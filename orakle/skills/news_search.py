@@ -24,6 +24,7 @@ class NewsSearch(Skill):
 
     def __init__(self):
         super().__init__()
+        logging.getLogger().setLevel(logging.DEBUG)
         # api_key = os.getenv('NEWSAPI_KEY')
         api_key = "f7a41568e4cd4a2ab5e8aefed810fa6b"
         if not api_key:
