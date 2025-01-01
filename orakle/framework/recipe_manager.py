@@ -74,10 +74,9 @@ class RecipeManager:
             skill = self.skills[step["skill"]]
             # Determine the action to be performed
             # based on the step's input type
-            if isinstance(step["input"], dict):
-                action = getattr(skill, step["action"])
-            else:
-                action = getattr(skill, "run")
+            # Get the action name from the step, defaulting to "run"
+            action_name = step.get("action", "run")
+            action = getattr(skill, action_name)
 
             print(pprint.pformat(action))
 
