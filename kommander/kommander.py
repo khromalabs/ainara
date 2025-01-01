@@ -6,7 +6,6 @@ import os
 import signal
 import sys
 import warnings
-
 from datetime import datetime
 
 import requests
@@ -72,54 +71,77 @@ def get_orakle_capabilities():
                     for endpoint, recipe in capabilities["recipes"].items():
                         params = recipe.get("parameters", [])
                         required_skills = recipe.get("required_skills", [])
-                        
+
                         # Add endpoint and description
                         summary.append(f"- {endpoint}")
-                        
+
                         # Add parameters with descriptions if available
                         if params:
                             summary.append("  Parameters:")
                             for param in params:
                                 param_desc = []
                                 param_desc.append(f"    - {param['name']}")
-                                if param.get('description'):
-                                    param_desc.append(f"      Description: {param['description']}")
-                                if param.get('type'):
-                                    param_desc.append(f"      Type: {param['type']}")
-                                if param.get('optional'):
+                                if param.get("description"):
+                                    param_desc.append(
+                                        "      Description:"
+                                        f" {param['description']}"
+                                    )
+                                if param.get("type"):
+                                    param_desc.append(
+                                        f"      Type: {param['type']}"
+                                    )
+                                if param.get("optional"):
                                     param_desc.append("      Optional: Yes")
                                 summary.extend(param_desc)
-                        
+
                         # Add required skills info
                         if required_skills:
-                            summary.append(f"  Required skills: {', '.join(required_skills)}")
+                            summary.append(
+                                "  Required skills:"
+                                f" {', '.join(required_skills)}"
+                            )
 
                 # Add skills with their descriptions
                 if "skills" in capabilities:
                     summary.append("\nSkills:")
-                    for skill_name, skill_info in capabilities["skills"].items():
+                    for skill_name, skill_info in capabilities[
+                        "skills"
+                    ].items():
                         summary.append(f"- {skill_name}")
-                        if skill_info.get('description'):
-                            summary.append(f"  Description: {skill_info['description']}")
-                        
+                        if skill_info.get("description"):
+                            summary.append(
+                                f"  Description: {skill_info['description']}"
+                            )
+
                         # Add run method info if available
-                        if 'run' in skill_info:
-                            run_info = skill_info['run']
-                            if run_info.get('description'):
-                                summary.append(f"  Run method: {run_info['description']}")
-                            
+                        if "run" in skill_info:
+                            run_info = skill_info["run"]
+                            if run_info.get("description"):
+                                summary.append(
+                                    f"  Run method: {run_info['description']}"
+                                )
+
                             # Add parameters info
-                            if run_info.get('parameters'):
+                            if run_info.get("parameters"):
                                 summary.append("  Parameters:")
-                                for param_name, param_info in run_info['parameters'].items():
+                                for param_name, param_info in run_info[
+                                    "parameters"
+                                ].items():
                                     param_desc = []
                                     param_desc.append(f"    - {param_name}")
-                                    if param_info.get('type'):
-                                        param_desc.append(f"      Type: {param_info['type']}")
-                                    if param_info.get('required'):
-                                        param_desc.append("      Required: Yes")
-                                    if param_info.get('default'):
-                                        param_desc.append(f"      Default: {param_info['default']}")
+                                    if param_info.get("type"):
+                                        param_desc.append(
+                                            f"      Type: {param_info['type']}"
+                                        )
+                                    if param_info.get("required"):
+                                        param_desc.append(
+                                            "      Required: Yes"
+                                        )
+                                    if param_info.get("default"):
+                                        param_desc.append(
+                                            "      Default:"
+                                            f" {param_info['default']}"
+                                        )
                                     summary.extend(param_desc)
 
                 return "\n".join(summary)
