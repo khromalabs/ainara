@@ -8,6 +8,8 @@ import sys
 import warnings
 from datetime import datetime
 
+import json
+import re
 import requests
 import setproctitle
 from prompt_toolkit import prompt
@@ -257,6 +259,44 @@ def backup(content):
             f.close()
 
 
+def execute_orakle_command(command_block):
+    """Execute an Orakle command and return the result"""
+    for server in ORAKLE_SERVERS:
+        try:
+            # Extract command type and parameters
+            match = re.match(r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command_block)
+            if not match:
+                return "Error: Invalid command format"
+            
+            cmd_type, cmd_name, params_str = match.groups()
+            try:
+                params = json.loads(params_str)
+            except json.JSONDecodeError:
+                return "Error: Invalid JSON parameters"
+
+            # Make request to Orakle server
+            endpoint = f"{server}/{cmd_type.lower()}/{cmd_name}"
+            response = requests.post(endpoint, json=params, timeout=30)
+            
+            if response.status_code == 200:
+                return json.dumps(response.json(), indent=2)
+            else:
+                return f"Error: Server returned {response.status_code}"
+                
+        except requests.RequestException as e:
+            continue
+    return "Error: No Orakle servers available"
+
+def process_orakle_commands(text):
+    """Process any oraklecmd blocks in the text and return modified text"""
+    def replace_command(match):
+        command = match.group(1).strip()
+        result = execute_orakle_command(command)
+        return f"```oraklecmd\n{command}\n```\nResult:\n```json\n{result}\n```"
+
+    pattern = r"```oraklecmd\n(.*?)\n```"
+    return re.sub(pattern, replace_command, text, flags=re.DOTALL)
+
 def chat_completion(question, stream=True) -> str:
     answer = llm.process_text(
         text=question,
@@ -265,8 +305,11 @@ def chat_completion(question, stream=True) -> str:
         stream=stream,
     )
     if answer:
-        backup(answer)
-        CHAT.extend([question, trim(answer)])
+        # Process any Orakle commands in the response
+        processed_answer = process_orakle_commands(answer)
+        backup(processed_answer)
+        CHAT.extend([question, trim(processed_answer)])
+        return processed_answer
     return answer
 
 
