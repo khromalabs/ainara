@@ -15,9 +15,12 @@ class HtmlTextParse(Skill):
 
     def run(self, text):
         """Extract article text from an HTML page"""
+        # Handle input whether it's a dictionary or direct text
+        html_content = text['text'] if isinstance(text, dict) else text
+        
         article = Article("")  # Empty URL since we already have the text
         article.download_state = 2  # Skip download
-        article.html = text
+        article.html = html_content
         article.parse()
 
         return {"text": article.text}
