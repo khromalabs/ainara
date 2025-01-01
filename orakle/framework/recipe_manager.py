@@ -52,42 +52,42 @@ class RecipeManager:
             # Register route for this recipe
             self.register_route(recipe)
 
-    def enforce_utf8_encoding(self, text):
-        # detected = chardet.detect(text.encode())
-        # original_encoding = detected['encoding']
-        # print("\n=== Detected encoding ===")
-        # print(f"Content: {original_encoding}")
-        # print("========================================\n")
-        # return text.encode(original_encoding).decode('utf-8')
-        common_encodings = [
-            'latin-1',
-            'utf-8',
-            'iso-8859-1',
-            'cp1252'
-        ]
-        # detected = chardet.detect(text.encode())
-        # print("\n=== Detected encoding ===")
-        # print(f"Detected: {detected}")
-        # print(f"Confidence: {detected['confidence']}")
-        # print(f"Text: {text}")
-        # print("========================================\n")
-        # if detected['confidence'] > 0.8:  # trust high confidence detections
-        #     try:
-        #         return text.encode(detected['encoding']).decode('utf-8')
-        #     except (UnicodeEncodeError, UnicodeDecodeError) as e:
-        #         print(f"Encoding error: {e}")
-        #         return None
-        for source_enc in common_encodings:
-            try:
-                fixed = text.encode(source_enc).decode('utf-8')
-                # Basic validation: check if contains expected characters
-                if 'Ã' not in fixed and 'Â' not in fixed:  # Common mojibake
-                    return fixed
-            except (UnicodeEncodeError, UnicodeDecodeError) as e:
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Encoding error: {e}")
-                continue
-        return text
+    # def enforce_utf8_encoding(self, text):
+    #     # detected = chardet.detect(text.encode())
+    #     # original_encoding = detected['encoding']
+    #     # print("\n=== Detected encoding ===")
+    #     # print(f"Content: {original_encoding}")
+    #     # print("========================================\n")
+    #     # return text.encode(original_encoding).decode('utf-8')
+    #     common_encodings = [
+    #         'latin-1',
+    #         'utf-8',
+    #         'iso-8859-1',
+    #         'cp1252'
+    #     ]
+    #     # detected = chardet.detect(text.encode())
+    #     # print("\n=== Detected encoding ===")
+    #     # print(f"Detected: {detected}")
+    #     # print(f"Confidence: {detected['confidence']}")
+    #     # print(f"Text: {text}")
+    #     # print("========================================\n")
+    #     # if detected['confidence'] > 0.8: # trust high confidence detections
+    #     #     try:
+    #     #         return text.encode(detected['encoding']).decode('utf-8')
+    #     #     except (UnicodeEncodeError, UnicodeDecodeError) as e:
+    #     #         print(f"Encoding error: {e}")
+    #     #         return None
+    #     for source_enc in common_encodings:
+    #         try:
+    #             fixed = text.encode(source_enc).decode('utf-8')
+    #             # Basic validation: check if contains expected characters
+    #             if 'Ã' not in fixed and 'Â' not in fixed:  # Common mojibake
+    #                 return fixed
+    #         except (UnicodeEncodeError, UnicodeDecodeError) as e:
+    #             logger = logging.getLogger(__name__)
+    #             logger.warning(f"Encoding error: {e}")
+    #             continue
+    #     return text
 
     def register_route(self, recipe):
         endpoint = recipe["endpoint"]
@@ -95,17 +95,17 @@ class RecipeManager:
 
         async def route_handler():
             result = await self.execute_recipe(endpoint, request.json)
-            if isinstance(result, str):
-                result = self.enforce_utf8_encoding(result)
-            elif isinstance(result, dict):
-                for key, value in result.items():
-                    if isinstance(value, str):
-                        result[key] = self.enforce_utf8_encoding(value)
-            # print("\n=== Final Result Before JSON Conversion ===")
-            # print(f"Type: {type(result)}")
-            # print(f"Content: {result}")
-            # print("========================================\n")
-            # return jsonify(result)
+            # if isinstance(result, str):
+            #     result = self.enforce_utf8_encoding(result)
+            # elif isinstance(result, dict):
+            #     for key, value in result.items():
+            #         if isinstance(value, str):
+            #             result[key] = self.enforce_utf8_encoding(value)
+            # # print("\n=== Final Result Before JSON Conversion ===")
+            # # print(f"Type: {type(result)}")
+            # # print(f"Content: {result}")
+            # # print("========================================\n")
+            # # return jsonify(result)
             if isinstance(result, str):
                 return result
             elif isinstance(result, dict):
