@@ -35,6 +35,20 @@ class NewsSearch(Skill):
                  from_date: str = None, to_date: str = None, country: str = None):
         logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}' ({type(language)}), "
                     f"sort_by='{sort_by}', from_date='{from_date}', to_date='{to_date}', country='{country}'")
+        
+        # Validate query
+        if not isinstance(query, str):
+            return {
+                "status": "error",
+                "message": f"Query must be a string, got {type(query)}"
+            }
+        
+        if not query or query.strip() == "" or query == "query":
+            return {
+                "status": "error",
+                "message": "Query parameter cannot be empty or invalid"
+            }
+            
         """
         Search for news articles matching the query
 
