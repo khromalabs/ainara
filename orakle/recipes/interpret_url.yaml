@@ -27,7 +27,7 @@ flow:
   - skill: TextProcessor
     input:
       prompt: "Please adapt the content and language of the following text according to these five instructions:
-        1. The language and characteristics of the adapted text must be based in this user profile description: '{$user_profile}'.
+        1. The language and characteristics of the adapted text must be based in this user profile description: '{$profile}'.
         2. Generate the output text using an easily readable HTML layout.
         3. Don't return a full HTML page just a `div` element containing an appropriate title and the processed text.
         4. Don't introduce placeholder content.
