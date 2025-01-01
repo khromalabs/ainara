@@ -6,6 +6,7 @@ method: POST
 required_skills:
   - WebUrlDownloader
   - HtmlTextParse
+  - TextProcessor
 
 parameters:
   - name: url
