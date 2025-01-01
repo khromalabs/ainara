@@ -34,7 +34,7 @@ parameters:
 flow:
   - skill: NewsSearch
     input:
-      query: query
+      query: $query
       language: $language
       from_date: $from_date
       to_date: $to_date
