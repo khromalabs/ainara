@@ -50,7 +50,7 @@ class RecipeManager:
         )
 
     async def execute_recipe(self, recipe_name, params):
-        recipe = self.recpes[recipe_name]
+        recipe = self.recipes[recipe_name]
         context = params.copy()
 
         for step in recipe["flow"]:

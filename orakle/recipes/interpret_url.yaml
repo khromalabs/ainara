@@ -4,7 +4,7 @@ endpoint: /interpret_url
 method: POST
 
 required_skills:
-  - WebDownloader
+  - WebUrlDownloader
   - TextAdapter
 
 parameters:
@@ -16,11 +16,10 @@ parameters:
     description: Target user profile (e.g. "Busy layman", "Five years old kid")
 
 flow:
-  - skill: WebDownloader
+  - skill: WebUrlDownloader
     action: download
     input: text
     output: web_content
-    
   - skill: TextAdapter
     action: adapt_for_user
     input:
