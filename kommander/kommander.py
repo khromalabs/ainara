@@ -69,15 +69,13 @@ def get_orakle_capabilities():
                 # Add recipes
                 if "recipes" in capabilities:
                     summary.append("\nRecipes:")
-                    for recipe in capabilities["recipes"]:
-                        desc = recipe.get("description", "No description")
-                        params = [
-                            p["name"] for p in recipe.get("parameters", [])
-                        ]
-                        summary.append(f"- {recipe['name']}: {desc}")
-                        if params:
+                    for endpoint, recipe in capabilities["recipes"].items():
+                        params = recipe.get("parameters", [])
+                        param_names = [p["name"] for p in params] if isinstance(params, list) else []
+                        summary.append(f"- {endpoint}")
+                        if param_names:
                             summary.append(
-                                f"  Parameters: {', '.join(params)}"
+                                f"  Parameters: {', '.join(param_names)}"
                             )
 
                 # Add skills
