@@ -1,8 +1,9 @@
 from newsapi import NewsApiClient
-
 from orakle.framework.skill import Skill
 
-# import os
+SUPPORTED_LANGUAGES = {
+    'ar', 'de', 'en', 'es', 'fr', 'he', 'it', 'nl', 'no', 'pt', 'ru', 'sv', 'zh'
+}
 
 
 class NewsSearch(Skill):
@@ -24,12 +25,19 @@ class NewsSearch(Skill):
 
         Args:
             query: Search query string
-            language: Language code (default: 'en')
+            language: Language code (default: 'en'). Must be one of: ar, de, en, es, fr, he, it, nl, no, pt, ru, sv, zh
             sort_by: Sort order ('relevancy', 'popularity', 'publishedAt')
 
         Returns:
             Dict containing search results
         """
+        # Validate language code
+        language = language.lower()
+        if language not in SUPPORTED_LANGUAGES:
+            return {
+                "status": "error",
+                "message": f"Invalid language code. Must be one of: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+            }
         try:
             response = self.newsapi.get_everything(
                 q=query, language=language, sort_by=sort_by
