@@ -17,7 +17,7 @@ class HtmlTextParse(Skill):
         """Extract article text from an HTML page"""
         # Handle input whether it's a dictionary or direct text
         if isinstance(text, dict):
-            html_content = text.get('text', '')
+            html_content = text.get('content', '')  # Changed from 'text' to 'content'
         else:
             html_content = text
         
