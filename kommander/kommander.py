@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
 import getopt
+import json
 import logging
 import os
+import re
 import signal
 import sys
 import warnings
 from datetime import datetime
 
-import json
-import re
 import requests
 import setproctitle
 from prompt_toolkit import prompt
@@ -138,8 +138,7 @@ def get_orakle_capabilities():
                                 ].items():
                                     if param_info.get("description"):
                                         desc = param_info.get(
-                                            'description',
-                                            ''
+                                            "description", ""
                                         )
                                         summary.append(
                                             f"    {param_name}:{desc}"
@@ -164,7 +163,7 @@ admit it frankly.
 
 Today's date in YYYY-MM-DD format is: {datetime.now().strftime('%Y-%m-%d')}
 
-To fulfull the user requests, there are especial commands available to be used
+To fullfil the user requests, there are especial commands available to be used
 by you in this chat, which will be called by this chat utility to the Orakle
 API server. Orakle is a powerful server that provides various capabilities
 through skills and recipes:
@@ -187,7 +186,7 @@ Here are all available commands with their parameters and return types:
 {orakle_caps}
 """
 
-print(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
+logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
 
 
 def find_working_provider():
@@ -264,10 +263,12 @@ def execute_orakle_command(command_block):
     for server in ORAKLE_SERVERS:
         try:
             # Extract command type and parameters
-            match = re.match(r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command_block)
+            match = re.match(
+                r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command_block
+            )
             if not match:
                 return "Error: Invalid command format"
-            
+
             cmd_type, cmd_name, params_str = match.groups()
             try:
                 params = json.loads(params_str)
@@ -277,18 +278,20 @@ def execute_orakle_command(command_block):
             # Make request to Orakle server
             endpoint = f"{server}/{cmd_type.lower()}/{cmd_name}"
             response = requests.post(endpoint, json=params, timeout=30)
-            
+
             if response.status_code == 200:
                 return json.dumps(response.json(), indent=2)
             else:
                 return f"Error: Server returned {response.status_code}"
-                
-        except requests.RequestException as e:
+
+        except requests.RequestException:
             continue
     return "Error: No Orakle servers available"
 
+
 def process_orakle_commands(text):
     """Process any oraklecmd blocks in the text and return modified text"""
+
     def replace_command(match):
         command = match.group(1).strip()
         result = execute_orakle_command(command)
@@ -296,6 +299,7 @@ def process_orakle_commands(text):
 
     pattern = r"```oraklecmd\n(.*?)\n```"
     return re.sub(pattern, replace_command, text, flags=re.DOTALL)
+
 
 def chat_completion(question, stream=True) -> str:
     answer = llm.process_text(
