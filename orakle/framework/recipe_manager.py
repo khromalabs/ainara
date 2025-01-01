@@ -54,7 +54,11 @@ class RecipeManager:
 
         async def route_handler():
             result = await self.execute_recipe(endpoint, request.json)
-            return jsonify(result)
+            print("\n=== Final Result Before JSON Conversion ===")
+            print(f"Type: {type(result)}")
+            print(f"Content: {result}")
+            print("========================================\n")
+            return jsonify(result, ensure_ascii=False)
 
         self.app.add_url_rule(
             endpoint, endpoint.lstrip("/"), route_handler, methods=methods
