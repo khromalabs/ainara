@@ -45,6 +45,7 @@ PROVIDERS = [
 ]
 
 logger = logging.getLogger()
+llm = LiteLLMBackend()
 
 
 def get_orakle_capabilities():
@@ -166,7 +167,6 @@ def backup(content):
 
 
 def chat_completion(question, stream=True) -> str:
-    llm = LiteLLMBackend()
     answer = llm.process_text(
         text=question,
         system_message=SYSTEM_MESSAGE,

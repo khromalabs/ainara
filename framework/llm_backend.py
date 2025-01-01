@@ -51,29 +51,32 @@ class LiteLLMBackend(LLMBackend):
         self.logger.debug(f"LiteLLM: {model_call_dict}")
 
     def process_text(
-        self, 
-        text: str, 
-        system_message: str = "", 
+        self,
+        text: str,
+        system_message: str = "",
         chat_history: list = None,
-        stream: bool = False
+        stream: bool = False,
     ) -> str:
         """Process text using LiteLLM
-        
+
         Args:
             text: The text to process
             system_message: Optional system message to prepend
-            chat_history: Optional list of previous messages in [user_msg, assistant_msg] pairs
+            chat_history: Optional list of previous messages in
+                          [user_msg, assistant_msg] pairs
             stream: Whether to stream the response
         """
         messages = [{"role": "system", "content": system_message}]
-        
+
         # Add chat history if provided
         if chat_history:
             for i in range(0, len(chat_history), 2):
                 messages.append({"role": "user", "content": chat_history[i]})
                 if i + 1 < len(chat_history):
-                    messages.append({"role": "assistant", "content": chat_history[i + 1]})
-        
+                    messages.append(
+                        {"role": "assistant", "content": chat_history[i + 1]}
+                    )
+
         # Add current message
         messages.append({"role": "user", "content": text})
 
@@ -106,7 +109,7 @@ class LiteLLMBackend(LLMBackend):
                         content = chunk.choices[0].text
                     else:
                         continue
-                    
+
                     print(content, end="", flush=True)
                     answer += content
             else:

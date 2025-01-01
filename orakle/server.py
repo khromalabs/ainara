@@ -76,4 +76,5 @@ if __name__ == "__main__":
     logger.info(f"Starting Orakle development server on port {args.port}")
 
     app = create_app()
-    app.run(port=args.port, debug=True)
+    # app.run(port=args.port, debug=True)
+    app.run(port=args.port)
