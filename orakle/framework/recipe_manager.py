@@ -64,7 +64,7 @@ class RecipeManager:
         # Retrieve the recipe from the recipes dictionary using the provided
         # recipe_name
         recipe = self.recipes[recipe_name]
-        
+
         # Create a mapping from parameter names to input values
         context = {}
         if "parameters" in recipe:
@@ -110,7 +110,7 @@ class RecipeManager:
                                 value = context
                                 print(f"\nDebug - Variable path: {var_path}")
                                 print(f"Debug - Context: {context}")
-                                for key in var_path.split('.'):
+                                for key in var_path.split("."):
                                     print(f"Debug - Accessing key: {key}")
                                     value = value[key]
                                     print(f"Debug - Current value: {value}")
@@ -122,7 +122,7 @@ class RecipeManager:
                     else:
                         input_params[k] = v
                 print(f"\nProcessing step: {step['skill']}")
-                self.preview_dict(input_params, step['skill'])
+                self.preview_dict(input_params, step["skill"])
 
             else:
                 # If the input is not a dictionary,
@@ -132,7 +132,9 @@ class RecipeManager:
                 input_params = {param_name: context[step["input"]]}
 
             # Execute the skill action
-            print(f"\nExecuting {step['skill']} with action: {action.__name__}")
+            print(
+                f"\nExecuting {step['skill']} with action: {action.__name__}"
+            )
             if action.__name__.startswith("async"):
                 # If the action is asynchronous,
                 # use await to wait for its completion
