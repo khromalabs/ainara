@@ -76,7 +76,7 @@ class RecipeManager:
             if isinstance(step["input"], dict):
                 action = getattr(skill, step["action"])
             else:
-                action = "run"
+                action = getattr(skill, "run")
 
             print(pprint.pformat(action))
 
