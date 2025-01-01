@@ -31,6 +31,11 @@ or partially unsure about the answer to any question asked by the user just
 admit it frankly.
 """
 
+ORAKLE_SERVERS = [
+    "http://127.0.0.1:5000",
+    "http://192.168.1.200:5000",
+]
+
 PROVIDERS = [
     {
         "model": "openai/gamingpc",
@@ -42,9 +47,40 @@ PROVIDERS = [
         "api_base": "http://192.168.1.200:7080",
         "api_key": "nokey",
     },
-    # Add more providers as needed
 ]
 
+
+def get_orakle_capabilities():
+    """Query Orakle servers for their capabilities and return a condensed summary"""
+    for server in ORAKLE_SERVERS:
+        try:
+            response = requests.get(f"{server}/capabilities", timeout=2)
+            if response.status_code == 200:
+                capabilities = response.json()
+                
+                # Create a condensed summary
+                summary = ["Available Orakle capabilities:"]
+                
+                # Add recipes
+                if "recipes" in capabilities:
+                    summary.append("\nRecipes:")
+                    for recipe in capabilities["recipes"]:
+                        desc = recipe.get("description", "No description")
+                        params = [p["name"] for p in recipe.get("parameters", [])]
+                        summary.append(f"- {recipe['name']}: {desc}")
+                        if params:
+                            summary.append(f"  Parameters: {', '.join(params)}")
+                
+                # Add skills
+                if "skills" in capabilities:
+                    summary.append("\nSkills:")
+                    for skill in capabilities["skills"]:
+                        summary.append(f"- {skill}")
+                
+                return "\n".join(summary)
+        except requests.RequestException:
+            continue
+    return None
 
 def find_working_provider():
     for provider in PROVIDERS:
@@ -99,6 +135,14 @@ def trim(s):
 
 def format_chat_messages(new_message):
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
+    
+    # Add Orakle capabilities if available
+    orakle_caps = get_orakle_capabilities()
+    if orakle_caps:
+        messages.append({
+            "role": "system",
+            "content": f"\nYou have access to the following Orakle capabilities:\n{orakle_caps}"
+        })
     for i in range(0, len(CHAT), 2):
         messages.append({"role": "user", "content": CHAT[i]})
         if i + 1 < len(CHAT):
