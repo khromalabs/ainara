@@ -31,35 +31,31 @@ class RecipeManager:
                 "methods": {},
             }
 
-            # Get information about public methods
-            for method_name, method in inspect.getmembers(
-                skill_instance, predicate=inspect.ismethod
-            ):
-                if not method_name.startswith("_"):  # Only public methods
-                    method_info = {
-                        "description": method.__doc__
-                        or "No description available",
-                        "parameters": {},
+            # Get information about run method
+            run_method = skill_instance.run
+            method_info = {
+                "description": run_method.__doc__ or "No description available",
+                "parameters": {},
+            }
+
+            # Get parameter information
+            sig = inspect.signature(run_method)
+            type_hints = get_type_hints(run_method)
+
+            for param_name, param in sig.parameters.items():
+                if param_name != "self":
+                    param_info = {
+                        "type": str(type_hints.get(param_name, "any")),
+                        "default": (
+                            None
+                            if param.default == param.empty
+                            else str(param.default)
+                        ),
+                        "required": param.default == param.empty,
                     }
+                    method_info["parameters"][param_name] = param_info
 
-                    # Get parameter information
-                    sig = inspect.signature(method)
-                    type_hints = get_type_hints(method)
-
-                    for param_name, param in sig.parameters.items():
-                        if param_name != "self":
-                            param_info = {
-                                "type": str(type_hints.get(param_name, "any")),
-                                "default": (
-                                    None
-                                    if param.default == param.empty
-                                    else str(param.default)
-                                ),
-                                "required": param.default == param.empty,
-                            }
-                            method_info["parameters"][param_name] = param_info
-
-                    skill_info["methods"][method_name] = method_info
+            skill_info["run"] = method_info
 
             capabilities["skills"][skill_name] = skill_info
 
@@ -208,13 +204,8 @@ class RecipeManager:
             # Retrieve the skill from the skills dictionary
             # using the step's skill name
             skill = self.skills[step["skill"]]
-            # Determine the action to be performed
-            # based on the step's input type
-            # Get the action name from the step, defaulting to "run"
-            action_name = step.get("action", "run")
-            action = getattr(skill, action_name)
-
-            logger.info(pprint.pformat(action))
+            # Always use the run method
+            logger.info(pprint.pformat(skill.run))
 
             # Prepare the input parameters for the skill action
             if isinstance(step["input"], dict):
@@ -284,18 +275,16 @@ class RecipeManager:
                 param_name = next(iter(inspect.signature(action).parameters))
                 input_params = {param_name: context[step["input"]]}
 
-            # Execute the skill action
+            # Execute the skill's run method
             logger = logging.getLogger(__name__)
-            logger.debug(
-                f"Executing {step['skill']} with action: {action.__name__}"
-            )
-            if action.__name__.startswith("async"):
-                # If the action is asynchronous,
-                # use await to wait for its completion
-                result = await action(**input_params)
+            logger.debug(f"Executing {step['skill']}.run()")
+            
+            if inspect.iscoroutinefunction(skill.run):
+                # If run is async, await it
+                result = await skill.run(**input_params)
             else:
-                # If the action is not asynchronous, execute it directly
-                result = action(**input_params)
+                # If run is not async, execute directly
+                result = skill.run(**input_params)
 
             # If the result is a coroutine, await it
             if inspect.iscoroutine(result):
