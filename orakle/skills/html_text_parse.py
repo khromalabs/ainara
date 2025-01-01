@@ -21,9 +21,9 @@ class HtmlTextParse(Skill):
         else:
             html_content = text
         
-        article = Article("")  # Empty URL since we already have the text
+        article = Article("", language='es')  # Empty URL since we already have the text
         article.download_state = 2  # Skip download
-        article.html = html_content
+        article.html = html_content.encode('utf-8').decode('utf-8')
         article.parse()
 
         return {"text": article.text}

@@ -22,6 +22,7 @@ class WebUrlDownloader(Skill):
         try:
             response = requests.get(url)
             response.raise_for_status()
+            response.encoding = 'utf-8'
             return {"content": response.text}
         except Exception as e:
             return {"error": str(e)}
