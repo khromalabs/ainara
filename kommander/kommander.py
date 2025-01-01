@@ -94,12 +94,6 @@ def get_orakle_capabilities():
                                     param_desc.append("      Optional: Yes")
                                 summary.extend(param_desc)
 
-                        # Add required skills info
-                        if required_skills:
-                            summary.append(
-                                "  Required skills:"
-                                f" {', '.join(required_skills)}"
-                            )
 
                 # Add skills with their descriptions
                 if "skills" in capabilities:
