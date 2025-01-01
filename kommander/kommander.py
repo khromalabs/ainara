@@ -7,8 +7,6 @@ import signal
 import sys
 import warnings
 
-# Suppress pydantic warning about config keys
-warnings.filterwarnings('ignore', message='Valid config keys have changed in V2:*')
 from datetime import datetime
 
 import requests
@@ -17,6 +15,11 @@ from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
 from ainara.framework.llm_backend import LiteLLMBackend
+
+# Suppress pydantic warning about config keys
+warnings.filterwarnings(
+    "ignore", message="Valid config keys have changed in V2:*"
+)
 
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/chat_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -89,6 +92,11 @@ def get_orakle_capabilities():
     return None
 
 
+orakle_caps = get_orakle_capabilities()
+
+print(f"orakle_caps: {orakle_caps}")
+
+
 def find_working_provider():
     for provider in PROVIDERS:
         try:
@@ -144,7 +152,6 @@ def format_chat_messages(new_message):
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
 
     # Add Orakle capabilities if available
-    orakle_caps = get_orakle_capabilities()
     if orakle_caps:
         messages.append(
             {
@@ -175,7 +182,7 @@ def chat_completion(question, stream=True) -> str:
         text=question,
         system_message=SYSTEM_MESSAGE,
         chat_history=CHAT,
-        stream=stream
+        stream=stream,
     )
     if answer:
         backup(answer)
