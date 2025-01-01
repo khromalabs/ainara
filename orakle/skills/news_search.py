@@ -30,7 +30,7 @@ class NewsSearch(Skill):
             raise ValueError("NEWSAPI_KEY environment variable is required")
         self.newsapi = NewsApiClient(api_key=api_key)
 
-    async def run(self, query: str, language: str, sort_by: str = "relevancy"):
+    async def run(self, query: str, language: str = "en", sort_by: str = "relevancy"):
         """
         Search for news articles matching the query
 
@@ -59,6 +59,7 @@ class NewsSearch(Skill):
                 q=query, language=language, sort_by=sort_by
             )
             logging.info(f"Got {len(response['articles'])} results")
+            logging.debug(f"First article language check - title: {response['articles'][0]['title'] if response['articles'] else 'No articles'}")
 
             # Format the results
             articles = []
