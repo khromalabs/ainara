@@ -158,7 +158,12 @@ class RecipeManager:
                         # Handle variable substitution in strings
                         if v.startswith("$"):
                             # Direct variable reference
-                            input_params[k] = context[v.strip("$")]
+                            var_name = v.strip("$")
+                            if var_name not in context:
+                                logger.error(f"Variable '{var_name}' not found in context")
+                                logger.debug(f"Available context variables: {list(context.keys())}")
+                                raise KeyError(f"Required variable '{var_name}' not found in recipe context")
+                            input_params[k] = context[var_name]
                         else:
                             # Replace {$var} patterns in strings
                             def replace_var(match):
