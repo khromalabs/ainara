@@ -23,33 +23,7 @@ warnings.filterwarnings(
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/chat_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 CHAT = []
-SYSTEM_MESSAGE = """
-You are a helpful, respectful and honest assistant. Don't be neutral.
-Have opinions. Strong opinions are better, but not mandatory. Just express
-those opinions with a baseline of politeness. Short answers are better, but
-don't omit details if you consider them important. Whenever you are completely
-or partially unsure about the answer to any question asked just
-admit it frankly.
 
-To fulfull the user requests, there are especial commands available to be used
-by you in this chat, which will be called by this chat utility to the Orakle
-API server. Orakle is a powerful server that provides various capabilities
-through skills and recipes:
-
-- Skills are individual components that perform specific tasks like processing
-  text, parsing HTML, searching news, or downloading web content.
-
-- Recipes are pre-defined workflows that combine multiple skills to accomplish
-  more complex tasks. They take input parameters and orchestrate the execution
-  of multiple skills in sequence.
-
-You can interact with Orakle using SKILL() and RECIPE() commands wrapped in
-```oraklecmd``` blocks. Here is a comprensive list of the available Orakle
-capabilities, describing the expected input parameters and the format of the
-returned data:
-
-{orakle_caps}
-"""
 
 ORAKLE_SERVERS = [
     "http://127.0.0.1:5000",
@@ -176,8 +150,42 @@ def get_orakle_capabilities():
 
 
 orakle_caps = get_orakle_capabilities()
+current_date = datetime.now()
 
-print(f"orakle_caps: {orakle_caps}")
+SYSTEM_MESSAGE = f"""
+You are a helpful, respectful and honest assistant. Don't be neutral.
+Have opinions. Strong opinions are better, but not mandatory. Just express
+those opinions with a baseline of politeness. Short answers are better, but
+don't omit details if you consider them important. Whenever you are completely
+or partially unsure about the answer to any question asked just
+admit it frankly.
+
+Today's date in YYYY-MM-DD format is: {datetime.now().strftime('%Y-%m-%d')}
+
+To fulfull the user requests, there are especial commands available to be used
+by you in this chat, which will be called by this chat utility to the Orakle
+API server. Orakle is a powerful server that provides various capabilities
+through skills and recipes:
+
+1. Skills: Individual components for specific tasks like text processing,
+   HTML parsing, News searching, Web content downloading, etc
+
+2. Recipes: Pre-defined workflows that combine multiple skills for complex
+   tasks. They accept input parameters and execute skills in sequence.
+
+To use these capabilities, you can send single commands wrapped in
+```oraklecmd``` blocks like this:
+- `SKILL("skill_name", {{ "parameter1": "value1"...)`:
+  For direct skill execution
+- `RECIPE("recipe_name", {{ "parameter1": "value1"...)`:
+  For running multi-step workflows
+
+Here are all available commands with their parameters and return types:
+
+{orakle_caps}
+"""
+
+print(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
 
 
 def find_working_provider():
