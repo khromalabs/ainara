@@ -31,17 +31,24 @@ don't omit details if you consider them important. Whenever you are completely
 or partially unsure about the answer to any question asked just
 admit it frankly.
 
-Orakle is a powerful server that provides various capabilities through skills and recipes:
+To fulfull the user requests, there are especial commands available to be used
+by you in this chat, which will be called by this chat utility to the Orakle
+API server. Orakle is a powerful server that provides various capabilities
+through skills and recipes:
 
-- Skills are individual components that perform specific tasks like processing text, 
-  parsing HTML, searching news, or downloading web content.
-  
-- Recipes are pre-defined workflows that combine multiple skills to accomplish more 
-  complex tasks. They take input parameters and orchestrate the execution of multiple 
-  skills in sequence.
+- Skills are individual components that perform specific tasks like processing
+  text, parsing HTML, searching news, or downloading web content.
 
-You can interact with Orakle using SKILL() and RECIPE() commands wrapped in ```oraklecmd``` 
-blocks. Each command returns specific data types that you can use in your responses.
+- Recipes are pre-defined workflows that combine multiple skills to accomplish
+  more complex tasks. They take input parameters and orchestrate the execution
+  of multiple skills in sequence.
+
+You can interact with Orakle using SKILL() and RECIPE() commands wrapped in
+```oraklecmd``` blocks. Here is a comprensive list of the available Orakle
+capabilities, describing the expected input parameters and the format of the
+returned data:
+
+{orakle_caps}
 """
 
 ORAKLE_SERVERS = [
@@ -76,64 +83,91 @@ def get_orakle_capabilities():
 
                 # Create a summary focused on command usage
                 summary = ["You can use the following Orakle commands:"]
-                
+
                 # Add recipes with command format and return type
                 if "recipes" in capabilities:
-                    summary.append("\nRecipes (use with ```oraklecmd\\nRECIPE(\"name\", params)```):")
+                    summary.append(
+                        '\nRecipes (use with ```oraklecmd\\nRECIPE("name",'
+                        " params)```):"
+                    )
                     for endpoint, recipe in capabilities["recipes"].items():
                         params = recipe.get("parameters", [])
                         param_dict = {}
-                        
+
                         # Build parameter dictionary for example
                         for param in params:
                             param_name = param["name"]
                             param_type = param.get("type", "string")
                             param_dict[param_name] = f"<{param_type}>"
-                            
+
                         # Create example command
                         example = f'RECIPE("{endpoint}", {param_dict})'
                         summary.append(f"- {example}")
-                        
+
                         # Add return type if available
                         if "flow" in recipe and recipe["flow"]:
                             last_step = recipe["flow"][-1]
                             if last_step.get("output_type"):
-                                summary.append(f"  Returns: {last_step['output_type']}")
-                        
+                                summary.append(
+                                    f"  Returns: {last_step['output_type']}"
+                                )
+
                         if any(p.get("description") for p in params):
                             summary.append("  Parameters:")
                             for p in params:
                                 if p.get("description"):
-                                    summary.append(f"    {p['name']}: {p['description']}")
+                                    summary.append(
+                                        f"    {p['name']}: {p['description']}"
+                                    )
 
                 # Add skills with command format
                 if "skills" in capabilities:
-                    summary.append("\nSkills (use with ```oraklecmd\\nSKILL(\"name\", params)```):")
-                    for skill_name, skill_info in capabilities["skills"].items():
+                    summary.append(
+                        '\nSkills (use with ```oraklecmd\\nSKILL("name",'
+                        " params)```):"
+                    )
+                    for skill_name, skill_info in capabilities[
+                        "skills"
+                    ].items():
                         if "run" in skill_info:
                             run_info = skill_info["run"]
                             params = {}
-                            
+
                             # Build parameter dictionary for example
                             if run_info.get("parameters"):
-                                for param_name, param_info in run_info["parameters"].items():
+                                for param_name, param_info in run_info[
+                                    "parameters"
+                                ].items():
                                     param_type = param_info.get("type", "any")
                                     params[param_name] = f"<{param_type}>"
-                            
+
                             # Create example command
                             example = f'SKILL("{skill_name}", {params})'
                             summary.append(f"- {example}")
-                            
-                            # Add parameter descriptions and return type if available
+
+                            # Add parameter descriptions and return type if
+                            # available
                             if run_info.get("description"):
-                                summary.append(f"  Purpose: {run_info['description']}")
+                                summary.append(
+                                    f"  Purpose: {run_info['description']}"
+                                )
                             if run_info.get("return_type"):
-                                summary.append(f"  Returns: {run_info['return_type']}")
+                                summary.append(
+                                    f"  Returns: {run_info['return_type']}"
+                                )
                             if run_info.get("parameters"):
                                 summary.append("  Parameters:")
-                                for param_name, param_info in run_info["parameters"].items():
+                                for param_name, param_info in run_info[
+                                    "parameters"
+                                ].items():
                                     if param_info.get("description"):
-                                        summary.append(f"    {param_name}: {param_info.get('description', '')}")
+                                        desc = param_info.get(
+                                            'description',
+                                            ''
+                                        )
+                                        summary.append(
+                                            f"    {param_name}:{desc}"
+                                        )
 
                 return "\n".join(summary)
         except requests.RequestException:
@@ -200,17 +234,6 @@ def trim(s):
 def format_chat_messages(new_message):
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
 
-    # Add Orakle capabilities if available
-    if orakle_caps:
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "\nYou have access to the following Orakle"
-                    f" capabilities:\n{orakle_caps}"
-                ),
-            }
-        )
     for i in range(0, len(CHAT), 2):
         messages.append({"role": "user", "content": CHAT[i]})
         if i + 1 < len(CHAT):
