@@ -17,11 +17,16 @@ class RecipeManager:
         self.skills = {}
         self.recipes = {}
         self.load_recipes()
-        self.register_skills_endpoint()
+        self.register_capabilities_endpoint()
 
-    def get_skills_info(self):
-        """Get information about all available skills"""
-        skills_info = {}
+    def get_capabilities(self):
+        """Get information about all available skills and recipes"""
+        capabilities = {
+            "skills": {},
+            "recipes": {}
+        }
+        
+        # Get skills information
         for skill_name, skill_instance in self.skills.items():
             skill_info = {
                 "description": skill_instance.__class__.__doc__ or "No description available",
@@ -51,15 +56,26 @@ class RecipeManager:
                     
                     skill_info["methods"][method_name] = method_info
             
-            skills_info[skill_name] = skill_info
+            capabilities["skills"][skill_name] = skill_info
         
-        return skills_info
+        # Get recipes information
+        for endpoint, recipe in self.recipes.items():
+            recipe_info = {
+                "endpoint": endpoint,
+                "method": recipe.get("method", "POST"),
+                "required_skills": recipe.get("required_skills", []),
+                "parameters": recipe.get("parameters", []),
+                "flow": recipe.get("flow", [])
+            }
+            capabilities["recipes"][endpoint] = recipe_info
+        
+        return capabilities
 
-    def register_skills_endpoint(self):
-        """Register the /skills endpoint"""
-        @self.app.route('/skills', methods=['GET'])
-        def get_skills():
-            return jsonify(self.get_skills_info())
+    def register_capabilities_endpoint(self):
+        """Register the /capabilities endpoint"""
+        @self.app.route('/capabilities', methods=['GET'])
+        def get_capabilities():
+            return jsonify(self.get_capabilities())
 
     def preview_dict(self, input_params, step_name=""):
         logger = logging.getLogger(__name__)
