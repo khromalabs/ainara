@@ -121,6 +121,10 @@ class RecipeManager:
                 # If the action is not asynchronous, execute it directly
                 result = action(**input_params)
 
+            # If the result is a coroutine, await it
+            if inspect.iscoroutine(result):
+                result = await result
+
             # Store the result of the action in the context
             context[step["output"]] = result
 
