@@ -1,5 +1,5 @@
-from orakle.skill import Skill
-from orakle.skills.llm_backend import LiteLLMBackend
+from orakle.core.skill import Skill
+from orakle.core.llm_backend import LiteLLMBackend
 
 
 class TextProcessor(Skill):

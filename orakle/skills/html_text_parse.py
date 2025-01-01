@@ -1,6 +1,6 @@
 from newspaper import Article
 
-from orakle.skill import Skill
+from orakle.core.skill import Skill
 
 
 class HtmlTextParse(Skill):
