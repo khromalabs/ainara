@@ -62,81 +62,57 @@ def get_orakle_capabilities():
             if response.status_code == 200:
                 capabilities = response.json()
 
-                # Create a condensed summary
-                summary = ["Available Orakle capabilities:"]
-
-                # Add recipes with their full descriptions
+                # Create a summary focused on command usage
+                summary = ["You can use the following Orakle commands:"]
+                
+                # Add recipes with command format
                 if "recipes" in capabilities:
-                    summary.append("\nRecipes:")
+                    summary.append("\nRecipes (use with ```oraklecmd\\nRECIPE(\"name\", params)```):")
                     for endpoint, recipe in capabilities["recipes"].items():
                         params = recipe.get("parameters", [])
-                        required_skills = recipe.get("required_skills", [])
-
-                        # Add endpoint and description
-                        summary.append(f"- {endpoint}")
-
-                        # Add parameters with descriptions if available
-                        if params:
+                        param_dict = {}
+                        
+                        # Build parameter dictionary for example
+                        for param in params:
+                            param_name = param["name"]
+                            param_type = param.get("type", "string")
+                            param_dict[param_name] = f"<{param_type}>"
+                            
+                        # Create example command
+                        example = f'RECIPE("{endpoint}", {param_dict})'
+                        summary.append(f"- {example}")
+                        if any(p.get("description") for p in params):
                             summary.append("  Parameters:")
-                            for param in params:
-                                param_desc = []
-                                param_desc.append(f"    - {param['name']}")
-                                if param.get("description"):
-                                    param_desc.append(
-                                        "      Description:"
-                                        f" {param['description']}"
-                                    )
-                                if param.get("type"):
-                                    param_desc.append(
-                                        f"      Type: {param['type']}"
-                                    )
-                                if param.get("optional"):
-                                    param_desc.append("      Optional: Yes")
-                                summary.extend(param_desc)
+                            for p in params:
+                                if p.get("description"):
+                                    summary.append(f"    {p['name']}: {p['description']}")
 
-
-                # Add skills with their descriptions
+                # Add skills with command format
                 if "skills" in capabilities:
-                    summary.append("\nSkills:")
-                    for skill_name, skill_info in capabilities[
-                        "skills"
-                    ].items():
-                        summary.append(f"- {skill_name}")
-                        if skill_info.get("description"):
-                            summary.append(
-                                f"  Description: {skill_info['description']}"
-                            )
-
-                        # Add run method info if available
+                    summary.append("\nSkills (use with ```oraklecmd\\nSKILL(\"name\", params)```):")
+                    for skill_name, skill_info in capabilities["skills"].items():
                         if "run" in skill_info:
                             run_info = skill_info["run"]
+                            params = {}
+                            
+                            # Build parameter dictionary for example
+                            if run_info.get("parameters"):
+                                for param_name, param_info in run_info["parameters"].items():
+                                    param_type = param_info.get("type", "any")
+                                    params[param_name] = f"<{param_type}>"
+                            
+                            # Create example command
+                            example = f'SKILL("{skill_name}", {params})'
+                            summary.append(f"- {example}")
+                            
+                            # Add parameter descriptions if available
                             if run_info.get("description"):
-                                summary.append(
-                                    f"  Run method: {run_info['description']}"
-                                )
-
-                            # Add parameters info
+                                summary.append(f"  Purpose: {run_info['description']}")
                             if run_info.get("parameters"):
                                 summary.append("  Parameters:")
-                                for param_name, param_info in run_info[
-                                    "parameters"
-                                ].items():
-                                    param_desc = []
-                                    param_desc.append(f"    - {param_name}")
-                                    if param_info.get("type"):
-                                        param_desc.append(
-                                            f"      Type: {param_info['type']}"
-                                        )
-                                    if param_info.get("required"):
-                                        param_desc.append(
-                                            "      Required: Yes"
-                                        )
-                                    if param_info.get("default"):
-                                        param_desc.append(
-                                            "      Default:"
-                                            f" {param_info['default']}"
-                                        )
-                                    summary.extend(param_desc)
+                                for param_name, param_info in run_info["parameters"].items():
+                                    if param_info.get("description"):
+                                        summary.append(f"    {param_name}: {param_info.get('description', '')}")
 
                 return "\n".join(summary)
         except requests.RequestException:
