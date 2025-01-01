@@ -22,5 +22,9 @@ flow:
   - skill: HtmlTextParse
     input:
       text: $web_content
-      user_profile: userProfile
+    output: parsed_text
+  - skill: TextProcessor
+    input:
+      text: $parsed_text
+      user_profile: $userProfile
     output: result
