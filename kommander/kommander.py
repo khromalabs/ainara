@@ -80,6 +80,10 @@ def get_orakle_capabilities():
                         example = f'RECIPE("{endpoint}", {param_dict})'
                         summary.append(f"- {example}")
 
+                        # Add description if available
+                        if recipe.get("description"):
+                            summary.append(f"  Purpose: {recipe['description']}")
+
                         # Add return type if available
                         if "flow" in recipe and recipe["flow"]:
                             last_step = recipe["flow"][-1]
