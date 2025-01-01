@@ -95,8 +95,12 @@ class RecipeManager:
                             def replace_var(match):
                                 var_path = match.group(1).strip("$")
                                 value = context
+                                print(f"\nDebug - Variable path: {var_path}")
+                                print(f"Debug - Context: {context}")
                                 for key in var_path.split('.'):
+                                    print(f"Debug - Accessing key: {key}")
                                     value = value[key]
+                                    print(f"Debug - Current value: {value}")
                                 return str(value)
 
                             input_params[k] = re.sub(
