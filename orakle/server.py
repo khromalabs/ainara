@@ -58,12 +58,17 @@ def parse_args():
 app = Flask(__name__)
 CORS(app)
 
+def create_app():
+    """Create and configure the Flask application"""
+    recipe_manager = RecipeManager(app)
+    return app
+
 if __name__ == "__main__":
     args = parse_args()
     setup_logging(args.log_dir, args.log_level)
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting Orakle server on port {args.port}")
+    logger.info(f"Starting Orakle development server on port {args.port}")
 
-    recipe_manager = RecipeManager(app)
+    create_app()
     app.run(port=args.port)
