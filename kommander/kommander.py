@@ -5,6 +5,10 @@ import logging
 import os
 import signal
 import sys
+import warnings
+
+# Suppress pydantic warning about config keys
+warnings.filterwarnings('ignore', message='Valid config keys have changed in V2:*')
 from datetime import datetime
 
 import requests
