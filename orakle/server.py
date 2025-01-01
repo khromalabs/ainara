@@ -1,7 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 
-from .recipe_manager import RecipeManager
+from orakle.framework.recipe_manager import RecipeManager
 
 app = Flask(__name__)
 CORS(app)

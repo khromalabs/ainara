@@ -1,7 +1,7 @@
 import requests
 import validators
 
-from orakle.core.skill import Skill
+from orakle.framework.skill import Skill
 
 
 class WebUrlDownloader(Skill):
