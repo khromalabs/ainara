@@ -1,5 +1,6 @@
 import importlib
 import inspect
+import logging
 import pprint
 import re
 from pathlib import Path
@@ -17,13 +18,14 @@ class RecipeManager:
         self.load_recipes()
 
     def preview_dict(self, input_params, step_name=""):
-        print(f"\n=== Parameter Preview for step: {step_name} ===")
-        print("Input parameters:")
+        logger = logging.getLogger(__name__)
+        logger.debug(f"=== Parameter Preview for step: {step_name} ===")
+        logger.debug("Input parameters:")
         for key, value in input_params.items():
-            print(f"Key: {key}")
-            print(f"Value type: {type(value)}")
-            print(f"Value: {value}")
-            print("-" * 50)
+            logger.debug(f"Key: {key}")
+            logger.debug(f"Value type: {type(value)}")
+            logger.debug(f"Value: {value}")
+            logger.debug("-" * 50)
 
     def camel_to_snake(self, name):
         name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
@@ -31,7 +33,8 @@ class RecipeManager:
 
     def load_recipes(self):
         recipe_dir = Path(__file__).parent.parent / "recipes"
-        print(recipe_dir)
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Loading recipes from: {recipe_dir}")
         for recipe_file in recipe_dir.glob("*.yaml"):
             with open(recipe_file) as f:
                 recipe = yaml.safe_load(f)
@@ -81,7 +84,8 @@ class RecipeManager:
                 if 'Ã' not in fixed and 'Â' not in fixed:  # Common mojibake
                     return fixed
             except (UnicodeEncodeError, UnicodeDecodeError) as e:
-                print(f"Encoding error: {e}")
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Encoding error: {e}")
                 continue
         return text
 
@@ -172,7 +176,8 @@ class RecipeManager:
                             )
                     else:
                         input_params[k] = v
-                print(f"\nProcessing step: {step['skill']}")
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Processing step: {step['skill']}")
                 self.preview_dict(input_params, step["skill"])
 
             else:
@@ -183,8 +188,9 @@ class RecipeManager:
                 input_params = {param_name: context[step["input"]]}
 
             # Execute the skill action
-            print(
-                f"\nExecuting {step['skill']} with action: {action.__name__}"
+            logger = logging.getLogger(__name__)
+            logger.debug(
+                f"Executing {step['skill']} with action: {action.__name__}"
             )
             if action.__name__.startswith("async"):
                 # If the action is asynchronous,

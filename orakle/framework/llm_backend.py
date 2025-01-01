@@ -27,10 +27,11 @@ class LiteLLMBackend(LLMBackend):
         }
         
         self.provider = {}
-        print("\nChecking environment variables:")
+        logger = logging.getLogger(__name__)
+        logger.info("Checking environment variables:")
         for key, env_var in required_vars.items():
             value = os.environ.get(env_var)
-            print(f"{env_var}: {'[SET]' if value else '[MISSING]'}")
+            logger.info(f"{env_var}: {'[SET]' if value else '[MISSING]'}")
             if not value:
                 raise ValueError(f"Missing required environment variable: {env_var}")
             self.provider[key] = value
@@ -62,5 +63,6 @@ class LiteLLMBackend(LLMBackend):
             return answer.rstrip("\n")
 
         except Exception as e:
-            print(f"\nError: Unable to get a response from the AI: {str(e)}")
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unable to get a response from the AI: {str(e)}")
             return ""
