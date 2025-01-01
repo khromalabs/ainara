@@ -1,5 +1,7 @@
 import logging
+
 from newsapi import NewsApiClient
+
 from orakle.framework.skill import Skill
 
 SUPPORTED_LANGUAGES = {
@@ -24,31 +26,42 @@ class NewsSearch(Skill):
 
     def __init__(self):
         super().__init__()
-        logging.getLogger().setLevel(logging.DEBUG)
+        # logging.getLogger().setLevel(logging.DEBUG)
         # api_key = os.getenv('NEWSAPI_KEY')
         api_key = "f7a41568e4cd4a2ab5e8aefed810fa6b"
         if not api_key:
             raise ValueError("NEWSAPI_KEY environment variable is required")
         self.newsapi = NewsApiClient(api_key=api_key)
 
-    async def run(self, query: str, language: str = "en", sort_by: str = "relevancy", 
-                 from_date: str = None, to_date: str = None, country: str = None):
-        logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}' ({type(language)}), "
-                    f"sort_by='{sort_by}', from_date='{from_date}', to_date='{to_date}', country='{country}'")
-        
+    async def run(
+        self,
+        query: str,
+        language: str = "en",
+        sort_by: str = "popularity",
+        from_date: str = None,
+        to_date: str = None,
+        country: str = None,
+    ):
+        logging.debug(
+            f"NewsSearch.run() called with parameters: query='{query}',"
+            f" language='{language}' ({type(language)}), sort_by='{sort_by}',"
+            f" from_date='{from_date}', to_date='{to_date}',"
+            f" country='{country}'"
+        )
+
         # Validate query
         if not isinstance(query, str):
             return {
                 "status": "error",
-                "message": f"Query must be a string, got {type(query)}"
+                "message": f"Query must be a string, got {type(query)}",
             }
-        
+
         if not query or query.strip() == "" or query == "query":
             return {
                 "status": "error",
-                "message": "Query parameter cannot be empty or invalid"
+                "message": "Query parameter cannot be empty or invalid",
             }
-            
+
         """
         Search for news articles matching the query
 
@@ -65,18 +78,23 @@ class NewsSearch(Skill):
         if not isinstance(language, str):
             return {
                 "status": "error",
-                "message": f"Language must be a string, got {type(language)}"
+                "message": f"Language must be a string, got {type(language)}",
             }
-        
-        # Check for unprocessed template variables    
+
+        # Check for unprocessed template variables
         if "{{" in language or "}}" in language:
             return {
                 "status": "error",
-                "message": f"Invalid language parameter: contains template markers"
+                "message": (
+                    "Invalid language parameter: contains template markers"
+                ),
             }
-            
+
         language = language.lower().strip()
-        logging.debug(f"After cleaning, language code: '{language}', type: {type(language)}")
+        logging.debug(
+            f"After cleaning, language code: '{language}', type:"
+            f" {type(language)}"
+        )
         logging.debug(f"Supported languages: {sorted(SUPPORTED_LANGUAGES)}")
         if language not in SUPPORTED_LANGUAGES:
             return {
@@ -87,26 +105,24 @@ class NewsSearch(Skill):
                 ),
             }
         try:
-            logging.info(f"Searching news with query='{query}' language='{language}' sort_by='{sort_by}'")
+            logging.info(
+                f"Searching news with query='{query}' language='{language}'"
+                f" sort_by='{sort_by}'"
+            )
             # Build parameters dict
-            params = {
-                'q': query,
-                'language': language,
-                'sort_by': sort_by
-            }
-            
+            params = {"q": query, "language": language, "sort_by": sort_by}
+
             # Add optional parameters if provided
             if from_date:
-                params['from_param'] = from_date
+                params["from_param"] = from_date
             if to_date:
-                params['to'] = to_date
+                params["to"] = to_date
             if country:
-                params['country'] = country
-                
+                params["country"] = country
+
             logging.debug(f"Calling NewsAPI with parameters: {params}")
             response = self.newsapi.get_everything(**params)
             logging.info(f"Got {len(response['articles'])} results")
-            logging.debug(f"First article language check - title: {response['articles'][0]['title'] if response['articles'] else 'No articles'}")
 
             # Format the results
             articles = []

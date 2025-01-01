@@ -11,13 +11,14 @@ from orakle.framework.recipe_manager import RecipeManager
 
 def setup_logging(log_dir=None, log_level="INFO"):
     """Configure logging to console and optionally to rotating file"""
-    logger = logging.getLogger('orakle')
+    # logger = logging.getLogger('orakle')
+    logger = logging.getLogger()
     log_level = getattr(logging, log_level.upper())
     logger.setLevel(log_level)
 
     # Console handler - INFO and above
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(log_level)
     console_formatter = logging.Formatter("%(levelname)s: %(message)s")
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
@@ -30,7 +31,7 @@ def setup_logging(log_dir=None, log_level="INFO"):
         file_handler = RotatingFileHandler(
             log_file, maxBytes=1024 * 1024, backupCount=5  # 1MB
         )
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(log_level)
         file_formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )

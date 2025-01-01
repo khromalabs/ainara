@@ -26,10 +26,6 @@ parameters:
     type: string
     description: End date for articles (YYYY-MM-DD format)
     optional: true
-  - name: country
-    type: string
-    description: Two-letter ISO 3166-1 country code (e.g. 'us', 'mx')
-    optional: true
 
 flow:
   - skill: NewsSearch
@@ -38,5 +34,4 @@ flow:
       language: "$language"
       from_date: $from_date
       to_date: $to_date
-      country: $country
     output: news_results
