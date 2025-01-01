@@ -64,6 +64,7 @@ CORS(app)
 def create_app():
     """Create and configure the Flask application"""
     recipe_manager = RecipeManager(app)
+    app.recipe_manager = recipe_manager  # Store reference to recipe manager
     return app
 
 
@@ -74,5 +75,5 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Orakle development server on port {args.port}")
 
-    create_app()
-    app.run(port=args.port)
+    app = create_app()
+    app.run(port=args.port, debug=True)
