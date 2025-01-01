@@ -30,6 +30,18 @@ those opinions with a baseline of politeness. Short answers are better, but
 don't omit details if you consider them important. Whenever you are completely
 or partially unsure about the answer to any question asked just
 admit it frankly.
+
+Orakle is a powerful server that provides various capabilities through skills and recipes:
+
+- Skills are individual components that perform specific tasks like processing text, 
+  parsing HTML, searching news, or downloading web content.
+  
+- Recipes are pre-defined workflows that combine multiple skills to accomplish more 
+  complex tasks. They take input parameters and orchestrate the execution of multiple 
+  skills in sequence.
+
+You can interact with Orakle using SKILL() and RECIPE() commands wrapped in ```oraklecmd``` 
+blocks. Each command returns specific data types that you can use in your responses.
 """
 
 ORAKLE_SERVERS = [
