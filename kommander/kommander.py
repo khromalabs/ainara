@@ -65,7 +65,7 @@ def get_orakle_capabilities():
                 # Create a summary focused on command usage
                 summary = ["You can use the following Orakle commands:"]
                 
-                # Add recipes with command format
+                # Add recipes with command format and return type
                 if "recipes" in capabilities:
                     summary.append("\nRecipes (use with ```oraklecmd\\nRECIPE(\"name\", params)```):")
                     for endpoint, recipe in capabilities["recipes"].items():
@@ -81,6 +81,13 @@ def get_orakle_capabilities():
                         # Create example command
                         example = f'RECIPE("{endpoint}", {param_dict})'
                         summary.append(f"- {example}")
+                        
+                        # Add return type if available
+                        if "flow" in recipe and recipe["flow"]:
+                            last_step = recipe["flow"][-1]
+                            if last_step.get("output_type"):
+                                summary.append(f"  Returns: {last_step['output_type']}")
+                        
                         if any(p.get("description") for p in params):
                             summary.append("  Parameters:")
                             for p in params:
@@ -105,9 +112,11 @@ def get_orakle_capabilities():
                             example = f'SKILL("{skill_name}", {params})'
                             summary.append(f"- {example}")
                             
-                            # Add parameter descriptions if available
+                            # Add parameter descriptions and return type if available
                             if run_info.get("description"):
                                 summary.append(f"  Purpose: {run_info['description']}")
+                            if run_info.get("return_type"):
+                                summary.append(f"  Returns: {run_info['return_type']}")
                             if run_info.get("parameters"):
                                 summary.append("  Parameters:")
                                 for param_name, param_info in run_info["parameters"].items():
