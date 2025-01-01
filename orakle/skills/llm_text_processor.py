@@ -1,8 +1,8 @@
-from orakle.framework.llm_backend import LiteLLMBackend
-from orakle.framework.skill import Skill
+from ainara.framework.llm_backend import LiteLLMBackend
+from ainara.framework.skill import Skill
 
 
-class TextProcessor(Skill):
+class LLMTextProcessor(Skill):
     """Skill for processing text using LLM"""
 
     def __init__(self):

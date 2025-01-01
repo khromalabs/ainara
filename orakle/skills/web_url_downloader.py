@@ -1,18 +1,12 @@
 import requests
 import validators
 
-from orakle.framework.skill import Skill
+from ainara.framework.skill import Skill
 
 
 class WebUrlDownloader(Skill):
     def __init__(self):
         super().__init__()
-
-    def start(self):
-        pass
-
-    def stop(self):
-        pass
 
     async def run(self, url):
         """Download content from a URL"""

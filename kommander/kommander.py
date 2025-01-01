@@ -2,6 +2,7 @@
 
 import contextlib
 import getopt
+import logging
 import os
 import signal
 import sys
@@ -18,7 +19,6 @@ with contextlib.redirect_stderr(open(os.devnull, "w")):
 
 from litellm import completion
 
-
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/chat_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 CHAT = []
@@ -27,7 +27,7 @@ You are a helpful, respectful and honest assistant. Don't be neutral.
 Have opinions. Strong opinions are better, but not mandatory. Just express
 those opinions with a baseline of politeness. Short answers are better, but
 don't omit details if you consider them important. Whenever you are completely
-or partially unsure about the answer to any question asked by the user just
+or partially unsure about the answer to any question asked just
 admit it frankly.
 """
 
@@ -49,38 +49,44 @@ PROVIDERS = [
     },
 ]
 
+logger = logging.getLogger()
 
 def get_orakle_capabilities():
-    """Query Orakle servers for their capabilities and return a condensed summary"""
+    """Query Orakle servers for capabilities, return a condensed summary"""
     for server in ORAKLE_SERVERS:
         try:
             response = requests.get(f"{server}/capabilities", timeout=2)
             if response.status_code == 200:
                 capabilities = response.json()
-                
+
                 # Create a condensed summary
                 summary = ["Available Orakle capabilities:"]
-                
+
                 # Add recipes
                 if "recipes" in capabilities:
                     summary.append("\nRecipes:")
                     for recipe in capabilities["recipes"]:
                         desc = recipe.get("description", "No description")
-                        params = [p["name"] for p in recipe.get("parameters", [])]
+                        params = [
+                            p["name"] for p in recipe.get("parameters", [])
+                        ]
                         summary.append(f"- {recipe['name']}: {desc}")
                         if params:
-                            summary.append(f"  Parameters: {', '.join(params)}")
-                
+                            summary.append(
+                                f"  Parameters: {', '.join(params)}"
+                            )
+
                 # Add skills
                 if "skills" in capabilities:
                     summary.append("\nSkills:")
                     for skill in capabilities["skills"]:
                         summary.append(f"- {skill}")
-                
+
                 return "\n".join(summary)
         except requests.RequestException:
             continue
     return None
+
 
 def find_working_provider():
     for provider in PROVIDERS:
@@ -135,14 +141,19 @@ def trim(s):
 
 def format_chat_messages(new_message):
     messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
-    
+
     # Add Orakle capabilities if available
     orakle_caps = get_orakle_capabilities()
     if orakle_caps:
-        messages.append({
-            "role": "system",
-            "content": f"\nYou have access to the following Orakle capabilities:\n{orakle_caps}"
-        })
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "\nYou have access to the following Orakle"
+                    f" capabilities:\n{orakle_caps}"
+                ),
+            }
+        )
     for i in range(0, len(CHAT), 2):
         messages.append({"role": "user", "content": CHAT[i]})
         if i + 1 < len(CHAT):
@@ -152,7 +163,7 @@ def format_chat_messages(new_message):
 
 
 def backup(content):
-    if 'BACKUP' in globals() and BACKUP:
+    if "BACKUP" in globals() and BACKUP:
         with open(BACKUP, "a") as f:
             f.write(content + "\n")
             f.close()
@@ -217,8 +228,8 @@ def extract_code_blocks(text):
     in_block = False
     current_block = []
 
-    for line in text.split('\n'):
-        if line.strip().startswith('```'):
+    for line in text.split("\n"):
+        if line.strip().startswith("```"):
             if in_block:
                 in_block = False
             else:
@@ -228,13 +239,13 @@ def extract_code_blocks(text):
         if in_block:
             current_block.append(line)
         elif current_block:
-            blocks.append('\n'.join(current_block))
+            blocks.append("\n".join(current_block))
             current_block = []
 
     if current_block:  # Handle case where text ends while still in a block
-        blocks.append('\n'.join(current_block))
+        blocks.append("\n".join(current_block))
 
-    return '\n\n'.join(blocks)
+    return "\n\n".join(blocks)
 
 
 def main():
@@ -259,7 +270,7 @@ def main():
             backup(f"> {initial_message}")
             response = chat_completion(initial_message, stream=not strip_mode)
             if strip_mode:
-                print(extract_code_blocks(response), end='')
+                print(extract_code_blocks(response), end="")
             else:
                 print()
         # Exit after processing the piped input

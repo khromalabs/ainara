@@ -2,7 +2,7 @@ import logging
 
 from newsapi import NewsApiClient
 
-from orakle.framework.skill import Skill
+from ainara.framework.skill import Skill
 
 SUPPORTED_LANGUAGES = {
     "ar",

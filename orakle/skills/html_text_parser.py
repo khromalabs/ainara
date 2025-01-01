@@ -1,17 +1,11 @@
 from newspaper import Article
 
-from orakle.framework.skill import Skill
+from ainara.framework.skill import Skill
 
 
-class HtmlTextParse(Skill):
+class HtmlTextParser(Skill):
     def __init__(self):
         super().__init__()
-
-    def start(self):
-        pass
-
-    def stop(self):
-        pass
 
     def run(self, text):
         """Extract article text from an HTML page"""

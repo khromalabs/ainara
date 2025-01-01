@@ -5,8 +5,8 @@ method: POST
 
 required_skills:
   - WebUrlDownloader
-  - HtmlTextParse
-  - TextProcessor
+  - HtmlTextParser
+  - LLMTextProcessor
 
 parameters:
   - name: url
@@ -21,11 +21,11 @@ flow:
   - skill: WebUrlDownloader
     input: url
     output: web_content
-  - skill: HtmlTextParse
+  - skill: HtmlTextParser
     input:
       text: $web_content
     output: parsed_text
-  - skill: TextProcessor
+  - skill: LLMTextProcessor
     input:
       prompt: "Please adapt the content and language of the following text according to these four instructions:
         1. The language and characteristics of the adapted text must be based in this user profile description: `{$user_profile}`.

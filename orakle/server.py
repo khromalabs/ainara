@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_cors import CORS
 
-from ainara.orakle.framework.recipe_manager import RecipeManager
+from ainara.framework.recipe_manager import RecipeManager
 
 
 def setup_logging(log_dir=None, log_level="INFO"):
@@ -48,9 +48,11 @@ def parse_args():
         "--log-dir", type=str, help="Directory for log files (optional)"
     )
     parser.add_argument(
-        "--log-level", type=str, default="INFO",
+        "--log-level",
+        type=str,
+        default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level (default: INFO)"
+        help="Logging level (default: INFO)",
     )
     return parser.parse_args()
 
@@ -58,10 +60,12 @@ def parse_args():
 app = Flask(__name__)
 CORS(app)
 
+
 def create_app():
     """Create and configure the Flask application"""
     recipe_manager = RecipeManager(app)
     return app
+
 
 if __name__ == "__main__":
     args = parse_args()
