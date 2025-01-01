@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import yaml
+import chardet
 from flask import jsonify, request
 
 
@@ -48,24 +49,35 @@ class RecipeManager:
             # Register route for this recipe
             self.register_route(recipe)
 
+    def enforce_utf8_encoding(self, text):
+        detected = chardet.detect(text.encode())
+        original_encoding = detected['encoding']
+        print("\n=== Detected encoding ===")
+        print(f"Content: {original_encoding}")
+        print("========================================\n")
+        return text.encode(original_encoding).decode('utf-8')
+
     def register_route(self, recipe):
         endpoint = recipe["endpoint"]
         methods = [recipe.get("method", "POST")]
 
         async def route_handler():
             result = await self.execute_recipe(endpoint, request.json)
-            # Ensure proper UTF-8 encoding for text content
             if isinstance(result, str):
-                result = result.encode('utf-8').decode('utf-8')
+                result = self.enforce_utf8_encoding(result)
             elif isinstance(result, dict):
                 for key, value in result.items():
                     if isinstance(value, str):
-                        result[key] = value.encode('utf-8').decode('utf-8')
-            print("\n=== Final Result Before JSON Conversion ===")
-            print(f"Type: {type(result)}")
-            print(f"Content: {result}")
-            print("========================================\n")
-            return jsonify(result, ensure_ascii=False)
+                        result[key] = self.enforce_utf8_encoding(value)
+            # print("\n=== Final Result Before JSON Conversion ===")
+            # print(f"Type: {type(result)}")
+            # print(f"Content: {result}")
+            # print("========================================\n")
+            # return jsonify(result)
+            if isinstance(result, str):
+                return result
+            elif isinstance(result, dict):
+                return jsonify(result)
 
         self.app.add_url_rule(
             endpoint, endpoint.lstrip("/"), route_handler, methods=methods
