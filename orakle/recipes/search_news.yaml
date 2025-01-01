@@ -23,5 +23,5 @@ flow:
   - skill: NewsSearch
     input:
       query: query
-      language: "{{ language }}"
+      language: language
     output: news_results

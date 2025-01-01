@@ -51,6 +51,13 @@ class NewsSearch(Skill):
                 "status": "error",
                 "message": f"Language must be a string, got {type(language)}"
             }
+        
+        # Check for unprocessed template variables    
+        if "{{" in language or "}}" in language:
+            return {
+                "status": "error",
+                "message": f"Invalid language parameter: contains template markers"
+            }
             
         language = language.lower().strip()
         logging.debug(f"After cleaning, language code: '{language}', type: {type(language)}")
