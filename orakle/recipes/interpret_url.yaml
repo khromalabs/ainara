@@ -8,16 +8,16 @@ required_skills:
   - HtmlTextParse
 
 parameters:
-  - name: text
+  - name: url
     type: string
     description: URL to download
-  - name: userProfile
+  - name: profile
     type: string
     description: Target user profile (e.g. "Busy layman", "Five years old kid")
 
 flow:
   - skill: WebUrlDownloader
-    input: text
+    input: url
     output: web_content
   - skill: HtmlTextParse
     input:
