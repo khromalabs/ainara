@@ -1,3 +1,4 @@
+import re
 import importlib
 from pathlib import Path
 
@@ -12,6 +13,10 @@ class RecipeManager:
         self.recipes = {}
         self.load_recipes()
 
+    def camel_to_snake(self, name):
+        name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+
     def load_recipes(self):
         recipe_dir = Path(__file__).parent / "recipes"
         for recipe_file in recipe_dir.glob("*.yaml"):
@@ -23,7 +28,8 @@ class RecipeManager:
             for skill_name in recipe["required_skills"]:
                 if skill_name not in self.skills:
                     module = importlib.import_module(
-                        f".skills.{skill_name.lower()}"
+                        f".skills.{self.camel_to_snake(skill_name)}",
+                        "orakle"
                     )
                     skill_class = getattr(module, skill_name)
                     self.skills[skill_name] = skill_class()
@@ -44,7 +50,7 @@ class RecipeManager:
         )
 
     async def execute_recipe(self, recipe_name, params):
-        recipe = self.recipes[recipe_name]
+        recipe = self.recpes[recipe_name]
         context = params.copy()
 
         for step in recipe["flow"]:
