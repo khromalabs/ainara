@@ -9,10 +9,11 @@ from flask_cors import CORS
 from orakle.framework.recipe_manager import RecipeManager
 
 
-def setup_logging(log_dir=None):
+def setup_logging(log_dir=None, log_level="INFO"):
     """Configure logging to console and optionally to rotating file"""
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    log_level = getattr(logging, log_level.upper())
+    logger.setLevel(log_level)
 
     # Console handler - INFO and above
     console_handler = logging.StreamHandler()
@@ -45,6 +46,11 @@ def parse_args():
     parser.add_argument(
         "--log-dir", type=str, help="Directory for log files (optional)"
     )
+    parser.add_argument(
+        "--log-level", type=str, default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (default: INFO)"
+    )
     return parser.parse_args()
 
 
@@ -53,7 +59,7 @@ CORS(app)
 
 if __name__ == "__main__":
     args = parse_args()
-    setup_logging(args.log_dir)
+    setup_logging(args.log_dir, args.log_level)
 
     logger = logging.getLogger(__name__)
     logger.info(f"Starting Orakle server on port {args.port}")
