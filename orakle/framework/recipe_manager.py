@@ -54,19 +54,17 @@ class RecipeManager:
 
         async def route_handler():
             result = await self.execute_recipe(endpoint, request.json)
+            # # Ensure proper UTF-8 encoding for text content
+            # if isinstance(result, str):
+            #     result = result.encode('utf-8')
+            # elif isinstance(result, dict):
+            #     for key, value in result.items():
+            #         if isinstance(value, str):
+            #             result[key] = value.encode('utf-8')
             print("\n=== Final Result Before JSON Conversion ===")
             print(f"Type: {type(result)}")
             print(f"Content: {result}")
             print("========================================\n")
-            
-            # Ensure proper UTF-8 encoding for text content
-            if isinstance(result, str):
-                result = result.encode('utf-8').decode('utf-8')
-            elif isinstance(result, dict):
-                for key, value in result.items():
-                    if isinstance(value, str):
-                        result[key] = value.encode('utf-8').decode('utf-8')
-            
             return jsonify(result, ensure_ascii=False)
 
         self.app.add_url_rule(
