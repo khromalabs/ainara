@@ -93,8 +93,11 @@ class RecipeManager:
                         else:
                             # Replace {$var} patterns in strings
                             def replace_var(match):
-                                var_name = match.group(1).strip("$")
-                                return str(context[var_name])
+                                var_path = match.group(1).strip("$")
+                                value = context
+                                for key in var_path.split('.'):
+                                    value = value[key]
+                                return str(value)
 
                             input_params[k] = re.sub(
                                 r"{(\$[^}]+)}", replace_var, v
