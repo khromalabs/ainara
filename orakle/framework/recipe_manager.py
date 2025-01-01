@@ -2,6 +2,7 @@ import importlib
 import inspect
 import logging
 import pprint
+from typing import get_type_hints
 import re
 from pathlib import Path
 
@@ -16,6 +17,49 @@ class RecipeManager:
         self.skills = {}
         self.recipes = {}
         self.load_recipes()
+        self.register_skills_endpoint()
+
+    def get_skills_info(self):
+        """Get information about all available skills"""
+        skills_info = {}
+        for skill_name, skill_instance in self.skills.items():
+            skill_info = {
+                "description": skill_instance.__class__.__doc__ or "No description available",
+                "methods": {}
+            }
+            
+            # Get information about public methods
+            for method_name, method in inspect.getmembers(skill_instance, predicate=inspect.ismethod):
+                if not method_name.startswith('_'):  # Only public methods
+                    method_info = {
+                        "description": method.__doc__ or "No description available",
+                        "parameters": {}
+                    }
+                    
+                    # Get parameter information
+                    sig = inspect.signature(method)
+                    type_hints = get_type_hints(method)
+                    
+                    for param_name, param in sig.parameters.items():
+                        if param_name != 'self':
+                            param_info = {
+                                "type": str(type_hints.get(param_name, "any")),
+                                "default": None if param.default == param.empty else str(param.default),
+                                "required": param.default == param.empty
+                            }
+                            method_info["parameters"][param_name] = param_info
+                    
+                    skill_info["methods"][method_name] = method_info
+            
+            skills_info[skill_name] = skill_info
+        
+        return skills_info
+
+    def register_skills_endpoint(self):
+        """Register the /skills endpoint"""
+        @self.app.route('/skills', methods=['GET'])
+        def get_skills():
+            return jsonify(self.get_skills_info())
 
     def preview_dict(self, input_params, step_name=""):
         logger = logging.getLogger(__name__)
