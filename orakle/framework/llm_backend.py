@@ -17,9 +17,14 @@ class LiteLLMBackend(LLMBackend):
     def __init__(self):
         import os
 
+        # import litellm
+        # litellm.set_verbose = True
         from litellm import completion
 
+        # from litellm import completion, completion_cost
+
         self.completion = completion
+        # self.completion_cost = completion_cost
 
         # Validate required environment variables
         required_vars = {
@@ -29,16 +34,21 @@ class LiteLLMBackend(LLMBackend):
         }
 
         self.provider = {}
-        logger = logging.getLogger(__name__)
-        logger.debug("Checking environment variables:")
+        self.logger = logging.getLogger(__name__)
+        self.logger.debug("Checking environment variables:")
         for key, env_var in required_vars.items():
             value = os.environ.get(env_var)
-            logger.debug(f"{env_var}: {'[SET]' if value else '[MISSING]'}")
+            self.logger.debug(
+                f"{env_var}: {'[SET]' if value else '[MISSING]'}"
+            )
             if not value:
                 raise ValueError(
                     f"Missing required environment variable: {env_var}"
                 )
             self.provider[key] = value
+
+    def my_custom_logging_fn(self, model_call_dict):
+        self.logger.debug(f"LiteLLM: {model_call_dict}")
 
     def process_text(self, text: str, system_message: str = "") -> str:
         """Process text using LiteLLM"""
@@ -55,9 +65,17 @@ class LiteLLMBackend(LLMBackend):
                 "stream": False,
                 "api_base": self.provider["api_base"],
                 "api_key": self.provider["api_key"],
+                "logger_fn": self.my_custom_logging_fn,
             }
 
+            self.logger.info(
+                f"{__name__}.{self.__class__.__name__} Sending completion"
+                " request..."
+            )
             response = self.completion(**completion_kwargs)
+            # cost = self.completion_cost(completion_response=response)
+            # formatted_string = f"${float(cost):.10f}"
+            # self.logger.info(f"{__name__} cost: {formatted_string}")
 
             if hasattr(response.choices[0], "message"):
                 answer = response.choices[0].message.content
@@ -67,6 +85,7 @@ class LiteLLMBackend(LLMBackend):
             return answer.rstrip("\n")
 
         except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.error(f"Unable to get a response from the AI: {str(e)}")
+            self.logger.error(
+                f"Unable to get a response from the AI: {str(e)}"
+            )
             return ""

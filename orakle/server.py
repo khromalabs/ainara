@@ -11,7 +11,7 @@ from orakle.framework.recipe_manager import RecipeManager
 
 def setup_logging(log_dir=None, log_level="INFO"):
     """Configure logging to console and optionally to rotating file"""
-    logger = logging.getLogger()
+    logger = logging.getLogger('orakle')
     log_level = getattr(logging, log_level.upper())
     logger.setLevel(log_level)
 
