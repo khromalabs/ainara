@@ -31,5 +31,5 @@ flow:
         2. Generate the output text using an easily readable HTML layout.
         3. Don't return a full HTML page just a `div` element containing an appropriate title and the processed text.
         4. Don't introduce placeholder content.
-        5. Enclose the adapted text in the described HTML layout inside a triple backtick block, as the Markdown standard defines for embedding multiline blocks of code. The text to adapt is: $parsed_text"
+        5. Enclose the adapted text in the described HTML layout inside a triple backtick block, as the Markdown standard defines for embedding multiline blocks of code. The text to adapt is: {$parsed_text.text}"
     output: result
