@@ -15,6 +15,7 @@ parameters:
   - name: user_profile
     type: string
     description: Target user profile (e.g. "Busy layman", "Five years old kid")
+    aliases: ["profile"]
 
 flow:
   - skill: WebUrlDownloader

@@ -64,8 +64,21 @@ class RecipeManager:
         # Retrieve the recipe from the recipes dictionary using the provided
         # recipe_name
         recipe = self.recipes[recipe_name]
-        # Create a copy of the input parameters to use as the context
-        context = params.copy()
+        
+        # Create a mapping from parameter names to input values
+        context = {}
+        if "parameters" in recipe:
+            for param in recipe["parameters"]:
+                param_name = param["name"]
+                if param_name in params:
+                    context[param_name] = params[param_name]
+                # Also store under any alternative names provided
+                if "aliases" in param:
+                    for alias in param["aliases"]:
+                        if alias in params:
+                            context[param_name] = params[alias]
+        else:
+            context = params.copy()
 
         # Iterate over each step in the recipe's flow
         for step in recipe["flow"]:
