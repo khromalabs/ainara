@@ -1,5 +1,5 @@
+import logging
 from newsapi import NewsApiClient
-
 from orakle.framework.skill import Skill
 
 SUPPORTED_LANGUAGES = {
@@ -54,9 +54,11 @@ class NewsSearch(Skill):
                 ),
             }
         try:
+            logging.info(f"Searching news with query='{query}' language='{language}' sort_by='{sort_by}'")
             response = self.newsapi.get_everything(
                 q=query, language=language, sort_by=sort_by
             )
+            logging.info(f"Got {len(response['articles'])} results")
 
             # Format the results
             articles = []
