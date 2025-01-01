@@ -190,7 +190,7 @@ Here are all available commands with their parameters and return types:
 {orakle_caps}
 """
 
-logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
+print(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
 
 
 def find_working_provider():
