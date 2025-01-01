@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import contextlib
 import getopt
 import logging
 import os
@@ -13,11 +12,7 @@ import setproctitle
 from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
-# Redirect stderr to /dev/null for LiteLLM import
-with contextlib.redirect_stderr(open(os.devnull, "w")):
-    import litellm
-
-from litellm import completion
+from ainara.framework.llm_backend import LiteLLMBackend
 
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/chat_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -50,6 +45,7 @@ PROVIDERS = [
 ]
 
 logger = logging.getLogger()
+
 
 def get_orakle_capabilities():
     """Query Orakle servers for capabilities, return a condensed summary"""
