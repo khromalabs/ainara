@@ -26,15 +26,14 @@ class RecipeManager:
         # Get skills information
         for skill_name, skill_instance in self.skills.items():
             skill_info = {
-                "description": skill_instance.__class__.__doc__
-                or "No description available",
+                "description": skill_instance.__class__.__doc__ or "",
                 "methods": {},
             }
 
             # Get information about run method
             run_method = skill_instance.run
             method_info = {
-                "description": run_method.__doc__ or "No description available",
+                "description": run_method.__doc__ or "",
                 "parameters": {},
             }
 
