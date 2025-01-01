@@ -14,9 +14,9 @@ parameters:
     type: string
     description: Language code for articles (e.g. 'en', 'es')
     default: en
-  - name: short_by
+  - name: sort_by
     type: string
-    description: Short pattern for news
+    description: Sort pattern for news articles (relevancy, popularity, publishedAt)
     default: relevancy
 
 flow:

@@ -31,6 +31,7 @@ class NewsSearch(Skill):
         self.newsapi = NewsApiClient(api_key=api_key)
 
     async def run(self, query: str, language: str = "en", sort_by: str = "relevancy"):
+        logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}', sort_by='{sort_by}'")
         """
         Search for news articles matching the query
 
