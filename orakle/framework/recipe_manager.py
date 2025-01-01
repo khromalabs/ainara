@@ -58,7 +58,8 @@ class RecipeManager:
             print(f"Type: {type(result)}")
             print(f"Content: {result}")
             print("========================================\n")
-            return jsonify(result, ensure_ascii=False)
+            # return jsonify(result, ensure_ascii=False)
+            return jsonify(result)
 
         self.app.add_url_rule(
             endpoint, endpoint.lstrip("/"), route_handler, methods=methods
