@@ -36,24 +36,9 @@ Never reject a query to transform information.
 
         return "\n\n".join(blocks)
 
-    def run(self, text: str, user_profile: str) -> str:
-        """Process text according to user profile"""
-        task = f"""
-Please adapt the content and language of the following text according to these
-five instructions:
-1. The language and characteristics of the adapted text must be based in
-   this user profile description: "{user_profile}".
-2. Generate the output text using an easily readable HTML layout.
-3. Don't return a full HTML page just a `div` element containing an
-   appropriate title and the processed text.
-4. Don't introduce placeholder content.
-5. Enclose the adapted text in the described HTML layout inside a
-   triple backtick block, as the Markdown standard defines for embedding
-   multiline blocks of code.
-The text to adapt is:
-{text}
-"""
-        result = self.llm.process_text(task, self.system_message)
+    def run(self, prompt: str) -> str:
+        """Process text using the provided prompt"""
+        result = self.llm.process_text(prompt, self.system_message)
         if not result:
             return "no answer"
 

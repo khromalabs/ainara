@@ -69,17 +69,22 @@ class RecipeManager:
 
             # Prepare the input parameters for the skill action
             if isinstance(step["input"], dict):
-                # If the input is a dictionary, map each key to the corresponding value in the context
-                input_params = {
-                    k: (
-                        context[
-                            v.strip("$")
-                        ]  # If the value starts with "$", use it as a context key
-                        if isinstance(v, str) and v.startswith("$")
-                        else v  # Otherwise, use the value directly
-                    )
-                    for k, v in step["input"].items()
-                }
+                # If the input is a dictionary, process each value
+                input_params = {}
+                for k, v in step["input"].items():
+                    if isinstance(v, str):
+                        # Handle variable substitution in strings
+                        if v.startswith("$"):
+                            # Direct variable reference
+                            input_params[k] = context[v.strip("$")]
+                        else:
+                            # Replace {$var} patterns in strings
+                            def replace_var(match):
+                                var_name = match.group(1).strip("$")
+                                return str(context[var_name])
+                            input_params[k] = re.sub(r'{(\$[^}]+)}', replace_var, v)
+                    else:
+                        input_params[k] = v
             else:
                 # If the input is not a dictionary, use the value directly from the context
                 input_params = context[step["input"]]
