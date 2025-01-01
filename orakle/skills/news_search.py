@@ -31,8 +31,10 @@ class NewsSearch(Skill):
             raise ValueError("NEWSAPI_KEY environment variable is required")
         self.newsapi = NewsApiClient(api_key=api_key)
 
-    async def run(self, query: str, language: str = "en", sort_by: str = "relevancy"):
-        logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}' ({type(language)}), sort_by='{sort_by}'")
+    async def run(self, query: str, language: str = "en", sort_by: str = "relevancy", 
+                 from_date: str = None, to_date: str = None, country: str = None):
+        logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}' ({type(language)}), "
+                    f"sort_by='{sort_by}', from_date='{from_date}', to_date='{to_date}', country='{country}'")
         """
         Search for news articles matching the query
 
@@ -72,9 +74,23 @@ class NewsSearch(Skill):
             }
         try:
             logging.info(f"Searching news with query='{query}' language='{language}' sort_by='{sort_by}'")
-            response = self.newsapi.get_everything(
-                q=query, language=language, sort_by=sort_by
-            )
+            # Build parameters dict
+            params = {
+                'q': query,
+                'language': language,
+                'sort_by': sort_by
+            }
+            
+            # Add optional parameters if provided
+            if from_date:
+                params['from_param'] = from_date
+            if to_date:
+                params['to'] = to_date
+            if country:
+                params['country'] = country
+                
+            logging.debug(f"Calling NewsAPI with parameters: {params}")
+            response = self.newsapi.get_everything(**params)
             logging.info(f"Got {len(response['articles'])} results")
             logging.debug(f"First article language check - title: {response['articles'][0]['title'] if response['articles'] else 'No articles'}")
 

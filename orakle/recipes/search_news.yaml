@@ -18,10 +18,25 @@ parameters:
     type: string
     description: Sort pattern for news articles (relevancy, popularity, publishedAt)
     default: relevancy
+  - name: from_date
+    type: string
+    description: Start date for articles (YYYY-MM-DD format)
+    optional: true
+  - name: to_date
+    type: string
+    description: End date for articles (YYYY-MM-DD format)
+    optional: true
+  - name: country
+    type: string
+    description: Two-letter ISO 3166-1 country code (e.g. 'us', 'mx')
+    optional: true
 
 flow:
   - skill: NewsSearch
     input:
       query: query
       language: $language
+      from_date: $from_date
+      to_date: $to_date
+      country: $country
     output: news_results
