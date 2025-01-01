@@ -42,5 +42,12 @@ Never reject a query to transform information.
         if not result:
             return "no answer"
 
+        # Extract code blocks
         result_strip = self.extract_code_blocks(result)
-        return result_strip if result_strip else result
+        final_result = result_strip if result_strip else result
+        
+        # Handle escaped characters and newlines
+        final_result = bytes(final_result, 'utf-8').decode('unicode_escape')
+        final_result = final_result.replace('\\n', '\n')
+        
+        return final_result
