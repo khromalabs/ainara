@@ -14,10 +14,14 @@ class RecipeManager:
         self.recipes = {}
         self.load_recipes()
 
-    def preview_dict(self, input_params):
-        print("Preview of dictionary values:")
+    def preview_dict(self, input_params, step_name=""):
+        print(f"\n=== Parameter Preview for step: {step_name} ===")
+        print("Input parameters:")
         for key, value in input_params.items():
-            print(f"Key: {key}, Value: {value}")
+            print(f"Key: {key}")
+            print(f"Value type: {type(value)}")
+            print(f"Value: {value}")
+            print("-" * 50)
 
     def camel_to_snake(self, name):
         name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
@@ -97,7 +101,8 @@ class RecipeManager:
                             )
                     else:
                         input_params[k] = v
-                self.preview_dict(input_params)
+                print(f"\nProcessing step: {step['skill']}")
+                self.preview_dict(input_params, step['skill'])
 
             else:
                 # If the input is not a dictionary,
@@ -105,6 +110,7 @@ class RecipeManager:
                 input_params = context[step["input"]]
 
             # Execute the skill action
+            print(f"\nExecuting {step['skill']} with action: {action.__name__}")
             if action.__name__.startswith("async"):
                 # If the action is asynchronous,
                 # use await to wait for its completion
