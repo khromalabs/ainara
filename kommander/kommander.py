@@ -66,23 +66,61 @@ def get_orakle_capabilities():
                 # Create a condensed summary
                 summary = ["Available Orakle capabilities:"]
 
-                # Add recipes
+                # Add recipes with their full descriptions
                 if "recipes" in capabilities:
                     summary.append("\nRecipes:")
                     for endpoint, recipe in capabilities["recipes"].items():
                         params = recipe.get("parameters", [])
-                        param_names = [p["name"] for p in params] if isinstance(params, list) else []
+                        required_skills = recipe.get("required_skills", [])
+                        
+                        # Add endpoint and description
                         summary.append(f"- {endpoint}")
-                        if param_names:
-                            summary.append(
-                                f"  Parameters: {', '.join(param_names)}"
-                            )
+                        
+                        # Add parameters with descriptions if available
+                        if params:
+                            summary.append("  Parameters:")
+                            for param in params:
+                                param_desc = []
+                                param_desc.append(f"    - {param['name']}")
+                                if param.get('description'):
+                                    param_desc.append(f"      Description: {param['description']}")
+                                if param.get('type'):
+                                    param_desc.append(f"      Type: {param['type']}")
+                                if param.get('optional'):
+                                    param_desc.append("      Optional: Yes")
+                                summary.extend(param_desc)
+                        
+                        # Add required skills info
+                        if required_skills:
+                            summary.append(f"  Required skills: {', '.join(required_skills)}")
 
-                # Add skills
+                # Add skills with their descriptions
                 if "skills" in capabilities:
                     summary.append("\nSkills:")
-                    for skill in capabilities["skills"]:
-                        summary.append(f"- {skill}")
+                    for skill_name, skill_info in capabilities["skills"].items():
+                        summary.append(f"- {skill_name}")
+                        if skill_info.get('description'):
+                            summary.append(f"  Description: {skill_info['description']}")
+                        
+                        # Add run method info if available
+                        if 'run' in skill_info:
+                            run_info = skill_info['run']
+                            if run_info.get('description'):
+                                summary.append(f"  Run method: {run_info['description']}")
+                            
+                            # Add parameters info
+                            if run_info.get('parameters'):
+                                summary.append("  Parameters:")
+                                for param_name, param_info in run_info['parameters'].items():
+                                    param_desc = []
+                                    param_desc.append(f"    - {param_name}")
+                                    if param_info.get('type'):
+                                        param_desc.append(f"      Type: {param_info['type']}")
+                                    if param_info.get('required'):
+                                        param_desc.append("      Required: Yes")
+                                    if param_info.get('default'):
+                                        param_desc.append(f"      Default: {param_info['default']}")
+                                    summary.extend(param_desc)
 
                 return "\n".join(summary)
         except requests.RequestException:
