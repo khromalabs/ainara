@@ -27,8 +27,10 @@ class LiteLLMBackend(LLMBackend):
         }
         
         self.provider = {}
+        print("\nChecking environment variables:")
         for key, env_var in required_vars.items():
             value = os.environ.get(env_var)
+            print(f"{env_var}: {'[SET]' if value else '[MISSING]'}")
             if not value:
                 raise ValueError(f"Missing required environment variable: {env_var}")
             self.provider[key] = value
