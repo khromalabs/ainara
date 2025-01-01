@@ -1,8 +1,9 @@
 #!/bin/sh
+#!/bin/sh
 cd $HOME/lab/src/ainara/
 source venv/bin/activate
-cd .. 
+cd ..
 set -a
 source /tmp/ai.env
-set +a 
-python -m ainara.kommander "$@"
+set +a
+python -m ainara.kommander.kommander "$@"
