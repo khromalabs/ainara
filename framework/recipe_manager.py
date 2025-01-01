@@ -94,7 +94,7 @@ class RecipeManager:
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
     def load_recipes(self):
-        recipe_dir = Path(__file__).parent.parent / "recipes"
+        recipe_dir = Path(__file__).parent.parent / "orakle" / "recipes"
         logger = logging.getLogger(__name__)
         logger.debug(f"Loading recipes from: {recipe_dir}")
         for recipe_file in recipe_dir.glob("*.yaml"):
