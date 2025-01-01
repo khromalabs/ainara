@@ -4,12 +4,14 @@ import importlib
 from pathlib import Path
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from functools import partial
 
 app = Flask(__name__)
 CORS(app)
 
 class RecipeManager:
-    def __init__(self):
+    def __init__(self, flask_app):
+        self.app = flask_app
         self.skills = {}
         self.recipes = {}
         self.load_recipes()
@@ -27,6 +29,24 @@ class RecipeManager:
                     module = importlib.import_module(f"orakle.skills.{skill_name.lower()}")
                     skill_class = getattr(module, skill_name)
                     self.skills[skill_name] = skill_class()
+                    
+            # Register route for this recipe
+            self.register_route(recipe)
+                    
+    def register_route(self, recipe):
+        endpoint = recipe["endpoint"]
+        methods = [recipe.get("method", "POST")]
+        
+        async def route_handler():
+            result = await self.execute_recipe(endpoint, request.json)
+            return jsonify(result)
+            
+        self.app.add_url_rule(
+            endpoint,
+            endpoint.lstrip("/"),
+            route_handler,
+            methods=methods
+        )
                     
     async def execute_recipe(self, recipe_name, params):
         recipe = self.recipes[recipe_name]
@@ -56,12 +76,7 @@ class RecipeManager:
             
         return context[recipe["flow"][-1]["output"]]
 
-recipe_manager = RecipeManager()
-
-@app.route("/interpret_url", methods=["POST"])
-async def interpret_url():
-    result = await recipe_manager.execute_recipe("/interpret_url", request.json)
-    return jsonify(result)
+recipe_manager = RecipeManager(app)
 
 if __name__ == "__main__":
     app.run(port=5000)
