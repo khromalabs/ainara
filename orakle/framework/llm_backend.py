@@ -18,11 +18,20 @@ class LiteLLMBackend(LLMBackend):
         import os
 
         self.completion = completion
-        self.provider = {
-            "model": os.environ.get("AI_API_MODEL"),
-            "api_base": os.environ.get("OPENAI_API_BASE"),
-            "api_key": os.environ.get("OPENAI_API_KEY"),
+        
+        # Validate required environment variables
+        required_vars = {
+            "model": "AI_API_MODEL",
+            "api_base": "OPENAI_API_BASE", 
+            "api_key": "OPENAI_API_KEY"
         }
+        
+        self.provider = {}
+        for key, env_var in required_vars.items():
+            value = os.environ.get(env_var)
+            if not value:
+                raise ValueError(f"Missing required environment variable: {env_var}")
+            self.provider[key] = value
 
     def process_text(self, text: str, system_message: str = "") -> str:
         """Process text using LiteLLM"""
