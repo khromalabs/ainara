@@ -64,7 +64,7 @@ def get_orakle_capabilities():
                 if "recipes" in capabilities:
                     summary.append(
                         '\nRecipes (use with ```oraklecmd\\nRECIPE("name",'
-                        " params)```):"
+                        " params)\\n```):"
                     )
                     for endpoint, recipe in capabilities["recipes"].items():
                         params = recipe.get("parameters", [])
@@ -83,8 +83,6 @@ def get_orakle_capabilities():
                         # Add description if available
                         if recipe.get("description"):
                             summary.append(f"  Purpose: {recipe['description']}")
-                        elif recipe.get("flow") and recipe["flow"][0].get("description"):
-                            summary.append(f"  Purpose: {recipe['flow'][0]['description']}")
 
                         # Add return type if available
                         if "flow" in recipe and recipe["flow"]:
@@ -186,8 +184,6 @@ To use these capabilities, you can send single commands wrapped in
   For direct skill execution
 - `RECIPE("recipe_name", {{ "parameter1": "value1"...)`:
   For running multi-step workflows
-
-Here are all available commands with their parameters and return types:
 
 {orakle_caps}
 """

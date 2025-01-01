@@ -5,7 +5,7 @@ Ainara is a modular AI assistant framework that combines local LLM capabilities 
 ## Components
 
 ### Kommander
-A CLI chat interface that connects to local LLM servers and Orakle API servers. Features:
+A CLI chat interface that connects to local/commercial LLM servers and the Orakle API server. Features:
 - Interactive chat with AI models
 - Support for multiple LLM providers
 - Command execution through Orakle API
@@ -20,6 +20,9 @@ A REST API server that provides:
 - Web content processing
 - News search capabilities
 - Text processing with LLMs
+
+### Polaris
+Desktop integrated app (TODO)
 
 ## Installation
 
@@ -67,8 +70,9 @@ echo "What is 2+2?" | ./kommander/kommander
 
 ## License
 
-[Add your license information here]
+MIT
 
 ## Contributing
 
-[Add contribution guidelines here]
+Developers, designers, sponsors, everybody is welcome to this project
+The last goal (dream?) would be to build the AI companion / assistant equivalent of Linux
