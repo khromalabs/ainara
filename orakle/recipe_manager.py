@@ -23,7 +23,7 @@ class RecipeManager:
             for skill_name in recipe["required_skills"]:
                 if skill_name not in self.skills:
                     module = importlib.import_module(
-                        f"orakle.skills.{skill_name.lower()}"
+                        f".skills.{skill_name.lower()}"
                     )
                     skill_class = getattr(module, skill_name)
                     self.skills[skill_name] = skill_class()
