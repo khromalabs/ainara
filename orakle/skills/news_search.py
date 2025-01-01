@@ -44,7 +44,9 @@ class NewsSearch(Skill):
             Dict containing search results
         """
         # Validate language code
-        language = language.lower()
+        language = language.lower().strip()
+        logging.debug(f"Validating language code: '{language}', type: {type(language)}")
+        logging.debug(f"Supported languages: {sorted(SUPPORTED_LANGUAGES)}")
         if language not in SUPPORTED_LANGUAGES:
             return {
                 "status": "error",
