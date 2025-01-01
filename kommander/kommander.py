@@ -166,52 +166,17 @@ def backup(content):
 
 
 def chat_completion(question, stream=True) -> str:
-    messages = format_chat_messages(question)
-
-    try:
-        completion_kwargs = {
-            "model": PROVIDER["model"],
-            "messages": messages,
-            "temperature": 0.2,
-            "stream": stream,
-        }
-
-        if PROVIDER:
-            completion_kwargs["api_base"] = PROVIDER["api_base"]
-            completion_kwargs["api_key"] = PROVIDER["api_key"]
-
-        response = completion(**completion_kwargs)
-        answer = ""
-
-        if stream:
-            for chunk in response:
-                if (
-                    hasattr(chunk.choices[0], "delta")
-                    and chunk.choices[0].delta.content is not None
-                ):
-                    content = chunk.choices[0].delta.content
-                elif hasattr(chunk.choices[0], "text"):
-                    content = chunk.choices[0].text
-                else:
-                    continue
-
-                print(content, end="", flush=True)
-                answer += content
-        else:
-            # For non-streaming mode, get the full response at once
-            if hasattr(response.choices[0], "message"):
-                answer = response.choices[0].message.content
-            else:
-                answer = response.choices[0].text
-
-        answer = answer.rstrip("\n")
+    llm = LiteLLMBackend()
+    answer = llm.process_text(
+        text=question,
+        system_message=SYSTEM_MESSAGE,
+        chat_history=CHAT,
+        stream=stream
+    )
+    if answer:
         backup(answer)
         CHAT.extend([question, trim(answer)])
-        return answer
-    except Exception:
-        print(
-            "\nError: Unable to get a response from the AI. Please try again."
-        )
+    return answer
 
 
 def signal_handler(sig, frame):

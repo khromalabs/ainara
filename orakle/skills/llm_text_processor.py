@@ -14,7 +14,11 @@ Never reject a query to transform information.
 
     def run(self, prompt: str) -> str:
         """Process text using the provided prompt"""
-        result = self.llm.process_text(prompt, self.system_message)
+        result = self.llm.process_text(
+            text=prompt,
+            system_message=self.system_message,
+            stream=False
+        )
         if not result:
             return "no answer"
         return result
