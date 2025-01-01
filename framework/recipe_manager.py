@@ -37,9 +37,13 @@ class RecipeManager:
                 "parameters": {},
             }
 
-            # Get parameter information
+            # Get parameter and return type information
             sig = inspect.signature(run_method)
             type_hints = get_type_hints(run_method)
+
+            # Add return type if available
+            if 'return' in type_hints:
+                method_info["return_type"] = str(type_hints['return'])
 
             for param_name, param in sig.parameters.items():
                 if param_name != "self":
@@ -279,6 +283,11 @@ class RecipeManager:
             # Execute the skill's run method
             logger = logging.getLogger(__name__)
             logger.debug(f"Executing {step['skill']}.run()")
+            
+            # Add output type information to the step
+            return_hint = get_type_hints(skill.run).get('return')
+            if return_hint:
+                step['output_type'] = str(return_hint)
             
             if inspect.iscoroutinefunction(skill.run):
                 # If run is async, await it
