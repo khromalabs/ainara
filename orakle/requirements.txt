@@ -5,3 +5,4 @@ litellm==1.52.14
 lxml_html_clean==0.4.1
 newspaper3k==0.2.8
 validators==0.34.0
+newsapi-python==0.2.7
