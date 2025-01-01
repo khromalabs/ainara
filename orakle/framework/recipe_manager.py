@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import pprint
 import re
 from pathlib import Path
@@ -107,7 +108,9 @@ class RecipeManager:
             else:
                 # If the input is not a dictionary,
                 # use the value directly from the context
-                input_params = context[step["input"]]
+                # Convert single parameter to a dictionary
+                param_name = next(iter(inspect.signature(action).parameters))
+                input_params = {param_name: context[step["input"]]}
 
             # Execute the skill action
             print(f"\nExecuting {step['skill']} with action: {action.__name__}")
