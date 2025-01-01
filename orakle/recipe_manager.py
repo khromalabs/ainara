@@ -1,5 +1,5 @@
-import re
 import importlib
+import re
 from pathlib import Path
 
 import yaml
@@ -14,8 +14,8 @@ class RecipeManager:
         self.load_recipes()
 
     def camel_to_snake(self, name):
-        name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+        name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+        return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
     def load_recipes(self):
         recipe_dir = Path(__file__).parent / "recipes"
@@ -28,8 +28,7 @@ class RecipeManager:
             for skill_name in recipe["required_skills"]:
                 if skill_name not in self.skills:
                     module = importlib.import_module(
-                        f".skills.{self.camel_to_snake(skill_name)}",
-                        "orakle"
+                        f".skills.{self.camel_to_snake(skill_name)}", "orakle"
                     )
                     skill_class = getattr(module, skill_name)
                     self.skills[skill_name] = skill_class()
@@ -49,34 +48,50 @@ class RecipeManager:
             endpoint, endpoint.lstrip("/"), route_handler, methods=methods
         )
 
-    async def execute_recipe(self, recipe_name, params):
-        recipe = self.recipes[recipe_name]
-        context = params.copy()
 
-        for step in recipe["flow"]:
-            skill = self.skills[step["skill"]]
+async def execute_recipe(self, recipe_name, params):
+    # Retrieve the recipe from the recipes dictionary using the provided recipe_name
+    recipe = self.recipes[recipe_name]
+    # Create a copy of the input parameters to use as the context
+    context = params.copy()
+
+    # Iterate over each step in the recipe's flow
+    for step in recipe["flow"]:
+        # Retrieve the skill from the skills dictionary using the step's skill name
+        skill = self.skills[step["skill"]]
+        # Determine the action to be performed based on the step's input type
+        if isinstance(step["input"], dict):
             action = getattr(skill, step["action"])
+        else:
+            action = "run"
 
-            # Prepare input parameters
-            if isinstance(step["input"], dict):
-                input_params = {
-                    k: (
-                        context[v.strip("$")]
-                        if isinstance(v, str) and v.startswith("$")
-                        else v
-                    )
-                    for k, v in step["input"].items()
-                }
-            else:
-                input_params = context[step["input"]]
+        # Prepare the input parameters for the skill action
+        if isinstance(step["input"], dict):
+            # If the input is a dictionary, map each key to the corresponding value in the context
+            input_params = {
+                k: (
+                    context[
+                        v.strip("$")
+                    ]  # If the value starts with "$", use it as a context key
+                    if isinstance(v, str) and v.startswith("$")
+                    else v  # Otherwise, use the value directly
+                )
+                for k, v in step["input"].items()
+            }
+        else:
+            # If the input is not a dictionary, use the value directly from the context
+            input_params = context[step["input"]]
 
-            # Execute skill action
-            if action.__name__.startswith("async"):
-                result = await action(**input_params)
-            else:
-                result = action(**input_params)
+        # Execute the skill action
+        if action.__name__.startswith("async"):
+            # If the action is asynchronous, use await to wait for its completion
+            result = await action(**input_params)
+        else:
+            # If the action is not asynchronous, execute it directly
+            result = action(**input_params)
 
-            # Store result in context
-            context[step["output"]] = result
+        # Store the result of the action in the context
+        context[step["output"]] = result
 
-        return context[recipe["flow"][-1]["output"]]
+    # Return the final output from the context, which corresponds to the output of the last step in the flow
+    return context[recipe["flow"][-1]["output"]]

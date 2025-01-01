@@ -5,7 +5,7 @@ method: POST
 
 required_skills:
   - WebUrlDownloader
-  - TextAdapter
+  - HtmlTextParse
 
 parameters:
   - name: text
@@ -17,11 +17,9 @@ parameters:
 
 flow:
   - skill: WebUrlDownloader
-    action: download
     input: text
     output: web_content
-  - skill: TextAdapter
-    action: adapt_for_user
+  - skill: HtmlTextParse
     input:
       text: $web_content
       user_profile: userProfile

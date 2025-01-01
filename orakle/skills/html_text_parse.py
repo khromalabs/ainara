@@ -13,7 +13,7 @@ class HtmlTextParse(Skill):
     def stop(self):
         pass
 
-    def parse_html(self, text):
+    def run(self, text):
         """Extract article text from an HTML page"""
         article = Article("")  # Empty URL since we already have the text
         article.download_state = 2  # Skip download

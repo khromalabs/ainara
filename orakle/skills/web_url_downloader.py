@@ -14,7 +14,7 @@ class WebUrlDownloader(Skill):
     def stop(self):
         pass
 
-    async def download(self, url):
+    async def run(self, url):
         """Download content from a URL"""
         if not validators.url(url):
             return {"error": "The provided address is not a valid URL"}
