@@ -272,7 +272,9 @@ class RecipeManager:
                 # If the input is not a dictionary,
                 # use the value directly from the context
                 # Convert single parameter to a dictionary
-                param_name = next(iter(inspect.signature(action).parameters))
+                param_name = next(iter(inspect.signature(skill.run).parameters))
+                if param_name == 'self':  # Skip self parameter
+                    param_name = next(iter(inspect.signature(skill.run).parameters.items()))[0]
                 input_params = {param_name: context[step["input"]]}
 
             # Execute the skill's run method
