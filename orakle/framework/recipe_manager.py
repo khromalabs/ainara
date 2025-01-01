@@ -116,6 +116,7 @@ class RecipeManager:
         )
 
     async def execute_recipe(self, recipe_name, params):
+        logger = logging.getLogger(__name__)
         # Retrieve the recipe from the recipes dictionary using the provided
         # recipe_name
         recipe = self.recipes[recipe_name]
@@ -146,7 +147,7 @@ class RecipeManager:
             action_name = step.get("action", "run")
             action = getattr(skill, action_name)
 
-            print(pprint.pformat(action))
+            logger.info(pprint.pformat(action))
 
             # Prepare the input parameters for the skill action
             if isinstance(step["input"], dict):
@@ -163,12 +164,12 @@ class RecipeManager:
                             def replace_var(match):
                                 var_path = match.group(1).strip("$")
                                 value = context
-                                print(f"\nDebug - Variable path: {var_path}")
-                                print(f"Debug - Context: {context}")
+                                logger.debug(f"Variable path: {var_path}")
+                                logger.debug(f"Context: {context}")
                                 for key in var_path.split("."):
-                                    print(f"Debug - Accessing key: {key}")
+                                    logger.debug(f"Accessing key: {key}")
                                     value = value[key]
-                                    print(f"Debug - Current value: {value}")
+                                    logger.debug(f"Current value: {value}")
                                 return str(value)
 
                             input_params[k] = re.sub(
