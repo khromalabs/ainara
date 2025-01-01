@@ -74,5 +74,4 @@ MIT
 
 ## Contributing
 
-Developers, designers, sponsors, everybody is welcome to this project
-The last goal (dream?) would be to build the AI companion / assistant equivalent of Linux
+Everyone's invited to join this project - developers, designers, sponsors, testers, and more! My ultimate goal (dream maybe?!) would be to create an open, community-driven AI companion/assistant that achieves for the emerging open source AI tools what Linux did for Unix: a game-changing, widely adopted, and endlessly customizable assistant that empowers users and developers alike.
