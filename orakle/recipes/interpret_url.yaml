@@ -25,6 +25,18 @@ flow:
     output: parsed_text
   - skill: TextProcessor
     input:
-      text: $parsed_text
-      user_profile: $userProfile
+      prompt: >
+Please adapt the content and language of the following text according to these
+five instructions:
+1. The language and characteristics of the adapted text must be based in
+   this user profile description: "{$user_profile}".
+2. Generate the output text using an easily readable HTML layout.
+3. Don't return a full HTML page just a `div` element containing an
+   appropriate title and the processed text.
+4. Don't introduce placeholder content.
+5. Enclose the adapted text in the described HTML layout inside a
+   triple backtick block, as the Markdown standard defines for embedding
+   multiline blocks of code.
+The text to adapt is:
+{$parsed_text}
     output: result
