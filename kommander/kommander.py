@@ -83,6 +83,8 @@ def get_orakle_capabilities():
                         # Add description if available
                         if recipe.get("description"):
                             summary.append(f"  Purpose: {recipe['description']}")
+                        elif recipe.get("flow") and recipe["flow"][0].get("description"):
+                            summary.append(f"  Purpose: {recipe['flow'][0]['description']}")
 
                         # Add return type if available
                         if "flow" in recipe and recipe["flow"]:
