@@ -1,7 +1,7 @@
 import importlib
+import pprint
 import re
 from pathlib import Path
-import pprint
 
 import yaml
 from flask import jsonify, request
@@ -14,12 +14,18 @@ class RecipeManager:
         self.recipes = {}
         self.load_recipes()
 
+    def preview_dict(self, input_params):
+        print("Preview of dictionary values:")
+        for key, value in input_params.items():
+            print(f"Key: {key}, Value: {value}")
+
     def camel_to_snake(self, name):
         name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
     def load_recipes(self):
-        recipe_dir = Path(__file__).parent / "recipes"
+        recipe_dir = Path(__file__).parent.parent / "recipes"
+        print(recipe_dir)
         for recipe_file in recipe_dir.glob("*.yaml"):
             with open(recipe_file) as f:
                 recipe = yaml.safe_load(f)
@@ -50,16 +56,19 @@ class RecipeManager:
         )
 
     async def execute_recipe(self, recipe_name, params):
-        # Retrieve the recipe from the recipes dictionary using the provided recipe_name
+        # Retrieve the recipe from the recipes dictionary using the provided
+        # recipe_name
         recipe = self.recipes[recipe_name]
         # Create a copy of the input parameters to use as the context
         context = params.copy()
 
         # Iterate over each step in the recipe's flow
         for step in recipe["flow"]:
-            # Retrieve the skill from the skills dictionary using the step's skill name
+            # Retrieve the skill from the skills dictionary
+            # using the step's skill name
             skill = self.skills[step["skill"]]
-            # Determine the action to be performed based on the step's input type
+            # Determine the action to be performed
+            # based on the step's input type
             if isinstance(step["input"], dict):
                 action = getattr(skill, step["action"])
             else:
@@ -82,16 +91,23 @@ class RecipeManager:
                             def replace_var(match):
                                 var_name = match.group(1).strip("$")
                                 return str(context[var_name])
-                            input_params[k] = re.sub(r'{(\$[^}]+)}', replace_var, v)
+
+                            input_params[k] = re.sub(
+                                r"{(\$[^}]+)}", replace_var, v
+                            )
                     else:
                         input_params[k] = v
+                self.preview_dict(input_params)
+
             else:
-                # If the input is not a dictionary, use the value directly from the context
+                # If the input is not a dictionary,
+                # use the value directly from the context
                 input_params = context[step["input"]]
 
             # Execute the skill action
             if action.__name__.startswith("async"):
-                # If the action is asynchronous, use await to wait for its completion
+                # If the action is asynchronous,
+                # use await to wait for its completion
                 result = await action(**input_params)
             else:
                 # If the action is not asynchronous, execute it directly
@@ -100,5 +116,6 @@ class RecipeManager:
             # Store the result of the action in the context
             context[step["output"]] = result
 
-        # Return the final output from the context, which corresponds to the output of the last step in the flow
+        # Return the final output from the context,
+        # which corresponds to the output of the last step in the flow
         return context[recipe["flow"][-1]["output"]]
