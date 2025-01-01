@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_cors import CORS
 
-from orakle.framework.recipe_manager import RecipeManager
+from ainara.orakle.framework.recipe_manager import RecipeManager
 
 
 def setup_logging(log_dir=None, log_level="INFO"):
