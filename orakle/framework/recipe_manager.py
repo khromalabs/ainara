@@ -159,10 +159,22 @@ class RecipeManager:
                         if v.startswith("$"):
                             # Direct variable reference
                             var_name = v.strip("$")
+                            # Check if this parameter is optional in the recipe definition
+                            param_is_optional = False
+                            if "parameters" in recipe:
+                                for param in recipe["parameters"]:
+                                    if param["name"] == var_name and param.get("optional", False):
+                                        param_is_optional = True
+                                        break
+                            
                             if var_name not in context:
-                                logger.error(f"Variable '{var_name}' not found in context")
-                                logger.debug(f"Available context variables: {list(context.keys())}")
-                                raise KeyError(f"Required variable '{var_name}' not found in recipe context")
+                                if param_is_optional:
+                                    # Skip this parameter if it's optional
+                                    continue
+                                else:
+                                    logger.error(f"Variable '{var_name}' not found in context")
+                                    logger.debug(f"Available context variables: {list(context.keys())}")
+                                    raise KeyError(f"Required variable '{var_name}' not found in recipe context")
                             input_params[k] = context[var_name]
                         else:
                             # Replace {$var} patterns in strings
