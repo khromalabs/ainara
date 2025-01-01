@@ -5,35 +5,23 @@ method: POST
 
 required_skills:
   - NewsSearch
-  - TextProcessor
 
 parameters:
   - name: query
     type: string
     description: Search query for news articles
-  - name: user_profile
-    type: string
-    description: Target user profile (e.g. "Busy layman", "Five years old kid")
-    aliases: ["profile"]
   - name: language
     type: string
     description: Language code for articles (e.g. 'en', 'es')
     default: en
+  - name: short_by
+    type: string
+    description: Short pattern for news
+    default: relevancy
 
 flow:
   - skill: NewsSearch
     input:
-      query: $query
-      language: $language
+      query: query
+      language: language
     output: news_results
-  - skill: TextProcessor
-    input:
-      prompt: "Please adapt these news search results according to these instructions:
-        1. The language and characteristics must match this user profile: `{$user_profile}`.
-        2. Generate the output using an easily readable HTML layout with UTF8 encoding.
-        3. Return a `div` element containing a title and the processed results.
-        4. Include links to the original articles.
-        
-        The news results to adapt are:
-        {$news_results}"
-    output: result

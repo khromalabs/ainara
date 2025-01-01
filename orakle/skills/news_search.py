@@ -1,8 +1,21 @@
 from newsapi import NewsApiClient
+
 from orakle.framework.skill import Skill
 
 SUPPORTED_LANGUAGES = {
-    'ar', 'de', 'en', 'es', 'fr', 'he', 'it', 'nl', 'no', 'pt', 'ru', 'sv', 'zh'
+    "ar",
+    "de",
+    "en",
+    "es",
+    "fr",
+    "he",
+    "it",
+    "nl",
+    "no",
+    "pt",
+    "ru",
+    "sv",
+    "zh",
 }
 
 
@@ -17,15 +30,14 @@ class NewsSearch(Skill):
             raise ValueError("NEWSAPI_KEY environment variable is required")
         self.newsapi = NewsApiClient(api_key=api_key)
 
-    async def run(
-        self, query: str, language: str = "en", sort_by: str = "relevancy"
-    ):
+    async def run(self, query: str, language: str, sort_by: str = "relevancy"):
         """
         Search for news articles matching the query
 
         Args:
             query: Search query string
-            language: Language code (default: 'en'). Must be one of: ar, de, en, es, fr, he, it, nl, no, pt, ru, sv, zh
+            language: Language code (default: 'en'). Must be one of:
+            ar, de, en, es, fr, he, it, nl, no, pt, ru, sv, zh
             sort_by: Sort order ('relevancy', 'popularity', 'publishedAt')
 
         Returns:
@@ -36,7 +48,10 @@ class NewsSearch(Skill):
         if language not in SUPPORTED_LANGUAGES:
             return {
                 "status": "error",
-                "message": f"Invalid language code. Must be one of: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+                "message": (
+                    "Invalid language code. Must be one of:"
+                    f" {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+                ),
             }
         try:
             response = self.newsapi.get_everything(
