@@ -1,2 +1,2 @@
 #!/bin/sh
-sh -c "source venv/bin/activate && python -m server"
+sh -c "source venv/bin/activate && cd .. && python -m orakle.server"
