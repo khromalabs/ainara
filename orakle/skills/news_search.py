@@ -31,7 +31,7 @@ class NewsSearch(Skill):
         self.newsapi = NewsApiClient(api_key=api_key)
 
     async def run(self, query: str, language: str = "en", sort_by: str = "relevancy"):
-        logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}', sort_by='{sort_by}'")
+        logging.info(f"NewsSearch.run() called with parameters: query='{query}', language='{language}' ({type(language)}), sort_by='{sort_by}'")
         """
         Search for news articles matching the query
 
@@ -45,8 +45,14 @@ class NewsSearch(Skill):
             Dict containing search results
         """
         # Validate language code
+        if not isinstance(language, str):
+            return {
+                "status": "error",
+                "message": f"Language must be a string, got {type(language)}"
+            }
+            
         language = language.lower().strip()
-        logging.debug(f"Validating language code: '{language}', type: {type(language)}")
+        logging.debug(f"After cleaning, language code: '{language}', type: {type(language)}")
         logging.debug(f"Supported languages: {sorted(SUPPORTED_LANGUAGES)}")
         if language not in SUPPORTED_LANGUAGES:
             return {
