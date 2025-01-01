@@ -1,0 +1,5 @@
+Flask[async]==3.1.0
+flask_cors==5.0.0
+PyYAML==6.0.2
+Requests==2.32.3
+validators==0.34.0
