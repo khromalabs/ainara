@@ -70,7 +70,8 @@ def get_orakle_capabilities():
                         params = recipe.get("parameters", [])
                         param_dict = {}
 
-                        # Build parameter dictionary for example with proper JSON formatting
+                        # Build parameter dictionary for example with proper
+                        # JSON formatting
                         for param in params:
                             param_name = param["name"]
                             param_type = param.get("type", "string")
@@ -122,9 +123,12 @@ def get_orakle_capabilities():
                             run_info = skill_info["run"]
                             params = {}
 
-                            # Build parameter dictionary for example with proper JSON formatting
+                            # Build parameter dictionary for example with
+                            # proper JSON formatting
                             if run_info.get("parameters"):
-                                for param_name, param_info in run_info["parameters"].items():
+                                for param_name, param_info in run_info[
+                                    "parameters"
+                                ].items():
                                     param_type = param_info.get("type", "any")
                                     # Use a placeholder value based on type
                                     if param_type == "string":
@@ -136,7 +140,8 @@ def get_orakle_capabilities():
                                     else:
                                         params[param_name] = "value"
 
-                            # Create example command with properly formatted JSON
+                            # Create example command with properly formatted
+                            # JSON
                             json_params = json.dumps(params)
                             example = f'SKILL("{skill_name}", {json_params})'
                             summary.append(f"- {example}")
@@ -291,7 +296,10 @@ def execute_orakle_command(command_block):
                 r'(SKILL|RECIPE)\("/?([^"]+)",\s*({[^}]+})', command_block
             )
             if not match:
-                return "Error: Invalid command format. Expected SKILL(\"name\", {params}) or RECIPE(\"name\", {params})"
+                return (
+                    'Error: Invalid command format. Expected SKILL("name",'
+                    ' {params}) or RECIPE("name", {params})'
+                )
 
             cmd_type, cmd_name, params_str = match.groups()
             try:
@@ -301,9 +309,13 @@ def execute_orakle_command(command_block):
 
             # Make request to Orakle server
             # Remove any leading/trailing slashes from cmd_name
-            cmd_name = cmd_name.strip('/')
+            cmd_name = cmd_name.strip("/")
             # Use plural form for recipes endpoint
-            endpoint_type = f"{cmd_type.lower()}s" if cmd_type.lower() == "recipe" else cmd_type.lower()
+            endpoint_type = (
+                f"{cmd_type.lower()}s"
+                if cmd_type.lower() == "recipe"
+                else cmd_type.lower()
+            )
             endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
             response = requests.post(endpoint, json=params, timeout=30)
 
@@ -311,12 +323,15 @@ def execute_orakle_command(command_block):
                 try:
                     return json.dumps(response.json(), indent=2)
                 except json.JSONDecodeError:
+                    # fix lint error in next line "f-string is missing placeholders"
                     return f"Error: Server returned invalid JSON response"
             else:
                 error_msg = f"Error: Server returned {response.status_code}"
                 try:
                     error_details = response.json()
-                    error_msg += f"\nDetails: {json.dumps(error_details, indent=2)}"
+                    error_msg += (
+                        f"\nDetails: {json.dumps(error_details, indent=2)}"
+                    )
                 except:
                     if response.text:
                         error_msg += f"\nDetails: {response.text}"
@@ -424,7 +439,6 @@ def main():
                 continue
             backup(f"> {question}")
             chat_completion(question)
-            print()
         except KeyboardInterrupt:
             signal_handler(signal.SIGINT, 0)
             break
