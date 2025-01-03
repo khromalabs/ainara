@@ -385,8 +385,10 @@ def process_orakle_commands(text):
         result = execute_orakle_command(command)
         results.append(result)
         formatted_cmd = format_orakle_command(command)
-        return f"\n{formatted_cmd}\n\nResult:\n```json\n{result}\n```"
+        # Remove the oraklecmd block completely
+        return f"{formatted_cmd}\n\nResult:\n```json\n{result}\n```"
 
+    # First remove any existing oraklecmd blocks and replace with formatted version
     pattern = r"```oraklecmd\n(.*?)\n```"
     processed_text = re.sub(pattern, replace_command, text, flags=re.DOTALL)
     return processed_text, results
