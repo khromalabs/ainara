@@ -61,7 +61,7 @@ class RecipeManager:
 
             skill_info["run"] = method_info
 
-            capabilities["skills"][skill_name] = skill_info
+            capabilities["skills"][self.camel_to_snake(skill_name)] = skill_info
 
         # Get recipes information
         for endpoint, recipe in self.recipes.items():
