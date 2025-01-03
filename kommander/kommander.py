@@ -363,7 +363,6 @@ def chat_completion(question, stream=True) -> str:
     if answer:
         # Process any Orakle commands in the response
         processed_answer = process_orakle_commands(answer)
-        print(processed_answer)
         backup(processed_answer)
         CHAT.extend([question, trim(processed_answer)])
         return processed_answer
@@ -438,6 +437,7 @@ def main():
                 continue
             backup(f"> {question}")
             chat_completion(question)
+            print()
         except KeyboardInterrupt:
             signal_handler(signal.SIGINT, 0)
             break
