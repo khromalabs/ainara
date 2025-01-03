@@ -369,9 +369,20 @@ def chat_completion(question, stream=True) -> str:
 
         # If there are command results, ask LLM to interpret them
         if results:
+            # Format results based on whether they are valid JSON or plain text
+            formatted_results = []
+            for r in results:
+                try:
+                    # Try to parse as JSON to validate and pretty print
+                    json.loads(r)
+                    formatted_results.append(f"```json\n{r}\n```")
+                except json.JSONDecodeError:
+                    # If not valid JSON, treat as plain text
+                    formatted_results.append(f"```text\n{r}\n```")
+
             interpretation_prompt = (
                 f"Based on the command results:\n"
-                + "\n".join(f"```json\n{r}\n```" for r in results)
+                + "\n".join(formatted_results)
                 + "\nPlease provide a response incorporating this information."
             )
 
