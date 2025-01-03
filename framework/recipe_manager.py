@@ -210,7 +210,7 @@ class RecipeManager:
             return handler
 
         # Register the async route handler with unique endpoint name
-        route_path = f"/api/recipes/{endpoint}"
+        route_path = f"/recipes/{endpoint}"
         endpoint_name = f"recipe_{endpoint}"
         self.app.route(route_path, methods=methods, endpoint=endpoint_name)(create_recipe_handler(endpoint))
         logging.getLogger(__name__).info(f"Registered recipe endpoint: {route_path}")
