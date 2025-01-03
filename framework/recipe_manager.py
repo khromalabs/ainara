@@ -283,12 +283,12 @@ class RecipeManager:
             # Execute the skill's run method
             logger = logging.getLogger(__name__)
             logger.debug(f"Executing {step['skill']}.run()")
-            
+
             # Add output type information to the step
             return_hint = get_type_hints(skill.run).get('return')
             if return_hint:
                 step['output_type'] = str(return_hint)
-            
+
             if inspect.iscoroutinefunction(skill.run):
                 # If run is async, await it
                 result = await skill.run(**input_params)
