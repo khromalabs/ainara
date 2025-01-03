@@ -396,7 +396,7 @@ def chat_completion(question, stream=True) -> str:
             )
 
             if final_answer:
-                processed_answer += f"\n\n{final_answer}"
+                processed_answer += f"\n\n---\n\n{final_answer}"
 
         backup(processed_answer)
 
