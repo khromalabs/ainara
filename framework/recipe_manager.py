@@ -178,7 +178,7 @@ class RecipeManager:
                 return jsonify(result)
 
         self.app.add_url_rule(
-            endpoint, endpoint.lstrip("/"), route_handler, methods=methods
+            f"/recipes/{endpoint.lstrip('/')}", endpoint.lstrip("/"), route_handler, methods=methods
         )
 
     async def execute_recipe(self, recipe_name, params):
