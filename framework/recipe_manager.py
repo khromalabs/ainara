@@ -341,16 +341,12 @@ class RecipeManager:
             if return_hint:
                 step["output_type"] = str(return_hint)
 
+            # Handle both async and sync skills uniformly
             if inspect.iscoroutinefunction(skill.run):
-                # If run is async, await it
                 result = await skill.run(**input_params)
             else:
-                # If run is not async, execute directly
+                # Wrap sync functions to be compatible with async flow
                 result = skill.run(**input_params)
-
-            # If the result is a coroutine, await it
-            if inspect.iscoroutine(result):
-                result = await result
 
             # Store the result of the action in the context
             context[step["output"]] = result
