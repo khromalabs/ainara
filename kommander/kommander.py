@@ -216,6 +216,9 @@ Don't suggest the user to use Orakle commands, as are meant to be used by you
 the assistant. Don't mention in the chat that you are executing an Orakle
 command, just send the oraklecmd block.
 
+Whenever a recipe seems to be fit to fullfil some required task give priority
+to use a recipe, againt use a skill or a combination of skills.
+
 {orakle_caps}
 """
 
@@ -323,7 +326,7 @@ def execute_orakle_command(command_block):
                 try:
                     # First try to parse as JSON
                     json_response = response.json()
-                    print(f"json_response: {json_response}")
+                    # print(f"json_response: {json_response}")
                     # Handle empty responses
                     if not json_response:
                         return "Empty response received"
@@ -334,7 +337,7 @@ def execute_orakle_command(command_block):
                 except json.JSONDecodeError:
                     # If not JSON, return the raw text response
                     text_response = response.text
-                    print(f"text_response: {text_response}")
+                    # print(f"text_response: {text_response}")
                     return text_response if text_response else "Empty response"
             else:
                 error_msg = f"Error: Server returned {response.status_code}"

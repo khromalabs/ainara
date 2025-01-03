@@ -61,7 +61,9 @@ class RecipeManager:
 
             skill_info["run"] = method_info
 
-            capabilities["skills"][self.camel_to_snake(skill_name)] = skill_info
+            capabilities["skills"][
+                self.camel_to_snake(skill_name)
+            ] = skill_info
 
         # Get recipes information
         for endpoint, recipe in self.recipes.items():
@@ -97,7 +99,9 @@ class RecipeManager:
                         from asgiref.sync import async_to_sync
 
                         if inspect.iscoroutinefunction(skill.run):
-                            result = async_to_sync(skill.run)(**request.get_json())
+                            result = async_to_sync(skill.run)(
+                                **request.get_json()
+                            )
                         else:
                             result = skill.run(**request.get_json())
 
@@ -113,9 +117,9 @@ class RecipeManager:
                 return handler
 
             endpoint_name = f"skill_{skill_name}"
-            self.app.route(route_path, methods=["POST"], endpoint=endpoint_name)(
-                create_skill_handler(skill_name, skill_instance)
-            )
+            self.app.route(
+                route_path, methods=["POST"], endpoint=endpoint_name
+            )(create_skill_handler(skill_name, skill_instance))
             logging.getLogger(__name__).info(
                 f"Registered skill endpoint: {route_path}"
             )
@@ -205,6 +209,7 @@ class RecipeManager:
 
                 try:
                     from asgiref.sync import async_to_sync
+
                     result = async_to_sync(self.execute_recipe)(
                         recipe_endpoint, request.get_json()
                     )
