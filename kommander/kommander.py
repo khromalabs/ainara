@@ -12,12 +12,14 @@ from datetime import datetime
 
 import requests
 import setproctitle
-from colorama import init, Fore, Style
-init()
+from colorama import Fore, init
+
 from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
 from ainara.framework.llm_backend import LiteLLMBackend
+
+init()
 
 # Suppress pydantic warning about config keys
 warnings.filterwarnings(
@@ -344,21 +346,22 @@ def execute_orakle_command(command_block):
 def format_orakle_command(command: str) -> str:
     """Format Orakle command with colors and layout"""
     import re
-    from colorama import Fore, Style, init
-    init()
 
     # Extract command parts
-    match = re.match(r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command.strip())
+    match = re.match(
+        r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command.strip()
+    )
     if not match:
         return command
 
     cmd_type, name, params = match.groups()
-    
+
     # Parse and format parameters
     try:
         params_dict = json.loads(params)
         formatted_params = "\n".join(
-            f"  {Fore.CYAN}{k}{Style.RESET_ALL}: {Fore.YELLOW}{repr(v)}{Style.RESET_ALL}"
+            f"  {Fore.CYAN}{k}{Style.RESET_ALL}:"
+            f" {Fore.YELLOW}{repr(v)}{Style.RESET_ALL}"
             for k, v in params_dict.items()
         )
     except json.JSONDecodeError:
@@ -372,6 +375,7 @@ def format_orakle_command(command: str) -> str:
         f"{formatted_params}"
     )
 
+
 def process_orakle_commands(text):
     """Process any oraklecmd blocks in the text and return results"""
     results = []
@@ -380,11 +384,12 @@ def process_orakle_commands(text):
         command = match.group(1).strip()
         result = execute_orakle_command(command)
         results.append(result)
-        formatted_cmd = format_orakle_command(command)
+        formatted_cmd = command  # format_orakle_command(command)
         # Remove the oraklecmd block completely
         return f"{formatted_cmd}\n\nResult:\n```json\n{result}\n```"
 
-    # First remove any existing oraklecmd blocks and replace with formatted version
+    # First remove any existing oraklecmd blocks and replace with formatted
+    # version
     pattern = r"```oraklecmd\n(.*?)\n```"
     processed_text = re.sub(pattern, replace_command, text, flags=re.DOTALL)
     return processed_text, results
@@ -415,11 +420,12 @@ def chat_completion(question, stream=True) -> str:
                     formatted_results.append(f"```text\n{r}\n```")
 
             interpretation_prompt = (
-                "Based on the command results:\n"
+                "Based on the Orakle command results:\n"
                 + "\n".join(formatted_results)
                 + "\nPlease provide a response incorporating this information."
             )
             print()
+            print(f"DEBUG: {interpretation_prompt}")
 
             final_answer = llm.process_text(
                 text=interpretation_prompt,
