@@ -18,6 +18,7 @@ class RecipeManager:
         self.recipes = {}
         self.load_recipes()
         self.register_capabilities_endpoint()
+        self.register_skill_endpoints()
 
     def get_capabilities(self):
         """Get information about all available skills and recipes"""
@@ -81,6 +82,34 @@ class RecipeManager:
         @self.app.route("/capabilities", methods=["GET"])
         def get_capabilities():
             return jsonify(self.get_capabilities())
+
+    def register_skill_endpoints(self):
+        """Register direct endpoints for each skill"""
+        for skill_name, skill_instance in self.skills.items():
+            route_path = f"/skills/{self.camel_to_snake(skill_name)}"
+            
+            async def create_handler(skill):
+                async def handler():
+                    if not request.is_json:
+                        return jsonify({"error": "Request must be JSON"}), 400
+                    
+                    try:
+                        if inspect.iscoroutinefunction(skill.run):
+                            result = await skill.run(**request.get_json())
+                        else:
+                            result = skill.run(**request.get_json())
+                            
+                        if isinstance(result, dict):
+                            return jsonify(result)
+                        else:
+                            return result, 200, {'Content-Type': 'text/plain'}
+                    except Exception as e:
+                        return jsonify({"error": str(e)}), 500
+                
+                return handler
+
+            self.app.route(route_path, methods=["POST"])(create_handler(skill_instance))
+            logging.getLogger(__name__).info(f"Registered skill endpoint: {route_path}")
 
     def preview_dict(self, input_params, step_name=""):
         logger = logging.getLogger(__name__)
