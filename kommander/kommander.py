@@ -272,25 +272,37 @@ def execute_orakle_command(command_block):
         try:
             # Extract command type and parameters
             match = re.match(
-                r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command_block
+                r'(SKILL|RECIPE)\("/?([^"]+)",\s*({[^}]+})', command_block
             )
             if not match:
-                return "Error: Invalid command format"
+                return "Error: Invalid command format. Expected SKILL(\"name\", {params}) or RECIPE(\"name\", {params})"
 
             cmd_type, cmd_name, params_str = match.groups()
             try:
                 params = json.loads(params_str)
-            except json.JSONDecodeError:
-                return "Error: Invalid JSON parameters"
+            except json.JSONDecodeError as e:
+                return f"Error: Invalid JSON parameters - {str(e)}"
 
             # Make request to Orakle server
-            endpoint = f"{server}/{cmd_type.lower()}/{cmd_name}"
+            # Remove any leading/trailing slashes from cmd_name
+            cmd_name = cmd_name.strip('/')
+            endpoint = f"{server.rstrip('/')}/{cmd_type.lower()}/{cmd_name}"
             response = requests.post(endpoint, json=params, timeout=30)
 
             if response.status_code == 200:
-                return json.dumps(response.json(), indent=2)
+                try:
+                    return json.dumps(response.json(), indent=2)
+                except json.JSONDecodeError:
+                    return f"Error: Server returned invalid JSON response"
             else:
-                return f"Error: Server returned {response.status_code}"
+                error_msg = f"Error: Server returned {response.status_code}"
+                try:
+                    error_details = response.json()
+                    error_msg += f"\nDetails: {json.dumps(error_details, indent=2)}"
+                except:
+                    if response.text:
+                        error_msg += f"\nDetails: {response.text}"
+                return error_msg
 
         except requests.RequestException:
             continue
