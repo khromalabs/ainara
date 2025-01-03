@@ -29,7 +29,7 @@ CHAT = []
 
 ORAKLE_SERVERS = [
     "http://127.0.0.1:5000",
-    "http://192.168.1.200:5000",
+    # "http://192.168.1.200:5000",
 ]
 
 PROVIDERS = [
@@ -82,7 +82,7 @@ def get_orakle_capabilities():
 
                         # Add description if available
                         if recipe.get("description"):
-                            summary.append(f"  Purpose: {recipe['description']}")
+                            summary.append(f"Purpose: {recipe['description']}")
 
                         # Add return type if available
                         if "flow" in recipe and recipe["flow"]:
@@ -151,7 +151,9 @@ def get_orakle_capabilities():
                 return "\n".join(summary)
         except requests.RequestException:
             continue
-    return None
+    return (
+        "WARNING: No Orakle capabilities found, is the Orakle server running?"
+    )
 
 
 orakle_caps = get_orakle_capabilities()
@@ -184,6 +186,10 @@ To use these capabilities, you can send single commands wrapped in
   For direct skill execution
 - `RECIPE("recipe_name", {{ "parameter1": "value1"...)`:
   For running multi-step workflows
+
+Don't suggest the user to use Orakle commands, as are meant to be used by you
+the assistant. Don't mention in the chat that you are executing an Orakle
+command, just send the oraklecmd block.
 
 {orakle_caps}
 """
@@ -313,6 +319,7 @@ def chat_completion(question, stream=True) -> str:
     if answer:
         # Process any Orakle commands in the response
         processed_answer = process_orakle_commands(answer)
+        print(processed_answer)
         backup(processed_answer)
         CHAT.extend([question, trim(processed_answer)])
         return processed_answer
