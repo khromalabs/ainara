@@ -188,22 +188,26 @@ class RecipeManager:
         endpoint = recipe["endpoint"]
         methods = [recipe.get("method", "POST")]
 
-        async def route_handler():
-            if not request.is_json:
-                return jsonify({"error": "Request must be JSON"}), 400
-            
-            try:
-                result = await self.execute_recipe(endpoint, request.get_json())
-                if isinstance(result, dict):
-                    return jsonify(result)
-                else:
-                    return result, 200, {'Content-Type': 'text/plain'}
-            except Exception as e:
-                return jsonify({"error": str(e)}), 500
+        # Create a unique handler function for this recipe
+        async def create_recipe_handler(recipe_endpoint):
+            async def handler():
+                if not request.is_json:
+                    return jsonify({"error": "Request must be JSON"}), 400
+                
+                try:
+                    result = await self.execute_recipe(recipe_endpoint, request.get_json())
+                    if isinstance(result, dict):
+                        return jsonify(result)
+                    else:
+                        return result, 200, {'Content-Type': 'text/plain'}
+                except Exception as e:
+                    return jsonify({"error": str(e)}), 500
+            return handler
 
-        # Register the async route handler
+        # Register the async route handler with unique endpoint name
         route_path = f"/api/recipes/{endpoint}"
-        self.app.route(route_path, methods=methods)(route_handler)
+        endpoint_name = f"recipe_{endpoint}"
+        self.app.route(route_path, methods=methods, endpoint=endpoint_name)(create_recipe_handler(endpoint))
         logging.getLogger(__name__).info(f"Registered recipe endpoint: {route_path}")
 
     async def execute_recipe(self, recipe_name, params):
