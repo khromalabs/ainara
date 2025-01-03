@@ -344,7 +344,7 @@ def execute_orakle_command(command_block):
 
 
 def process_orakle_commands(text):
-    """Process any oraklecmd blocks in the text and return modified text and results"""
+    """Process any oraklecmd blocks in the text and return results"""
     results = []
 
     def replace_command(match):
@@ -383,10 +383,11 @@ def chat_completion(question, stream=True) -> str:
                     formatted_results.append(f"```text\n{r}\n```")
 
             interpretation_prompt = (
-                f"Based on the command results:\n"
+                "Based on the command results:\n"
                 + "\n".join(formatted_results)
                 + "\nPlease provide a response incorporating this information."
             )
+            print()
 
             final_answer = llm.process_text(
                 text=interpretation_prompt,
