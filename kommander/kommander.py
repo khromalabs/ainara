@@ -13,7 +13,6 @@ from datetime import datetime
 import requests
 import setproctitle
 from colorama import Fore, init
-
 from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
@@ -55,6 +54,7 @@ llm = LiteLLMBackend()
 
 def get_orakle_capabilities():
     """Query Orakle servers for capabilities, return a condensed summary"""
+    print("Retrieving Orakle server capabilities...")
     for server in ORAKLE_SERVERS:
         try:
             response = requests.get(f"{server}/capabilities", timeout=2)
@@ -319,8 +319,6 @@ def execute_orakle_command(command_block):
             endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
             response = requests.post(endpoint, json=params, timeout=30)
 
-            print(f"DEBUG: response.status_code: {response.status_code}")
-
             if response.status_code == 200:
                 try:
                     # First try to parse as JSON
@@ -336,6 +334,7 @@ def execute_orakle_command(command_block):
                 except json.JSONDecodeError:
                     # If not JSON, return the raw text response
                     text_response = response.text
+                    print(f"text_response: {text_response}")
                     return text_response if text_response else "Empty response"
             else:
                 error_msg = f"Error: Server returned {response.status_code}"
@@ -394,6 +393,7 @@ def process_orakle_commands(text):
     def replace_command(match):
         command = match.group(1).strip()
         result = execute_orakle_command(command)
+        # print(f"\n----\nDEBUG: result: {result}")
         results.append(result)
         formatted_cmd = command  # format_orakle_command(command)
         # Remove the oraklecmd block completely
@@ -436,7 +436,7 @@ def chat_completion(question, stream=True) -> str:
                 + "\nPlease provide a response incorporating this information."
             )
             print()
-            print(f"DEBUG: {interpretation_prompt}")
+            # print(f"\n----\nDEBUG: {interpretation_prompt}")
 
             final_answer = llm.process_text(
                 text=interpretation_prompt,
