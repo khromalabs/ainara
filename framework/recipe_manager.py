@@ -160,27 +160,22 @@ class RecipeManager:
         methods = [recipe.get("method", "POST")]
 
         async def route_handler():
-            result = await self.execute_recipe(endpoint, request.json)
-            # if isinstance(result, str):
-            #     result = self.enforce_utf8_encoding(result)
-            # elif isinstance(result, dict):
-            #     for key, value in result.items():
-            #         if isinstance(value, str):
-            #             result[key] = self.enforce_utf8_encoding(value)
-            # # print("\n=== Final Result Before JSON Conversion ===")
-            # # print(f"Type: {type(result)}")
-            # # print(f"Content: {result}")
-            # # print("========================================\n")
-            # # return jsonify(result)
-            if isinstance(result, dict):
-                return jsonify(result)
-            else:
-                # For string/text responses, return as-is with text/plain content type
-                return result, 200, {'Content-Type': 'text/plain'}
+            if not request.is_json:
+                return jsonify({"error": "Request must be JSON"}), 400
+            
+            try:
+                result = await self.execute_recipe(endpoint, request.get_json())
+                if isinstance(result, dict):
+                    return jsonify(result)
+                else:
+                    return result, 200, {'Content-Type': 'text/plain'}
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
 
-        self.app.add_url_rule(
-            f"/recipes/{endpoint.lstrip('/')}", endpoint.lstrip("/"), route_handler, methods=methods
-        )
+        # Register the async route handler
+        route_path = f"/api/recipes/{endpoint}"
+        self.app.route(route_path, methods=methods)(route_handler)
+        logging.getLogger(__name__).info(f"Registered recipe endpoint: {route_path}")
 
     async def execute_recipe(self, recipe_name, params):
         logger = logging.getLogger(__name__)
