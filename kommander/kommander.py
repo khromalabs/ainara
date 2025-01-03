@@ -323,8 +323,7 @@ def execute_orakle_command(command_block):
                 try:
                     return json.dumps(response.json(), indent=2)
                 except json.JSONDecodeError:
-                    # fix lint error in next line "f-string is missing placeholders"
-                    return f"Error: Server returned invalid JSON response"
+                    return "Error: Server returned invalid JSON response"
             else:
                 error_msg = f"Error: Server returned {response.status_code}"
                 try:
