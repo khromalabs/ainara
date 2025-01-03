@@ -88,7 +88,7 @@ class RecipeManager:
         for skill_name, skill_instance in self.skills.items():
             route_path = f"/skills/{self.camel_to_snake(skill_name)}"
             
-            async def create_handler(skill):
+            def create_skill_handler(skill_name, skill):
                 async def handler():
                     if not request.is_json:
                         return jsonify({"error": "Request must be JSON"}), 400
@@ -106,9 +106,14 @@ class RecipeManager:
                     except Exception as e:
                         return jsonify({"error": str(e)}), 500
                 
+                # Set a unique name for the handler function
+                handler.__name__ = f"handle_{skill_name}"
                 return handler
 
-            self.app.route(route_path, methods=["POST"])(create_handler(skill_instance))
+            endpoint_name = f"skill_{skill_name}"
+            self.app.route(route_path, methods=["POST"], endpoint=endpoint_name)(
+                create_skill_handler(skill_name, skill_instance)
+            )
             logging.getLogger(__name__).info(f"Registered skill endpoint: {route_path}")
 
     def preview_dict(self, input_params, step_name=""):
