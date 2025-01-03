@@ -23,7 +23,7 @@ warnings.filterwarnings(
 )
 
 # Comment this line to disable the automatic chat backup
-BACKUP = f"/tmp/chat_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+BACKUP = f"/tmp/kommander_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 CHAT = []
 
 
@@ -344,7 +344,7 @@ def execute_orakle_command(command_block):
 def process_orakle_commands(text):
     """Process any oraklecmd blocks in the text and return modified text and results"""
     results = []
-    
+
     def replace_command(match):
         command = match.group(1).strip()
         result = execute_orakle_command(command)
@@ -366,7 +366,7 @@ def chat_completion(question, stream=True) -> str:
     if answer:
         # Process any Orakle commands in the response
         processed_answer, results = process_orakle_commands(answer)
-        
+
         # If there are command results, ask LLM to interpret them
         if results:
             interpretation_prompt = (
@@ -374,18 +374,19 @@ def chat_completion(question, stream=True) -> str:
                 + "\n".join(f"```json\n{r}\n```" for r in results)
                 + "\nPlease provide a response incorporating this information."
             )
-            
+
             final_answer = llm.process_text(
                 text=interpretation_prompt,
                 system_message=SYSTEM_MESSAGE,
                 chat_history=CHAT,
                 stream=stream,
             )
-            
+
             if final_answer:
                 processed_answer += f"\n\n{final_answer}"
-        
+
         backup(processed_answer)
+
         CHAT.extend([question, trim(processed_answer)])
         return processed_answer
     return answer
