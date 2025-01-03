@@ -88,37 +88,37 @@ class RecipeManager:
         for skill_name, skill_instance in self.skills.items():
             route_path = f"/skills/{self.camel_to_snake(skill_name)}"
 
-        def create_skill_handler(skill_name, skill):
-            def handler():
-                if not request.is_json:
-                    return jsonify({"error": "Request must be JSON"}), 400
+            def create_skill_handler(skill_name, skill):
+                def handler():
+                    if not request.is_json:
+                        return jsonify({"error": "Request must be JSON"}), 400
 
-                try:
-                    from asgiref.sync import async_to_sync
+                    try:
+                        from asgiref.sync import async_to_sync
 
-                    if inspect.iscoroutinefunction(skill.run):
-                        result = async_to_sync(skill.run)(**request.get_json())
-                    else:
-                        result = skill.run(**request.get_json())
+                        if inspect.iscoroutinefunction(skill.run):
+                            result = async_to_sync(skill.run)(**request.get_json())
+                        else:
+                            result = skill.run(**request.get_json())
 
-                    if isinstance(result, dict):
-                        return jsonify(result)
-                    else:
-                        return result, 200, {"Content-Type": "text/plain"}
-                except Exception as e:
-                    return jsonify({"error": str(e)}), 500
+                        if isinstance(result, dict):
+                            return jsonify(result)
+                        else:
+                            return result, 200, {"Content-Type": "text/plain"}
+                    except Exception as e:
+                        return jsonify({"error": str(e)}), 500
 
-            # Set a unique name for the handler function
-            handler.__name__ = f"handle_{skill_name}"
-            return handler
+                # Set a unique name for the handler function
+                handler.__name__ = f"handle_{skill_name}"
+                return handler
 
-        endpoint_name = f"skill_{skill_name}"
-        self.app.route(route_path, methods=["POST"], endpoint=endpoint_name)(
-            create_skill_handler(skill_name, skill_instance)
-        )
-        logging.getLogger(__name__).info(
-            f"Registered skill endpoint: {route_path}"
-        )
+            endpoint_name = f"skill_{skill_name}"
+            self.app.route(route_path, methods=["POST"], endpoint=endpoint_name)(
+                create_skill_handler(skill_name, skill_instance)
+            )
+            logging.getLogger(__name__).info(
+                f"Registered skill endpoint: {route_path}"
+            )
 
     def preview_dict(self, input_params, step_name=""):
         logger = logging.getLogger(__name__)
