@@ -319,10 +319,13 @@ def execute_orakle_command(command_block):
             endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
             response = requests.post(endpoint, json=params, timeout=30)
 
+            print(f"DEBUG: response.status_code: {response.status_code}")
+
             if response.status_code == 200:
                 try:
                     # First try to parse as JSON
                     json_response = response.json()
+                    print(f"json_response: {json_response}")
                     # Handle empty responses
                     if not json_response:
                         return "Empty response received"
@@ -333,7 +336,7 @@ def execute_orakle_command(command_block):
                 except json.JSONDecodeError:
                     # If not JSON, return the raw text response
                     text_response = response.text
-                    return text_response if text_response else "Empty response received"
+                    return text_response if text_response else "Empty response"
             else:
                 error_msg = f"Error: Server returned {response.status_code}"
                 try:
