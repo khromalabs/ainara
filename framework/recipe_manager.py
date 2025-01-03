@@ -172,10 +172,11 @@ class RecipeManager:
             # # print(f"Content: {result}")
             # # print("========================================\n")
             # # return jsonify(result)
-            if isinstance(result, str):
-                return result
-            elif isinstance(result, dict):
+            if isinstance(result, dict):
                 return jsonify(result)
+            else:
+                # For string/text responses, return as-is with text/plain content type
+                return result, 200, {'Content-Type': 'text/plain'}
 
         self.app.add_url_rule(
             f"/recipes/{endpoint.lstrip('/')}", endpoint.lstrip("/"), route_handler, methods=methods

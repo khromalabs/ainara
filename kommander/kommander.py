@@ -321,9 +321,11 @@ def execute_orakle_command(command_block):
 
             if response.status_code == 200:
                 try:
+                    # First try to parse as JSON
                     return json.dumps(response.json(), indent=2)
                 except json.JSONDecodeError:
-                    return "Error: Server returned invalid JSON response"
+                    # If not JSON, return the raw text response
+                    return response.text
             else:
                 error_msg = f"Error: Server returned {response.status_code}"
                 try:
