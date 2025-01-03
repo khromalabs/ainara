@@ -302,7 +302,9 @@ def execute_orakle_command(command_block):
             # Make request to Orakle server
             # Remove any leading/trailing slashes from cmd_name
             cmd_name = cmd_name.strip('/')
-            endpoint = f"{server.rstrip('/')}/{cmd_type.lower()}/{cmd_name}"
+            # Use plural form for recipes endpoint
+            endpoint_type = f"{cmd_type.lower()}s" if cmd_type.lower() == "recipe" else cmd_type.lower()
+            endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
             response = requests.post(endpoint, json=params, timeout=30)
 
             if response.status_code == 200:
