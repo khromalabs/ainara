@@ -331,7 +331,7 @@ def execute_orakle_command(command_block):
                     error_msg += (
                         f"\nDetails: {json.dumps(error_details, indent=2)}"
                     )
-                except:
+                except (ValueError, json.JSONDecodeError):
                     if response.text:
                         error_msg += f"\nDetails: {response.text}"
                 return error_msg
