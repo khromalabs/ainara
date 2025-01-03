@@ -396,8 +396,8 @@ def chat_completion(question, stream=True) -> str:
             )
 
             if final_answer:
-                separator = "\n" + "=" * 40 + "\n"
-                processed_answer += f"{separator}{final_answer}"
+                separator = "\n\nResult:\n" + "=" * 40 + "\n"
+                processed_answer += f"{separator}{final_answer}\n" + "=" * 40
 
         backup(processed_answer)
 
