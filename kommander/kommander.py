@@ -70,14 +70,23 @@ def get_orakle_capabilities():
                         params = recipe.get("parameters", [])
                         param_dict = {}
 
-                        # Build parameter dictionary for example
+                        # Build parameter dictionary for example with proper JSON formatting
                         for param in params:
                             param_name = param["name"]
                             param_type = param.get("type", "string")
-                            param_dict[param_name] = f"<{param_type}>"
+                            # Use a placeholder value based on type
+                            if param_type == "string":
+                                param_dict[param_name] = "value"
+                            elif param_type == "integer":
+                                param_dict[param_name] = 0
+                            elif param_type == "boolean":
+                                param_dict[param_name] = False
+                            else:
+                                param_dict[param_name] = "value"
 
-                        # Create example command
-                        example = f'RECIPE("{endpoint}", {param_dict})'
+                        # Create example command with properly formatted JSON
+                        json_params = json.dumps(param_dict)
+                        example = f'RECIPE("{endpoint}", {json_params})'
                         summary.append(f"- {example}")
 
                         # Add description if available
@@ -113,16 +122,23 @@ def get_orakle_capabilities():
                             run_info = skill_info["run"]
                             params = {}
 
-                            # Build parameter dictionary for example
+                            # Build parameter dictionary for example with proper JSON formatting
                             if run_info.get("parameters"):
-                                for param_name, param_info in run_info[
-                                    "parameters"
-                                ].items():
+                                for param_name, param_info in run_info["parameters"].items():
                                     param_type = param_info.get("type", "any")
-                                    params[param_name] = f"<{param_type}>"
+                                    # Use a placeholder value based on type
+                                    if param_type == "string":
+                                        params[param_name] = "value"
+                                    elif param_type == "integer":
+                                        params[param_name] = 0
+                                    elif param_type == "boolean":
+                                        params[param_name] = False
+                                    else:
+                                        params[param_name] = "value"
 
-                            # Create example command
-                            example = f'SKILL("{skill_name}", {params})'
+                            # Create example command with properly formatted JSON
+                            json_params = json.dumps(params)
+                            example = f'SKILL("{skill_name}", {json_params})'
                             summary.append(f"- {example}")
 
                             # Add parameter descriptions and return type if
