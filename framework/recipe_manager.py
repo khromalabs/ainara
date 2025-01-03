@@ -43,8 +43,8 @@ class RecipeManager:
             type_hints = get_type_hints(run_method)
 
             # Add return type if available
-            if 'return' in type_hints:
-                method_info["return_type"] = str(type_hints['return'])
+            if "return" in type_hints:
+                method_info["return_type"] = str(type_hints["return"])
 
             for param_name, param in sig.parameters.items():
                 if param_name != "self":
@@ -87,34 +87,38 @@ class RecipeManager:
         """Register direct endpoints for each skill"""
         for skill_name, skill_instance in self.skills.items():
             route_path = f"/skills/{self.camel_to_snake(skill_name)}"
-            
-            def create_skill_handler(skill_name, skill):
-                async def handler():
-                    if not request.is_json:
-                        return jsonify({"error": "Request must be JSON"}), 400
-                    
-                    try:
-                        if inspect.iscoroutinefunction(skill.run):
-                            result = await skill.run(**request.get_json())
-                        else:
-                            result = skill.run(**request.get_json())
-                            
-                        if isinstance(result, dict):
-                            return jsonify(result)
-                        else:
-                            return result, 200, {'Content-Type': 'text/plain'}
-                    except Exception as e:
-                        return jsonify({"error": str(e)}), 500
-                
-                # Set a unique name for the handler function
-                handler.__name__ = f"handle_{skill_name}"
-                return handler
 
-            endpoint_name = f"skill_{skill_name}"
-            self.app.route(route_path, methods=["POST"], endpoint=endpoint_name)(
-                create_skill_handler(skill_name, skill_instance)
-            )
-            logging.getLogger(__name__).info(f"Registered skill endpoint: {route_path}")
+        def create_skill_handler(skill_name, skill):
+            def handler():
+                if not request.is_json:
+                    return jsonify({"error": "Request must be JSON"}), 400
+
+                try:
+                    from asgiref.sync import async_to_sync
+
+                    if inspect.iscoroutinefunction(skill.run):
+                        result = async_to_sync(skill.run)(**request.get_json())
+                    else:
+                        result = skill.run(**request.get_json())
+
+                    if isinstance(result, dict):
+                        return jsonify(result)
+                    else:
+                        return result, 200, {"Content-Type": "text/plain"}
+                except Exception as e:
+                    return jsonify({"error": str(e)}), 500
+
+            # Set a unique name for the handler function
+            handler.__name__ = f"handle_{skill_name}"
+            return handler
+
+        endpoint_name = f"skill_{skill_name}"
+        self.app.route(route_path, methods=["POST"], endpoint=endpoint_name)(
+            create_skill_handler(skill_name, skill_instance)
+        )
+        logging.getLogger(__name__).info(
+            f"Registered skill endpoint: {route_path}"
+        )
 
     def preview_dict(self, input_params, step_name=""):
         logger = logging.getLogger(__name__)
@@ -198,22 +202,29 @@ class RecipeManager:
             async def handler():
                 if not request.is_json:
                     return jsonify({"error": "Request must be JSON"}), 400
-                
+
                 try:
-                    result = await self.execute_recipe(recipe_endpoint, request.get_json())
+                    result = await self.execute_recipe(
+                        recipe_endpoint, request.get_json()
+                    )
                     if isinstance(result, dict):
                         return jsonify(result)
                     else:
-                        return result, 200, {'Content-Type': 'text/plain'}
+                        return result, 200, {"Content-Type": "text/plain"}
                 except Exception as e:
                     return jsonify({"error": str(e)}), 500
+
             return handler
 
         # Register the async route handler with unique endpoint name
         route_path = f"/recipes/{endpoint}"
         endpoint_name = f"recipe_{endpoint}"
-        self.app.route(route_path, methods=methods, endpoint=endpoint_name)(create_recipe_handler(endpoint))
-        logging.getLogger(__name__).info(f"Registered recipe endpoint: {route_path}")
+        self.app.route(route_path, methods=methods, endpoint=endpoint_name)(
+            create_recipe_handler(endpoint)
+        )
+        logging.getLogger(__name__).info(
+            f"Registered recipe endpoint: {route_path}"
+        )
 
     async def execute_recipe(self, recipe_name, params):
         logger = logging.getLogger(__name__)
@@ -309,9 +320,13 @@ class RecipeManager:
                 # If the input is not a dictionary,
                 # use the value directly from the context
                 # Convert single parameter to a dictionary
-                param_name = next(iter(inspect.signature(skill.run).parameters))
-                if param_name == 'self':  # Skip self parameter
-                    param_name = next(iter(inspect.signature(skill.run).parameters.items()))[0]
+                param_name = next(
+                    iter(inspect.signature(skill.run).parameters)
+                )
+                if param_name == "self":  # Skip self parameter
+                    param_name = next(
+                        iter(inspect.signature(skill.run).parameters.items())
+                    )[0]
                 input_params = {param_name: context[step["input"]]}
 
             # Execute the skill's run method
@@ -319,9 +334,9 @@ class RecipeManager:
             logger.debug(f"Executing {step['skill']}.run()")
 
             # Add output type information to the step
-            return_hint = get_type_hints(skill.run).get('return')
+            return_hint = get_type_hints(skill.run).get("return")
             if return_hint:
-                step['output_type'] = str(return_hint)
+                step["output_type"] = str(return_hint)
 
             if inspect.iscoroutinefunction(skill.run):
                 # If run is async, await it
