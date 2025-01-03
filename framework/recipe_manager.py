@@ -198,13 +198,14 @@ class RecipeManager:
         methods = [recipe.get("method", "POST")]
 
         # Create a unique handler function for this recipe
-        async def create_recipe_handler(recipe_endpoint):
-            async def handler():
+        def create_recipe_handler(recipe_endpoint):
+            def handler():
                 if not request.is_json:
                     return jsonify({"error": "Request must be JSON"}), 400
 
                 try:
-                    result = await self.execute_recipe(
+                    from asgiref.sync import async_to_sync
+                    result = async_to_sync(self.execute_recipe)(
                         recipe_endpoint, request.get_json()
                     )
                     if isinstance(result, dict):
@@ -214,9 +215,11 @@ class RecipeManager:
                 except Exception as e:
                     return jsonify({"error": str(e)}), 500
 
+            # Set unique name for the handler
+            handler.__name__ = f"handle_recipe_{recipe_endpoint}"
             return handler
 
-        # Register the async route handler with unique endpoint name
+        # Register the route handler with unique endpoint name
         route_path = f"/recipes/{endpoint}"
         endpoint_name = f"recipe_{endpoint}"
         self.app.route(route_path, methods=methods, endpoint=endpoint_name)(
