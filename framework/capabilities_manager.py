@@ -27,7 +27,7 @@ class CapabilitiesManager:
         # Get skills information (excluding hidden ones)
         for skill_name, skill_instance in self.skills.items():
             # Skip hidden skills
-            if getattr(skill_instance.__class__, 'hidden', False):
+            if getattr(skill_instance, 'hidden', False):
                 continue
                     
             skill_info = {
