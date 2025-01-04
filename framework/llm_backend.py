@@ -29,7 +29,7 @@ class LiteLLMBackend(LLMBackend):
         # Initialize provider dictionary and logger
         self.provider = {}
         self.logger = logging.getLogger(__name__)
-        
+
         # Define environment variable mappings
         env_vars = {
             "model": ("AI_API_MODEL", True),  # (env_var_name, required)
@@ -89,8 +89,16 @@ class LiteLLMBackend(LLMBackend):
                 "messages": messages,
                 "temperature": 0.2,
                 "stream": stream,
-                **({"api_base": self.provider["api_base"]} if "api_base" in self.provider else {}),
-                **({"api_key": self.provider["api_key"]} if "api_key" in self.provider else {}),
+                **(
+                    {"api_base": self.provider["api_base"]}
+                    if "api_base" in self.provider
+                    else {}
+                ),
+                **(
+                    {"api_key": self.provider["api_key"]}
+                    if "api_key" in self.provider
+                    else {}
+                ),
                 "logger_fn": self.my_custom_logging_fn,
             }
 
