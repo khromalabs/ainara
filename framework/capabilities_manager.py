@@ -15,9 +15,10 @@ class CapabilitiesManager:
         self.app = flask_app
         self.skills = {}
         self.recipes = {}
-        self.load_recipes()
+        self.load_skills()
+        self.register_skills_endpoints()
+        self.register_recipes_endpoints()
         self.register_capabilities_endpoint()
-        self.register_skill_endpoints()
 
     def get_capabilities(self):
         """Get information about all available skills and recipes"""
@@ -68,6 +69,7 @@ class CapabilitiesManager:
         for endpoint, recipe in self.recipes.items():
             recipe_info = {
                 "endpoint": endpoint,
+                "description": recipe.get("description", ""),
                 "method": recipe.get("method", "POST"),
                 "required_skills": recipe.get("required_skills", []),
                 "parameters": recipe.get("parameters", []),
@@ -84,9 +86,10 @@ class CapabilitiesManager:
         def get_capabilities():
             return jsonify(self.get_capabilities())
 
-    def register_skill_endpoints(self):
+    def register_skills_endpoints(self):
         """Register direct endpoints for each skill"""
         for skill_name, skill_instance in self.skills.items():
+
             route_path = f"/skills/{self.camel_to_snake(skill_name)}"
 
             def create_skill_handler(skill_name, skill):
@@ -170,13 +173,13 @@ class CapabilitiesManager:
                     f"Failed to load skill from {skill_file}: {str(e)}"
                 )
 
-    def load_recipes(self):
+    def register_recipes_endpoints(self):
         """Load all available recipes from the recipes directory"""
-        recipe_dir = Path(__file__).parent.parent / "orakle" / "recipes"
+        recipes_dir = Path(__file__).parent.parent / "orakle" / "recipes"
         logger = logging.getLogger(__name__)
-        logger.debug(f"Loading recipes from: {recipe_dir}")
+        logger.debug(f"Loading recipes from: {recipes_dir}")
 
-        for recipe_file in recipe_dir.glob("*.yaml"):
+        for recipe_file in recipes_dir.glob("*.yaml"):
             try:
                 with open(recipe_file) as f:
                     recipe = yaml.safe_load(f)
@@ -232,7 +235,7 @@ class CapabilitiesManager:
             return handler
 
         # Register the route handler with unique endpoint name
-        route_path = f"/recipes/{endpoint}"
+        route_path = f"/recipes{endpoint}"
         endpoint_name = f"recipe_{endpoint}"
         self.app.route(route_path, methods=methods, endpoint=endpoint_name)(
             create_recipe_handler(endpoint)

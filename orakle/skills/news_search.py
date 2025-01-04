@@ -22,7 +22,7 @@ SUPPORTED_LANGUAGES = {
 
 
 class NewsSearch(Skill):
-    """Skill for searching news articles using NewsAPI"""
+    """Search news articles using NewsAPI"""
 
     def __init__(self):
         super().__init__()
@@ -39,14 +39,13 @@ class NewsSearch(Skill):
         language: str = "en",
         sort_by: str = "popularity",
         from_date: str = None,
-        to_date: str = None,
-        country: str = None,
+        to_date: str = None
     ):
+        """Search news articles using NewsAPI"""
         logging.debug(
             f"NewsSearch.run() called with parameters: query='{query}',"
             f" language='{language}' ({type(language)}), sort_by='{sort_by}',"
             f" from_date='{from_date}', to_date='{to_date}',"
-            f" country='{country}'"
         )
 
         # Validate query
@@ -117,8 +116,6 @@ class NewsSearch(Skill):
                 params["from_param"] = from_date
             if to_date:
                 params["to"] = to_date
-            if country:
-                params["country"] = country
 
             logging.debug(f"Calling NewsAPI with parameters: {params}")
             response = self.newsapi.get_everything(**params)

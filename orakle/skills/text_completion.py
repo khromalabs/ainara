@@ -2,7 +2,7 @@ from ainara.framework.llm_backend import LiteLLMBackend
 from ainara.framework.skill import Skill
 
 
-class LLMTextProcessor(Skill):
+class TextCompletion(Skill):
     """Skill for processing text using LLM"""
 
     def __init__(self):
