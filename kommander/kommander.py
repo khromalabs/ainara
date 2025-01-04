@@ -96,7 +96,9 @@ def get_orakle_capabilities():
 
                         # Add description if available
                         if recipe.get("description"):
-                            summary.append(f"Purpose: {recipe['description']}")
+                            summary.append(
+                                f"  Purpose: {recipe['description']}"
+                            )
 
                         # Add return type if available
                         if "flow" in recipe and recipe["flow"]:
@@ -199,13 +201,14 @@ by you in this chat, which will be called by this chat utility to the Orakle
 API server. Orakle is a powerful server that provides various capabilities
 through skills and recipes:
 
-1. Skills: Individual components for specific tasks like text processing,
-   HTML parsing, News searching, Web content downloading, etc
+1. Skills: Individual components for specific tasks.
 
 2. Recipes: Pre-defined workflows that combine multiple skills for complex
-   tasks. They accept input parameters and execute skills in sequence.
+   tasks. Recipes execute skills in sequence.
 
-To use these capabilities, you can send single commands wrapped in
+Both skills and recipes accept input parameters and return processed data.
+
+To use these capabilities, you must send single commands wrapped in
 ```oraklecmd``` blocks like this:
 - `SKILL("skill_name", {{ "parameter1": "value1"...)`:
   For direct skill execution
@@ -216,8 +219,8 @@ Don't suggest the user to use Orakle commands, as are meant to be used by you
 the assistant. Don't mention in the chat that you are executing an Orakle
 command, just send the oraklecmd block.
 
-Whenever a recipe seems to be fit to fullfil some required task give priority
-to use a recipe, againt use a skill or a combination of skills.
+Give priority to recipes if, AND ONLY IF, a user request completely fits the recipe purpose. DON'T GIVE PRIORITY TO RECIPES IN ANY OTHER CASE.
+
 
 {orakle_caps}
 """
