@@ -29,8 +29,8 @@ class LiteLLMBackend(LLMBackend):
         # Validate required environment variables
         required_vars = {
             "model": "AI_API_MODEL",
-            "api_base": "OPENAI_API_BASE",
-            "api_key": "OPENAI_API_KEY",
+            # "api_base": "OPENAI_API_BASE",
+            # "api_key": "OPENAI_API_KEY",
         }
 
         self.provider = {}
@@ -86,8 +86,8 @@ class LiteLLMBackend(LLMBackend):
                 "messages": messages,
                 "temperature": 0.2,
                 "stream": stream,
-                "api_base": self.provider["api_base"],
-                "api_key": self.provider["api_key"],
+                # "api_base": self.provider["api_base"],
+                # "api_key": self.provider["api_key"],
                 "logger_fn": self.my_custom_logging_fn,
             }
 
