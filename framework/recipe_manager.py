@@ -139,29 +139,65 @@ class RecipeManager:
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
     def load_skills(self):
+        """Load all available skills from the skills directory"""
+        skills_dir = Path(__file__).parent.parent / "orakle" / "skills"
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Loading skills from: {skills_dir}")
+        
+        # Get all Python files in the skills directory
+        for skill_file in skills_dir.glob("*.py"):
+            if skill_file.stem.startswith("__"):
+                continue
+                
+            try:
+                # Convert filename to class name (e.g., web_url_downloader -> WebUrlDownloader)
+                class_name = "".join(word.title() for word in skill_file.stem.split("_"))
+                
+                # Import the module and get the skill class
+                module = importlib.import_module(
+                    f".skills.{skill_file.stem}",
+                    "ainara.orakle"
+                )
+                skill_class = getattr(module, class_name)
+                
+                # Instantiate the skill and add it to the skills dictionary
+                self.skills[class_name] = skill_class()
+                logger.info(f"Loaded skill: {class_name}")
+                
+            except (ImportError, AttributeError) as e:
+                logger.error(f"Failed to load skill from {skill_file}: {str(e)}")
 
 
     def load_recipes(self):
+        """Load all available recipes from the recipes directory"""
         recipe_dir = Path(__file__).parent.parent / "orakle" / "recipes"
         logger = logging.getLogger(__name__)
         logger.debug(f"Loading recipes from: {recipe_dir}")
+        
         for recipe_file in recipe_dir.glob("*.yaml"):
-            with open(recipe_file) as f:
-                recipe = yaml.safe_load(f)
-                self.recipes[recipe["endpoint"]] = recipe
-
-            # Load required skills
-            for skill_name in recipe["required_skills"]:
-                if skill_name not in self.skills:
-                    module = importlib.import_module(
-                        f".skills.{self.camel_to_snake(skill_name)}",
-                        "ainara.orakle",
+            try:
+                with open(recipe_file) as f:
+                    recipe = yaml.safe_load(f)
+                    
+                # Validate that all required skills are available
+                missing_skills = [
+                    skill for skill in recipe.get("required_skills", [])
+                    if skill not in self.skills
+                ]
+                
+                if missing_skills:
+                    logger.error(
+                        f"Recipe {recipe_file.name} requires unavailable skills: "
+                        f"{', '.join(missing_skills)}"
                     )
-                    skill_class = getattr(module, skill_name)
-                    self.skills[skill_name] = skill_class()
-
-            # Register route for this recipe
-            self.register_route(recipe)
+                    continue
+                    
+                self.recipes[recipe["endpoint"]] = recipe
+                self.register_route(recipe)
+                logger.info(f"Loaded recipe: {recipe['endpoint']}")
+                
+            except Exception as e:
+                logger.error(f"Failed to load recipe from {recipe_file}: {str(e)}")
 
     # def enforce_utf8_encoding(self, text):
     #     # detected = chardet.detect(text.encode())
