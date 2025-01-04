@@ -26,26 +26,29 @@ class LiteLLMBackend(LLMBackend):
         self.completion = completion
         # self.completion_cost = completion_cost
 
-        # Validate required environment variables
-        required_vars = {
-            "model": "AI_API_MODEL",
-            # "api_base": "OPENAI_API_BASE",
-            # "api_key": "OPENAI_API_KEY",
-        }
-
+        # Initialize provider dictionary and logger
         self.provider = {}
         self.logger = logging.getLogger(__name__)
+        
+        # Define environment variable mappings
+        env_vars = {
+            "model": ("AI_API_MODEL", True),  # (env_var_name, required)
+            "api_base": ("OPENAI_API_BASE", False),
+            "api_key": ("OPENAI_API_KEY", False),
+        }
+
         self.logger.debug("Checking environment variables:")
-        for key, env_var in required_vars.items():
+        for key, (env_var, required) in env_vars.items():
             value = os.environ.get(env_var)
             self.logger.debug(
                 f"{env_var}: {'[SET]' if value else '[MISSING]'}"
             )
-            if not value:
+            if required and not value:
                 raise ValueError(
                     f"Missing required environment variable: {env_var}"
                 )
-            self.provider[key] = value
+            if value:  # Only add to provider if value exists
+                self.provider[key] = value
 
     def my_custom_logging_fn(self, model_call_dict):
         self.logger.debug(f"LiteLLM: {model_call_dict}")
@@ -86,8 +89,8 @@ class LiteLLMBackend(LLMBackend):
                 "messages": messages,
                 "temperature": 0.2,
                 "stream": stream,
-                # "api_base": self.provider["api_base"],
-                # "api_key": self.provider["api_key"],
+                **({"api_base": self.provider["api_base"]} if "api_base" in self.provider else {}),
+                **({"api_key": self.provider["api_key"]} if "api_key" in self.provider else {}),
                 "logger_fn": self.my_custom_logging_fn,
             }
 
