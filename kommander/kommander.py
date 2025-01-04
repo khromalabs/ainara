@@ -54,7 +54,7 @@ llm = LiteLLMBackend()
 
 def get_orakle_capabilities():
     """Query Orakle servers for capabilities, return a condensed summary"""
-    print("Retrieving Orakle server capabilities...")
+    print("Retrieving Orakle server capabilities...", end="")
     for server in ORAKLE_SERVERS:
         try:
             response = requests.get(f"{server}/capabilities", timeout=2)
@@ -175,6 +175,7 @@ def get_orakle_capabilities():
                                             f"    {param_name}:{desc}"
                                         )
 
+                print("done")
                 return "\n".join(summary)
         except requests.RequestException:
             continue
@@ -197,7 +198,7 @@ admit it frankly.
 Today's date in YYYY-MM-DD format is: {datetime.now().strftime('%Y-%m-%d')}
 
 To fullfil the user requests, there are especial commands available to be used
-by you in this chat, which will be called by this chat utility to the Orakle
+by you in this chat, which will be send by this chat utility to the Orakle
 API server. Orakle is a powerful server that provides various capabilities
 through skills and recipes:
 
@@ -208,8 +209,8 @@ through skills and recipes:
 
 Both skills and recipes accept input parameters and return processed data.
 
-To use these capabilities, you must send single commands wrapped in
-```oraklecmd``` blocks like this:
+To use these capabilities, you must send single commands wrapped in tripe
+backticks ```oraklecmd``` blocks like this:
 - `SKILL("skill_name", {{ "parameter1": "value1"...)`:
   For direct skill execution
 - `RECIPE("recipe_name", {{ "parameter1": "value1"...)`:
@@ -219,8 +220,11 @@ Don't suggest the user to use Orakle commands, as are meant to be used by you
 the assistant. Don't mention in the chat that you are executing an Orakle
 command, just send the oraklecmd block.
 
-Give priority to recipes if, AND ONLY IF, a user request completely fits the recipe purpose. DON'T GIVE PRIORITY TO RECIPES IN ANY OTHER CASE.
+Give priority to recipes if, and only if, a user request completely fits the
+recipe purpose. Don't give priority to recipes in any other case.
 
+Orakle commands are processed one at a time, don't send more than one Orakle
+command per answer.
 
 {orakle_caps}
 """
@@ -405,11 +409,11 @@ def process_orakle_commands(text):
         # Remove the oraklecmd block completely
         return f"{formatted_cmd}\n\nResult:\n```json\n{result}\n```"
 
-    # First remove any existing oraklecmd blocks and replace with formatted
-    # version
-    pattern = r"```oraklecmd\n(.*?)\n```"
-    processed_text = re.sub(pattern, replace_command, text, flags=re.DOTALL)
-    return processed_text, results
+    # # First remove any existing oraklecmd blocks and replace with formatted
+    # # version
+    # pattern = r"```oraklecmd\n(.*?)\n```"
+    # processed_text = re.sub(pattern, replace_command, text, flags=re.DOTALL)
+    # return processed_text, results
 
 
 def chat_completion(question, stream=True) -> str:
@@ -439,10 +443,12 @@ def chat_completion(question, stream=True) -> str:
             interpretation_prompt = (
                 "Based on the Orakle command results:\n"
                 + "\n".join(formatted_results)
-                + "\nPlease provide a response incorporating this information."
+                + "\nIf the past Orakle command was a recipe, please reproduce"
+                + "\nthis answer in the chat verbatim. If past Orakle command"
+                + "\nwas a skill, please provide a response incorporating this"
+                + "\ninformation without reproducing this information."
             )
             print()
-            # print(f"\n----\nDEBUG: {interpretation_prompt}")
 
             final_answer = llm.process_text(
                 text=interpretation_prompt,

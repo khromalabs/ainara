@@ -24,12 +24,17 @@ class CapabilitiesManager:
         """Get information about all available skills and recipes"""
         capabilities = {"skills": {}, "recipes": {}}
 
+        logger = logging.getLogger(__name__)
+
         # Get skills information (excluding hidden ones)
         for skill_name, skill_instance in self.skills.items():
             # Skip hidden skills
-            if getattr(skill_instance, 'hidden', False):
+            if getattr(skill_instance, "hiddenCapability", False):
+                logger.info(
+                    f"Skipping hidden skill in capabilities: {skill_name}"
+                )
                 continue
-                    
+
             skill_info = {
                 "description": skill_instance.__class__.__doc__ or "",
                 "methods": {},
@@ -167,11 +172,6 @@ class CapabilitiesManager:
                     f".skills.{skill_file.stem}", "ainara.orakle"
                 )
                 skill_class = getattr(module, class_name)
-
-                # Skip hidden skills
-                if getattr(skill_class, 'hidden', False):
-                    logger.info(f"Skipping hidden skill: {class_name}")
-                    continue
 
                 # Instantiate the skill and add it to the skills dictionary
                 self.skills[class_name] = skill_class()

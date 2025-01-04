@@ -39,7 +39,7 @@ class NewsSearch(Skill):
         language: str = "en",
         sort_by: str = "popularity",
         from_date: str = None,
-        to_date: str = None
+        to_date: str = None,
     ):
         """Search news articles using NewsAPI"""
         logging.debug(
@@ -109,7 +109,11 @@ class NewsSearch(Skill):
                 f" sort_by='{sort_by}'"
             )
             # Build parameters dict
-            params = {"q": query, "language": language, "sort_by": sort_by}
+            params = {
+                "qintitle": query,
+                "language": language,
+                "sort_by": sort_by,
+            }
 
             # Add optional parameters if provided
             if from_date:

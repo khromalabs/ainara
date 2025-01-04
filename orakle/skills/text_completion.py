@@ -4,7 +4,7 @@ from ainara.framework.skill import Skill
 
 class TextCompletion(Skill):
     """Skill for processing text using LLM"""
-    hidden = True  # Hide this skill from capabilities listing
+    hiddenCapability = True  # Hide this skill from capabilities listing
 
     def __init__(self):
         self.llm = LiteLLMBackend()
