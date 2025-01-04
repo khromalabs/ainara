@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_cors import CORS
 
-from ainara.framework.recipe_manager import RecipeManager
+from ainara.framework.capabilities_manager import CapabilitiesManager
 
 
 def setup_logging(log_dir=None, log_level="INFO"):
@@ -63,8 +63,9 @@ CORS(app)
 
 def create_app():
     """Create and configure the Flask application"""
-    recipe_manager = RecipeManager(app)
-    app.recipe_manager = recipe_manager  # Store reference to recipe manager
+    capabilities_manager = CapabilitiesManager(app)
+    # Store reference to capabilities manager
+    app.capabilities_manager = capabilities_manager
     return app
 
 
