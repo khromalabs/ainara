@@ -138,6 +138,9 @@ class RecipeManager:
         name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
+    def load_skills(self):
+
+
     def load_recipes(self):
         recipe_dir = Path(__file__).parent.parent / "orakle" / "recipes"
         logger = logging.getLogger(__name__)
