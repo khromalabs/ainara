@@ -24,8 +24,12 @@ class CapabilitiesManager:
         """Get information about all available skills and recipes"""
         capabilities = {"skills": {}, "recipes": {}}
 
-        # Get skills information
+        # Get skills information (excluding hidden ones)
         for skill_name, skill_instance in self.skills.items():
+            # Skip hidden skills
+            if getattr(skill_instance.__class__, 'hidden', False):
+                continue
+                    
             skill_info = {
                 "description": skill_instance.__class__.__doc__ or "",
                 "methods": {},
