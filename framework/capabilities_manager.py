@@ -168,6 +168,11 @@ class CapabilitiesManager:
                 )
                 skill_class = getattr(module, class_name)
 
+                # Skip hidden skills
+                if getattr(skill_class, 'hidden', False):
+                    logger.info(f"Skipping hidden skill: {class_name}")
+                    continue
+
                 # Instantiate the skill and add it to the skills dictionary
                 self.skills[class_name] = skill_class()
                 logger.info(f"Loaded skill: {class_name}")
