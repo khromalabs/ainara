@@ -536,7 +536,7 @@ def main():
     )
     if log_dir or log_level != "INFO":
         # Only reconfigure logging if custom options are provided
-        logging_manager.setup(log_dir=log_dir, log_level=log_level, "kommander")
+        logging_manager.setup(log_dir=log_dir, log_level=log_level, log_filter="kommander")
     logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
     if model_override:
         PROVIDER = {"model": model_override, "api_base": None, "api_key": None}
