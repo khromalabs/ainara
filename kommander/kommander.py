@@ -26,6 +26,8 @@ warnings.filterwarnings(
     "ignore", message="Valid config keys have changed in V2:*"
 )
 
+logger = logging.getLogger()
+
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/kommander_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 CHAT = []
@@ -49,13 +51,12 @@ PROVIDERS = [
     },
 ]
 
-logger = logging.getLogger()
 llm = LiteLLMBackend()
 
 
 def get_orakle_capabilities():
     """Query Orakle servers for capabilities, return a condensed summary"""
-    print("Retrieving Orakle server capabilities...", end="")
+    logger.info("Retrieving Orakle server capabilities...", end="")
     for server in ORAKLE_SERVERS:
         try:
             response = requests.get(f"{server}/capabilities", timeout=2)
@@ -230,8 +231,6 @@ command per answer.
 {orakle_caps}
 """
 
-logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
-
 
 def find_working_provider():
     for provider in PROVIDERS:
@@ -255,13 +254,13 @@ def parse_arguments():
     usage = (
         f"Usage: {os.path.basename(__file__)} [-l|--light] [-m|--model"
         " LLM_MODEL] [-s|--strip] [--log-dir DIR] [--log-level"
-        " LEVEL]\n\n-l|--light    Use colors for light"
-        " themes\n-m|--model    Model as specified in the LLMLite"
-        " definitions\n-s|--strip    Strip everything except code"
-        " blocks in non-interactive mode\n--log-dir    Directory for log"
-        " files\n--log-level   Logging level (DEBUG,INFO,WARNING,ERROR,CRITICAL)"
-        "\n\nFirst message can be send also with a stdin pipe"
-        " which will be processed in non-interactive mode\n"
+        " LEVEL]\n\n-l|--light    Use colors for light themes\n-m|--model   "
+        " Model as specified in the LLMLite definitions\n-s|--strip    Strip"
+        " everything except code blocks in non-interactive mode\n--log-dir   "
+        " Directory for log files\n--log-level   Logging level"
+        " (DEBUG,INFO,WARNING,ERROR,CRITICAL)\n\nFirst message can be send"
+        " also with a stdin pipe which will be processed in non-interactive"
+        " mode\n"
     )
     try:
         opts, _ = getopt.getopt(
@@ -531,8 +530,11 @@ def extract_code_blocks(text):
 
 def main():
     global PROVIDER
-    model_override, light_mode, strip_mode, log_dir, log_level = parse_arguments()
+    model_override, light_mode, strip_mode, log_dir, log_level = (
+        parse_arguments()
+    )
     setup_logging(log_dir, log_level)
+    logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
     if model_override:
         PROVIDER = {"model": model_override, "api_base": None, "api_key": None}
     else:
