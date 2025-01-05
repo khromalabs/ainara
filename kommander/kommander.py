@@ -397,23 +397,25 @@ def format_orakle_command(command: str) -> str:
 
 
 def process_orakle_commands(text):
-    """Process any oraklecmd blocks in the text and return results"""
+    """Process any oraklecmd blocks in the text and return results and command types"""
     results = []
+    command_types = []
 
     def replace_command(match):
         command = match.group(1).strip()
+        # Extract command type (SKILL or RECIPE)
+        cmd_type_match = re.match(r'(SKILL|RECIPE)', command)
+        if cmd_type_match:
+            command_types.append(cmd_type_match.group(1))
+        
         result = execute_orakle_command(command)
-        # print(f"\n----\nDEBUG: result: {result}")
         results.append(result)
         formatted_cmd = command  # format_orakle_command(command)
-        # Remove the oraklecmd block completely
         return f"{formatted_cmd}\n\nResult:\n```json\n{result}\n```"
 
-    # First remove any existing oraklecmd blocks and replace with formatted
-    # version
     pattern = r"```oraklecmd\n(.*?)\n```"
     processed_text = re.sub(pattern, replace_command, text, flags=re.DOTALL)
-    return processed_text, results
+    return processed_text, results, command_types
 
 
 def chat_completion(question, stream=True) -> str:
@@ -425,7 +427,7 @@ def chat_completion(question, stream=True) -> str:
     )
     if answer:
         # Process any Orakle commands in the response
-        processed_answer, results = process_orakle_commands(answer)
+        processed_answer, results, command_types = process_orakle_commands(answer)
 
         # If there are command results, ask LLM to interpret them
         if results:
@@ -440,13 +442,26 @@ def chat_completion(question, stream=True) -> str:
                     # If not valid JSON, treat as plain text
                     formatted_results.append(f"```text\n{r}\n```")
 
+            # Determine instruction based on command type
+            if command_types and command_types[0] == "RECIPE":
+                instruction = (
+                    "This was a RECIPE command. Please reproduce the command result "
+                    "verbatim in your response, maintaining all formatting and structure. "
+                    "Add a brief introduction explaining what the recipe did."
+                )
+            else:
+                instruction = (
+                    "This was a SKILL command. Please analyze the result and provide "
+                    "a natural, conversational response that incorporates the key "
+                    "information without directly reproducing the raw data. Focus on "
+                    "explaining what the skill did and what we learned from it."
+                )
+
             interpretation_prompt = (
                 "Based on the Orakle command results:\n"
                 + "\n".join(formatted_results)
-                + "\nIf the past Orakle command was a recipe, please reproduce"
-                + "\nthis answer in the chat verbatim. If past Orakle command"
-                + "\nwas a skill, please provide a response incorporating this"
-                + "\ninformation without reproducing this information."
+                + "\n\n"
+                + instruction
             )
             print()
 
