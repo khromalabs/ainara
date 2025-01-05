@@ -16,12 +16,14 @@ from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
 from ainara.framework.llm_backend import LiteLLMBackend
-from ainara.framework.logging_setup import logger, logging_manager
+from ainara.framework.logging_setup import logging_manager
 
 init()
 
 # Set up logging first, before any logger calls
 logging_manager.setup(log_dir="/tmp", log_level="INFO", log_filter="kommander")
+# Get logger after setup
+logger = logging_manager.logger
 
 # Suppress pydantic warning about config keys
 warnings.filterwarnings(
