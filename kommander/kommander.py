@@ -17,6 +17,7 @@ from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
 from ainara.framework.llm_backend import LiteLLMBackend
+from ainara.framework.logging_setup import setup_logging
 
 init()
 
@@ -249,18 +250,24 @@ def parse_arguments():
     model = os.environ.get("AI_API_MODEL")
     light_mode = False
     strip_mode = False
+    log_dir = None
+    log_level = "INFO"
     usage = (
         f"Usage: {os.path.basename(__file__)} [-l|--light] [-m|--model"
-        " LLM_MODEL] [-s|--strip]\n\n-l|--light    Use colors for light"
+        " LLM_MODEL] [-s|--strip] [--log-dir DIR] [--log-level"
+        " LEVEL]\n\n-l|--light    Use colors for light"
         " themes\n-m|--model    Model as specified in the LLMLite"
         " definitions\n-s|--strip    Strip everything except code"
-        " blocks in non-interactive mode"
+        " blocks in non-interactive mode\n--log-dir    Directory for log"
+        " files\n--log-level   Logging level (DEBUG,INFO,WARNING,ERROR,CRITICAL)"
         "\n\nFirst message can be send also with a stdin pipe"
         " which will be processed in non-interactive mode\n"
     )
     try:
         opts, _ = getopt.getopt(
-            sys.argv[1:], "hlms", ["help", "light", "model=", "strip"]
+            sys.argv[1:],
+            "hlms",
+            ["help", "light", "model=", "strip", "log-dir=", "log-level="],
         )
         for opt, arg in opts:
             if opt in ("-h", "--help"):
@@ -273,10 +280,14 @@ def parse_arguments():
                     model = arg
             if opt in ("-s", "--strip"):
                 strip_mode = True
+            if opt == "--log-dir":
+                log_dir = arg
+            if opt == "--log-level":
+                log_level = arg.upper()
     except getopt.GetoptError as err:
         print(err)
         sys.exit(2)
-    return model, light_mode, strip_mode
+    return model, light_mode, strip_mode, log_dir, log_level
 
 
 def trim(s):
@@ -520,7 +531,8 @@ def extract_code_blocks(text):
 
 def main():
     global PROVIDER
-    model_override, light_mode, strip_mode = parse_arguments()
+    model_override, light_mode, strip_mode, log_dir, log_level = parse_arguments()
+    setup_logging(log_dir, log_level)
     if model_override:
         PROVIDER = {"model": model_override, "api_base": None, "api_key": None}
     else:
