@@ -229,7 +229,7 @@ command per answer.
 {orakle_caps}
 """
 
-print(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
+logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
 
 
 def find_working_provider():
@@ -397,17 +397,20 @@ def format_orakle_command(command: str) -> str:
 
 
 def process_orakle_commands(text):
-    """Process any oraklecmd blocks in the text and return results and command types"""
+    """
+    Process any oraklecmd blocks in the text and return results and command
+    types
+    """
     results = []
     command_types = []
 
     def replace_command(match):
         command = match.group(1).strip()
         # Extract command type (SKILL or RECIPE)
-        cmd_type_match = re.match(r'(SKILL|RECIPE)', command)
+        cmd_type_match = re.match(r"(SKILL|RECIPE)", command)
         if cmd_type_match:
             command_types.append(cmd_type_match.group(1))
-        
+
         result = execute_orakle_command(command)
         results.append(result)
         formatted_cmd = command  # format_orakle_command(command)
@@ -427,7 +430,9 @@ def chat_completion(question, stream=True) -> str:
     )
     if answer:
         # Process any Orakle commands in the response
-        processed_answer, results, command_types = process_orakle_commands(answer)
+        processed_answer, results, command_types = process_orakle_commands(
+            answer
+        )
 
         # If there are command results, ask LLM to interpret them
         if results:
@@ -445,16 +450,15 @@ def chat_completion(question, stream=True) -> str:
             # Determine instruction based on command type
             if command_types and command_types[0] == "RECIPE":
                 instruction = (
-                    "This was a RECIPE command. Please reproduce the command result "
-                    "verbatim in your response, maintaining all formatting and structure. "
-                    "Add a brief introduction explaining what the recipe did."
+                    "This was a RECIPE command. Please reproduce the command"
+                    " result verbatim in your response, maintaining all"
+                    " formatting and structure. Add a brief introduction"
+                    " explaining what the recipe did."
                 )
             else:
                 instruction = (
-                    "This was a SKILL command. Please analyze the result and provide "
-                    "a natural, conversational response that incorporates the key "
-                    "information without directly reproducing the raw data. Focus on "
-                    "explaining what the skill did and what we learned from it."
+                    "This was a SKILL command. Don't reproduce the JSON "
+                    "data received, if any, in your next answer"
                 )
 
             interpretation_prompt = (
@@ -473,8 +477,9 @@ def chat_completion(question, stream=True) -> str:
             )
 
             if final_answer:
-                separator = "\n\nResult:\n" + "=" * 40 + "\n"
-                processed_answer += f"{separator}{final_answer}\n" + "=" * 40
+                processed_answer = final_answer
+                # separator = "\n\nResult:\n" + "=" * 40 + "\n"
+                # processed_answer += f"{separator}{final_answer}\n" + "=" * 40
 
         backup(processed_answer)
 
