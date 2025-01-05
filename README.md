@@ -17,7 +17,7 @@ An important aspect to highlight in this video: I'm not using any commercial LLM
 ![Demostration](assets/ainara_kommander_orakle_demo.gif)
 
 
-[![Watch the video](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
+[![Watch the video](https://img.youtube.com/vi/prahMiHDaYM/0.jpg)](https://www.youtube.com/watch?v=prahMiHDaYM)
 
 
 ## Components
