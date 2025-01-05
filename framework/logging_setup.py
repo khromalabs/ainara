@@ -15,10 +15,10 @@ class LoggingManager:
 
     def __init__(self):
         if self._logger is None:
-            self._logger = logging.getLogger("orakle")
+            self._logger = logging.getLogger()
             self._logger.setLevel(logging.INFO)
 
-    def setup(self, log_dir=None, log_level="INFO", log_filter=""):
+    def setup(self, log_dir=None, log_level="INFO", log_filter=None):
         """Configure logging to console and optionally to rotating file"""
         logger = self._logger
         log_level = getattr(logging, log_level.upper())
