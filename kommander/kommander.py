@@ -180,7 +180,7 @@ def get_orakle_capabilities():
                                             f"    {param_name}:{desc}"
                                         )
 
-                print("done")
+                logger.info("...done")
                 return "\n".join(summary)
         except requests.RequestException:
             continue
