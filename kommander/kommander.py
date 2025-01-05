@@ -21,7 +21,7 @@ from ainara.framework.logging_setup import logger, logging_manager
 init()
 
 # Set up logging first, before any logger calls
-logging_manager.setup(log_dir="kommander")
+logging_manager.setup(log_dir="/tmp", log_level="INFO", log_filter="kommander")
 
 # Suppress pydantic warning about config keys
 warnings.filterwarnings(
