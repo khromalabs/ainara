@@ -1,11 +1,10 @@
 import argparse
-import logging
 
 from flask import Flask
 from flask_cors import CORS
 
 from ainara.framework.capabilities_manager import CapabilitiesManager
-from ainara.framework.logging_setup import setup_logging
+from ainara.framework.logging_setup import logger, logging_manager
 
 
 def parse_args():
@@ -40,9 +39,7 @@ def create_app():
 
 if __name__ == "__main__":
     args = parse_args()
-    setup_logging(args.log_dir, args.log_level)
-
-    logger = logging.getLogger(__name__)
+    logging_manager.setup(log_dir=args.log_dir, log_level=args.log_level)
     logger.info(f"Starting Orakle development server on port {args.port}")
 
     app = create_app()
