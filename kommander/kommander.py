@@ -21,6 +21,9 @@ from ainara.framework.logging_setup import setup_logging
 
 init()
 
+# Set up logging first, before any logger calls
+setup_logging()
+
 # Suppress pydantic warning about config keys
 warnings.filterwarnings(
     "ignore", message="Valid config keys have changed in V2:*"
@@ -531,10 +534,10 @@ def extract_code_blocks(text):
 
 def main():
     global PROVIDER
-    model_override, light_mode, strip_mode, log_dir, log_level = (
-        parse_arguments()
-    )
-    setup_logging(log_dir, log_level)
+    model_override, light_mode, strip_mode, log_dir, log_level = parse_arguments()
+    if log_dir or log_level != "INFO":
+        # Only reconfigure logging if custom options are provided
+        setup_logging(log_dir, log_level)
     logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
     if model_override:
         PROVIDER = {"model": model_override, "api_base": None, "api_key": None}
