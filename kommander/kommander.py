@@ -59,7 +59,6 @@ llm = LiteLLMBackend()
 
 def get_orakle_capabilities():
     """Query Orakle servers for capabilities, return a condensed summary"""
-    # logger.info("Retrieving Orakle server capabilities...", end="")
     logger.info("Retrieving Orakle server capabilities...")
     for server in ORAKLE_SERVERS:
         try:
@@ -534,7 +533,9 @@ def extract_code_blocks(text):
 
 def main():
     global PROVIDER
-    model_override, light_mode, strip_mode, log_dir, log_level = parse_arguments()
+    model_override, light_mode, strip_mode, log_dir, log_level = (
+        parse_arguments()
+    )
     if log_dir or log_level != "INFO":
         # Only reconfigure logging if custom options are provided
         setup_logging(log_dir, log_level)
