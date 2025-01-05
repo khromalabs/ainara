@@ -184,6 +184,9 @@ def get_orakle_capabilities():
                 return "\n".join(summary)
         except requests.RequestException:
             continue
+    logger.warning(
+        "No Orakle capabilities found, is the Orakle server running?"
+    )
     return (
         "WARNING: No Orakle capabilities found, is the Orakle server running?"
     )
@@ -470,8 +473,11 @@ def chat_completion(question, stream=True) -> str:
                 )
             else:
                 instruction = (
-                    "This was a SKILL command. Don't reproduce the JSON "
-                    "data received, if any, in your next answer"
+                    "This was a SKILL command. Don't reproduce the command "
+                    "result verbatim in your next answer, instead write your "
+                    "interpretation about the result in the context of the "
+                    "conversation. Only reproduce the command result verbatim "
+                    "if the user explicitly asks that"
                 )
 
             interpretation_prompt = (
@@ -490,9 +496,9 @@ def chat_completion(question, stream=True) -> str:
             )
 
             if final_answer:
-                processed_answer = final_answer
-                # separator = "\n\nResult:\n" + "=" * 40 + "\n"
-                # processed_answer += f"{separator}{final_answer}\n" + "=" * 40
+                # processed_answer = final_answer
+                separator = "\n\nResult:\n" + "=" * 40 + "\n"
+                processed_answer += f"{separator}{final_answer}\n" + "=" * 40
 
         backup(processed_answer)
 
