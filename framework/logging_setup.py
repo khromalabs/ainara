@@ -14,12 +14,12 @@ class LoggingManager:
         return cls._instance
 
     def __init__(self):
-        if self._logger is None:
-            self._logger = logging.getLogger()
-            self._logger.setLevel(logging.INFO)
+        self._logger = None
 
     def setup(self, log_dir=None, log_level="INFO", log_filter=None):
         """Configure logging to console and optionally to rotating file"""
+        # Initialize logger with optional filter
+        self._logger = logging.getLogger(log_filter if log_filter else "")
         logger = self._logger
         log_level = getattr(logging, log_level.upper())
         logger.setLevel(log_level)
