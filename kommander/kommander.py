@@ -22,14 +22,13 @@ from ainara.framework.logging_setup import setup_logging
 init()
 
 # Set up logging first, before any logger calls
-setup_logging()
+setup_logging("kommander")
 
 # Suppress pydantic warning about config keys
 warnings.filterwarnings(
     "ignore", message="Valid config keys have changed in V2:*"
 )
 
-logger = logging.getLogger()
 
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/kommander_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
