@@ -56,7 +56,8 @@ llm = LiteLLMBackend()
 
 def get_orakle_capabilities():
     """Query Orakle servers for capabilities, return a condensed summary"""
-    logger.info("Retrieving Orakle server capabilities...", end="")
+    # logger.info("Retrieving Orakle server capabilities...", end="")
+    logger.info("Retrieving Orakle server capabilities...")
     for server in ORAKLE_SERVERS:
         try:
             response = requests.get(f"{server}/capabilities", timeout=2)
