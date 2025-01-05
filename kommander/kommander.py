@@ -2,7 +2,6 @@
 
 import getopt
 import json
-import logging
 import os
 import re
 import signal
@@ -17,12 +16,12 @@ from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
 from ainara.framework.llm_backend import LiteLLMBackend
-from ainara.framework.logging_setup import setup_logging
+from ainara.framework.logging_setup import logger, logging_manager
 
 init()
 
 # Set up logging first, before any logger calls
-setup_logging("kommander")
+logging_manager.setup(log_dir="kommander")
 
 # Suppress pydantic warning about config keys
 warnings.filterwarnings(
@@ -537,7 +536,7 @@ def main():
     )
     if log_dir or log_level != "INFO":
         # Only reconfigure logging if custom options are provided
-        setup_logging(log_dir, log_level)
+        logging_manager.setup(log_dir=log_dir, log_level=log_level)
     logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
     if model_override:
         PROVIDER = {"model": model_override, "api_base": None, "api_key": None}
