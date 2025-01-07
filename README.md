@@ -1,5 +1,7 @@
 # Ainara AI Assistant Framework
 
+![Ainara logo](./assets/ainara_logo.png)
+
 Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills and recipes. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
 
 ## Demonstration video
