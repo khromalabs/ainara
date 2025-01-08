@@ -1,7 +1,7 @@
 # Ainara AI Assistant Framework
 
 ![Ainara logo](./assets/ainara_logo.png)
-<center><small>**Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". Associated with the Spring, and the beginning of life._</small></center>
+**Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 <br><br>
 
 Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills and recipes. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
