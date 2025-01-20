@@ -120,16 +120,23 @@ class CapabilitiesManager:
 
             def create_skill_handler(skill_name, skill):
                 def handler():
-                    if not request.is_json:
+                    if not request.is_json and not request.data:
                         return jsonify({"error": "Request must be JSON"}), 400
 
                     try:
                         from asgiref.sync import async_to_sync
-
+                        
+                        # Parse the request data
+                        data = request.get_json(force=True)
+                        # If data is a string starting with SKILL, parse it
+                        if isinstance(data, str) and data.startswith("SKILL("):
+                            import re
+                            match = re.match(r'SKILL\("([^"]+)",\s*({[^}]+})\)', data)
+                            if match:
+                                data = eval(match.group(2))  # Safely evaluate the JSON part
+                            
                         if inspect.iscoroutinefunction(skill.run):
-                            result = async_to_sync(skill.run)(
-                                **request.get_json()
-                            )
+                            result = async_to_sync(skill.run)(**data)
                         else:
                             result = skill.run(**request.get_json())
 
@@ -172,21 +179,30 @@ class CapabilitiesManager:
         logger = logging.getLogger(__name__)
         logger.debug(f"Loading skills from: {skills_dir}")
 
-        # Get all Python files in the skills directory
-        for skill_file in skills_dir.glob("*.py"):
-            if skill_file.stem.startswith("__"):
+        # Get all Python files in the skills directory and subdirectories
+        for skill_file in skills_dir.rglob("*.py"):
+            # Skip __init__ files and base files
+            if skill_file.stem.startswith("__") or skill_file.stem == "base":
                 continue
 
             try:
-                # Convert filename to class name
-                # (e.g., web_url_downloader -> WebUrlDownloader)
-                class_name = "".join(
-                    word.title() for word in skill_file.stem.split("_")
-                )
+                # Get relative path from skills directory
+                rel_path = skill_file.relative_to(skills_dir)
+                # Convert path to module path
+                # (e.g., html/url_downloader -> html.url_downloader)
+                module_path = str(rel_path.with_suffix("")).replace("/", ".")
+
+                # Get the parent directory name and file name
+                dir_name = skill_file.parent.name
+                file_name = skill_file.stem
+                
+                # Convert directory and file names to proper case
+                # (e.g., html/distill -> HtmlDistill)
+                class_name = dir_name.title() + file_name.title()
 
                 # Import the module and get the skill class
                 module = importlib.import_module(
-                    f".skills.{skill_file.stem}", "ainara.orakle"
+                    f".skills.{module_path}", "ainara.orakle"
                 )
                 skill_class = getattr(module, class_name)
 

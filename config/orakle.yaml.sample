@@ -1,0 +1,28 @@
+# Orakle Configuration File Template
+#
+# To use this configuration:
+# 1. Copy this file to ~/.config/orakle/orakle.yaml
+#    mkdir -p ~/.config/orakle && cp config/orakle.yaml.sample ~/.config/orakle/orakle.yaml
+# 2. Edit the copied file with your actual API keys
+#
+# The application will look for configuration in these locations (in order):
+# - $XDG_CONFIG_HOME/orakle/orakle.yaml (defaults to ~/.config/orakle/orakle.yaml)
+# - /etc/orakle/orakle.yaml
+# - ./config/orakle.yaml (fallback to repo config)
+
+apis:
+  # News API configuration
+  # Sign up at https://newsapi.org to get your API key
+  news:
+    api_key: "<YOUR-NEWS-API-KEY>"
+    endpoint: "https://newsapi.org/v2"
+
+  # Twitter/X API configuration
+  twitter:
+    api_key: "<YOUR-TWITTER-API-KEY>"
+
+  # Reddit API configuration
+  # Create an app at https://www.reddit.com/prefs/apps
+  reddit:
+    client_id: "<YOUR-REDDIT-CLIENT-ID>"
+    client_secret: "<YOUR-REDDIT-CLIENT-SECRET>"

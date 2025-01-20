@@ -4,9 +4,9 @@ endpoint: /interpret_url
 method: POST
 
 required_skills:
-  - WebUrlDownloader
-  - HtmlTextParser
-  - TextCompletion
+  - HtmlDownload
+  - HtmlDistill
+  - InferenceLlm
 
 parameters:
   - name: url
@@ -19,14 +19,14 @@ parameters:
     aliases: ["profile"]
 
 flow:
-  - skill: WebUrlDownloader
+  - skill: HtmlDownloader
     input: url
     output: web_content
-  - skill: HtmlTextParser
+  - skill: HtmlDistill
     input:
       text: $web_content
     output: parsed_text
-  - skill: TextCompletion
+  - skill: InferenceLlm
     input:
       prompt: "Please adapt the content and language of the following text according to these three instructions:
         1. The language and characteristics of the adapted text must be based in this user profile description: `{$user_profile}`.
