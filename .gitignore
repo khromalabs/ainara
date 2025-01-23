@@ -1,0 +1,5 @@
+config/orakle.yaml
+**/nltk_data/
+**/__pycache__/
+docs/paper/*
+docs/paper/ainara.tex

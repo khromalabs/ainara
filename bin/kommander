@@ -1,9 +1,42 @@
-#!/bin/sh
-#!/bin/sh
+#!/bin/bash
 cd $HOME/lab/src/ainara/
 source venv/bin/activate
+
+# # Ensure audio device is available
+# if ! command -v aplay &> /dev/null; then
+#     echo "Error: aplay not found. Please install alsa-utils"
+#     exit 1
+# fi
+#
+# # Test audio and show devices
+# echo "Available audio devices:"
+# aplay -l
+#
+# if ! aplay -l &> /dev/null; then
+#     echo "Error: No audio devices found"
+#     exit 1
+# fi
+#
+# # Check if play command exists
+# if ! command -v play &> /dev/null; then
+#     echo "Error: 'play' command not found. Please install sox"
+#     exit 1
+# fi
+#
+# # Test audio playback
+# echo "Testing audio playback..."
+# play -n synth 0.1 sine 1000 2>/dev/null || {
+#     echo "Error: Audio playback failed"
+#     exit 1
+# }
+
 cd ..
 set -a
 test -f /tmp/ai.env && source /tmp/ai.env
 set +a
+
+# Enable debug logging
+export PYTHONPATH=.
+export LOG_LEVEL=DEBUG
+
 python -m ainara.kommander.kommander "$@"

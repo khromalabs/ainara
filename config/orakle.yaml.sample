@@ -10,6 +10,25 @@
 # - /etc/orakle/orakle.yaml
 # - ./config/orakle.yaml (fallback to repo config)
 
+# Text-to-Speech configuration
+tts:
+  # Default output module to use
+  default_module: "espeak"
+  # Available modules:
+  # - espeak: Basic TTS using espeak
+  # - festival: Festival TTS system
+  # - speech-dispatcher: Speech Dispatcher (spd-say)
+  modules:
+    espeak:
+      binary: "/usr/bin/espeak"
+      options: "-v en"
+    festival:
+      binary: "/usr/bin/festival"
+      options: "--tts"
+    speech-dispatcher:
+      binary: "/usr/bin/spd-say"
+      options: "-w -e"
+
 apis:
   # News API configuration
   # Sign up at https://newsapi.org to get your API key

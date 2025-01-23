@@ -45,7 +45,7 @@ class NewsSearch(Skill):
         super().__init__()
         # logging.getLogger().setLevel(logging.DEBUG)
         # api_key = os.getenv('NEWSAPI_KEY')
-        api_key = ""
+        api_key = "f7a41568e4cd4a2ab5e8aefed810fa6b"
         if not api_key:
             raise ValueError("NEWSAPI_KEY environment variable is required")
         self.newsapi = NewsApiClient(api_key=api_key)

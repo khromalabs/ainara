@@ -126,27 +126,30 @@ class LiteLLMBackend(LLMBackend):
             response = self.completion(**completion_kwargs)
 
             if stream:
-                answer = ""
+                # For streaming, yield each chunk of text
                 for chunk in response:
-                    if (
-                        hasattr(chunk.choices[0], "delta")
-                        and chunk.choices[0].delta.content is not None
-                    ):
+                    self.logger.debug(f"Stream chunk: {chunk}")
+                    if hasattr(chunk.choices[0], "delta"):
                         content = chunk.choices[0].delta.content
+                        if content is not None:
+                            self.logger.debug(
+                                f"Yielding delta content: {content}"
+                            )
+                            yield content
                     elif hasattr(chunk.choices[0], "text"):
-                        content = chunk.choices[0].text
-                    else:
-                        continue
-
-                    print(content, end="", flush=True)
-                    answer += content
+                        self.logger.debug(
+                            f"Yielding text: {chunk.choices[0].text}"
+                        )
+                        yield chunk.choices[0].text
             else:
+                # For non-streaming, return complete response
                 if hasattr(response.choices[0], "message"):
-                    answer = response.choices[0].message.content
+                    return response.choices[0].message.content.rstrip("\n")
+                elif hasattr(response.choices[0], "text"):
+                    return response.choices[0].text.rstrip("\n")
                 else:
-                    answer = response.choices[0].text
-
-            return answer.rstrip("\n")
+                    self.logger.error("Unexpected response format")
+                    return ""
 
         except Exception as e:
             self.logger.error(

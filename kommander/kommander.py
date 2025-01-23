@@ -23,6 +23,7 @@ import os
 import re
 import signal
 import sys
+import time
 import warnings
 from datetime import datetime
 
@@ -31,9 +32,13 @@ import setproctitle
 from colorama import Fore, init
 from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
+# Suppress Pygame welcome message
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+from pygame import mixer
 
 from ainara.framework.llm_backend import LiteLLMBackend
 from ainara.framework.logging_setup import logging_manager
+from ainara.framework.tts.piper import PiperTTS
 
 init()
 
@@ -210,10 +215,12 @@ def get_orakle_capabilities():
 
 
 orakle_caps = get_orakle_capabilities()
+# !!! DISABLED
+# orakle_caps = ""
 current_date = datetime.now()
 
+# Your name is Ainara.
 SYSTEM_MESSAGE = f"""
-Your name is Ainara.
 
 You are a helpful, respectful and honest assistant. Don't be neutral.
 Have opinions. Strong opinions are better, but not mandatory. Just express
@@ -285,22 +292,35 @@ def parse_arguments():
     strip_mode = False
     log_dir = None
     log_level = "INFO"
+    speak_mode = False
+    output_module = None
     usage = (
         f"Usage: {os.path.basename(__file__)} [-l|--light] [-m|--model"
-        " LLM_MODEL] [-s|--strip] [--log-dir DIR] [--log-level"
-        " LEVEL]\n\n-l|--light    Use colors for light themes\n-m|--model   "
-        " Model as specified in the LLMLite definitions\n-s|--strip    Strip"
-        " everything except code blocks in non-interactive mode\n--log-dir   "
-        " Directory for log files\n--log-level   Logging level"
-        " (DEBUG,INFO,WARNING,ERROR,CRITICAL)\n\nFirst message can be send"
-        " also with a stdin pipe which will be processed in non-interactive"
-        " mode\n"
+        " LLM_MODEL] [-s|--strip] [--log-dir DIR] [--log-level LEVEL]"
+        " [--voice] [--output-module MODULE]\n\n-l|--light          Use"
+        " colors for light themes\n-m|--model          Model as specified in"
+        " the LLMLite definitions\n-s|--strip          Strip everything"
+        " except code blocks in non-interactive mode\n--log-dir DIR      "
+        " Directory for log files\n--log-level LEVEL   Logging level"
+        " (DEBUG,INFO,WARNING,ERROR,CRITICAL)\n--voice             Enable"
+        " text-to-speech output\n--output-module MOD Speech output module to"
+        " use\n\nFirst message can be sent also with a stdin pipe which will"
+        " be processed in non-interactive mode\n"
     )
     try:
         opts, _ = getopt.getopt(
             sys.argv[1:],
             "hlms",
-            ["help", "light", "model=", "strip", "log-dir=", "log-level="],
+            [
+                "help",
+                "light",
+                "model=",
+                "strip",
+                "log-dir=",
+                "log-level=",
+                "voice",
+                "output-module=",
+            ],
         )
         for opt, arg in opts:
             if opt in ("-h", "--help"):
@@ -317,10 +337,22 @@ def parse_arguments():
                 log_dir = arg
             if opt == "--log-level":
                 log_level = arg.upper()
+            if opt == "--voice":
+                speak_mode = True
+            if opt in ("-o", "--output-module"):
+                output_module = arg
     except getopt.GetoptError as err:
         print(err)
         sys.exit(2)
-    return model, light_mode, strip_mode, log_dir, log_level
+    return (
+        model,
+        light_mode,
+        strip_mode,
+        log_dir,
+        log_level,
+        speak_mode,
+        output_module,
+    )
 
 
 def trim(s):
@@ -445,6 +477,10 @@ def process_orakle_commands(text):
     Process any oraklecmd blocks in the text and return results and command
     types
     """
+    # If text is a generator, collect all chunks first
+    if hasattr(text, "__iter__") and not isinstance(text, (str, bytes)):
+        text = "".join(list(text))
+
     results = []
     command_types = []
 
@@ -465,74 +501,152 @@ def process_orakle_commands(text):
     return processed_text, results, command_types
 
 
-def chat_completion(question, stream=True) -> str:
-    answer = llm.process_text(
+def get_llm_response(
+    question: str, stream: bool = True, suppress_output: bool = False
+) -> str:
+    """Get the initial LLM response"""
+    answer = ""
+    response = llm.process_text(
         text=question,
         system_message=SYSTEM_MESSAGE,
         chat_history=CHAT,
         stream=stream,
     )
-    if answer:
-        # Process any Orakle commands in the response
-        processed_answer, results, command_types = process_orakle_commands(
-            answer
-        )
 
-        # If there are command results, ask LLM to interpret them
-        if results:
-            # Format results based on whether they are valid JSON or plain text
-            formatted_results = []
-            for r in results:
-                try:
-                    # Try to parse as JSON to validate and pretty print
-                    json.loads(r)
-                    formatted_results.append(f"```json\n{r}\n```")
-                except json.JSONDecodeError:
-                    # If not valid JSON, treat as plain text
-                    formatted_results.append(f"```text\n{r}\n```")
-
-            # Determine instruction based on command type
-            if command_types and command_types[0] == "RECIPE":
-                instruction = (
-                    "This was a RECIPE command. Please reproduce the command"
-                    " result verbatim in your response, maintaining all"
-                    " formatting and structure. Add a brief introduction"
-                    " explaining what the recipe did."
-                )
-            else:
-                instruction = (
-                    "This was a SKILL command. Don't reproduce the command "
-                    "result verbatim in your next answer, instead write your "
-                    "interpretation about the result in the context of the "
-                    "conversation. Only reproduce the command result verbatim "
-                    "if the user explicitly asks that"
-                )
-
-            interpretation_prompt = (
-                "Based on the Orakle command results:\n"
-                + "\n".join(formatted_results)
-                + "\n\n"
-                + instruction
-            )
-            print()
-
-            final_answer = llm.process_text(
-                text=interpretation_prompt,
-                system_message=SYSTEM_MESSAGE,
-                chat_history=CHAT,
-                stream=stream,
-            )
-
-            if final_answer:
-                # processed_answer = final_answer
-                separator = "\n\nResult:\n" + "=" * 40 + "\n"
-                processed_answer += f"{separator}{final_answer}\n" + "=" * 40
-
-        backup(processed_answer)
-
-        CHAT.extend([question, trim(processed_answer)])
-        return processed_answer
+    try:
+        for chunk in response:
+            if chunk:
+                if not suppress_output:
+                    print(chunk, end="", flush=True)
+                answer += chunk
+    except Exception as e:
+        logger.error(f"Error during streaming: {e}")
     return answer
+
+
+def handle_tts(processed_answer: str, tts) -> None:
+    """Handle text-to-speech output with synchronized text display"""
+    if not tts:
+        return
+
+    sections = re.split(r"(```.*?```)", processed_answer, flags=re.DOTALL)
+    for section in sections:
+        if not section.startswith("```"):
+            # Split into natural phrases
+            phrases = re.split(r"([.!?]\s+)", section.strip())
+
+            # Recombine phrases with their punctuation
+            i = 0
+            while i < len(phrases):
+                if i + 1 < len(phrases):
+                    phrase = phrases[i] + phrases[i + 1]
+                    i += 2
+                else:
+                    phrase = phrases[i]
+                    i += 1
+
+                if not phrase.strip():
+                    continue
+
+                try:
+                    # Generate audio file and get duration
+                    audio_file, duration = tts.generate_audio(phrase)
+                    char_delay = duration / len(phrase)
+
+                    # Start audio playback and wait for it to actually begin
+                    if not tts.play_audio(audio_file):
+                        raise RuntimeError("Failed to start audio playback")
+
+                    # Now that we know audio has started, print text
+                    # synchronized
+                    for char in phrase:
+                        sys.stdout.write(char)
+                        sys.stdout.flush()
+                        time.sleep(char_delay)
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+
+                    # Wait for current audio to finish before next phrase
+                    while mixer.music.get_busy():
+                        time.sleep(0.001)
+
+                except Exception as e:
+                    logger.error(f"TTS error: {e}")
+                    # Fallback to just printing if TTS fails
+                    print(phrase)
+
+
+def get_command_interpretation(
+    results: list, command_types: list, stream: bool = True
+) -> str:
+    """Get LLM interpretation of command results"""
+    formatted_results = []
+    for r in results:
+        try:
+            json.loads(r)
+            formatted_results.append(f"```json\n{r}\n```")
+        except json.JSONDecodeError:
+            formatted_results.append(f"```text\n{r}\n```")
+
+    instruction = (
+        "This was a RECIPE command. Please reproduce the command result"
+        " verbatim in your response, maintaining all formatting and structure."
+        " Add a brief introduction explaining what the recipe did."
+        if command_types and command_types[0] == "RECIPE"
+        else (
+            "This was a SKILL command. Don't reproduce the command result"
+            " verbatim in your next answer, instead write your interpretation"
+            " about the result in the context of the conversation. Only"
+            " reproduce the command result verbatim if the user explicitly"
+            " asks that"
+        )
+    )
+
+    interpretation_prompt = (
+        "Based on the Orakle command results:\n"
+        + "\n".join(formatted_results)
+        + "\n\n"
+        + instruction
+    )
+    print()
+    return llm.process_text(
+        text=interpretation_prompt,
+        system_message=SYSTEM_MESSAGE,
+        chat_history=CHAT,
+        stream=stream,
+    )
+
+
+def chat_completion(question, stream=True, tts=None) -> str:
+    """Main chat completion function"""
+    # Always stream to capture text, but don't print if TTS enabled
+    answer = get_llm_response(question, stream=True, suppress_output=bool(tts))
+    if not answer:
+        return ""
+
+    # Process commands and TTS
+    processed_answer, results, command_types = process_orakle_commands(answer)
+    handle_tts(processed_answer, tts)
+
+    # Get interpretation if needed
+    if results:
+        final_answer = ""
+        for chunk in get_command_interpretation(
+            results, command_types, stream
+        ):
+            if chunk:
+                print(chunk, end="", flush=True)
+                final_answer += chunk
+
+        if final_answer:
+            separator = "\n\nResult:\n" + "=" * 40 + "\n"
+            processed_answer += f"{separator}{final_answer}\n" + "=" * 40
+
+    # Handle backup and chat history
+    backup(processed_answer)
+    CHAT.extend([question, trim(processed_answer)])
+
+    return processed_answer
 
 
 def signal_handler(sig, frame):
@@ -567,9 +681,43 @@ def extract_code_blocks(text):
 
 def main():
     global PROVIDER
-    model_override, light_mode, strip_mode, log_dir, log_level = (
-        parse_arguments()
-    )
+    (
+        model_override,
+        light_mode,
+        strip_mode,
+        log_dir,
+        log_level,
+        speak_mode,
+        output_module,
+    ) = parse_arguments()
+
+    if log_dir or log_level != "INFO":
+        # Only reconfigure logging if custom options are provided
+        logging_manager.setup(
+            log_dir=log_dir, log_level=log_level, log_filter="kommander"
+        )
+    logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
+
+    # Initialize TTS if voice mode enabled
+    tts = None
+    if speak_mode:
+        logger.debug("Initializing TTS in voice mode")
+        try:
+            tts = PiperTTS()
+            logger.debug("TTS initialization successful")
+            # Test TTS with a short phrase
+            if log_level == "DEBUG":
+                logger.debug("Testing TTS with a short phrase")
+                test_result = tts.speak("TTS test")
+                if not test_result:
+                    logger.error("TTS test failed")
+                    speak_mode = False
+                else:
+                    logger.info("TTS test successful")
+        except RuntimeError as e:
+            logger.error(f"Could not initialize speech: {e}")
+            print(f"Warning: Could not initialize speech: {e}")
+            speak_mode = False
     if log_dir or log_level != "INFO":
         # Only reconfigure logging if custom options are provided
         logging_manager.setup(
@@ -593,7 +741,7 @@ def main():
         initial_message = sys.stdin.read().strip()
         if initial_message:
             backup(f"> {initial_message}")
-            response = chat_completion(initial_message, stream=not strip_mode)
+            response = chat_completion(initial_message, stream=False)
             if strip_mode:
                 print(extract_code_blocks(response), end="")
             else:
@@ -610,7 +758,7 @@ def main():
             if not question:
                 continue
             backup(f"> {question}")
-            chat_completion(question)
+            response = chat_completion(question, stream=True, tts=tts)
             print()
         except KeyboardInterrupt:
             signal_handler(signal.SIGINT, 0)
