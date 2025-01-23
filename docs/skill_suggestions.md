@@ -1,4 +1,4 @@
-# Suggested Skills for Orakle AI Assistant
+﻿# Suggested Skills for Orakle AI Server
 
 Based on analysis of the current architecture, here are recommended additional skills to enhance the assistant's capabilities:
 
