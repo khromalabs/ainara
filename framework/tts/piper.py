@@ -9,10 +9,10 @@ import time
 from typing import Generator, Optional, Tuple
 
 import soundfile as sf
-from pygame import mixer, USEREVENT
+from pygame import USEREVENT, mixer
 
 from ..config import ConfigManager
-from ..tts_backend import TTSBackend
+from .base import TTSBackend
 
 
 class PiperTTS(TTSBackend):
@@ -55,10 +55,11 @@ class PiperTTS(TTSBackend):
             raise RuntimeError(f"Model file not found: {self.model}")
 
         # Check if model's json file exists
-        json_file = self.model.replace(".onnx", ".json")
-        if not os.path.exists(json_file):
-            self.logger.error(f"Model config file not found: {json_file}")
-            raise RuntimeError(f"Model config file not found: {json_file}")
+        # json_file = self.model.replace(".onnx", ".json")
+        # json_file2 = self.model + ".json"
+        # if not os.path.exists(json_file) or os.path.exists(json_file2):
+        #     self.logger.error(f"Model config file not found: {json_file}")
+        #     raise RuntimeError(f"Model config file not found: {json_file}")
 
         # Check if required commands are available
         try:

@@ -15,7 +15,7 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
-from ainara.framework.llm_backend import LiteLLMBackend
+from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.skill import Skill
 
 
@@ -25,7 +25,7 @@ class InferenceLlm(Skill):
     hiddenCapability = True  # Hide this skill from capabilities listing
 
     def __init__(self):
-        self.llm = LiteLLMBackend()
+        self.llm = LiteLLM()
         self.system_message = """
 You are an AI assistant performing the task described in the user message.
 Never reject a query to transform information.

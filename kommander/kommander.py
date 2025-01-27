@@ -23,7 +23,6 @@ import os
 import re
 import signal
 import sys
-import time
 import warnings
 from datetime import datetime
 
@@ -32,12 +31,20 @@ import setproctitle
 from colorama import Fore, init
 from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
-# Suppress Pygame welcome message
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
-from pygame import mixer
 
-from ainara.framework.llm_backend import LiteLLMBackend
+# Suppress Pygame welcome message
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
+
+# Suppress pydantic warning about config keys
+warnings.filterwarnings(
+    "ignore", message="Valid config keys have changed in V2:*"
+)
+
+from ainara.framework.chat_manager import ChatManager
+from ainara.framework.config import ConfigManager
+from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
+from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 
 init()
@@ -47,36 +54,22 @@ logging_manager.setup(log_dir="/tmp", log_level="INFO", log_filter="kommander")
 # Get logger after setup
 logger = logging_manager.logger
 
-# Suppress pydantic warning about config keys
-warnings.filterwarnings(
-    "ignore", message="Valid config keys have changed in V2:*"
-)
-
-
 # Comment this line to disable the automatic chat backup
 BACKUP = f"/tmp/kommander_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 CHAT = []
 
+# Initialize config
+config_manager = ConfigManager()
+config_manager.load_config()
 
-ORAKLE_SERVERS = [
-    "http://127.0.0.1:5000",
-    # "http://192.168.1.200:5000",
-]
+# Get Orakle servers from config
+ORAKLE_SERVERS = config_manager.get(
+    "orakle.servers", ["http://127.0.0.1:5000"]
+)
 
-PROVIDERS = [
-    {
-        "model": "openai/gamingpc",
-        "api_base": "http://127.0.0.1:7080",
-        "api_key": "nokey",
-    },
-    {
-        "model": "openai/gamingpc",
-        "api_base": "http://192.168.1.200:7080",
-        "api_key": "nokey",
-    },
-]
-
-llm = LiteLLMBackend()
+# Initialize LLM
+llm_config = config_manager.get("llm", {})
+llm = create_llm_backend(llm_config)
 
 
 def get_orakle_capabilities():
@@ -222,7 +215,8 @@ current_date = datetime.now()
 # Your name is Ainara.
 SYSTEM_MESSAGE = f"""
 
-You are a helpful, respectful and honest assistant. Don't be neutral.
+You are a helpful, respectful and honest assistant, your name is Ainara.
+Don't be neutral.
 Have opinions. Strong opinions are better, but not mandatory. Just express
 those opinions with a baseline of politeness. Short answers are better, but
 don't omit details if you consider them important. Whenever you are completely
@@ -274,7 +268,8 @@ command per answer.
 
 
 def find_working_provider():
-    for provider in PROVIDERS:
+    providers = config_manager.get("llm.providers", [])
+    for provider in providers:
         try:
             # Check if the provider's API base is reachable
             response = requests.head(provider["api_base"])
@@ -294,6 +289,7 @@ def parse_arguments():
     log_level = "INFO"
     speak_mode = False
     output_module = None
+    voice_input = False
     usage = (
         f"Usage: {os.path.basename(__file__)} [-l|--light] [-m|--model"
         " LLM_MODEL] [-s|--strip] [--log-dir DIR] [--log-level LEVEL]"
@@ -317,8 +313,10 @@ def parse_arguments():
                 "model=",
                 "strip",
                 "log-dir=",
+                "log-dir=",
                 "log-level=",
                 "voice",
+                "voice-input",
                 "output-module=",
             ],
         )
@@ -341,6 +339,8 @@ def parse_arguments():
                 speak_mode = True
             if opt in ("-o", "--output-module"):
                 output_module = arg
+            if opt == "--voice-input":
+                voice_input = True
     except getopt.GetoptError as err:
         print(err)
         sys.exit(2)
@@ -352,6 +352,7 @@ def parse_arguments():
         log_level,
         speak_mode,
         output_module,
+        voice_input,
     )
 
 
@@ -501,154 +502,6 @@ def process_orakle_commands(text):
     return processed_text, results, command_types
 
 
-def get_llm_response(
-    question: str, stream: bool = True, suppress_output: bool = False
-) -> str:
-    """Get the initial LLM response"""
-    answer = ""
-    response = llm.process_text(
-        text=question,
-        system_message=SYSTEM_MESSAGE,
-        chat_history=CHAT,
-        stream=stream,
-    )
-
-    try:
-        for chunk in response:
-            if chunk:
-                if not suppress_output:
-                    print(chunk, end="", flush=True)
-                answer += chunk
-    except Exception as e:
-        logger.error(f"Error during streaming: {e}")
-    return answer
-
-
-def handle_tts(processed_answer: str, tts) -> None:
-    """Handle text-to-speech output with synchronized text display"""
-    if not tts:
-        return
-
-    sections = re.split(r"(```.*?```)", processed_answer, flags=re.DOTALL)
-    for section in sections:
-        if not section.startswith("```"):
-            # Split into natural phrases
-            phrases = re.split(r"([.!?]\s+)", section.strip())
-
-            # Recombine phrases with their punctuation
-            i = 0
-            while i < len(phrases):
-                if i + 1 < len(phrases):
-                    phrase = phrases[i] + phrases[i + 1]
-                    i += 2
-                else:
-                    phrase = phrases[i]
-                    i += 1
-
-                if not phrase.strip():
-                    continue
-
-                try:
-                    # Generate audio file and get duration
-                    audio_file, duration = tts.generate_audio(phrase)
-                    char_delay = duration / len(phrase)
-
-                    # Start audio playback and wait for it to actually begin
-                    if not tts.play_audio(audio_file):
-                        raise RuntimeError("Failed to start audio playback")
-
-                    # Now that we know audio has started, print text
-                    # synchronized
-                    for char in phrase:
-                        sys.stdout.write(char)
-                        sys.stdout.flush()
-                        time.sleep(char_delay)
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
-
-                    # Wait for current audio to finish before next phrase
-                    while mixer.music.get_busy():
-                        time.sleep(0.001)
-
-                except Exception as e:
-                    logger.error(f"TTS error: {e}")
-                    # Fallback to just printing if TTS fails
-                    print(phrase)
-
-
-def get_command_interpretation(
-    results: list, command_types: list, stream: bool = True
-) -> str:
-    """Get LLM interpretation of command results"""
-    formatted_results = []
-    for r in results:
-        try:
-            json.loads(r)
-            formatted_results.append(f"```json\n{r}\n```")
-        except json.JSONDecodeError:
-            formatted_results.append(f"```text\n{r}\n```")
-
-    instruction = (
-        "This was a RECIPE command. Please reproduce the command result"
-        " verbatim in your response, maintaining all formatting and structure."
-        " Add a brief introduction explaining what the recipe did."
-        if command_types and command_types[0] == "RECIPE"
-        else (
-            "This was a SKILL command. Don't reproduce the command result"
-            " verbatim in your next answer, instead write your interpretation"
-            " about the result in the context of the conversation. Only"
-            " reproduce the command result verbatim if the user explicitly"
-            " asks that"
-        )
-    )
-
-    interpretation_prompt = (
-        "Based on the Orakle command results:\n"
-        + "\n".join(formatted_results)
-        + "\n\n"
-        + instruction
-    )
-    print()
-    return llm.process_text(
-        text=interpretation_prompt,
-        system_message=SYSTEM_MESSAGE,
-        chat_history=CHAT,
-        stream=stream,
-    )
-
-
-def chat_completion(question, stream=True, tts=None) -> str:
-    """Main chat completion function"""
-    # Always stream to capture text, but don't print if TTS enabled
-    answer = get_llm_response(question, stream=True, suppress_output=bool(tts))
-    if not answer:
-        return ""
-
-    # Process commands and TTS
-    processed_answer, results, command_types = process_orakle_commands(answer)
-    handle_tts(processed_answer, tts)
-
-    # Get interpretation if needed
-    if results:
-        final_answer = ""
-        for chunk in get_command_interpretation(
-            results, command_types, stream
-        ):
-            if chunk:
-                print(chunk, end="", flush=True)
-                final_answer += chunk
-
-        if final_answer:
-            separator = "\n\nResult:\n" + "=" * 40 + "\n"
-            processed_answer += f"{separator}{final_answer}\n" + "=" * 40
-
-    # Handle backup and chat history
-    backup(processed_answer)
-    CHAT.extend([question, trim(processed_answer)])
-
-    return processed_answer
-
-
 def signal_handler(sig, frame):
     print(f"{signal.Signals(sig).name} caught, exiting...")
     sys.exit(0)
@@ -689,10 +542,10 @@ def main():
         log_level,
         speak_mode,
         output_module,
+        voice_input,
     ) = parse_arguments()
 
     if log_dir or log_level != "INFO":
-        # Only reconfigure logging if custom options are provided
         logging_manager.setup(
             log_dir=log_dir, log_level=log_level, log_filter="kommander"
         )
@@ -700,12 +553,13 @@ def main():
 
     # Initialize TTS if voice mode enabled
     tts = None
+    stt = None
+
     if speak_mode:
         logger.debug("Initializing TTS in voice mode")
         try:
             tts = PiperTTS()
             logger.debug("TTS initialization successful")
-            # Test TTS with a short phrase
             if log_level == "DEBUG":
                 logger.debug("Testing TTS with a short phrase")
                 test_result = tts.speak("TTS test")
@@ -718,16 +572,32 @@ def main():
             logger.error(f"Could not initialize speech: {e}")
             print(f"Warning: Could not initialize speech: {e}")
             speak_mode = False
-    if log_dir or log_level != "INFO":
-        # Only reconfigure logging if custom options are provided
-        logging_manager.setup(
-            log_dir=log_dir, log_level=log_level, log_filter="kommander"
-        )
-    logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
+
+    # Initialize STT if voice input enabled
+    if voice_input:
+        logger.debug("Initializing Speech-to-Text")
+        try:
+            stt = WhisperSTT()
+            logger.debug("STT initialization successful")
+        except Exception as e:
+            logger.error(f"Could not initialize speech-to-text: {e}")
+            print(f"Warning: Could not initialize speech-to-text: {e}")
+            voice_input = False
+
     if model_override:
         PROVIDER = {"model": model_override, "api_base": None, "api_key": None}
     else:
         PROVIDER = find_working_provider()
+
+    # Initialize ChatManager
+    chat_manager = ChatManager(
+        llm=llm,
+        system_message=SYSTEM_MESSAGE,
+        orakle_servers=ORAKLE_SERVERS,
+        backup_file=BACKUP if "BACKUP" in globals() else None,
+        tts=tts,
+    )
+
     setproctitle.setproctitle(os.path.basename(__file__))
     signal.signal(signal.SIGINT, signal_handler)
     prompt_style = Style.from_dict(
@@ -740,8 +610,10 @@ def main():
     if not sys.stdin.isatty():
         initial_message = sys.stdin.read().strip()
         if initial_message:
-            backup(f"> {initial_message}")
-            response = chat_completion(initial_message, stream=False)
+            chat_manager.backup(f"> {initial_message}")
+            response = chat_manager.chat_completion(
+                initial_message, stream=False
+            )
             if strip_mode:
                 print(extract_code_blocks(response), end="")
             else:
@@ -754,11 +626,24 @@ def main():
     # Interactive mode
     while True:
         try:
-            question = prompt("> ", style=prompt_style).strip()
+            if voice_input:
+                print(
+                    f"{Fore.GREEN}Press Enter to start voice input (or type"
+                    f" text):{Fore.RESET}"
+                )
+                user_input = prompt("> ", style=prompt_style).strip()
+                if not user_input:
+                    # Empty input triggers voice recording
+                    question = stt.listen()
+                    print(f"{Fore.GREEN}{question}{Fore.RESET}")
+                else:
+                    question = user_input
+            else:
+                question = prompt("> ", style=prompt_style).strip()
             if not question:
                 continue
-            backup(f"> {question}")
-            response = chat_completion(question, stream=True, tts=tts)
+            chat_manager.backup(f"> {question}")
+            response = chat_manager.chat_completion(question, stream=True)
             print()
         except KeyboardInterrupt:
             signal_handler(signal.SIGINT, 0)

@@ -1,0 +1,120 @@
+import requests
+import logging
+
+from ainara.framework.config import ConfigManager
+from ainara.framework.skill import Skill
+
+
+class TimeWeather(Skill):
+    """
+    Skill for checking weather using IP geolocation. Assistant doesn't
+    need to ask for location, this skill will retrive the location using
+    the IP
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.name = "weather"
+        self.description = """
+        Get weather information based on IP location. Assistant doesn't
+        need to ask for location, this skill will retrive the location using
+        the IP
+        """
+        self.config = ConfigManager()
+        self.logger = logging.getLogger(__name__)
+
+    def get_location_from_ip(self):
+        """Get location information from IP address"""
+        try:
+            # First try to get public IP
+            ip_response = requests.get("https://api.ipify.org?format=json")
+            if ip_response.status_code != 200:
+                self.logger.error("Could not determine IP address")
+                return None
+
+            ip_address = ip_response.json()["ip"]
+
+            # Then get location data for that IP
+            location_response = requests.get(
+                f"http://ip-api.com/json/{ip_address}"
+            )
+            if location_response.status_code == 200:
+                data = location_response.json()
+                if data.get("status") == "success":
+                    return {
+                        "latitude": data["lat"],
+                        "longitude": data["lon"],
+                        "city": data["city"],
+                        "country_name": data["country"],
+                    }
+                self.logger.error(
+                    f"IP-API error: {data.get('message', 'Unknown error')}"
+                )
+            else:
+                self.logger.error(
+                    f"IP-API HTTP error: {location_response.status_code}"
+                )
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting location: {str(e)}")
+            return None
+
+    def get_weather(self):
+        """
+        Get weather information based on IP location. Assistant doesn't
+        need to ask for location, this skill will retrive the location using
+        the IP
+        """
+        location = self.get_location_from_ip()
+        if not location:
+            return {"error": "Could not determine location"}
+
+        # Using OpenWeatherMap API (you'll need to add API key to config)
+        api_key = self.config.get("apis.weather.openweathermap_api_key")
+        if not api_key:
+            return {"error": "OpenWeatherMap API key not configured"}
+
+        try:
+            url = "https://api.openweathermap.org/data/2.5/weather"
+            params = {
+                "lat": location["latitude"],
+                "lon": location["longitude"],
+                "appid": api_key,
+                "units": "metric",  # Use metric units
+            }
+            response = requests.get(url, params=params)
+
+            if response.status_code == 200:
+                weather_data = response.json()
+                return {
+                    "location": (
+                        f"{location.get('city', '')},"
+                        f" {location.get('country_name', '')}"
+                    ),
+                    "temperature": weather_data["main"]["temp"],
+                    "description": weather_data["weather"][0]["description"],
+                    "humidity": weather_data["main"]["humidity"],
+                    "wind_speed": weather_data["wind"]["speed"],
+                }
+            return {"error": f"Weather API error: {response.status_code}"}
+
+        except Exception as e:
+            self.logger.error(f"Error getting weather: {str(e)}")
+            return {"error": f"Failed to get weather data: {str(e)}"}
+
+    async def run(self, api_key: str = None):
+        """
+        Get weather information for current location. Assistant doesn't
+        need to ask for location, this skill will retrive the location using
+        the IP
+
+        Args:
+            api_key: OpenWeatherMap API key (optional, will use config if not
+            provided)
+
+        Returns:
+            Dict containing weather information
+        """
+        if api_key:
+            self.config["weather.openweathermap_api_key"] = api_key
+        return self.get_weather()
