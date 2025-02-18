@@ -14,10 +14,9 @@ Another component of the system is 'kommander', a CLI application designed to ch
 
 As a proof of concept, I've developed several skills in Orakle that allow the AI assistant to search for real-time news. I've also created a more complex recipe that can download a web page, extract any articles within it, and process the content according to the desired profile - whether that's a layman's summary, easy-to-read language, or even content adapted for a young child, which works remarkably well.
 
-This video demonstrates using Ainara to search for recent news about a major company and quickly assess its investment potential.  
-An important aspect to highlight in this video: I'm not using any commercial LLM backend, but rather running llama.cpp with a 5-bit quantized version of Qwen 2.5 14B on my own server, which features a 'humble' NVidia RTX 3060 card. I'm quite impressed by how well it understands the instructions to interact with my local Orakle server, as demonstrated in this video.
+UPDATE January 27, 2025: This is the 4th video in my series featuring Ainara. It shows a full natural language conversation with the assistant, where I discuss Bitcoin and look up real-time news and market info. I also explore how the AI assistant can find connections between these sources.
 
-[![Watch the video](https://img.youtube.com/vi/prahMiHDaYM/0.jpg)](https://www.youtube.com/watch?v=prahMiHDaYM)
+[![Watch the video](https://img.youtube.com/vi/WSfvNAtOSQw/0.jpg)](https://www.youtube.com/watch?v=WSfvNAtOSQw)
 
 ## $AINARA Token
 
