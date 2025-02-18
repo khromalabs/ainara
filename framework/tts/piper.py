@@ -171,8 +171,11 @@ class PiperTTS(TTSBackend):
                 #     stderr=subprocess.PIPE,
                 # )
 
-                # Write the text to piper
-                stdout, stderr = piper_process.communicate(input=phrase)
+                # Clean and write the text to piper
+                cleaned_phrase = self._clean_text(phrase)
+                stdout, stderr = piper_process.communicate(
+                    input=cleaned_phrase
+                )
                 if piper_process.returncode != 0:
                     self.logger.error(
                         "Piper failed with return code"
@@ -244,7 +247,10 @@ class PiperTTS(TTSBackend):
 
             # Write the text to piper and get stderr
             self.logger.debug("Sending text to piper process")
-            _, stderr = piper_process.communicate(input=text.encode("utf-8"))
+            cleaned_text = self._clean_text(text)
+            _, stderr = piper_process.communicate(
+                input=cleaned_text.encode("utf-8")
+            )
             stderr_text = stderr.decode("utf-8") if stderr else ""
 
             if piper_process.returncode != 0:
@@ -286,6 +292,17 @@ class PiperTTS(TTSBackend):
                 phrases.append(splits[i])
 
         return [p.strip() for p in phrases if p.strip()]
+
+    def _clean_text(self, text: str) -> str:
+        """Remove symbols that shouldn't be read by TTS
+
+        Args:
+            text: Text to clean
+
+        Returns:
+            str: Cleaned text with removed symbols
+        """
+        return re.sub("[*#]", "", text)
 
     def stop(self) -> bool:
         """Stop current speech and audio playback
@@ -331,7 +348,8 @@ class PiperTTS(TTSBackend):
                 text=True,
             )
 
-            stdout, stderr = process.communicate(input=text)
+            cleaned_text = self._clean_text(text)
+            stdout, stderr = process.communicate(input=cleaned_text)
 
             if process.returncode != 0:
                 self.logger.error(f"Piper failed: {stderr}")

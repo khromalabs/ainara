@@ -16,9 +16,11 @@
 # <https://www.gnu.org/licenses/>.
 
 import logging
+import os
 
 from newsapi import NewsApiClient
 
+from ainara.framework.config import config
 from ainara.framework.skill import Skill
 
 SUPPORTED_LANGUAGES = {
@@ -44,8 +46,9 @@ class NewsSearch(Skill):
     def __init__(self):
         super().__init__()
         # logging.getLogger().setLevel(logging.DEBUG)
-        # api_key = os.getenv('NEWSAPI_KEY')
-        api_key = "f7a41568e4cd4a2ab5e8aefed810fa6b"
+        api_key = os.getenv("NEWSAPI_KEY") or config.get(
+            "apis.news.api_key", {}
+        )
         if not api_key:
             raise ValueError("NEWSAPI_KEY environment variable is required")
         self.newsapi = NewsApiClient(api_key=api_key)
@@ -58,7 +61,19 @@ class NewsSearch(Skill):
         from_date: str = None,
         to_date: str = None,
     ):
-        """Search news articles using NewsAPI"""
+        """
+        Search for news articles matching the query using NewsAPI
+
+        Args:
+            query: Search query string
+            language: Language code (default: 'en'). Must be one of:
+            ar, de, en, es, fr, he, it, nl, no, pt, ru, sv, zh
+            sort_by: Sort order ('relevancy', 'popularity', 'publishedAt')
+
+        Returns:
+            Dict containing search results
+        """
+
         logging.debug(
             f"NewsSearch.run() called with parameters: query='{query}',"
             f" language='{language}' ({type(language)}), sort_by='{sort_by}',"
@@ -78,18 +93,6 @@ class NewsSearch(Skill):
                 "message": "Query parameter cannot be empty or invalid",
             }
 
-        """
-        Search for news articles matching the query
-
-        Args:
-            query: Search query string
-            language: Language code (default: 'en'). Must be one of:
-            ar, de, en, es, fr, he, it, nl, no, pt, ru, sv, zh
-            sort_by: Sort order ('relevancy', 'popularity', 'publishedAt')
-
-        Returns:
-            Dict containing search results
-        """
         # Validate language code
         if not isinstance(language, str):
             return {

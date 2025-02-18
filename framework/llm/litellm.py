@@ -1,7 +1,7 @@
 import os
 from typing import Generator, Union
 
-from litellm import completion
+from litellm import completion, get_max_tokens
 
 from .base import LLMBackend
 from ainara.framework.config import ConfigManager
@@ -15,6 +15,37 @@ class LiteLLM(LLMBackend):
         super().__init__(self.config)
         self.completion = completion
         self.provider = self._initialize_provider()
+        self._context_window = self._get_context_window()
+
+    def _get_context_window(self) -> int:
+        """Get the context window size for the current model"""
+        try:
+            model_name = self.provider.get("model")
+            if not model_name:
+                raise ValueError("No model specified")
+
+            # First check if we have a configured context window
+            model_contexts = self.config.get("llm.model_contexts", {})
+            if model_name in model_contexts:
+                context_size = model_contexts[model_name]
+                self.logger.info(
+                    f"Using configured context window for {model_name}: {context_size} tokens"
+                )
+                return context_size
+
+            # Otherwise try to get it from LiteLLM
+            max_tokens = get_max_tokens(model_name)
+            self.logger.info(
+                f"Using LiteLLM-provided context window for {model_name}: {max_tokens} tokens"
+            )
+            return max_tokens
+        except Exception as e:
+            # self.logger.warning(f"Unable to get context window size: {str(e)}")
+            return 4000  # Conservative default
+
+    def get_context_window(self) -> int:
+        """Return the cached context window size"""
+        return self._context_window
 
     def _initialize_provider(self) -> dict:
         """Initialize provider configuration"""

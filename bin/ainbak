@@ -1,0 +1,133 @@
+#!/bin/bash
+
+# Initialize variables
+skip_orakle=0
+skip_pybridge=0
+skip_whisper=0
+stop_servers=0
+just_tail=0
+getopt="skip-orakle,skip-pybridge,skip-whisper,stop,tail,help"
+
+# Parse command-line options
+options=$(getopt -o "" --long "$getopt" -- "$@")
+eval set -- "$options"
+
+while true; do
+    case "$1" in
+        --skip-orakle)
+            skip_orakle=1
+            shift
+            ;;
+        --skip-pybridge)
+            skip_pybridge=1
+            shift
+            ;;
+        --skip-whisper)
+            skip_whisper=1
+            shift
+            ;;
+        --stop)
+            stop_servers=1
+            shift
+            ;;
+        --tail)
+            just_tail=1
+            shift
+            ;;
+        --help)
+			echo "Use: $(basename $0) --<$getopt>"
+			exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "Invalid option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Function to stop servers
+stop_servers_func() {
+    echo "Stopping Orakle server..."
+     pkill -fe "python \-m ainara.orakle.server"
+    echo "Stopping Pybrige server..."
+    pkill -9 -fe "python \-m ainara.framework.pybridge"
+    echo "Stopping Whisper server..."
+    pkill -e "whisper-server"
+	echo "Cleaning logs..."
+	rm /tmp/orakle.log /tmp/pybridge.log /tmp/whisper.log
+	echo "Done"
+	echo
+}
+
+tail_output() {
+	( tail -f /tmp/orakle.log | sed "s/.*/\x1b[31m&\x1b[0m/" ) &
+	( tail -f /tmp/pybridge.log | sed "s/.*/\x1b[33m&\x1b[0m/" ) &
+	( tail -f /tmp/whisper.log | sed "s/.*/\x1b[32m&\x1b[0m/" ) &
+	while true; do sleep 2; done
+    pkill -fe "tail -f /tmp/"
+}
+
+if [ "$just_tail" = 1 ]; then
+	tail_output
+	exit 0
+fi
+
+# Check if the stop option is set
+if [ "$stop_servers" = 1 ]; then
+    stop_servers_func
+    exit 0
+fi
+
+AIENV="/tmp/ai.env"
+if [ ! -f $AIENV ]; then
+	echo "Missing $AIENV"
+	exit 1
+fi
+
+cd "$HOME/lab/src/ainara/"
+source venv/bin/activate
+cd ..
+set -a
+source /tmp/ai.env
+set +a
+
+# Check if the Orakle server should be skipped
+orakle_cmd="python -m ainara.orakle.server"
+if pgrep -f "$orakle_cmd" > /dev/null; then
+	skip_orakle=1
+	echo "Skipping restarting Orakle server..."
+fi
+if [ "$skip_orakle" -eq 0 ]; then
+    echo " --- Starting Orakle server --- "
+    nohup $orakle_cmd --log-dir /tmp/ > /tmp/orakle.log &
+fi
+
+# Check if the Pybrige server should be skipped
+pybridge_cmd="python -m ainara.framework.pybridge"
+if pgrep -f "$pybridge_cmd" > /dev/null; then
+	skip_pybridge=1
+	echo "Skipping restarting Pybridge server..."
+fi
+if [ $skip_pybridge -eq 0 ]; then
+    echo " --- Starting Pybrige server --- "
+    nohup $pybridge_cmd > /tmp/pybridge.log &
+fi
+
+# Check if the Whisper server should be skipped
+whisper_cmd="whisper-server"
+if pgrep -f "$whisper_cmd" > /dev/null; then
+	skip_whisper=1
+	echo "Skipping restarting Whisper server..."
+fi
+if [ $skip_whisper -eq 0 ]; then
+    echo " --- Starting Whisper server --- "
+	cd $HOME/lab/build/git/whisper.cpp/build/bin
+	nohup $whisper_cmd -m models/ggml-medium.en-q5_0.bin > /tmp/whisper.log &
+	cd -
+fi
+
+tail_output

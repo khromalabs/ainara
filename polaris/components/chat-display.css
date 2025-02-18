@@ -1,0 +1,91 @@
+:host {
+    position: fixed;
+    bottom: 160px;  /* Changed from 200px to 240px to move it down 40px */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+}
+
+.message {
+    font-family: 'Inter', sans-serif;
+    font-size: 1.2em;
+    line-height: 1.4;
+    padding: 8px 16px;
+    transition: all 1s ease-out;
+    opacity: 1;
+    transform: translateY(0);
+    text-align: left;
+    max-width: 80%;
+    margin-left: 0;
+    letter-spacing: 1px;
+    white-space: pre-wrap;       /* Preserve spaces and line breaks, but wrap text */
+    overflow-wrap: break-word;   /* Allow breaking words at any character */
+    word-break: break-word;      /* More elegant word breaking than 'break-all' */
+    hyphens: auto;               /* Enable automatic hyphenation */
+    font-weight: 300;
+    animation: textPulse 2s infinite;
+    background-color: rgba(0,0,0,0.3);
+    border-radius: 10px;
+}
+
+.message.user {
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5),
+                 0 0 20px rgba(255, 255, 255, 0.3),
+                 2px 2px 6px rgba(0, 0, 0, 1),
+                 1px 1px 4px rgba(0, 0, 0, 1);
+}
+
+.message.ai {
+    color: rgba(120, 200, 255, 0.9);
+    text-shadow: 0 0 10px rgba(120, 200, 255, 0.5),
+                 0 0 20px rgba(120, 200, 255, 0.3),
+                 2px 2px 6px rgba(0, 0, 0, 1),
+                 1px 1px 4px rgba(0, 0, 0, 1);
+}
+
+@keyframes textPulse {
+    0% {
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.5),
+                    0 0 20px rgba(255, 255, 255, 0.3),
+                    2px 2px 6px rgba(0, 0, 0, 1),
+                    1px 1px 4px rgba(0, 0, 0, 1);
+    }
+    50% {
+        text-shadow: 0 0 15px rgba(255, 255, 255, 0.6),
+                    0 0 25px rgba(255, 255, 255, 0.4),
+                    2px 2px 6px rgba(0, 0, 0, 1),
+                    1px 1px 4px rgba(0, 0, 0, 1);
+    }
+    100% {
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.5),
+                    0 0 20px rgba(255, 255, 255, 0.3),
+                    2px 2px 6px rgba(0, 0, 0, 1),
+                    1px 1px 4px rgba(0, 0, 0, 1);
+    }
+}
+
+.message.fading {
+    opacity: 0;
+    transform: translateY(-30px);
+}
+
+.character {
+    display: inline-block;
+    opacity: 0;
+    transition: opacity 0.1s ease-out;
+}
+
+.character.visible {
+    opacity: 1;
+}

@@ -125,7 +125,7 @@ class CapabilitiesManager:
 
                     try:
                         from asgiref.sync import async_to_sync
-                        
+
                         # Parse the request data
                         data = request.get_json(force=True)
                         # If data is a string starting with SKILL, parse it
@@ -134,7 +134,7 @@ class CapabilitiesManager:
                             match = re.match(r'SKILL\("([^"]+)",\s*({[^}]+})\)', data)
                             if match:
                                 data = eval(match.group(2))  # Safely evaluate the JSON part
-                            
+
                         if inspect.iscoroutinefunction(skill.run):
                             result = async_to_sync(skill.run)(**data)
                         else:
@@ -195,7 +195,7 @@ class CapabilitiesManager:
                 # Get the parent directory name and file name
                 dir_name = skill_file.parent.name
                 file_name = skill_file.stem
-                
+
                 # Convert directory and file names to proper case
                 # (e.g., html/distill -> HtmlDistill)
                 class_name = dir_name.title() + file_name.title()

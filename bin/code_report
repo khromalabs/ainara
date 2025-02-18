@@ -1,0 +1,7 @@
+#!/bin/sh
+rep="/tmp/ainara_code_report.txt"
+cd `git root`
+for i in `find . -name "*.yaml" -or -name "*.py" -or -name "*.js" | grep -v "node_modules" | grep -v "venv"`; do wc -l $i; done > $rep
+cat $rep
+echo "TOTAL:"
+awk '{sum += $1} END {print sum}' $rep

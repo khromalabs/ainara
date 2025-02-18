@@ -16,12 +16,25 @@
 # <https://www.gnu.org/licenses/>.
 
 import argparse
+from typing import Dict
 
-from flask import Flask
+import json
+import time
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
+from pygame import mixer
 
 from ainara.framework.capabilities_manager import CapabilitiesManager
+from ainara.framework.config import ConfigManager
 from ainara.framework.logging_setup import logging_manager
+
+config_manager = ConfigManager()
+config_manager.load_config()
+
+# Get Orakle servers from config
+ORAKLE_SERVERS = config_manager.get(
+    "orakle.servers", ["http://127.0.0.1:5000"]
+)
 
 
 def parse_args():
@@ -46,6 +59,12 @@ app = Flask(__name__)
 CORS(app)
 
 
+def register_framework_endpoints(app):
+    """Register framework-specific endpoints for non-Python clients"""
+    # Framework endpoints moved to PyBridge server
+    pass
+
+
 def create_app():
     """Create and configure the Flask application"""
     capabilities_manager = CapabilitiesManager(app)
@@ -62,5 +81,4 @@ if __name__ == "__main__":
     logger.info(f"Starting Orakle development server on port {args.port}")
 
     app = create_app()
-    # app.run(port=args.port, debug=True)
     app.run(port=args.port)

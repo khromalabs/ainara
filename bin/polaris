@@ -1,0 +1,3 @@
+#!/bin/sh
+cd $HOME/lab/src/ainara/polaris
+npm start

@@ -1,15 +1,15 @@
-import requests
 import logging
 
-from ainara.framework.config import ConfigManager
+import requests
+
+from ainara.framework.config import config
 from ainara.framework.skill import Skill
 
 
 class TimeWeather(Skill):
     """
-    Skill for checking weather using IP geolocation. Assistant doesn't
-    need to ask for location, this skill will retrive the location using
-    the IP
+    Skill for checking weather by location or IP geolocation.
+    If no location is provided, it will retrieve the location using the IP.
     """
 
     def __init__(self):
@@ -20,7 +20,6 @@ class TimeWeather(Skill):
         need to ask for location, this skill will retrive the location using
         the IP
         """
-        self.config = ConfigManager()
         self.logger = logging.getLogger(__name__)
 
     def get_location_from_ip(self):
@@ -59,18 +58,49 @@ class TimeWeather(Skill):
             self.logger.error(f"Error getting location: {str(e)}")
             return None
 
+    def get_weather_by_city(self, city_name: str):
+        """Get weather information for a specific city"""
+        api_key = config.get("apis.weather.openweathermap_api_key")
+        if not api_key:
+            return {"error": "OpenWeatherMap API key not configured"}
+
+        try:
+            url = "https://api.openweathermap.org/data/2.5/weather"
+            params = {
+                "q": city_name,
+                "appid": api_key,
+                "units": "metric",
+            }
+            response = requests.get(url, params=params)
+
+            if response.status_code == 200:
+                weather_data = response.json()
+                return {
+                    "location": (
+                        f"{weather_data['name']},"
+                        f" {weather_data['sys']['country']}"
+                    ),
+                    "temperature": weather_data["main"]["temp"],
+                    "description": weather_data["weather"][0]["description"],
+                    "humidity": weather_data["main"]["humidity"],
+                    "wind_speed": weather_data["wind"]["speed"],
+                }
+            return {"error": f"Weather API error: {response.status_code}"}
+
+        except Exception as e:
+            self.logger.error(f"Error getting weather: {str(e)}")
+            return {"error": f"Failed to get weather data: {str(e)}"}
+
     def get_weather(self):
         """
-        Get weather information based on IP location. Assistant doesn't
-        need to ask for location, this skill will retrive the location using
-        the IP
+        Get weather information based on IP location.
         """
         location = self.get_location_from_ip()
         if not location:
             return {"error": "Could not determine location"}
 
         # Using OpenWeatherMap API (you'll need to add API key to config)
-        api_key = self.config.get("apis.weather.openweathermap_api_key")
+        api_key = config.get("apis.weather.openweathermap_api_key")
         if not api_key:
             return {"error": "OpenWeatherMap API key not configured"}
 
@@ -102,19 +132,17 @@ class TimeWeather(Skill):
             self.logger.error(f"Error getting weather: {str(e)}")
             return {"error": f"Failed to get weather data: {str(e)}"}
 
-    async def run(self, api_key: str = None):
+    async def run(self, location: str = None, api_key: str = None):
         """
-        Get weather information for current location. Assistant doesn't
-        need to ask for location, this skill will retrive the location using
-        the IP
+        Get weather information for a location or current IP-based location.
 
         Args:
-            api_key: OpenWeatherMap API key (optional, will use config if not
-            provided)
+            location: City name (optional, will use IP-based location
+            if not provided)
 
         Returns:
             Dict containing weather information
         """
-        if api_key:
-            self.config["weather.openweathermap_api_key"] = api_key
+        if location:
+            return self.get_weather_by_city(location)
         return self.get_weather()

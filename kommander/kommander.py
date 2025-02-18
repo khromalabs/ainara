@@ -18,12 +18,9 @@
 # !/usr/bin/env python3
 
 import getopt
-import json
 import os
-import re
 import signal
 import sys
-import warnings
 from datetime import datetime
 
 import requests
@@ -32,13 +29,11 @@ from colorama import Fore, init
 from prompt_toolkit import prompt
 from prompt_toolkit.styles import Style
 
-# Suppress Pygame welcome message
-os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
-
-# Suppress pydantic warning about config keys
-warnings.filterwarnings(
-    "ignore", message="Valid config keys have changed in V2:*"
-)
+# # Suppress pydantic warning about config keys
+# import warnings
+# warnings.filterwarnings(
+#     "ignore", message="Valid config keys have changed in V2:*"
+# )
 
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
@@ -46,6 +41,14 @@ from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
+
+config_manager = ConfigManager()
+config_manager.load_config()
+
+# Get Orakle servers from config
+ORAKLE_SERVERS = config_manager.get(
+    "orakle.servers", ["http://127.0.0.1:5000"]
+)
 
 init()
 
@@ -62,209 +65,9 @@ CHAT = []
 config_manager = ConfigManager()
 config_manager.load_config()
 
-# Get Orakle servers from config
-ORAKLE_SERVERS = config_manager.get(
-    "orakle.servers", ["http://127.0.0.1:5000"]
-)
-
 # Initialize LLM
 llm_config = config_manager.get("llm", {})
 llm = create_llm_backend(llm_config)
-
-
-def get_orakle_capabilities():
-    """Query Orakle servers for capabilities, return a condensed summary"""
-    logger.info("Retrieving Orakle server capabilities...")
-    for server in ORAKLE_SERVERS:
-        try:
-            response = requests.get(f"{server}/capabilities", timeout=2)
-            if response.status_code == 200:
-                capabilities = response.json()
-
-                # Create a summary focused on command usage
-                summary = ["You can use the following Orakle commands:"]
-
-                # Add recipes with command format and return type
-                if "recipes" in capabilities:
-                    summary.append(
-                        '\nRecipes (use with ```oraklecmd\\nRECIPE("name",'
-                        " params)\\n```):"
-                    )
-                    for endpoint, recipe in capabilities["recipes"].items():
-                        params = recipe.get("parameters", [])
-                        param_dict = {}
-
-                        # Build parameter dictionary for example with proper
-                        # JSON formatting
-                        for param in params:
-                            param_name = param["name"]
-                            param_type = param.get("type", "string")
-                            # Use a placeholder value based on type
-                            if param_type == "string":
-                                param_dict[param_name] = "value"
-                            elif param_type == "integer":
-                                param_dict[param_name] = 0
-                            elif param_type == "boolean":
-                                param_dict[param_name] = False
-                            else:
-                                param_dict[param_name] = "value"
-
-                        # Create example command with properly formatted JSON
-                        json_params = json.dumps(param_dict)
-                        example = f'RECIPE("{endpoint}", {json_params})'
-                        summary.append(f"- {example}")
-
-                        # Add description if available
-                        if recipe.get("description"):
-                            summary.append(
-                                f"  Purpose: {recipe['description']}"
-                            )
-
-                        # Add return type if available
-                        if "flow" in recipe and recipe["flow"]:
-                            last_step = recipe["flow"][-1]
-                            if last_step.get("output_type"):
-                                summary.append(
-                                    f"  Returns: {last_step['output_type']}"
-                                )
-
-                        if any(p.get("description") for p in params):
-                            summary.append("  Parameters:")
-                            for p in params:
-                                if p.get("description"):
-                                    summary.append(
-                                        f"    {p['name']}: {p['description']}"
-                                    )
-
-                # Add skills with command format
-                if "skills" in capabilities:
-                    summary.append(
-                        '\nSkills (use with ```oraklecmd\\nSKILL("name",'
-                        " params)```):"
-                    )
-                    for skill_name, skill_info in capabilities[
-                        "skills"
-                    ].items():
-                        if "run" in skill_info:
-                            run_info = skill_info["run"]
-                            params = {}
-
-                            # Build parameter dictionary for example with
-                            # proper JSON formatting
-                            if run_info.get("parameters"):
-                                for param_name, param_info in run_info[
-                                    "parameters"
-                                ].items():
-                                    param_type = param_info.get("type", "any")
-                                    # Use a placeholder value based on type
-                                    if param_type == "string":
-                                        params[param_name] = "value"
-                                    elif param_type == "integer":
-                                        params[param_name] = 0
-                                    elif param_type == "boolean":
-                                        params[param_name] = False
-                                    else:
-                                        params[param_name] = "value"
-
-                            # Create example command with properly formatted
-                            # JSON
-                            json_params = json.dumps(params)
-                            example = f'SKILL("{skill_name}", {json_params})'
-                            summary.append(f"- {example}")
-
-                            # Add parameter descriptions and return type if
-                            # available
-                            if run_info.get("description"):
-                                summary.append(
-                                    f"  Purpose: {run_info['description']}"
-                                )
-                            if run_info.get("return_type"):
-                                summary.append(
-                                    f"  Returns: {run_info['return_type']}"
-                                )
-                            if run_info.get("parameters"):
-                                summary.append("  Parameters:")
-                                for param_name, param_info in run_info[
-                                    "parameters"
-                                ].items():
-                                    if param_info.get("description"):
-                                        desc = param_info.get(
-                                            "description", ""
-                                        )
-                                        summary.append(
-                                            f"    {param_name}:{desc}"
-                                        )
-
-                logger.info("...done")
-                return "\n".join(summary)
-        except requests.RequestException:
-            continue
-    logger.warning(
-        "No Orakle capabilities found, is the Orakle server running?"
-    )
-    return (
-        "WARNING: No Orakle capabilities found, is the Orakle server running?"
-    )
-
-
-orakle_caps = get_orakle_capabilities()
-# !!! DISABLED
-# orakle_caps = ""
-current_date = datetime.now()
-
-# Your name is Ainara.
-SYSTEM_MESSAGE = f"""
-
-You are a helpful, respectful and honest assistant, your name is Ainara.
-Don't be neutral.
-Have opinions. Strong opinions are better, but not mandatory. Just express
-those opinions with a baseline of politeness. Short answers are better, but
-don't omit details if you consider them important. Whenever you are completely
-or partially unsure about the answer to any question asked just
-admit it frankly.
-
-Today's date in YYYY-MM-DD format is: {datetime.now().strftime('%Y-%m-%d')}
-
-To fullfil the user requests, there are especial commands available to be used
-by you in this chat, which will be send by this chat utility to the Orakle
-API server. Orakle is a powerful server that provides various capabilities
-through skills and recipes:
-
-1. Skills: Individual components for specific tasks.
-
-2. Recipes: Pre-defined workflows that combine multiple skills for complex
-   tasks. Recipes execute skills in sequence.
-
-Both skills and recipes accept input parameters and return processed data.
-
-To use these capabilities, you must send single commands wrapped in triple
-backticks blocks like this block:
-
-```oraklecmd
-  SKILL("skill_name", {{ "parameter1": "value1"...)
-```
-or also like this block:
-
-```oraklecmd
-  RECIPE("recipe_name", {{ "parameter1": "value1"...)
-```
-
-Skills are for individual actions, Recipes execute multiple actions chained
-together. Right bellow we'll define the available skills and recipes.
-
-Don't suggest the user to use Orakle commands, as are meant to be used by you
-the assistant. Never mention in the chat that you are executing an Orakle
-command, or you are going to execute an Orakle command, just send the
-oraklecmd block.
-
-Give priority to recipes if, and only if, a user request completely fits the
-recipe purpose. Don't give priority to recipes in any other case.
-
-Orakle commands are processed one at a time, don't send more than one Orakle
-command per answer.
-
-{orakle_caps}
-"""
 
 
 def find_working_provider():
@@ -360,146 +163,11 @@ def trim(s):
     return s.strip()
 
 
-def format_chat_messages(new_message):
-    messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
-
-    for i in range(0, len(CHAT), 2):
-        messages.append({"role": "user", "content": CHAT[i]})
-        if i + 1 < len(CHAT):
-            messages.append({"role": "assistant", "content": CHAT[i + 1]})
-    messages.append({"role": "user", "content": new_message})
-    return messages
-
-
 def backup(content):
     if "BACKUP" in globals() and BACKUP:
         with open(BACKUP, "a") as f:
             f.write(content + "\n")
             f.close()
-
-
-def execute_orakle_command(command_block):
-    """Execute an Orakle command and return the result"""
-    for server in ORAKLE_SERVERS:
-        try:
-            # Extract command type and parameters
-            match = re.match(
-                r'(SKILL|RECIPE)\("/?([^"]+)",\s*({[^}]+})', command_block
-            )
-            if not match:
-                return (
-                    'Error: Invalid command format. Expected SKILL("name",'
-                    ' {params}) or RECIPE("name", {params})'
-                )
-
-            cmd_type, cmd_name, params_str = match.groups()
-            try:
-                params = json.loads(params_str)
-            except json.JSONDecodeError as e:
-                return f"Error: Invalid JSON parameters - {str(e)}"
-
-            # Make request to Orakle server
-            # Remove any leading/trailing slashes from cmd_name
-            cmd_name = cmd_name.strip("/")
-            # Always use plural form for endpoints
-            endpoint_type = f"{cmd_type.lower()}s"
-            endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
-            response = requests.post(endpoint, json=params, timeout=30)
-
-            if response.status_code == 200:
-                try:
-                    # First try to parse as JSON
-                    json_response = response.json()
-                    # print(f"json_response: {json_response}")
-                    # Handle empty responses
-                    if not json_response:
-                        return "Empty response received"
-                    # Handle both string and dict responses
-                    if isinstance(json_response, str):
-                        return json_response
-                    return json.dumps(json_response, indent=2)
-                except json.JSONDecodeError:
-                    # If not JSON, return the raw text response
-                    text_response = response.text
-                    # print(f"text_response: {text_response}")
-                    return text_response if text_response else "Empty response"
-            else:
-                error_msg = f"Error: Server returned {response.status_code}"
-                try:
-                    error_details = response.json()
-                    error_msg += (
-                        f"\nDetails: {json.dumps(error_details, indent=2)}"
-                    )
-                except (ValueError, json.JSONDecodeError):
-                    if response.text:
-                        error_msg += f"\nDetails: {response.text}"
-                return error_msg
-
-        except requests.RequestException:
-            continue
-    return "Error: No Orakle servers available"
-
-
-def format_orakle_command(command: str) -> str:
-    """Format Orakle command with colors and layout"""
-    import re
-
-    # Extract command parts
-    match = re.match(
-        r'(SKILL|RECIPE)\("([^"]+)",\s*({[^}]+})', command.strip()
-    )
-    if not match:
-        return command
-
-    cmd_type, name, params = match.groups()
-
-    # Parse and format parameters
-    try:
-        params_dict = json.loads(params)
-        formatted_params = "\n".join(
-            f"  {Fore.CYAN}{k}{Style.RESET_ALL}:"
-            f" {Fore.YELLOW}{repr(v)}{Style.RESET_ALL}"
-            for k, v in params_dict.items()
-        )
-    except json.JSONDecodeError:
-        formatted_params = params
-
-    # Build formatted command
-    return (
-        f"{Fore.GREEN}╭─ {cmd_type}{Style.RESET_ALL} "
-        f"{Fore.BLUE}{name}{Style.RESET_ALL}\n"
-        f"{Fore.GREEN}╰─{Style.RESET_ALL} Parameters:\n"
-        f"{formatted_params}"
-    )
-
-
-def process_orakle_commands(text):
-    """
-    Process any oraklecmd blocks in the text and return results and command
-    types
-    """
-    # If text is a generator, collect all chunks first
-    if hasattr(text, "__iter__") and not isinstance(text, (str, bytes)):
-        text = "".join(list(text))
-
-    results = []
-    command_types = []
-
-    def replace_command(match):
-        command = match.group(1).strip()
-        # Extract command type (SKILL or RECIPE)
-        cmd_type_match = re.match(r"(SKILL|RECIPE)", command)
-        if cmd_type_match:
-            command_types.append(cmd_type_match.group(1))
-
-        result = execute_orakle_command(command)
-        results.append(result)
-        formatted_cmd = command  # format_orakle_command(command)
-        return f"{formatted_cmd}\n\nResult:\n```json\n{result}\n```"
-
-    pattern = r"```oraklecmd\n(.*?)\n```"
-    processed_text = re.sub(pattern, replace_command, text, flags=re.DOTALL)
-    return processed_text, results, command_types
 
 
 def signal_handler(sig, frame):
@@ -549,7 +217,7 @@ def main():
         logging_manager.setup(
             log_dir=log_dir, log_level=log_level, log_filter="kommander"
         )
-    logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
+    # logger.debug(f"SYSTEM_MESSAGE: {SYSTEM_MESSAGE}")
 
     # Initialize TTS if voice mode enabled
     tts = None
@@ -592,7 +260,6 @@ def main():
     # Initialize ChatManager
     chat_manager = ChatManager(
         llm=llm,
-        system_message=SYSTEM_MESSAGE,
         orakle_servers=ORAKLE_SERVERS,
         backup_file=BACKUP if "BACKUP" in globals() else None,
         tts=tts,

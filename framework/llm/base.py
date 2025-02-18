@@ -70,6 +70,14 @@ class LLMBackend(ABC):
             return False
         return self.check_provider_availability(self.provider["api_base"])
 
+    def get_context_window(self) -> int:
+        """Get the context window size for the current model
+        
+        Returns:
+            Maximum number of tokens the model can process
+        """
+        return 4000  # Default conservative value
+
     @abstractmethod
     def process_text(
         self,

@@ -27,10 +27,22 @@ class ConfigManager:
         for config_path in config_paths:
             if config_path.exists():
                 with open(config_path) as f:
-                    self.config = yaml.safe_load(f)
-                return
+                    self.config = yaml.safe_load(f) or {}  # Ensure config is a dict
+                    
+                    # Add default audio configuration if not present
+                    if "audio" not in self.config:
+                        self.config["audio"] = {}
+                    if "buffer_size_mb" not in self.config["audio"]:
+                        self.config["audio"]["buffer_size_mb"] = 10
+                    
+                    return
 
-        raise FileNotFoundError("No configuration file found")
+        # If no config file found, create minimal default config
+        self.config = {
+            "audio": {
+                "buffer_size_mb": 10
+            }
+        }
 
     def get(self, key_path: str, default=None):
         """Get a config value using dot notation"""

@@ -3,3 +3,5 @@ config/orakle.yaml
 **/__pycache__/
 docs/paper/*
 docs/paper/ainara.tex
+fireworks_ai/
+framework/static/

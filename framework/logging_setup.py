@@ -24,6 +24,7 @@ class LoggingManager:
     """Manages application-wide logging configuration"""
     _instance = None
     _logger = None
+    _filters = set()  # Add this to track filters
 
     def __new__(cls):
         if cls._instance is None:
@@ -32,11 +33,36 @@ class LoggingManager:
 
     def __init__(self):
         self._logger = None
+        self._filters = set()  # Initialize filters set
+
+    def addFilter(self, log_filter):
+        """Add filtering criteria
+
+        Args:
+            log_filter: str or list of str - Names to filter logging on
+        """
+        if isinstance(log_filter, (list, tuple)):
+            self._filters.update(log_filter)
+        else:
+            self._filters.add(log_filter)
+
+        # Create a new logger that combines all filters
+        if self._logger:
+            self._logger = logging.getLogger("|".join(self._filters))
+            # Preserve existing handlers and their configuration
+            handlers = self._logger.handlers
+            level = self._logger.level
+            self._logger.handlers = handlers
+            self._logger.setLevel(level)
 
     def setup(self, log_dir=None, log_level="INFO", log_filter=None):
         """Configure logging to console and optionally to rotating file"""
-        # Initialize logger with optional filter
-        self._logger = logging.getLogger(log_filter if log_filter else "")
+        if log_filter:
+            self.addFilter(log_filter)
+
+        # Initialize logger with combined filters
+        filter_string = "|".join(self._filters) if self._filters else ""
+        self._logger = logging.getLogger(filter_string)
         logger = self._logger
         log_level = getattr(logging, log_level.upper())
         logger.setLevel(log_level)
