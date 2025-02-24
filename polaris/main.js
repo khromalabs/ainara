@@ -1,12 +1,13 @@
 const { app, Tray, Menu, dialog, globalShortcut } = require('electron');
-const yargs = require('yargs/yargs');
-const { hideBin } = require('yargs/helpers');
+// const yargs = require('yargs/yargs');
+// const { hideBin } = require('yargs/helpers');
 const path = require('path');
 const ConfigManager = require('./utils/config');
 const { WindowManager } = require('./windows/WindowManager');
 const ComRingWindow = require('./windows/ComRingWindow');
 const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const Logger = require('./utils/logger');
+const process = require('process');
 
 const config = new ConfigManager();
 let windowManager = null;
@@ -14,32 +15,32 @@ let tray = null;
 let shortcutRegistered = false;
 const shortcutKey = config.get('shortcuts.toggle', 'Super+K');
 
-async function checkServerHealth(url, serviceName) {
-    try {
-        Logger.log(`Checking ${serviceName} server at: ${url}`);
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`${serviceName} server returned status ${response.status}`);
-        }
-        Logger.log(`${serviceName} server is available`);
-        return true;
-    } catch (error) {
-        Logger.error(`${serviceName} server not available at ${url}:`, error.message);
-        return false;
-    }
-}
+// async function checkServerHealth(url, serviceName) {
+//     try {
+//         Logger.log(`Checking ${serviceName} server at: ${url}`);
+//         const response = await fetch(url);
+//         if (!response.ok) {
+//             throw new Error(`${serviceName} server returned status ${response.status}`);
+//         }
+//         Logger.log(`${serviceName} server is available`);
+//         return true;
+//     } catch (error) {
+//         Logger.error(`${serviceName} server not available at ${url}:`, error.message);
+//         return false;
+//     }
+// }
 
 
 async function appInitialization() {
     try {
-        // Parse command line arguments
-        const argv = yargs(hideBin(process.argv))
-            .option('debug', {
-                alias: 'd',
-                type: 'boolean',
-                description: 'Enable debug logging'
-            })
-            .argv;
+        // // Parse command line arguments
+        // const argv = yargs(hideBin(process.argv))
+        //     .option('debug', {
+        //         alias: 'd',
+        //         type: 'boolean',
+        //         description: 'Enable debug logging'
+        //     })
+        //     .argv;
 
         Logger.setDebugMode(true);
 
@@ -147,7 +148,7 @@ function appCreateTray() {
 
 function appSetupEventHandlers() {
     // Prevent app from closing when all windows are closed
-    app.on('window-all-closed', (e) => {
+    app.on('window-all-closed', () => {
         if (process.platform !== 'darwin') {
             app.quit();
         }

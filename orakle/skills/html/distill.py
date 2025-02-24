@@ -25,7 +25,12 @@ class HtmlDistill(Skill):
         super().__init__()
 
     def run(self, text):
-        """Extract article text from an HTML page"""
+        """
+        Extract article text from an HTML page
+
+        Args:
+            - content: String containing an HTML web page
+        """
         # Handle input whether it's a dictionary or direct text
         if isinstance(text, dict):
             html_content = text.get('content', '')

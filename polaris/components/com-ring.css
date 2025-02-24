@@ -73,12 +73,13 @@ body {
 
 .ring-circle.tts-active {
     /* Significantly enhance both outer and inner glow effects during TTS */
-    box-shadow: 0 0 30px rgba(255, 255, 255, 0.7),
-                0 0 45px rgba(255, 255, 255, 0.5),
-                0 0 60px rgba(255, 255, 255, 0.4),
-                inset 0 0 30px rgba(255, 255, 255, 0.7),
-                inset 0 0 45px rgba(255, 255, 255, 0.5),
-                inset 0 0 60px rgba(255, 255, 255, 0.4);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.7),
+                0 0 20px rgba(255, 255, 255, 0.5),
+                0 0 30px rgba(255, 255, 255, 0.4),
+                inset 0 0 10px rgba(255, 255, 255, 0.7),
+                inset 0 0 25px rgba(255, 255, 255, 0.5),
+                inset 0 0 30px rgba(255, 255, 255, 0.4);
+    border: 8px solid rgba(255, 255, 255, 1);
 }
 
 .inner-circle {
@@ -88,8 +89,8 @@ body {
     width: 100%;
     height: 100%;
     border-radius: 50%;
-    background-color: rgb(255, 255, 255);  /* Full white, no transparency */
-    box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);  /* Added glow effect */
+    background-color: rgb(255, 255, 255, 0.8);
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
     opacity: 0;
     transition: opacity 0.1s ease-out;
 }
@@ -122,30 +123,39 @@ body {
     100% { opacity: 1; }
 }
 
-@keyframes pulse {
-    0% { transform: scale(1); }
-    50% { transform: scale(1.1); }
-    100% { transform: scale(1); }
-}
-
 @keyframes glow {
     0% { opacity: 0.3; }
     50% { opacity: 0.8; }
     100% { opacity: 0.3; }
 }
 
+@keyframes pulse {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.03);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
 @keyframes power-fluctuation {
-    0% { 
+    0% {
         opacity: 1;
         box-shadow: 0 0 20px rgba(255, 255, 255, 0.5),
                     inset 0 0 20px rgba(255, 255, 255, 0.5);
     }
-    50% { 
+    50% {
         opacity: 0.4;
         box-shadow: 0 0 10px rgba(255, 255, 255, 0.2),
                     inset 0 0 10px rgba(255, 255, 255, 0.2);
     }
-    100% { 
+    100% {
         opacity: 1;
         box-shadow: 0 0 20px rgba(255, 255, 255, 0.5),
                     inset 0 0 20px rgba(255, 255, 255, 0.5);

@@ -7,18 +7,7 @@ from ainara.framework.skill import Skill
 
 
 class SystemClipboard(Skill):
-    """
-    Skill for reading and writing to the system clipboard.
-
-    This skill provides methods to:
-    - Read current clipboard contents
-    - Write text to clipboard
-    - Clear clipboard contents
-
-    Requirements:
-        pyperclip package must be installed:
-        pip install pyperclip
-    """
+    """Read and Write to the system clipboard"""
 
     def __init__(self):
         super().__init__()

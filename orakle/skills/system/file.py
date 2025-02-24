@@ -23,7 +23,7 @@ from ainara.framework.skill import Skill
 
 
 class SystemFile(Skill):
-    """Skill for file system operations"""
+    """Perform file operations in the local system as read, list, exists"""
 
     def __init__(self):
         super().__init__()
@@ -51,11 +51,11 @@ class SystemFile(Skill):
 
         operations = {
             "read": self._read_file,
-            "write": self._write_file,
-            "delete": self._delete_file,
+#            "write": self._write_file,
+#            "delete": self._delete_file,
             "list": self._list_directory,
             "exists": self._check_exists,
-            "find": self._find_files,
+#            "find": self._find_files,
         }
 
         if operation not in operations:

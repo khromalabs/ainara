@@ -40,7 +40,7 @@ SUPPORTED_LANGUAGES = {
 }
 
 
-class NewsSearch(Skill):
+class SearchNews(Skill):
     """Search news articles using NewsAPI"""
 
     def __init__(self):

@@ -15,32 +15,37 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
-from typing import List, Dict, Tuple, Optional
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from cachetools import LRUCache
-import logging
-from pathlib import Path
 import json
+import logging
 import re
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import numpy as np
+from cachetools import LRUCache
+from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
+
 class CapabilityMatcher:
-    """Efficient capability matching using embeddings, keywords and usage statistics"""
+    """
+    Efficient capability matching using embeddings, keywords and usage
+    statistics
+    """
 
     def __init__(self, cache_size: int = 1000):
         self.logger = logging.getLogger(__name__)
-        
+
         # Initialize embedding model
         self.logger.info("Initializing sentence transformer model...")
-        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
-        
+        self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
+
         # Initialize caches and storage
         self.query_cache = LRUCache(maxsize=cache_size)
         self.skill_embeddings = {}
         self.skill_keywords = {}
         self.skill_usage_stats = {}
-        
+
         # Load usage statistics if they exist
         self._load_usage_stats()
 
@@ -60,7 +65,7 @@ class CapabilityMatcher:
         stats_file = Path(__file__).parent / "data" / "skill_usage_stats.json"
         stats_file.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(stats_file, 'w') as f:
+            with open(stats_file, "w") as f:
                 json.dump(self.skill_usage_stats, f)
             self.logger.debug("Saved skill usage statistics")
         except Exception as e:
@@ -71,9 +76,11 @@ class CapabilityMatcher:
         # Convert to lowercase and split
         words = text.lower().split()
         # Remove stop words and short words
-        keywords = [w for w in words if w not in ENGLISH_STOP_WORDS and len(w) > 2]
+        keywords = [
+            w for w in words if w not in ENGLISH_STOP_WORDS and len(w) > 2
+        ]
         # Remove special characters and numbers
-        keywords = [re.sub(r'[^a-z]', '', w) for w in keywords]
+        keywords = [re.sub(r"[^a-z]", "", w) for w in keywords]
         # Remove empty strings
         return [w for w in keywords if w]
 
@@ -81,16 +88,23 @@ class CapabilityMatcher:
         """Pre-compute embeddings for all skills and their descriptions"""
         self.logger.info("Pre-computing skill embeddings...")
         for skill_name, skill_info in skills.items():
-            # Combine skill name, description and parameters for richer matching
-            skill_text = f"{skill_name} {skill_info.get('description', '')} {' '.join(skill_info.get('parameters', []))}"
+            # Combine skill name, description and parameters for
+            # richer matching
+            skill_text = (
+                f"{skill_name} {skill_info.get('description', '')} {' '.join(skill_info.get('parameters', []))}"
+            )
             self.skill_embeddings[skill_name] = self.encoder.encode(skill_text)
-            
+
             # Extract keywords for quick matching
-            self.skill_keywords[skill_name] = set(self.extract_keywords(skill_text))
-        
+            self.skill_keywords[skill_name] = set(
+                self.extract_keywords(skill_text)
+            )
+
         self.logger.info(f"Pre-computed embeddings for {len(skills)} skills")
 
-    def find_matching_skill(self, query: str, threshold: float = 0.7) -> List[Tuple[str, float]]:
+    def find_matching_skill(
+        self, query: str, threshold: float = 0.7
+    ) -> List[Tuple[str, float]]:
         """Multi-stage matching process"""
         # Check cache first
         if query in self.query_cache:
@@ -98,7 +112,7 @@ class CapabilityMatcher:
             return self.query_cache[query]
 
         matches = []
-        
+
         # Stage 1: Quick keyword matching
         self.logger.debug("Performing keyword matching...")
         keyword_matches = self.keyword_match(query)
@@ -137,12 +151,15 @@ class CapabilityMatcher:
         matches = []
         for skill_name, skill_embedding in self.skill_embeddings.items():
             similarity = np.dot(query_embedding, skill_embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(skill_embedding)
+                np.linalg.norm(query_embedding)
+                * np.linalg.norm(skill_embedding)
             )
             matches.append((skill_name, float(similarity)))
         return sorted(matches, key=lambda x: x[1], reverse=True)
 
-    def apply_heuristics(self, matches: List[Tuple[str, float]]) -> List[Tuple[str, float]]:
+    def apply_heuristics(
+        self, matches: List[Tuple[str, float]]
+    ) -> List[Tuple[str, float]]:
         """Apply usage statistics and other heuristics to refine rankings"""
         weighted_matches = []
         for skill_name, score in matches:
@@ -155,5 +172,7 @@ class CapabilityMatcher:
 
     def update_usage_stats(self, skill_name: str):
         """Update usage statistics for a skill"""
-        self.skill_usage_stats[skill_name] = self.skill_usage_stats.get(skill_name, 0) + 1
+        self.skill_usage_stats[skill_name] = (
+            self.skill_usage_stats.get(skill_name, 0) + 1
+        )
         self._save_usage_stats()

@@ -1,11 +1,49 @@
 :host {
     position: fixed;
-    bottom: 160px;  /* Changed from 200px to 240px to move it down 40px */
+    bottom: 160px;
     left: 50%;
     transform: translateX(-50%);
     width: 100%;
     z-index: 1000;
     pointer-events: none;
+    display: flex;
+    flex-direction: column;
+}
+
+.typing-container {
+    position: fixed;
+    bottom: 60px;  /* Adjust this value to position it where you want */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    padding: 10px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: auto;
+}
+
+.typing-area {
+    width: 100%;
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: none;
+    background-color: rgba(0, 0, 0, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+    font-family: 'Inter', sans-serif;
+    font-size: 1.5em;
+    line-height: 1.8;
+    outline: none;
+    display: none;  /* Initially hidden */
+}
+
+.typing-area::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.typing-area:focus {
+    background-color: rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+                0 0 20px rgba(255, 255, 255, 0.1);
 }
 
 .chat-container {
@@ -14,6 +52,9 @@
     align-items: flex-start;
     gap: 8px;
     width: 100%;
+    /* Add some bottom margin to prevent overlap with typing container */
+    margin-bottom: 60px;  /* Adjust this value based on your typing container height */
+    overflow-y: auto;
 }
 
 .message {

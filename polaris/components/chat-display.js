@@ -1,4 +1,7 @@
 const BaseComponent = require('./base')
+const electron = require('electron');
+
+var ipcRenderer = electron.ipcRenderer;
 
 class ChatDisplay extends BaseComponent {
     constructor() {
@@ -7,6 +10,50 @@ class ChatDisplay extends BaseComponent {
         this.maxVisibleMessages = 5;
         this.messageTimeouts = [];
         this.animationTimeouts = [];
+        this.isTypingMode = false;
+        const { ipcRenderer } = require('electron');
+        this.ipcRenderer = ipcRenderer;
+        this.keydownHandler = null;
+    }
+
+    enterTypingMode() {
+        this.isTypingMode = true;
+        this.typingArea.style.opacity = '1';
+        this.textInput.style.display = 'block';
+        this.textInput.focus();
+        this.container.style.marginBottom = '60px';
+
+        this.keydownHandler = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const text = this.textInput.value.trim();
+                if (text) {
+                    this.addMessage(text, 1, false);
+                    console.log("SENDING process-typed-message");
+                    ipcRenderer.send('process-typed-message', text);
+                    this.textInput.value = '';
+                }
+                this.exitTypingMode();
+            } else if (e.key === 'Escape') {
+                this.exitTypingMode();
+            }
+        };
+
+        this.textInput.addEventListener('keydown', this.keydownHandler);
+    }
+
+    exitTypingMode() {
+        if (this.keydownHandler) {
+            this.textInput.removeEventListener('keydown', this.keydownHandler);
+            this.keydownHandler = null;
+        }
+
+        this.isTypingMode = false;
+        this.typingArea.style.opacity = '0';
+        this.textInput.style.display = 'none';
+        this.textInput.value = '';
+        this.container.style.marginBottom = '0';
+        ipcRenderer.send('exit-typing-mode');
     }
 
     cleanupState() {
@@ -14,6 +61,7 @@ class ChatDisplay extends BaseComponent {
         if (this.messageTimeouts) {
             this.messageTimeouts.forEach(timeout => clearTimeout(timeout));
         }
+        this.exitTypingMode();
         this.messageTimeouts = [];
 
         // Clear all animation timeouts
@@ -45,7 +93,10 @@ class ChatDisplay extends BaseComponent {
 
             this.shadowRoot.appendChild(template.content.cloneNode(true));
             this.container = this.shadowRoot.querySelector('.chat-container');
+            this.typingArea = this.shadowRoot.querySelector('.typing-container');
+            this.textInput = this.shadowRoot.querySelector('.typing-area');
             console.log('ChatDisplay: Container initialized:', !!this.container);
+
 
             // Add IPC listeners with error handling
             try {
@@ -105,6 +156,27 @@ class ChatDisplay extends BaseComponent {
                     console.log('ChatDisplay: Resetting state');
                     this.cleanupState();
                     this.container.style.opacity = '1';
+                });
+
+                ipcRenderer.on('enter-typing-mode', () => {
+                    console.log('ChatDisplay: Entering typing mode');
+                    this.enterTypingMode();
+                });
+
+                ipcRenderer.on('exit-typing-mode', () => {
+                    console.log('ChatDisplay: Exiting typing mode');
+                    this.exitTypingMode();
+                });
+
+                ipcRenderer.on('typing-key-pressed', (event, key) => {
+                    console.log('ChatDisplay: Received typing key:', key);
+                    if (!this.isTypingMode) {
+                        this.enterTypingMode();
+                        this.textInput.value = key;
+                    } else {
+                        this.textInput.value += key;
+                    }
+                    this.textInput.focus();
                 });
 
                 console.log('ChatDisplay: IPC listeners setup complete');

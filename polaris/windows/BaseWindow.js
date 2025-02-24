@@ -1,6 +1,8 @@
 // windows/BaseWindow.js
 const { BrowserWindow } = require('electron');
 const Logger = require('../utils/logger');
+const path = require('path');
+const process = require('process');
 
 class BaseWindow {
     constructor(config, prefix, options = {}) {
@@ -34,11 +36,6 @@ class BaseWindow {
     }
 
     setupBaseEventHandlers() {
-        // Keyboard event logging
-        this.window.webContents.on('before-input-event', (event, input) => {
-            // Logger.log(`[${this.name}] Keyboard event:`, input);
-        });
-
         // Window state events
         this.window.on('show', () => {
             Logger.log(`${this.name} shown`);
@@ -69,7 +66,10 @@ class BaseWindow {
 
         // Renderer events
         this.window.webContents.on('console-message', (event, level, message, line, sourceId) => {
-            Logger.log(`[${this.name}] Renderer Console: [${sourceId}][${line}] ${message}`);
+            const myfilepath = `${sourceId}`.replace("file://", "");
+            const currentDirectory = process.cwd();
+            const relativePath = path.relative(currentDirectory, myfilepath);
+            Logger.log(`[${relativePath}:${line}] ${message}`);
         });
 
         this.window.webContents.on('crashed', () => {
@@ -96,7 +96,6 @@ class BaseWindow {
 
     show() {
         this.window.show();
-        this.window.focus();
     }
 
     hide() {

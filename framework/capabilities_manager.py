@@ -18,7 +18,7 @@
 import importlib
 import inspect
 import logging
-import pprint
+# import pprint
 import re
 from pathlib import Path
 from typing import get_type_hints
@@ -41,21 +41,29 @@ class CapabilitiesManager:
         """Get information about all available skills and recipes"""
         capabilities = {"skills": {}, "recipes": {}}
 
-        logger = logging.getLogger(__name__)
+        logging.info("get_capabilities 1")
 
         # Get skills information (excluding hidden ones)
+        # Modify the skill info collection part:
         for skill_name, skill_instance in self.skills.items():
+            # Debug logging
+            logging.info(f"Processing skill: {skill_name}")
+            logging.info(f"Class docstring: {skill_instance.__class__.__doc__}")
             # Skip hidden skills
             if getattr(skill_instance, "hiddenCapability", False):
-                logger.info(
-                    f"Skipping hidden skill in capabilities: {skill_name}"
-                )
+                logging.info(f"Skipping hidden skill in capabilities: {skill_name}")
                 continue
-
             skill_info = {
                 "description": skill_instance.__class__.__doc__ or "",
-                "methods": {},
             }
+            # Debug logging
+            logging.info(f"Final description: {skill_info['description']}")
+            if not skill_info["description"]:
+                logging.error(
+                    "No valid description found in skill " +
+                    skill_name + ". Skipping skill."
+                )
+                continue
 
             # Get information about run method
             run_method = skill_instance.run
@@ -131,9 +139,14 @@ class CapabilitiesManager:
                         # If data is a string starting with SKILL, parse it
                         if isinstance(data, str) and data.startswith("SKILL("):
                             import re
-                            match = re.match(r'SKILL\("([^"]+)",\s*({[^}]+})\)', data)
+
+                            match = re.match(
+                                r'SKILL\("([^"]+)",\s*({[^}]+})\)', data
+                            )
                             if match:
-                                data = eval(match.group(2))  # Safely evaluate the JSON part
+                                data = eval(
+                                    match.group(2)
+                                )  # Safely evaluate the JSON part
 
                         if inspect.iscoroutinefunction(skill.run):
                             result = async_to_sync(skill.run)(**data)
@@ -183,6 +196,10 @@ class CapabilitiesManager:
         for skill_file in skills_dir.rglob("*.py"):
             # Skip __init__ files and base files
             if skill_file.stem.startswith("__") or skill_file.stem == "base":
+                continue
+
+            # Skip directories containing "_backend"
+            if "_backend" in skill_file.parent.name:
                 continue
 
             try:
@@ -313,7 +330,7 @@ class CapabilitiesManager:
             # using the step's skill name
             skill = self.skills[step["skill"]]
             # Always use the run method
-            logger.info(pprint.pformat(skill.run))
+            # logger.info(pprint.pformat(skill.run))
 
             # Prepare the input parameters for the skill action
             if isinstance(step["input"], dict):

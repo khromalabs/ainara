@@ -71,15 +71,22 @@ class WindowManager {
             }
         });
 
+        ipcMain.on('hide-window-all', () => {
+            Logger.log('WindowManager: Force hiding all windows');
+            this.hideAll(true);
+        });
+
         this.windows.forEach(window => {
             window.on('blur', () => {
-                if (!this.isAnyOtherWindowFocused(window.prefix)) {
-                    this.handlers.onBlur(window, this);
-                }
-            });
-
-            window.window.webContents.on('console-message', (event, level, message, line, sourceId) => {
-                // Logger.log(`Renderer Console: [${sourceId}][${line}] ${message}`);
+                // Add delay to allow focus to settle on another window
+                setTimeout(() => {
+                    if (!this.isAnyApplicationWindowFocused()) {
+                        Logger.log('WindowManager: Focus lost to external window - hiding all windows');
+                        this.hideAll();
+                    } else {
+                        Logger.log('WindowManager: Focus still within application windows');
+                    }
+                }, 100);
             });
 
             window.window.webContents.on('crashed', () => {
@@ -118,9 +125,9 @@ class WindowManager {
         });
     }
 
-    isAnyOtherWindowFocused(excludePrefix) {
-        return Array.from(this.windows.entries())
-            .some(([prefix, window]) => prefix !== excludePrefix && window.isFocused());
+    isAnyApplicationWindowFocused() {
+        return Array.from(this.windows.values())
+            .some(window => window.isFocused());
     }
 
     showAll() {
@@ -136,14 +143,16 @@ class WindowManager {
         this.handlers.onShow(this);
     }
 
-    hideAll() {
-        this.windows.forEach(window => {
-            if (window.isVisible()) {
-                this.handlers.beforeHide(window, this);
-                window.hide();
-            }
-        });
-        this.handlers.onHide(this);
+    hideAll(force = false) {
+        if (force || !this.isAnyApplicationWindowFocused()) {
+            this.windows.forEach(window => {
+                if (window.isVisible()) {
+                    this.handlers.beforeHide(window, this);
+                    window.hide();
+                }
+            });
+            this.handlers.onHide(this);
+        }
     }
 
     toggleVisibility() {

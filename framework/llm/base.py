@@ -29,13 +29,29 @@ class LLMBackend(ABC):
 
     def _handle_normal_response(self, response) -> str:
         """Handle normal (non-streaming) response"""
+        content = ""
         if hasattr(response.choices[0], "message"):
-            return response.choices[0].message.content.rstrip("\n")
+            content = response.choices[0].message.content
         elif hasattr(response.choices[0], "text"):
-            return response.choices[0].text.rstrip("\n")
+            content = response.choices[0].text
         else:
             self.logger.error("Unexpected response format")
             return ""
+            
+        # Clean up the response
+        content = content.strip()
+        # Remove markdown code block if present
+        if content.startswith("```") and content.endswith("```"):
+            # Extract language if specified
+            lines = content.split("\n")
+            if len(lines) > 2:
+                # Remove first and last lines (``` markers)
+                content = "\n".join(lines[1:-1])
+            else:
+                # Just remove the ``` markers
+                content = content.replace("```", "")
+                
+        return content.strip()
 
     def _prepare_messages(
         self, text: str, system_message: str = "", chat_history: list = None
@@ -79,7 +95,7 @@ class LLMBackend(ABC):
         return 4000  # Default conservative value
 
     @abstractmethod
-    def process_text(
+    async def process_text(
         self,
         text: str,
         system_message: str = "",

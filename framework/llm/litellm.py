@@ -1,7 +1,7 @@
 import os
 from typing import Generator, Union
 
-from litellm import completion, get_max_tokens
+from litellm import completion, acompletion, get_max_tokens
 
 from .base import LLMBackend
 from ainara.framework.config import ConfigManager
@@ -14,6 +14,7 @@ class LiteLLM(LLMBackend):
         self.config = ConfigManager()
         super().__init__(self.config)
         self.completion = completion
+        self.acompletion = acompletion
         self.provider = self._initialize_provider()
         self._context_window = self._get_context_window()
 
@@ -122,6 +123,51 @@ class LiteLLM(LLMBackend):
 
             self.logger.info("Sending completion request...")
             response = self.completion(**completion_kwargs)
+
+            if stream:
+                return self._handle_streaming_response(response)
+            else:
+                return self._handle_normal_response(response)
+
+        except Exception as e:
+            self.logger.error(
+                f"Unable to get a response from the AI: {str(e)}"
+            )
+            return ""
+
+    async def aprocess_text(
+        self,
+        text: str,
+        system_message: str = "",
+        chat_history: list = None,
+        stream: bool = False,
+    ) -> Union[str, Generator]:
+        """Process text using LiteLLM (async version)"""
+        try:
+            messages = self._prepare_messages(
+                text, system_message, chat_history
+            )
+
+            completion_kwargs = {
+                "model": self.provider["model"],
+                "messages": messages,
+                "temperature": 0.2,
+                "stream": stream,
+                **(
+                    {"api_base": self.provider["api_base"]}
+                    if "api_base" in self.provider
+                    else {}
+                ),
+                **(
+                    {"api_key": self.provider["api_key"]}
+                    if "api_key" in self.provider
+                    else {}
+                ),
+                "logger_fn": self.my_custom_logging_fn,
+            }
+
+            self.logger.info("Sending completion request...")
+            response = await self.acompletion(**completion_kwargs)
 
             if stream:
                 return self._handle_streaming_response(response)

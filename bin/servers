@@ -106,7 +106,6 @@ if [ "$skip_orakle" -eq 0 ]; then
     nohup $orakle_cmd --log-dir /tmp/ > /tmp/orakle.log &
 fi
 
-
 # Check if the Pybrige server should be skipped
 pybridge_cmd="python -m ainara.framework.pybridge"
 if pgrep -f "$pybridge_cmd" > /dev/null; then
@@ -114,7 +113,6 @@ if pgrep -f "$pybridge_cmd" > /dev/null; then
 	echo "Skipping restarting Pybridge server..."
 fi
 if [ $skip_pybridge -eq 0 ]; then
-    sleep 3
     echo " --- Starting Pybrige server --- "
     nohup $pybridge_cmd > /tmp/pybridge.log &
 fi

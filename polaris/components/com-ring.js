@@ -20,7 +20,7 @@ const ConfigManager = require('../utils/config');
 const BaseComponent = require('./base');
 const electron = require('electron');
 
-ipcRenderer = electron.ipcRenderer;
+var ipcRenderer = electron.ipcRenderer;
 console.log('com-ring.js loaded');
 
 class ComRing extends BaseComponent {
@@ -30,6 +30,8 @@ class ComRing extends BaseComponent {
             this.ignoreIncomingEvents = false;
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
+            this.isTypingMode = false;
+            this.text = null;
 
             // Get pybridge API endpoint from config
             this.pybridgeEndpoint = this.config.get('pybridge.api_url', 'http://localhost:5001');
@@ -38,6 +40,7 @@ class ComRing extends BaseComponent {
             };
 
             this.isWindowVisible = false;
+            this.isProcessingUserMessage = false;
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
             this.state = {
@@ -152,6 +155,7 @@ class ComRing extends BaseComponent {
             mainKey: this.mainKey
         });
 
+
         try {
             console.log('ComRing: Successfully imported electron and got ipcRenderer');
         } catch (error) {
@@ -172,30 +176,81 @@ class ComRing extends BaseComponent {
                 console.log('Window hidden while recording - stopping recording');
                 this.stopRecording();
             }
+
+            if (this.state.isProcessingLLM) {
+                this.abortLLMResponse();
+                this.cleanAudio();
+                this.state.isAwaitingResponse = false;
+            }
         });
 
+        ipcRenderer.on('process-typed-message', async (event, message) => {
+            if (!this.isProcessingUserMessage) {
+                this.isProcessingUserMessage = true;
+                await this.processUserMessage(message, true);
+                this.isProcessingUserMessage = false;
+            } else {
+                console.log("process-typed-message: Avoiding concurrent entry");
+            }
+        });
+
+        ipcRenderer.on('exit-typing-mode', () => {
+            console.log("RECEIVED COMRING EXIT TYPING MODE");
+            this.exitTypingMode();
+        });
+
+        // // Helper function to check if a character is printable
+        // function isPrintableChar(key) {
+        //     // First check if it's a single character
+        //     if (key.length !== 1) return false;
+        //
+        //     // Get the character code
+        //     const charCode = key.charCodeAt(0);
+        //
+        //     // Check if it's a control character
+        //     if (charCode < 32 || // ASCII control characters
+        //         (charCode >= 127 && charCode <= 159)) { // Extended ASCII control characters
+        //         return false;
+        //     }
+        //
+        //     // Check if it's a printable character
+        //     // This includes all Unicode printable characters
+        //     return true;
+        // }
 
         // Debug keyboard events
         document.addEventListener('keydown', (event) => {
-            // console.log("keydown");
-            if (this.isWindowVisible &&
-                event.code === this.triggerKey) {
-                this.state.keyPressed = true;
-                if (!this.state.isRecording) {
-                    console.log('ComRing: Shortcut detected - starting recording');
-                    this.startRecording();
+            // console.log("EVENT KEYDOWN");
+            if (this.isWindowVisible) {
+                if (!this.isTypingMode && event.code === this.triggerKey) {
+                    this.state.keyPressed = true;
+                    if (!this.state.isRecording) {
+                        console.log('ComRing: Shortcut detected - starting recording');
+                        this.startRecording();
+                    }
+                } else if (
+                    !this.state.isRecording &&
+                    event.key.length === 1 &&
+                    /[a-zA-Z0-9]/.test(event.key)
+                ) {
+                    // Only handle the first keystroke to enter typing mode
+                    console.log('ComRing: Entering typing mode');
+                    this.enterTypingMode();
+                    // Send first key and trigger focus change
+                    ipcRenderer.send('typing-key-pressed', event.key);
+                    ipcRenderer.send('focus-chat-display');
+                    // Prevent further key handling
+                    event.preventDefault();
                 }
             }
-
             if (event.key === 'Escape') {
+                console.log("EVENT ESCAPE");
                 if (this.state.isProcessingLLM) {
-                    // Abort LLM processing
                     console.log('Aborting LLM response');
                     this.abortLLMResponse();
                 } else {
-                    // Only hide window if we're not processing LLM
-                    console.log("hiding-window");
-                    ipcRenderer.send('hide-window');
+                    console.log("Escape triggers hide-window-all");
+                    ipcRenderer.send('hide-window-all');
                 }
             }
         });
@@ -226,23 +281,29 @@ class ComRing extends BaseComponent {
     }
 
 
+    async processUserMessage(message, typed = false) {
+        console.log('processUserMessage:', message);
+        if (!typed) {
+            // Show user message in display window
+            ipcRenderer.send('transcription-received', message);
+        }
+        try {
+            await this.processAIResponse(message);
+            this.circle.classList.add('faded');
+        } catch (error) {
+            console.error('LLM Processing Error:', error);
+            ipcRenderer.send('llm-error', error.message);
+            this.circle.classList.add('error');
+        }
+        this.state.isAwaitingResponse = false;
+        this.circle.classList.remove('awaiting');
+    }
+
+
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (transcription) => {
             if (transcription) {
-                console.log('Transcription:', transcription);
-                // Show user message in display window
-                ipcRenderer.send('transcription-received', transcription);
-
-                try {
-                    await this.processAIResponse(transcription);
-                    this.circle.classList.add('faded');
-                } catch (error) {
-                    console.error('LLM Processing Error:', error);
-                    ipcRenderer.send('llm-error', error.message);
-                    this.circle.classList.add('error');
-                }
-                this.state.isAwaitingResponse = false;
-                this.circle.classList.remove('awaiting');
+                await this.processUserMessage(transcription);
             }
         };
     }
@@ -328,6 +389,22 @@ class ComRing extends BaseComponent {
         }
     }
 
+
+    enterTypingMode() {
+        this.text = "";
+        this.isTypingMode = true;
+        this.circle.style.opacity = '0.4';
+        ipcRenderer.send('enter-typing-mode');
+    }
+
+    exitTypingMode() {
+        this.text = "";
+        this.isTypingMode = false;
+        this.circle.style.opacity = '1';
+        this.isWindowVisible = true;
+        this.window.focus();
+        // ipcRenderer.send('exit-typing-mode');
+    }
 
     cleanAudio() {
         if (this.keyCheckInterval) {
@@ -480,9 +557,11 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
-            this.showError(event.content.message);
+            this.showError(event.content.message + " " + error);
+            this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
+            this.window.focus();
         }
     }
 
@@ -551,7 +630,7 @@ class ComRing extends BaseComponent {
                     if (content.flags.skill) {
                         // Check flag again before showing skill status
                         if (this.ignoreIncomingEvents) return;
-                        
+
                         // Show skill request message in status
                         const sttStatus = this.shadowRoot.querySelector('.stt-status');
                         // Add loading state to both status and ring
@@ -589,7 +668,7 @@ class ComRing extends BaseComponent {
                                     this.updateVisualization('tts', 0);
                                     return;
                                 }
-                                
+
                                 analyser.getByteFrequencyData(dataArray);
                                 const average = dataArray.reduce((a, b) => a + b) / bufferLength;
                                 const volume = average / 255;
@@ -634,12 +713,12 @@ class ComRing extends BaseComponent {
                             await audio.play();
 
                         } catch (error) {
-                            console.error('Error playing audio:', error);
-                            console.log('Audio element state:', {
-                                readyState: audio?.readyState,
-                                paused: audio?.paused,
-                                src: audio?.src
-                            });
+                            console.error('ERROR playing audio:', error);
+                            // console.log('Audio element state:', {
+                            //     readyState: audio?.readyState,
+                            //     paused: audio?.paused,
+                            //     src: audio?.src
+                            // });
                         }
                     }
                 }

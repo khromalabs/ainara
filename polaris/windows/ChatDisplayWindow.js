@@ -5,12 +5,22 @@ class ChatDisplayWindow extends BaseWindow {
     static getHandlers() {
         return {
             onBlur: (window, manager) => {
+                // Don't auto-hide if in typing mode
+                const comRing = manager.getWindow('comRing');
+                if (comRing && comRing.isTypingMode) {
+                    return;
+                }
                 manager.hideAll();
             },
             onShow: (manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
                 if (chatDisplay) {
                     chatDisplay.send('ready-for-transcription');
+                    // If in typing mode, ensure window is focusable
+                    const comRing = manager.getWindow('comRing');
+                    if (comRing?.isTypingMode) {
+                        chatDisplay.window.setFocusable(true);
+                    }
                 }
             }
         };
@@ -19,7 +29,7 @@ class ChatDisplayWindow extends BaseWindow {
     constructor(config, screen) {
         const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
         const windowWidth = Math.floor(screenWidth * 0.7);
-        const windowHeight = config.get('chatDisplay.height', 300);
+        const windowHeight = 600; // config.get('chatDisplay.height', 300);
         const windowX = Math.floor((screenWidth / 2) - (windowWidth / 2));
         const windowY = Math.floor(screenHeight * (5/6)) - (windowHeight / 2);
 
@@ -29,7 +39,7 @@ class ChatDisplayWindow extends BaseWindow {
             x: windowX,
             y: windowY,
             type: 'toolbar',
-            focusable: false,
+            focusable: true,
             frame: false,
             transparent: true,
             alwaysOnTop: true,
@@ -82,7 +92,7 @@ class ChatDisplayWindow extends BaseWindow {
                 return;
             }
             // Show window before sending message
-            this.show();
+            // this.show();
             this.window.webContents.send('add-message', text);
             Logger.log('ChatDisplayWindow: Message forwarded to chat display');
         });
@@ -103,6 +113,20 @@ class ChatDisplayWindow extends BaseWindow {
             this.hide();
             // Reset window state for next interaction
             this.window.webContents.send('reset-state');
+        });
+
+        ipcMain.on('typing-key-pressed', (event, key) => {
+            Logger.log('ChatDisplayWindow: Typing key received:', key);
+            if (!this.window.isVisible()) {
+                this.show();
+            }
+            this.window.webContents.send('typing-key-pressed', key);
+        });
+
+        ipcMain.on('focus-chat-display', () => {
+            Logger.log('ChatDisplayWindow: Focusing window');
+            this.show();
+            this.window.focus();
         });
     }
 }

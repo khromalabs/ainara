@@ -7,10 +7,7 @@ from ainara.framework.skill import Skill
 
 
 class TimeWeather(Skill):
-    """
-    Skill for checking weather by location or IP geolocation.
-    If no location is provided, it will retrieve the location using the IP.
-    """
+    """Get weather info determining location with geolocation, optionally allowing a location parameter"""
 
     def __init__(self):
         super().__init__()
@@ -137,7 +134,7 @@ class TimeWeather(Skill):
         Get weather information for a location or current IP-based location.
 
         Args:
-            location: City name (optional, will use IP-based location
+            location: Location name (optional, will use IP-based location
             if not provided)
 
         Returns:

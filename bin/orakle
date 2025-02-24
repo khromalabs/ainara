@@ -1,8 +1,0 @@
-#!/bin/sh
-cd $HOME/lab/src/ainara/
-source venv/bin/activate
-cd .. 
-set -a
-source /tmp/ai.env
-set +a 
-python -m ainara.orakle.server --log-dir /tmp/ "$@"

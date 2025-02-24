@@ -15,7 +15,7 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
-from typing import Dict, Any, Union
+from typing import Dict, Any
 import sympy
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 
@@ -23,7 +23,7 @@ from ainara.framework.skill import Skill
 
 
 class ToolsCalculator(Skill):
-    """Skill for evaluating mathematical expressions"""
+    """Evaluation of non-trivial mathematical expressions"""
 
     def __init__(self):
         super().__init__()

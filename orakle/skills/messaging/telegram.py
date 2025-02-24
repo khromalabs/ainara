@@ -7,7 +7,7 @@ from ainara.framework.config import config
 
 
 class MessagingTelegram(Skill):
-    """Skill for interacting with Telegram API"""
+    """Interact with the Telegram API"""
 
     def __init__(self):
         super().__init__()

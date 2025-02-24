@@ -18,6 +18,7 @@
 import json
 import logging
 import os
+import pprint
 import re
 import shutil
 import sys
@@ -29,60 +30,12 @@ import requests
 from pygame import mixer
 
 from ainara.framework.loading_animation import LoadingAnimation
-from ainara.framework.matcher.orakle_matcher_transformers import \
-    OrakleMatcherTransformers
+from ainara.framework.matcher.llm import \
+    OrakleMatcherLLM
 from ainara.framework.tts.base import TTSBackend
 from ainara.framework.utils import format_orakle_command
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_MESSAGE = f"""
- I'm Ainara, an AI assistant that combines built-in knowledge with real-time
- capabilities through the ORAKLE("<request>") command.
-
- I use my built-in knowledge for:
- - Theoretical concepts
- - Historical facts
- - Definitions
- - General knowledge
- - Scientific principles
- - Explanations
- - Common knowledge
-
- I MUST use ORAKLE("<request>") for ANY:
- - Current data or information
- - Real-time tasks
- - Calculations
- - External services
- - Market prices
- - Weather information
- - News
- - Data retrieval
- - Task execution
- - Real world physical actions
- - Local system clipboard access
- - Explicit request of an ORAKLE command
-
- Examples:
- "What is quantum physics?" → I use my knowledge to explain
- "What's Bitcoin's price?" → ORAKLE("get current Bitcoin price")
- "Explain gravity" → I use my knowledge to explain
- "Calculate 15% tip" → ORAKLE("calculate 15 percent tip")
- "Define photosynthesis" → I use my knowledge to explain
- "What's the weather?" → ORAKLE("get current weather")
-
- I never guess or assume current information - if it's real-time or requires
- external data, I MUST use ORAKLE. If I use a ORAKLE command I NEVER provide
- any further explanation about it, I just use the ORAKLE command directly. I
- never request more than one ORAKLE command in the same answer, I just user an
- ORAKLE commmand once per answer. I don't do any comments towards the ORAKLE
- server, I don't thank receiving the results by the ORAKLE server, my comments
- are only towards the final user. If I receive the feedback that I don't have
- the capability of executing an ORAKLE command, I don't do any further comment
- about it.
-
- Today is: {datetime.now().strftime('%Y-%m-%d')}
-"""
 
 
 def ndjson(event_type: str, event_name: str, content: Any = None) -> str:
@@ -116,20 +69,72 @@ class ChatManager:
     ):
         self.app = flask_app
         self.llm = llm
-        self.system_message = SYSTEM_MESSAGE
         self.backup_file = backup_file
         self.tts = tts
         self.chat_history: List[str] = []
         self.orakle_servers = orakle_servers
-        self.matcher = OrakleMatcherTransformers()
+        self.matcher = OrakleMatcherLLM(llm)
         self.last_audio_file = None
         if capabilities:
             self.capabilities = capabilities
         else:
             self.capabilities = {"recipes": [], "skills": []}
             self.capabilities = self.get_orakle_capabilities()
+        skills_description_list = ""
         for skill in self.capabilities["skills"]:
-            self.matcher.register_skill(skill["name"], skill["description"])
+            self.matcher.register_skill(
+                skill["name"],
+                skill["description"],
+                metadata={"runinfo": skill["runinfo"]}
+            )
+            skills_description_list += "\n - " + skill["description"]
+            # pprint
+            # logger.info("SKILL_NAME: " + skill["name"])
+            # logger.info("SKILL_DESCRIPTION: " + skill["description"])
+
+        self.system_message = f"""
+ I'm Ainara, an AI assistant that combines built-in knowledge with real-time
+ capabilities through the ORAKLE("<request>") command.
+
+ I use my built-in knowledge for:
+ - Theoretical concepts
+ - Historical facts
+ - Definitions
+ - General knowledge
+ - Scientific principles
+ - Explanations
+ - Common knowledge
+
+ I MUST use ORAKLE("<request>") for ANY:
+{skills_description_list}
+ - Explicit request of an ORAKLE command
+
+ Examples:
+ "What is quantum physics?" → I use my knowledge to explain
+ "What's Bitcoin's price?" → ORAKLE("get current Bitcoin price")
+ "Explain gravity" → I use my knowledge to explain
+ "Calculate 15% tip" → ORAKLE("calculate 15 percent tip")
+ "Define photosynthesis" → I use my knowledge to explain
+ "What's the weather?" → ORAKLE("get current weather")
+ "How many capital cities are in Europe" → I use my knowledge to explain
+ "How many people live in Europe now" → ORAKLE("search current Europe population")
+
+ I never guess or assume current information - if it's real-time or requires
+ external data, I MUST use ORAKLE. If I use a ORAKLE command I NEVER provide
+ any further explanation about my intentions, I just use the ORAKLE command
+ directly. I never request more than one ORAKLE command in the same answer, I
+ just user an ORAKLE commmand once per answer. I don't do any comments towards
+ the ORAKLE server, I don't thank receiving the results by the ORAKLE server,
+ my comments are only towards the final user. If I receive the feedback that I
+ don't have the capability of executing an ORAKLE command, I don't do any further
+ comment about it. I only mention the ORAKLE keyword to request an ORAKLE command,
+ I never mention the ORAKLE keyword as part of a comment about the ORAKLE
+ functionality.
+
+
+ Today is: {datetime.now().strftime('%Y-%m-%d')}
+"""
+        logger.info(self.system_message)
 
     def backup(self, content: str) -> None:
         """Backup chat content to file if backup is enabled"""
@@ -184,24 +189,28 @@ class ChatManager:
         command_types = []
 
         def replace_command(match):
+            logger.info("replace_command 1")
             query = match.group(1).strip()
             # Find matching skills using the matcher
             matches = self.matcher.match(query)
 
+            logger.info("replace_command 2")
             if not matches:
-                result = (
-                    "I apologize, but I don't have the capability to"
-                    f" '{query}'. This action is not available among my"
-                    " current skills."
-                )
+                logger.info("replace_command 3")
+                result = f"Request '{query}' didn't match any available skill."
                 results.append(result)
                 # Return just the error message without command formatting
                 return f"\n{result}\n"
 
             # Use the best matching skill
+            logger.info("replace_command 4")
             best_match = matches[0]
             skill_id = best_match["skill_id"]
             skill_description = best_match["description"]
+
+            logger.info("replace_command 5")
+            logger.info("===========")
+            logger.info("best_match: " + pprint.pformat(best_match))
 
             # Use LLM to convert natural language to structured parameters
             prompt = f"""Based on this skill description: "{skill_description}"
@@ -321,8 +330,11 @@ class ChatManager:
             logger.error(f"Error cleaning up audio file {filepath}: {e}")
 
     def _create_audio_stream_event(
-        self, audio_file: str, text_content: str, duration: float,
-        skill: Optional[bool] = False
+        self,
+        audio_file: str,
+        text_content: str,
+        duration: float,
+        skill: Optional[bool] = False,
     ) -> dict:
         """Create a standardized audio stream event with audio URL."""
         filename = os.path.basename(audio_file)
@@ -350,7 +362,7 @@ class ChatManager:
                         "command": False,
                         "audio": True,
                         "duration": duration,
-                        "skill": skill
+                        "skill": skill,
                     },
                     "audio": {
                         "url": f"/static/audio/{filename}",
@@ -363,14 +375,11 @@ class ChatManager:
         self, text: str, stream_type: Optional[Literal["cli", "json"]] = None
     ) -> List[str]:
         """Process and speak regular text content"""
-        logger.info("_process_regular_text 1")
-        logger.info(text)
+        # logger.info(text)
         events = []
 
         if not text.strip():
             return events
-
-        logger.info("_process_regular_text 2")
 
         logger.info(text)
         phrases = re.split(r"([.!?]\s+)", text.strip())
@@ -383,18 +392,12 @@ class ChatManager:
                 phrase = phrases[j]
                 j += 1
 
-            logger.info("_process_regular_text 3")
-
             if not phrase.strip():
                 continue
 
-            logger.info("_process_regular_text 4")
-
             try:
-                logger.info("_process_regular_text 5")
                 audio_file, duration = self.tts.generate_audio(phrase)
                 if stream_type == "json":
-                    logger.info("_process_regular_text 6")
                     event_data = self._create_audio_stream_event(
                         audio_file=audio_file,
                         text_content=phrase,
@@ -418,16 +421,10 @@ class ChatManager:
                     # Clean up the audio file after playback
                     self._cleanup_audio_file(audio_file)
 
-                logger.info("_process_regular_text 6")
-
             except Exception as e:
                 logger.error(f"TTS error: {e}")
                 print(phrase)
 
-            logger.info("_process_regular_text 7")
-
-
-        logger.info("_process_regular_text 8")
         return events
 
     def _process_command(
@@ -449,7 +446,7 @@ class ChatManager:
                     audio_file=audio_file,
                     text_content=phrase,
                     duration=duration,
-                    skill=True
+                    skill=True,
                 )
                 events.append(ndjson("message", "stream", event_data))
             else:
@@ -500,7 +497,7 @@ class ChatManager:
         stream_type: Optional[Literal["cli", "json"]] = None,
     ) -> List[str]:
         """Process structured response with text-to-speech and streaming output"""
-        logger.info("Starting tts_response_output")
+        # logger.info("Starting tts_response_output")
         events = []
 
         if not self.tts:
@@ -530,7 +527,7 @@ class ChatManager:
         for i, part in enumerate(parts):
             if i % 2 == 0:  # Regular text
                 events.extend(self._process_regular_text(part, stream_type))
-                logger.info("tts_response_output 1")
+                # logger.info("tts_response_output 1")
             else:  # Command name and result
                 cmd_name = part
                 next_part = parts[i + 1] if i + 1 < len(parts) else ""
@@ -540,7 +537,7 @@ class ChatManager:
                     )
                 )
 
-        logger.info("tts_response_output 2")
+        # logger.info("tts_response_output 2")
         return events
 
     def get_command_interpretation(
@@ -627,12 +624,16 @@ class ChatManager:
                     if stream == "cli" and not self.tts:
                         print(chunk, end="", flush=True)
 
-            if stream == "cli":
-                loading.stop()
-            elif stream == "json":
-                yield ndjson("signal", "loading", {"state": "stop"})
-
             if not answer:
+                if stream == "cli":
+                    loading.stop()
+                elif stream == "json":
+                    yield ndjson("signal", "loading", {"state": "stop"})
+                    yield ndjson(
+                        "signal",
+                        "error",
+                        {"message": "No answer from the LLM"},
+                    )
                 logger.info("NO ANSWER")
                 return {} if stream == "json" else ""
 
@@ -652,14 +653,18 @@ class ChatManager:
         logger.info("processed_answer: " + processed_answer)
 
         # Process initial response with TTS and streaming
-        logger.info("PRE tts_response_output")
+        # logger.info("PRE tts_response_output")
+        if stream == "cli":
+            loading.stop()
+        elif stream == "json":
+            yield ndjson("signal", "loading", {"state": "stop"})
         events = self.tts_response_output(processed_answer, stream)
-        logger.info("POST tts_response_output")
+        # logger.info("POST tts_response_output")
         for event in events:
             if stream == "json":
-                logger.info("YIELD EVENT")
+                # logger.info("YIELD EVENT")
                 yield event
-        logger.info("POST tts_response_output")
+        # logger.info("POST tts_response_output")
 
         if results:
             final_answer = ""
@@ -680,89 +685,85 @@ class ChatManager:
                 if self.tts:
                     events = self.tts_response_output(final_answer, stream)
                     if stream == "json":
-                        logger.info(f"Yielding {len(list(events))} final TTS events")
+                        # logger.info(f"Yielding {len(list(events))} final TTS events")
                         for event in events:
-                            logger.info(f"Yielding event: {event[:100]}...")
+                            # logger.info(f"Yielding event: {event[:100]}...")
                             yield event
-
 
         if stream == "json":
             yield ndjson("signal", "completed", None)
 
         return processed_answer
 
+    def _process_orakle_recipes(self, raw_capabilities: dict) -> List[dict]:
+        """Process raw recipe capabilities into structured format"""
+        recipes = []
+        if "recipes" in raw_capabilities:
+            for endpoint, recipe in raw_capabilities["recipes"].items():
+                recipe_data = {
+                    "name": endpoint,
+                    "description": recipe.get("description", ""),
+                    "parameters": recipe.get("parameters", []),
+                }
+
+                # Extract return type from flow if available
+                if "flow" in recipe and recipe["flow"]:
+                    last_step = recipe["flow"][-1]
+                    recipe_data["return_type"] = last_step.get("output_type", "")
+
+                recipes.append(recipe_data)
+        return recipes
+
+    def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
+        """Process raw skill capabilities into structured format"""
+        skills = []
+        if "skills" in raw_capabilities:
+            for skill_name, skill_info in raw_capabilities["skills"].items():
+                run_info = skill_info["run"]
+                logger.info(" ---------------------- ")
+                logger.info(pprint.pformat(run_info))
+                skill_data = {
+                    "name": skill_name,
+                    "description": skill_info.get("description", "").replace("\n", ""),
+                    "runinfo": run_info.get("description", "").replace("\n", ""),
+                    "parameters": [],
+                }
+
+                # Process parameters
+                if run_info.get("parameters"):
+                    for param_name, param_info in run_info["parameters"].items():
+                        param_data = {
+                            "name": param_name,
+                            "type": param_info.get("type", "any"),
+                        }
+                        skill_data["parameters"].append(param_data)
+
+                skills.append(skill_data)
+        return skills
+
     def get_orakle_capabilities(self):
         """Query Orakle servers for capabilities and store them in structured format"""
         print("Retrieving Orakle server capabilities...")
         self.capabilities = {"recipes": [], "skills": []}
+        logger.info("get_orakle_capabilities 1")
 
         for server in self.orakle_servers:
             try:
+                logger.info("get_orakle_capabilities 2")
                 response = requests.get(f"{server}/capabilities", timeout=2)
+                logger.info(f"...capabilities status code: {response.status_code}")
                 if response.status_code == 200:
+                    logger.info("get_orakle_capabilities 3")
                     raw_capabilities = response.json()
 
-                    # Process recipes
-                    if "recipes" in raw_capabilities:
-                        for endpoint, recipe in raw_capabilities[
-                            "recipes"
-                        ].items():
-                            recipe_data = {
-                                "name": endpoint,
-                                "description": recipe.get("description", ""),
-                                "parameters": recipe.get("parameters", []),
-                                "return_type": "",
-                            }
+                    # Process recipes and skills using the new methods
+                    self.capabilities["recipes"] = self._process_orakle_recipes(raw_capabilities)
+                    self.capabilities["skills"] = self._process_orakle_skills(raw_capabilities)
 
-                            # Extract return type from flow if available
-                            if "flow" in recipe and recipe["flow"]:
-                                last_step = recipe["flow"][-1]
-                                recipe_data["return_type"] = last_step.get(
-                                    "output_type", ""
-                                )
-
-                            self.capabilities["recipes"].append(recipe_data)
-
-                    # Process skills
-                    if "skills" in raw_capabilities:
-                        for skill_name, skill_info in raw_capabilities[
-                            "skills"
-                        ].items():
-                            if "run" in skill_info:
-                                run_info = skill_info["run"]
-                                skill_data = {
-                                    "name": skill_name,
-                                    "description": run_info.get(
-                                        "description", ""
-                                    ),
-                                    "return_type": run_info.get(
-                                        "return_type", ""
-                                    ),
-                                    "parameters": [],
-                                }
-
-                                # Process parameters
-                                if run_info.get("parameters"):
-                                    for param_name, param_info in run_info[
-                                        "parameters"
-                                    ].items():
-                                        param_data = {
-                                            "name": param_name,
-                                            "type": param_info.get(
-                                                "type", "any"
-                                            ),
-                                            "description": param_info.get(
-                                                "description", ""
-                                            ),
-                                        }
-                                        skill_data["parameters"].append(
-                                            param_data
-                                        )
-
-                                self.capabilities["skills"].append(skill_data)
-
-                        logger.info("...capabilities loaded successfully:")
-                        return self.capabilities
+                    logger.info(" ---- ")
+                    logger.info("...capabilities loaded successfully:")
+                    logger.info(pprint.pformat(self.capabilities))
+                    return self.capabilities
             except requests.RequestException:
                 continue
 
