@@ -16,25 +16,21 @@
 # <https://www.gnu.org/licenses/>.
 
 import argparse
-from typing import Dict
-
-import json
 import time
-from flask import Flask, jsonify, request, Response
+from datetime import datetime
+
+from flask import Flask
 from flask_cors import CORS
-from pygame import mixer
 
 from ainara.framework.capabilities_manager import CapabilitiesManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.logging_setup import logging_manager
+from ainara.orakle import __version__
+from ainara.framework.llm import create_llm_backend
 
 config_manager = ConfigManager()
 config_manager.load_config()
-
-# Get Orakle servers from config
-ORAKLE_SERVERS = config_manager.get(
-    "orakle.servers", ["http://127.0.0.1:5000"]
-)
+llm = create_llm_backend(config_manager.get("llm", {}))
 
 
 def parse_args():
@@ -59,10 +55,57 @@ app = Flask(__name__)
 CORS(app)
 
 
-def register_framework_endpoints(app):
-    """Register framework-specific endpoints for non-Python clients"""
-    # Framework endpoints moved to PyBridge server
-    pass
+# Add at module level
+startup_time = datetime.utcnow()
+
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Comprehensive health check endpoint"""
+    start_time = time.time()
+
+    # Get memory configuration
+    memory_config = config_manager.get("memory", {})
+    memory_enabled = memory_config.get("enabled", False)
+
+    status = {
+        "status": "ok",
+        "version": __version__,
+        "uptime_seconds": (datetime.utcnow() - startup_time).total_seconds(),
+        "services": {
+            "capabilities_manager": app.capabilities_manager is not None,
+            "config_manager": config_manager is not None,
+            "logging": logging_manager is not None,
+        },
+        "dependencies": {
+            "llm_available": llm and llm.is_available(),
+        },
+    }
+
+    # Only include storage check if memory is enabled
+    if memory_enabled:
+        status["dependencies"][
+            "storage_available"
+        ] = False  # Should implement actual storage check
+
+    # Check if all essential services are available
+    all_services_ok = all(status["services"].values())
+    all_dependencies_ok = all(status["dependencies"].values())
+
+    if not all_services_ok or not all_dependencies_ok:
+        status["status"] = "degraded"
+        status["message"] = "Some services or dependencies are unavailable"
+
+    # Add response time measurement
+    status["response_time_ms"] = (time.time() - start_time) * 1000
+
+    return status
+
+
+# def register_framework_endpoints(app):
+#     """Register framework-specific endpoints for non-Python clients"""
+#     # Framework endpoints moved to PyBridge server
+#     pass
 
 
 def create_app():

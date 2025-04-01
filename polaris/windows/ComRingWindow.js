@@ -4,7 +4,7 @@ const Logger = require('../utils/logger');
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
         return {
-            onShow: (manager) => {
+            onShow: (window, manager) => {
                 const comRing = manager.getWindow('comRing');
                 if (comRing) {
                     comRing.focus();
@@ -17,28 +17,25 @@ class ComRingWindow extends BaseWindow {
                     window.window.webContents.send('stopRecording');
                 }
             },
-            onBlur: (window) => {
+            onBlur: async (window, manager) => {
+                const chatDisplay = manager.getWindow('chatDisplay');
                 // Don't auto-hide if in typing mode
-                if (window.prefix === 'comRing' && window.isVisible()) {
+                if (window.prefix === 'comRing' && window.isVisible() && !chatDisplay.isTypingMode) {
                     window.window.webContents.send('window-hide');
                     window.hide();
-                    // const chatDisplay = manager.getWindow('chatDisplay');
-                    // if (!window.isTypingMode && !chatDisplay?.isFocused()) {
-                    //     window.hide();
-                    //     window.window.webContents.send('window-hide');
-                    //     window.window.webContents.send('stopRecording');
-                    // }
                 }
+            },
+            onFocus: () => {
+                Logger.log('ComRingWindow RECEIVED FOCUS');
+                // Add your focus handling logic here
             }
         };
     }
 
-    constructor(config, screen) {
+    constructor(config, screen, manager, basePath) {
         const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
         const windowWidth = config.get('comRing.width', 300);
         const windowHeight = config.get('comRing.height', 200);
-
-
         const options = {
             width: windowWidth,
             height: windowHeight,
@@ -48,8 +45,9 @@ class ComRingWindow extends BaseWindow {
             focusable: true  // Explicitly set focusable
         };
 
-        super(config, 'comRing', options);
-        this.isTypingMode = false;
+        super(config, 'comRing', options, basePath);
+
+        this.manager = manager; // Store reference to window manager
         this.loadContent('./components/com-ring.html');
         this.setupEventHandlers();
     }
@@ -59,12 +57,10 @@ class ComRingWindow extends BaseWindow {
 
         const { ipcMain } = require('electron');
 
-        // Handle typing mode state changes
-        ipcMain.on('enter-typing-mode', () => {
-            this.isTypingMode = true;
+        ipcMain.on('com-ring-focus', () => {
+            this.window.focus();
         });
 
-        // // In setupEventHandlers()
         ipcMain.on('process-typed-message', (event, message) => {
             Logger.log('Received typed message:', message);
             this.window.webContents.send('process-typed-message', message);
@@ -72,7 +68,6 @@ class ComRingWindow extends BaseWindow {
 
         ipcMain.on('exit-typing-mode', () => {
             Logger.log('ComRingWindow: Exiting typing mode');
-            this.isTypingMode = false;
             this.window.focus();
             this.window.webContents.send('exit-typing-mode');
             Logger.log('ComRingWindow: Focusing window');

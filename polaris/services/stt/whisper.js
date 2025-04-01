@@ -23,7 +23,7 @@ class WhisperSTT extends STTBackend {
         this.service = config.get('stt.modules.whisper.service', 'openai');
         const serviceConfig = config.get(`stt.modules.whisper.${this.service}`, {});
 
-        if (!['openai', 'custom'].includes(this.service)) {
+        if (!['openai', 'pybridge', 'custom'].includes(this.service)) {
             throw new Error(`Unknown Whisper service: ${this.service}`);
         }
 
@@ -42,8 +42,10 @@ class WhisperSTT extends STTBackend {
         try {
             console.log("WhisperSTT initialize starting");
             console.log("apiUrl is:", this.apiUrl);
-            // Check if server is available by requesting the root URL
-            const baseUrl = this.apiUrl.replace('/inference', '');
+            // const url = new URL(this.apiUrl);
+            // // Check if server is available by requesting the root URL
+            // const baseUrl = `${url.protocol}//${url.host}`;
+            const baseUrl = this.apiUrl;
             console.log("Checking Whisper server at: " + baseUrl);
             const response = await fetch(baseUrl);
             if (!response.ok) {

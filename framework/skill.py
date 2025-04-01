@@ -18,6 +18,8 @@
 class Skill:
     def __init__(self):
         self.name = self.__class__.__name__
+        # Define what data this skill requires from the chat manager
+        self.required_data = {}
 
     def run(self):
         raise NotImplementedError(

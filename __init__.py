@@ -1,4 +1,4 @@
-# Ainara - Open Source AI Assistant Framework
+# Ainara - Open Source AI Companion Framework
 # Copyright (C) 2025 Rubén Gómez http://www.khromalabs.org
 
 # This program is free software; you can redistribute it and/or
@@ -15,3 +15,5 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
+__version__ = "0.1.0"
+__version_info__ = (0, 1, 0)

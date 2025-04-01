@@ -1,6 +1,8 @@
 // windows/WindowManager.js
 const { screen, ipcMain } = require('electron');
 const Logger = require('../utils/logger');
+const path = require('path');
+const { nativeTheme } = require('electron');
 
 class WindowManager {
     constructor(config) {
@@ -11,44 +13,40 @@ class WindowManager {
             onShow: () => {},
             onHide: () => {},
             beforeHide: () => {},
+            onFocus: () => {},
         };
+        this.tray = null;
+        this.iconPath = null;
+        this.currentState = 'inactive';
+        this.basePath = null;
     }
 
-    initialize(windowClasses) {
+    initialize(windowClasses, basePath) {
+        this.basePath = basePath;
         this.handlers = this.collectHandlers(windowClasses);
         this.createWindows(windowClasses);
         this.setupWindowEvents();
     }
 
-    collectHandlers(windowClasses) {
-        const baseHandlers = {
+    setTray(tray, iconPath) {
+        this.tray = tray;
+        this.iconPath = iconPath;
+    }
+
+    collectHandlers() {  // ( windowClasses )
+        // Just create empty base handlers - we'll handle window-specific logic directly
+        return {
             onBlur: () => {},
             onShow: () => {},
             onHide: () => {},
             beforeHide: () => {},
+            onFocus: () => {},
         };
-
-        return windowClasses.reduce((handlers, WindowClass) => {
-            const classHandlers = WindowClass.getHandlers();
-            Object.entries(classHandlers).forEach(([event, handler]) => {
-                if (!handlers[event]) {
-                    handlers[event] = handler;
-                } else {
-                    // Combine handlers if multiple windows define the same event
-                    const existingHandler = handlers[event];
-                    handlers[event] = (...args) => {
-                        existingHandler(...args);
-                        handler(...args);
-                    };
-                }
-            });
-            return handlers;
-        }, baseHandlers);
     }
 
     createWindows(windowClasses) {
         windowClasses.forEach(WindowClass => {
-            const window = new WindowClass(this.config, screen);
+            const window = new WindowClass(this.config, screen, this, this.basePath);
             this.windows.set(window.prefix, window);
         });
     }
@@ -77,6 +75,9 @@ class WindowManager {
         });
 
         this.windows.forEach(window => {
+            // Store the window class handlers directly on the window object for easy access
+            window.handlers = window.constructor.getHandlers();
+
             window.on('blur', () => {
                 // Add delay to allow focus to settle on another window
                 setTimeout(() => {
@@ -87,6 +88,11 @@ class WindowManager {
                         Logger.log('WindowManager: Focus still within application windows');
                     }
                 }, 100);
+
+                // Call this window's specific blur handler if it exists
+                if (window.handlers.onBlur) {
+                    window.handlers.onBlur(window, this);
+                }
             });
 
             window.window.webContents.on('crashed', () => {
@@ -116,11 +122,29 @@ class WindowManager {
                     Logger.log(`${window.prefix} already loaded - sending window-show event`);
                     window.window.webContents.send('window-show');
                 }
+
+                // Call this window's specific show handler if it exists
+                if (window.handlers.onShow) {
+                    window.handlers.onShow(window, this);
+                }
             });
 
             window.window.on('hide', () => {
                 window.window.webContents.send('window-hide');
                 window.window.webContents.send('stopRecording');
+
+                // Call this window's specific hide handler if it exists
+                if (window.handlers.onHide) {
+                    window.handlers.onHide(window, this);
+                }
+            });
+
+            window.on('focus', () => {
+                Logger.log(`${window.prefix} gained focus - calling window-specific onFocus handler`);
+                // Call this window's specific focus handler if it exists
+                if (window.handlers.onFocus) {
+                    window.handlers.onFocus(window, this);
+                }
             });
         });
     }
@@ -133,25 +157,36 @@ class WindowManager {
     showAll() {
         // Disable global shortcut when showing windows
         if (global.shortcutRegistered) {
-            const shortcutKey = this.config.get('shortcuts.toggle', 'Super+K');
+            const shortcutKey = this.config.get('shortcuts.toggle', 'F1');
             require('electron').globalShortcut.unregister(shortcutKey);
             global.shortcutRegistered = false;
             Logger.log('Disabled global shortcut while windows shown');
         }
 
+        // Remove throttling before showing windows
+        this.applyBackgroundThrottling(false);
+    
         this.windows.forEach(window => window.show());
         this.handlers.onShow(this);
+        this.updateTrayIcon('active'); // Update tray icon to active state
     }
 
     hideAll(force = false) {
         if (force || !this.isAnyApplicationWindowFocused()) {
             this.windows.forEach(window => {
                 if (window.isVisible()) {
-                    this.handlers.beforeHide(window, this);
+                    // Call window-specific beforeHide handler if it exists
+                    if (window.handlers && window.handlers.beforeHide) {
+                        window.handlers.beforeHide(window, this);
+                    }
                     window.hide();
+                    // Background throttling is applied in the window.hide() method
                 }
             });
-            this.handlers.onHide(this);
+            this.updateTrayIcon('inactive'); // Update tray icon to inactive state
+        
+            // Apply additional throttling to all windows
+            this.applyBackgroundThrottling(true);
         }
     }
 
@@ -179,6 +214,40 @@ class WindowManager {
 
     getWindow(prefix) {
         return this.windows.get(prefix);
+    }
+
+    updateTrayIcon(state) {
+        this.currentState = state;
+        const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+        const iconPath = path.join(this.iconPath, `tray-icon-${state}-${theme}.png`);
+        Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
+        this.tray.setImage(iconPath);
+    }
+
+    updateTheme() {
+        if (this.tray && this.iconPath) {
+            this.updateTrayIcon(this.currentState);
+        }
+    }
+
+    // New method to apply background throttling to all windows
+    applyBackgroundThrottling(enable) {
+        Logger.log(`${enable ? 'Enabling' : 'Disabling'} background throttling for all windows`);
+        
+        this.windows.forEach(window => {
+            if (window.window && window.window.webContents) {
+                window.window.webContents.setBackgroundThrottling(enable);
+                
+                // Set frame rate based on visibility
+                if (enable) {
+                    // Set to absolute minimum (1 FPS) when hidden
+                    window.window.webContents.setFrameRate(1);
+                } else {
+                    // Restore normal frame rate (60 FPS) when visible
+                    window.window.webContents.setFrameRate(60);
+                }
+            }
+        });
     }
 }
 

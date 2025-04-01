@@ -1,19 +1,39 @@
-# After pip install, run NLTK setup with either:
-#   make setup    # If you have make installed
-#   python setup_nltk.py  # Direct Python approach
-#
+aiohttp==3.11.11
 asgiref==3.8.1
+cachetools==5.5.1
+chromadb==0.6.3
 colorama==0.4.6
+emoji==2.14.1
+faster-whisper==1.1.1
 Flask==3.1.0
 Flask_Cors==5.0.0
+google-api-python-client==2.166.0
+langchain-community==0.3.20
+langchain==0.3.21
 litellm==1.58.4
+lxml_html_clean==0.4.1
 newsapi_python==0.2.7
 newspaper3k==0.2.8
-prompt_toolkit==3.0.48
-PyYAML==6.0.2
+nltk==3.9.1
+normalise==0.1.8
+numpy==2.2.4
+prompt_toolkit==3.0.50
+psutil>=5.9.0
+pygame==2.6.1
+pyperclip==1.9.0
+pystache==0.6.7
+pytest==8.3.5
 PyYAML==6.0.2
 Requests==2.32.3
+requests>=2.32.3
+scikit_learn==1.6.1
+sentence_transformers==3.4.1
 setproctitle==1.3.4
+sounddevice==0.5.1
+soundfile==0.13.0
+sympy==1.13.1
+telegram==0.0.1
 textblob==0.19.0
+torch==2.6.0
 tweepy==4.15.0
 validators==0.34.0

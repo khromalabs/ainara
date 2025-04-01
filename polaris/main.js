@@ -8,12 +8,13 @@ const ComRingWindow = require('./windows/ComRingWindow');
 const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const Logger = require('./utils/logger');
 const process = require('process');
+const { nativeTheme } = require('electron');
 
 const config = new ConfigManager();
 let windowManager = null;
 let tray = null;
 let shortcutRegistered = false;
-const shortcutKey = config.get('shortcuts.toggle', 'Super+K');
+const shortcutKey = config.get('shortcuts.toggle', 'F1');
 
 // async function checkServerHealth(url, serviceName) {
 //     try {
@@ -77,7 +78,7 @@ async function appInitialization() {
         }
 
         windowManager = new WindowManager(config);
-        windowManager.initialize([ComRingWindow, ChatDisplayWindow]);
+        windowManager.initialize([ComRingWindow, ChatDisplayWindow], __dirname);
 
         appSetupEventHandlers();
         appSetupShortcuts();
@@ -117,9 +118,16 @@ function appSetupShortcuts() {
 
 // Convert other methods to regular functions (keeping their existing logic)
 function appCreateTray() {
-    const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
-    tray = new Tray(iconPath);
+    const iconPath = path.join(__dirname, 'assets');
+    const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
+    // Set initial tray icon based on service health
+    const iconStatus =  'inactive';
+    tray = new Tray(path.join(iconPath, `tray-icon-${iconStatus}-${theme}.png`));
+
+    windowManager.setTray(tray, iconPath);
+
+    // Add service management to tray menu
     const contextMenu = Menu.buildFromTemplate([
         {
             label: 'Show',
@@ -180,6 +188,13 @@ function appSetupEventHandlers() {
                 Logger.log('Re-enabled global shortcut after window hide'); // Keep as debug log
             }
         });
+    });
+
+    nativeTheme.on('updated', () => {
+        Logger.info('System theme changed:', nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+        if (windowManager) {
+            windowManager.updateTheme();
+        }
     });
 }
 

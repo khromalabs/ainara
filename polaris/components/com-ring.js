@@ -30,8 +30,16 @@ class ComRing extends BaseComponent {
             this.ignoreIncomingEvents = false;
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
-            this.isTypingMode = false;
             this.text = null;
+
+            // Add tracking for animations and message queue
+            this.pendingAnimations = new Map();  // Track pending animations by message ID
+            this.messageQueue = [];              // Queue for combined text and audio messages
+            this.isProcessingMessage = false;    // Flag to track if a message is being processed
+            this.currentMessageId = null;        // Track the ID of the current message being processed
+            this.animationResolvers = new Map(); // Store animation completion resolvers
+            this.animationTimeouts = new Map();  // Store animation timeouts
+            this.audioTimeouts = new Map();      // Store audio timeouts
 
             // Get pybridge API endpoint from config
             this.pybridgeEndpoint = this.config.get('pybridge.api_url', 'http://localhost:5001');
@@ -182,6 +190,8 @@ class ComRing extends BaseComponent {
                 this.cleanAudio();
                 this.state.isAwaitingResponse = false;
             }
+
+            this.exitTypingMode();
         });
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
@@ -197,6 +207,43 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('exit-typing-mode', () => {
             console.log("RECEIVED COMRING EXIT TYPING MODE");
             this.exitTypingMode();
+        });
+
+        // Add listener for typing mode changes from window
+        ipcRenderer.on('typing-mode-changed', (event, isTypingMode) => {
+            console.log('ComRing: Typing mode changed to', isTypingMode);
+            // Update UI based on typing mode
+            this.circle.style.opacity = isTypingMode ? '0.4' : '1';
+        });
+
+        // Add event listeners for animation events
+        ipcRenderer.on('animation-started', (event, data) => {
+            console.log('Animation started:', data);
+            this.pendingAnimations.set(data.messageId, true);
+        });
+
+        ipcRenderer.on('animation-completed', (event, data) => {
+            console.log('Animation completed:', data, 'Current message:', this.currentMessageId);
+            this.pendingAnimations.set(data.messageId, false);
+
+            // Resolve the animation promise if it exists
+            const resolver = this.animationResolvers.get(data.messageId);
+            if (resolver) {
+                console.log(`Resolving animation promise for message: ${data.messageId}`);
+                resolver();
+                this.animationResolvers.delete(data.messageId);
+            } else {
+                console.warn(`No resolver found for message: ${data.messageId}`);
+            }
+
+            // Only try to process the next message if we're not already processing one
+            // and this is not for the current message being processed
+            if (!this.isProcessingMessage && data.messageId !== this.currentMessageId) {
+                console.log('Not currently processing a message, trying to process next one');
+                this.processMessageQueue();
+            } else {
+                console.log('Still processing a message or this is for the current message, not starting next one yet');
+            }
         });
 
         // // Helper function to check if a character is printable
@@ -219,38 +266,51 @@ class ComRing extends BaseComponent {
         // }
 
         // Debug keyboard events
-        document.addEventListener('keydown', (event) => {
+        document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
+            if (event.key === 'Escape') {
+                // event.key === this.config.get('shortcuts.toggle', 'F1')) {
+;
+                console.log("EVENT ESCAPE");
+                // Always abort any ongoing LLM response first
+                if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
+                    console.log('Aborting LLM response');
+                    this.abortLLMResponse();
+                    event.preventDefault();
+                    event.stopPropagation();
+                    ipcRenderer.send('com-ring-focus');
+                    return;
+                } else {
+                    console.log("Escape triggers hide-window-all");
+                    this.ignoreIncomingEvents = true;
+                    ipcRenderer.send('hide-window-all');
+                }
+            }
+
             if (this.isWindowVisible) {
-                if (!this.isTypingMode && event.code === this.triggerKey) {
+                // Get current typing mode state from window
+                const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
+
+                if (!isTypingMode && event.code === this.triggerKey) {
                     this.state.keyPressed = true;
                     if (!this.state.isRecording) {
                         console.log('ComRing: Shortcut detected - starting recording');
                         this.startRecording();
                     }
                 } else if (
+                    !isTypingMode &&
                     !this.state.isRecording &&
                     event.key.length === 1 &&
                     /[a-zA-Z0-9]/.test(event.key)
                 ) {
                     // Only handle the first keystroke to enter typing mode
                     console.log('ComRing: Entering typing mode');
-                    this.enterTypingMode();
+                    await this.enterTypingMode();
                     // Send first key and trigger focus change
                     ipcRenderer.send('typing-key-pressed', event.key);
                     ipcRenderer.send('focus-chat-display');
                     // Prevent further key handling
                     event.preventDefault();
-                }
-            }
-            if (event.key === 'Escape') {
-                console.log("EVENT ESCAPE");
-                if (this.state.isProcessingLLM) {
-                    console.log('Aborting LLM response');
-                    this.abortLLMResponse();
-                } else {
-                    console.log("Escape triggers hide-window-all");
-                    ipcRenderer.send('hide-window-all');
                 }
             }
         });
@@ -312,6 +372,7 @@ class ComRing extends BaseComponent {
     async startRecording() {
         if (this.state.isRecording || !this.isWindowVisible) return;
 
+        this.ignoreIncomingEvents = false;
         this.state.isRecording = true;
         this.state.isAwaitingResponse = false;
         this.circle.classList.remove('faded');
@@ -390,20 +451,24 @@ class ComRing extends BaseComponent {
     }
 
 
-    enterTypingMode() {
+    async enterTypingMode() {
+        this.ignoreIncomingEvents = false;
         this.text = "";
-        this.isTypingMode = true;
+        // Set state in window
+        await ipcRenderer.invoke('set-typing-mode-state', true);
+        // Update UI
         this.circle.style.opacity = '0.4';
         ipcRenderer.send('enter-typing-mode');
     }
 
-    exitTypingMode() {
+    async exitTypingMode() {
         this.text = "";
-        this.isTypingMode = false;
+        // Set state in window
+        await ipcRenderer.invoke('set-typing-mode-state', false);
+        // Update UI
         this.circle.style.opacity = '1';
         this.isWindowVisible = true;
-        this.window.focus();
-        // ipcRenderer.send('exit-typing-mode');
+        ipcRenderer.send('com-ring-focus');
     }
 
     cleanAudio() {
@@ -578,8 +643,29 @@ class ComRing extends BaseComponent {
 
 
     abortLLMResponse() {
+        console.log('Aborting LLM response');
+
         // Set flag to ignore incoming events
         this.ignoreIncomingEvents = true;
+
+        // Clear message queue
+        this.messageQueue = [];
+        this.isProcessingMessage = false;
+        this.currentMessageId = null;
+
+        // Clear all animation and audio tracking
+        this.pendingAnimations.clear();
+
+        // Resolve all pending animation promises to unblock any waiting code
+        this.animationResolvers.forEach(resolver => resolver());
+        this.animationResolvers.clear();
+
+        // Clear all timeouts
+        this.animationTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.animationTimeouts.clear();
+
+        this.audioTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.audioTimeouts.clear();
 
         // Stop any playing audio
         if (this.currentAudio) {
@@ -615,18 +701,231 @@ class ComRing extends BaseComponent {
     }
 
 
-    async handleEvent(event) {
-        // Ignore events if flag is set
-        if (this.ignoreIncomingEvents) {
-            console.log('Ignoring event due to abort:', event);
+    // Process message queue - handle text and audio in parallel
+    async processMessageQueue() {
+        // Add diagnostic logging
+        console.log(`Queue status: length=${this.messageQueue.length}, isProcessing=${this.isProcessingMessage}, ignoreEvents=${this.ignoreIncomingEvents}`);
+
+        // If already processing a message or queue is empty, return
+        if (this.isProcessingMessage || this.messageQueue.length === 0 || this.ignoreIncomingEvents) {
             return;
         }
 
-        console.log("\n--- EVENT ---\nevent: " + event.event + "\ntype:" + event.type + "\ncontent:"+ JSON.stringify(event.content));
+        // Start processing the next message
+        this.isProcessingMessage = true;
+        const nextMessage = this.messageQueue.shift();
+        const { event, audio, content, messageId } = nextMessage;
+
+        try {
+            console.log(`Processing message: ${messageId}`);
+            this.currentMessageId = messageId;
+
+            // Check if processing was aborted
+            if (this.ignoreIncomingEvents) {
+                throw new Error('Processing aborted');
+            }
+
+            // Create promises for both animation and audio
+            const promises = [];
+
+            // 1. Send message to chat display if not a skill
+            if (!content.flags.skill && !this.ignoreIncomingEvents) {
+                console.log(`Sending message to chat display: ${messageId}`);
+
+                // Create animation completion promise
+                const animationPromise = new Promise((resolve) => {
+                    // Store the message ID and its resolve function
+                    this.animationResolvers.set(messageId, () => {
+                        console.log(`Animation resolve function called for message: ${messageId}`);
+
+                        // Clear the timeout when resolving
+                        if (this.animationTimeouts.has(messageId)) {
+                            clearTimeout(this.animationTimeouts.get(messageId));
+                            this.animationTimeouts.delete(messageId);
+                        }
+
+                        // Call the original resolve
+                        resolve();
+                    });
+
+                    // Add a timeout to prevent getting stuck
+                    const timeout = setTimeout(() => {
+                        console.warn(`Animation timeout for message ${messageId}`);
+                        // Still resolve to continue processing
+                        const resolver = this.animationResolvers.get(messageId);
+                        if (resolver) {
+                            resolver();
+                            this.animationResolvers.delete(messageId);
+                        }
+                    }, 60000);
+
+                    // Store timeout to clear it if animation completes
+                    this.animationTimeouts.set(messageId, timeout);
+                });
+
+                // Send the message to chat display
+                ipcRenderer.send('llm-stream', event);
+
+                // Add animation promise to the list
+                promises.push(animationPromise);
+            }
+
+            // 2. Start playing audio if available (in parallel with animation)
+            if (audio && !this.ignoreIncomingEvents) {
+                console.log(`Playing audio for: ${messageId}`);
+
+                // Create audio completion promise
+                const audioPromise = new Promise((resolve) => {
+                    // Clean up previous audio
+                    if (this.currentAudio) {
+                        this.cleanAudio();
+                    }
+
+                    // Set up audio completion handler
+                    audio.onended = () => {
+                        console.log(`Audio completed for: ${messageId}`);
+
+                        // Clear the timeout when audio ends
+                        if (this.audioTimeouts.has(messageId)) {
+                            clearTimeout(this.audioTimeouts.get(messageId));
+                            this.audioTimeouts.delete(messageId);
+                        }
+
+                        // Call resolve
+                        resolve();
+                    };
+
+                    // Set up error handler
+                    audio.onerror = (error) => {
+                        console.error(`Audio error for message ${messageId}:`, error);
+
+                        // Clear the timeout on error
+                        if (this.audioTimeouts.has(messageId)) {
+                            clearTimeout(this.audioTimeouts.get(messageId));
+                            this.audioTimeouts.delete(messageId);
+                        }
+
+                        // Still resolve to continue processing
+                        resolve();
+                    };
+
+                    // Calculate timeout based on audio duration if available
+                    let timeoutDuration = 15000; // Default 15 seconds
+                    if (nextMessage.audioDuration) {
+                        // Add a buffer of 3 seconds to the actual duration
+                        timeoutDuration = (nextMessage.audioDuration * 1000) + 3000;
+                        console.log(`Setting timeout to ${timeoutDuration}ms based on audio duration of ${nextMessage.audioDuration}s`);
+                    }
+
+                    // Add a timeout in case audio never completes
+                    const timeout = setTimeout(() => {
+                        console.warn(`Audio timeout ${timeoutDuration} for message ${messageId}`);
+
+                        // Force audio to stop if it's still playing
+                        if (audio && !audio.paused) {
+                            audio.pause();
+                            audio.currentTime = 0;
+                        }
+
+                        resolve();
+                    }, timeoutDuration);
+
+                    // Store timeout to clear it if audio completes
+                    this.audioTimeouts.set(messageId, timeout);
+
+                    // Start playing the audio
+                    this.currentAudio = audio;
+                    audio.play().catch(error => {
+                        console.error(`Error playing audio for message ${messageId}:`, error);
+
+                        // Clear the timeout on play error
+                        if (this.audioTimeouts.has(messageId)) {
+                            clearTimeout(this.audioTimeouts.get(messageId));
+                            this.audioTimeouts.delete(messageId);
+                        }
+
+                        resolve();
+                    });
+                });
+
+                // Add audio promise to the list
+                promises.push(audioPromise);
+            }
+
+            // Wait for both animation and audio to complete
+            if (promises.length > 0) {
+                console.log(`Starting to wait for ${promises.length} promises for message: ${messageId}`);
+                promises.forEach((p, i) => {
+                    p.then(() => console.log(`Promise ${i} resolved for message: ${messageId}`))
+                     .catch(e => console.error(`Promise ${i} rejected for message: ${messageId}:`, e));
+                });
+
+                console.log(`Waiting for all processes to complete for message: ${messageId}`);
+                try {
+                    await Promise.all(promises);
+                    console.log(`All processes completed for message: ${messageId}`);
+                } catch (error) {
+                    console.error(`Error in Promise.all for message ${messageId}:`, error);
+                    // Continue processing even if there's an error
+                }
+            }
+
+        } catch (error) {
+            if (error.message === 'Processing aborted') {
+                console.log('Message processing aborted:', messageId);
+            } else {
+                console.error('Error processing message:', error);
+            }
+        } finally {
+            console.log(`Finishing processing for message: ${messageId}, queue length: ${this.messageQueue.length}`);
+
+            // Ensure all timeouts are cleared
+            if (this.animationTimeouts.has(messageId)) {
+                clearTimeout(this.animationTimeouts.get(messageId));
+                this.animationTimeouts.delete(messageId);
+            }
+            if (this.audioTimeouts.has(messageId)) {
+                clearTimeout(this.audioTimeouts.get(messageId));
+                this.audioTimeouts.delete(messageId);
+            }
+
+            // Ensure any remaining resolvers are removed
+            if (this.animationResolvers.has(messageId)) {
+                this.animationResolvers.delete(messageId);
+            }
+
+            // Reset processing state
+            this.isProcessingMessage = false;
+            this.currentMessageId = null;
+
+            // Process next message if available and not aborted
+            if (this.messageQueue.length > 0 && !this.ignoreIncomingEvents) {
+                console.log(`Scheduling next message processing, queue length: ${this.messageQueue.length}`);
+                setTimeout(() => this.processMessageQueue(), 10);
+            } else {
+                console.log(`No more messages to process or processing aborted. Queue length: ${this.messageQueue.length}, ignoreEvents: ${this.ignoreIncomingEvents}`);
+            }
+        }
+    }
+
+    async handleEvent(event) {
+        // Ignore events if flag is set
+        if (this.ignoreIncomingEvents || !this.isWindowVisible) {
+            console.log('Ignoring incoming events');
+            return;
+        }
+
+        // console.log("\n--- EVENT ---\nevent: " + event.event + "\ntype:" + event.type + "\ncontent:"+ JSON.stringify(event.content));
         switch(event.event) {
             case 'stream':
                 if (event.type === 'message') {
                     const content = event.content.content;
+                    const messageId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+                    if (event.content && event.content.content) {
+                        event.content.content.messageId = messageId;
+                    }
+
                     if (content.flags.skill) {
                         // Check flag again before showing skill status
                         if (this.ignoreIncomingEvents) return;
@@ -645,10 +944,25 @@ class ComRing extends BaseComponent {
                             }
                         }, 3000);
                     }
+
+                    // Add message ID to the event
+                    if (event.content && event.content.content) {
+                        event.content.content.messageId = messageId;
+                    }
+
                     if (content.flags.audio && content.audio) {
                         const audioUrl = this.pybridgeEndpoint + content.audio.url;
                         try {
-                            const audio = new Audio(audioUrl);
+                            // Create audio but don't play it yet
+                            const audio = new Audio();
+
+                            // Add error handling for audio loading
+                            audio.onerror = (error) => {
+                                console.error(`Error loading audio from ${audioUrl}:`, error);
+                            };
+
+                            // Set source after adding error handler
+                            audio.src = audioUrl;
 
                             // Set up audio analysis for TTS
                             const audioContext = new AudioContext();
@@ -682,45 +996,49 @@ class ComRing extends BaseComponent {
                                 }
                             };
 
-                            // Wait for previous audio to finish if any
-                            if (this.currentAudio) {
-                                if (!this.currentAudio.paused && !this.currentAudio.ended) {
-                                    try {
-                                        await Promise.race([
-                                            new Promise(resolve => {
-                                                this.currentAudio.addEventListener('ended', resolve, { once: true });
-                                            }),
-                                            new Promise(resolve => setTimeout(resolve, 10000))
-                                        ]);
-                                    } catch (error) {
-                                        console.error('Error waiting for audio to finish:', error);
-                                    }
-                                }
-                                this.cleanAudio();
-                            }
-
-                            // Check flag one final time before playing
-                            if (this.ignoreIncomingEvents) return;
-
-                            // Store current audio and play it
-                            this.currentAudio = audio;
+                            // Add visualization listener
                             audio.addEventListener('play', () => {
-                                if (!content.flags.skill && !this.ignoreIncomingEvents) {
-                                    ipcRenderer.send('llm-stream', event);
-                                }
                                 updateTTSVisualization();
                             });
-                            await audio.play();
+
+                            // Store the audio duration if available in the content
+                            const audioDuration = content.flags.duration || null;
+
+                            console.log(JSON.stringify(content));
+
+                            // Add to message queue with audio
+                            this.messageQueue.push({
+                                event,
+                                audio,
+                                content,
+                                audioDuration,
+                                messageId
+                            });
 
                         } catch (error) {
-                            console.error('ERROR playing audio:', error);
-                            // console.log('Audio element state:', {
-                            //     readyState: audio?.readyState,
-                            //     paused: audio?.paused,
-                            //     src: audio?.src
-                            // });
+                            console.error('ERROR creating audio:', error);
+
+                            // Add to message queue without audio if there was an error
+                            this.messageQueue.push({
+                                event,
+                                audio: null,  // No audio for this message
+                                content,
+                                messageId
+                            });
                         }
+
+                    } else {
+                        // Add message to queue without audio
+                        this.messageQueue.push({
+                            event,
+                            audio: null,
+                            content,
+                            messageId
+                        });
                     }
+
+                    // Try to process queue
+                    this.processMessageQueue();
                 }
                 break;
 

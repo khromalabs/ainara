@@ -1,7 +1,9 @@
+import json
 import logging
 import pprint
 from typing import Any, Dict, List, Optional
 
+from ..template_manager import TemplateManager
 from .base import OrakleMatcherBase
 
 logger = logging.getLogger(__name__)
@@ -13,17 +15,21 @@ class OrakleMatcherLLM(OrakleMatcherBase):
     to match user queries with available skills.
     """
 
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, template_manager=None):
         """
         Initialize the LLM-based matcher.
 
         Args:
             llm: LLM instance to use for matching (optional)
+            template_manager: TemplateManager instance for rendering prompts (optional)
         """
         super().__init__()
         self.llm = llm
         self.skills_registry = {}
         self.usage_stats = {}  # Initialize usage statistics dictionary
+
+        # Initialize template manager if not provided
+        self.template_manager = template_manager or TemplateManager()
 
     def register_skill(
         self, skill_id: str, description: str, metadata: Optional[Dict] = None
@@ -46,35 +52,29 @@ class OrakleMatcherLLM(OrakleMatcherBase):
         """
         Format all registered skills into a string for the LLM prompt.
         """
-        skills_text = "Available skills:\n\n"
+        skills_text = "Available skills:\n"
         for skill_id, data in self.skills_registry.items():
-            skills_text += f"- {skill_id}: {data['description']}\n"
+            skills_text += (
+                f"- {skill_id}: "
+                f"{data.get('description', '')}"
+                f"{' ' + data['metadata']['matcher_info'] if data['metadata']['matcher_info'] else ''}"
+                "\n"
+            )
+
+        # logger.info("SKILLS_TEXT: " + pprint.pformat(skills_text))
+
         return skills_text
 
     def _create_matcher_prompt(self, query: str) -> str:
         """
-        Create the prompt for the LLM to match skills.
+        Create the prompt for the LLM to match skills using the template manager.
         """
-        return f"""Given the following list of available skills, determine which skill(s) best match the user's request.
-If multiple skills could be relevant, list them in order of relevance.
-If you're unsure, you can suggest multiple potentially relevant skills.
+        context = {
+            "skills_list": self._format_skills_for_llm(),
+            "query": query,
+        }
 
-{self._format_skills_for_llm()}
-
-User request: {query}
-
-Respond in this JSON format:
-{{
-    "matches": [
-        {{
-            "skill_id": "the_skill_id",
-            "confidence": 0.9,  # between 0 and 1
-            "reasoning": "Brief explanation of why this skill matches"
-        }}
-    ]
-}}
-
-Your response:"""
+        return self.template_manager.render("matcher.skill_matching", context)
 
     def match(
         self, query: str, threshold: float = 0.1, top_k: int = 5
@@ -97,23 +97,32 @@ Your response:"""
 
         try:
             # Get LLM response
-            response = self.llm.process_text(
-                prompt,
-                system_message=(
-                    "You are a skill matching assistant. Your task is to match"
-                    " user requests to the most appropriate available skills."
-                ),
+            logger.info(f"Matcher query: {query}")
+            logger.info(f"Matcher prompt: {prompt}")
+
+            response = self.llm.chat(
+                self.llm.prepare_chat(
+                    system_message=(
+                        "You are a skill matching assistant. Your task is to"
+                        " match user requests to the most appropriate"
+                        " available skills."
+                    ),
+                    new_message=prompt,
+                )
             )
 
-            # Parse LLM response (assuming it returns valid JSON)
-            import json
+            logger.info(f"LLM matcher response: {response}")
 
+            # Parse LLM response
             result = json.loads(response)
+            logger.info(f"Parsed matcher result: {result}")
 
             # Filter and sort matches
             matches = result.get("matches", [])
+            logger.info(f"Raw matches before filtering: {matches}")
             matches = [m for m in matches if m["confidence"] >= threshold]
             matches.sort(key=lambda x: x["confidence"], reverse=True)
+            logger.info(f"Filtered matches (threshold={threshold}): {matches}")
 
             # Validate matches and update usage stats
             valid_matches = []
@@ -127,7 +136,12 @@ Your response:"""
                         self.usage_stats.get(skill_id, 0) + 1
                     )
                     valid_match["usage_count"] = self.usage_stats[skill_id]
-                    valid_match["description"] = self.skills_registry[skill_id]["metadata"].get("runinfo", self.skills_registry[skill_id]["description"])
+                    valid_match["description"] = self.skills_registry[
+                        skill_id
+                    ]["metadata"].get(
+                        "run_info",
+                        self.skills_registry[skill_id]["description"],
+                    )
 
                     valid_matches.append(valid_match)
                 else:

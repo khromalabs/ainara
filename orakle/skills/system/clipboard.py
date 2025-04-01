@@ -7,11 +7,10 @@ from ainara.framework.skill import Skill
 
 
 class SystemClipboard(Skill):
-    """Read and Write to the system clipboard"""
+    """Read and write the system clipboard"""
 
     def __init__(self):
         super().__init__()
-        self.description = "Read and write clipboard contents"
         self._check_clipboard_available()
 
     def _check_clipboard_available(self) -> None:
@@ -84,15 +83,15 @@ class SystemClipboard(Skill):
         self, action: str, text: Optional[str] = None, **kwargs
     ) -> Dict[str, Any]:
         """
-        Execute clipboard operations
+        Reads and Writes to the system clipboard.
 
         Args:
-            action: Operation to perform ('read', 'write', or 'clear')
-            text: Text to write (required for 'write' action)
-            **kwargs: Additional arguments (unused)
+            action: Operation to perform ('read', 'write', or 'clear').
+            text: Text to write (required for 'write' action).
+            **kwargs: Additional arguments (unused).
 
         Returns:
-            Dict containing operation results
+            Dict containing operation results.
         """
         action = action.lower()
 

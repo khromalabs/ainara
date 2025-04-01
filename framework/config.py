@@ -19,9 +19,9 @@ class ConfigManager:
         )
 
         config_paths = [
-            Path(config_home) / "orakle/orakle.yaml",
-            Path("/etc/orakle/orakle.yaml"),
-            Path("config/orakle.yaml"),  # Fallback to repo config
+            Path(config_home) / "ainara/ainara.yaml",
+            Path("/etc/ainara/ainara.yaml"),
+            Path("config/ainara.yaml"),  # Fallback to repo config
         ]
 
         for config_path in config_paths:
@@ -40,7 +40,17 @@ class ConfigManager:
                     return
 
         # If no config file found, create minimal default config
-        self.config = {"audio": {"buffer_size_mb": 10}}
+        self.config = {
+            "audio": {"buffer_size_mb": 10},
+            "memory": {
+                "enabled": True,
+                "storage_path": "~/.config/ainara/chat_memory.db",
+                "vector_db_path": "~/.config/ainara/vector_db",
+                "embedding_model": "sentence-transformers/all-mpnet-base-v2",
+                "vector_db_enabled": True,
+                "session_id": "default_session"
+            }
+        }
 
     def get(self, key_path: str, default=None):
         """Get a config value using dot notation"""

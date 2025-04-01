@@ -1,5 +1,5 @@
 # Ainara - Open Source AI Assistant Framework
-# Copyright (C) 2025 Rubén Gómez http://www.khromalabs.org
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
 
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -22,18 +22,26 @@ import pprint
 import re
 import shutil
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, Generator, List, Literal, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Generator, List, Literal, Optional, Union
 
-import requests
+import nltk
 from pygame import mixer
 
+from ainara.framework.chat_memory import ChatMemory
+from ainara.framework.config import config
 from ainara.framework.loading_animation import LoadingAnimation
-from ainara.framework.matcher.llm import \
-    OrakleMatcherLLM
+from ainara.framework.orakle_middleware import OrakleMiddleware
+from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.utils import format_orakle_command
+
+# import pprint
+
+# from ainara.framework.utils import format_orakle_command
 
 logger = logging.getLogger(__name__)
 
@@ -73,252 +81,93 @@ class ChatManager:
         self.tts = tts
         self.chat_history: List[str] = []
         self.orakle_servers = orakle_servers
-        self.matcher = OrakleMatcherLLM(llm)
         self.last_audio_file = None
+        self.ndjson = ndjson
+        self.new_summary = ""
+
+        # Initialize NLTK for sentence tokenization
+        try:
+            # Use the configured NLTK data path
+            nltk_data_dir = os.path.join(
+                str(Path.home()), ".cache", "ainara", "nltk_data"
+            )
+            os.environ["NLTK_DATA"] = nltk_data_dir
+            nltk.data.path = [nltk_data_dir]  # Override default paths
+            # Test if punkt tokenizer is available
+            nltk.data.find("tokenizers/punkt")
+            logger.info("NLTK sentence tokenization initialized successfully")
+        except (ImportError, LookupError) as e:
+            logger.error(f"NLTK sentence tokenization not available: {e}")
+            raise RuntimeError("Failed to import NLTK sentence tokenization")
+
+        # # Add a reentrant lock for thread safety
+        # self.chat_lock = threading.RLock()
+
+        # Initialize template manager
+        self.template_manager = TemplateManager()
+
+        # Initialize chat memory
+        memory_enabled = config.get("memory.enabled", True)
+        self.summary_enabled = config.get("summary.enabled", True)
+        if memory_enabled:
+            # Initialize chat memory using global config
+            self.chat_memory = ChatMemory()
+            logger.info("Chat memory initialized")
+        else:
+            self.chat_memory = None
+            logger.info("Chat memory disabled")
+
+        # Render the system message template
+        current_date = datetime.now().date()
+        self.system_message = self.template_manager.render(
+            "framework.chat_manager.system_prompt",
+            {
+                "skills_description_list": (
+                    ""
+                ),  # Will be populated by middleware
+                "current_date": current_date,
+            },
+        )
+
+        # Initialize Orakle middleware
         if capabilities:
             self.capabilities = capabilities
         else:
             self.capabilities = {"recipes": [], "skills": []}
-            self.capabilities = self.get_orakle_capabilities()
+
+        self.orakle_middleware = OrakleMiddleware(
+            llm=llm,
+            orakle_servers=orakle_servers,
+            system_message=self.system_message,
+            capabilities=capabilities,
+        )
+
+        # Get capabilities from middleware
+        self.capabilities = self.orakle_middleware.capabilities
+
+        # Update system message with skills descriptions
         skills_description_list = ""
         for skill in self.capabilities["skills"]:
-            self.matcher.register_skill(
-                skill["name"],
-                skill["description"],
-                metadata={"runinfo": skill["runinfo"]}
-            )
             skills_description_list += "\n - " + skill["description"]
-            # pprint
-            # logger.info("SKILL_NAME: " + skill["name"])
-            # logger.info("SKILL_DESCRIPTION: " + skill["description"])
 
-        self.system_message = f"""
- I'm Ainara, an AI assistant that combines built-in knowledge with real-time
- capabilities through the ORAKLE("<request>") command.
-
- I use my built-in knowledge for:
- - Theoretical concepts
- - Historical facts
- - Definitions
- - General knowledge
- - Scientific principles
- - Explanations
- - Common knowledge
-
- I MUST use ORAKLE("<request>") for ANY:
-{skills_description_list}
- - Explicit request of an ORAKLE command
-
- Examples:
- "What is quantum physics?" → I use my knowledge to explain
- "What's Bitcoin's price?" → ORAKLE("get current Bitcoin price")
- "Explain gravity" → I use my knowledge to explain
- "Calculate 15% tip" → ORAKLE("calculate 15 percent tip")
- "Define photosynthesis" → I use my knowledge to explain
- "What's the weather?" → ORAKLE("get current weather")
- "How many capital cities are in Europe" → I use my knowledge to explain
- "How many people live in Europe now" → ORAKLE("search current Europe population")
-
- I never guess or assume current information - if it's real-time or requires
- external data, I MUST use ORAKLE. If I use a ORAKLE command I NEVER provide
- any further explanation about my intentions, I just use the ORAKLE command
- directly. I never request more than one ORAKLE command in the same answer, I
- just user an ORAKLE commmand once per answer. I don't do any comments towards
- the ORAKLE server, I don't thank receiving the results by the ORAKLE server,
- my comments are only towards the final user. If I receive the feedback that I
- don't have the capability of executing an ORAKLE command, I don't do any further
- comment about it. I only mention the ORAKLE keyword to request an ORAKLE command,
- I never mention the ORAKLE keyword as part of a comment about the ORAKLE
- functionality.
-
-
- Today is: {datetime.now().strftime('%Y-%m-%d')}
-"""
-        logger.info(self.system_message)
-
-    def backup(self, content: str) -> None:
-        """Backup chat content to file if backup is enabled"""
-        if self.backup_file:
-            with open(self.backup_file, "a") as f:
-                f.write(content + "\n")
-
-    def format_chat_messages(self, new_message: str) -> List[dict]:
-        """Format chat history and new message for LLM processing"""
-        messages = [{"role": "system", "content": self.system_message}]
-
-        for i in range(0, len(self.chat_history), 2):
-            messages.append({"role": "user", "content": self.chat_history[i]})
-            if i + 1 < len(self.chat_history):
-                messages.append(
-                    {"role": "assistant", "content": self.chat_history[i + 1]}
-                )
-
-        messages.append({"role": "user", "content": new_message})
-        return messages
-
-    def get_llm_response(
-        self, question: str, stream: bool = True, suppress_output: bool = False
-    ) -> str:
-        """Get initial LLM response"""
-        answer = ""
-        response = self.llm.process_text(
-            text=question,
-            system_message=self.system_message,
-            chat_history=self.chat_history,
-            stream=stream,
+        # Update system message with skills descriptions
+        self.system_message = self.template_manager.render(
+            "framework.chat_manager.system_prompt",
+            {
+                "skills_description_list": skills_description_list,
+                "current_date": current_date,
+            },
         )
-
-        try:
-            for chunk in response:
-                if chunk:
-                    if not suppress_output:
-                        print(chunk, end="", flush=True)
-                    answer += chunk
-        except Exception as e:
-            logger.error(f"Error during streaming: {e}")
-        return answer
-
-    def process_orakle_commands(
-        self, text: str
-    ) -> Tuple[str, List[str], List[str]]:
-        """Process Orakle commands in text"""
-        if hasattr(text, "__iter__") and not isinstance(text, (str, bytes)):
-            text = "".join(list(text))
-
-        results = []
-        command_types = []
-
-        def replace_command(match):
-            logger.info("replace_command 1")
-            query = match.group(1).strip()
-            # Find matching skills using the matcher
-            matches = self.matcher.match(query)
-
-            logger.info("replace_command 2")
-            if not matches:
-                logger.info("replace_command 3")
-                result = f"Request '{query}' didn't match any available skill."
-                results.append(result)
-                # Return just the error message without command formatting
-                return f"\n{result}\n"
-
-            # Use the best matching skill
-            logger.info("replace_command 4")
-            best_match = matches[0]
-            skill_id = best_match["skill_id"]
-            skill_description = best_match["description"]
-
-            logger.info("replace_command 5")
-            logger.info("===========")
-            logger.info("best_match: " + pprint.pformat(best_match))
-
-            # Use LLM to convert natural language to structured parameters
-            prompt = f"""Based on this skill description: "{skill_description}"
-            Convert this natural language query: "{query}"
-            into a JSON parameters object following the skill's requirements.
-            Pay special attention to the args (arguments) description, which
-            you must interprete according to this schema:
-            Args:
-                <param_arg_name_1>: <param_arg_description_1>
-                <param_arg_name_2>: <param_arg_description_2>
-                etc
-            Return ONLY the JSON object, no backticks, nothing else."""
-
-            json_params = self.llm.process_text(
-                text=prompt,
-                stream=False,
-            )
-
-            try:
-                # Validate it's proper JSON
-                params_dict = json.loads(json_params)
-                # Determine if it's a SKILL or RECIPE from the ID
-                cmd_type = (
-                    "SKILL" if not skill_id.startswith("recipe/") else "RECIPE"
-                )
-                command_types.append(cmd_type)
-
-                # Format the command with the matched skill and LLM params
-                command = (
-                    f'{cmd_type}("{skill_id}", {json.dumps(params_dict)})'
-                )
-                # print(f"Cmd: {command}")
-            except json.JSONDecodeError:
-                logger.error(f"LLM generated invalid JSON: {json_params}")
-                # Fallback to simple query parameter
-                command = f'{cmd_type}("{skill_id}", {{"query": "{query}"}})'
-
-            result = self.execute_orakle_command(command)
-            results.append(result)
-
-            return f"__COMMAND_START__{skill_id}__COMMAND_DISPLAY__{command}\n\nResult:\n```json\n{result}\n```__COMMAND_END__"
-
-        # Look for ORAKLE commands
-        pattern = r'ORAKLE\("([^"]+)"\)'
-        processed_text = re.sub(
-            pattern, replace_command, text, flags=re.DOTALL
-        )
-        return processed_text, results, command_types
-
-    def execute_orakle_command(self, command_block: str) -> str:
-        """Execute an Orakle command and return the result"""
-        for server in self.orakle_servers:
-            try:
-                # Extract command type and parameters
-                match = re.match(
-                    r'(SKILL|RECIPE)\("/?([^"]+)",\s*({[^}]+})', command_block
-                )
-                if not match:
-                    return (
-                        'Error: Invalid command format. Expected SKILL("name",'
-                        ' {params}) or RECIPE("name", {params})'
-                    )
-
-                cmd_type, cmd_name, params_str = match.groups()
-                try:
-                    params = json.loads(params_str)
-                except json.JSONDecodeError as e:
-                    return f"Error: Invalid JSON parameters - {str(e)}"
-
-                # Make request to Orakle server
-                cmd_name = cmd_name.strip("/")
-                endpoint_type = f"{cmd_type.lower()}s"
-                endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
-
-                response = requests.post(endpoint, json=params, timeout=30)
-
-                if response.status_code == 200:
-                    try:
-                        json_response = response.json()
-                        if not json_response:
-                            return "Empty response received"
-                        if isinstance(json_response, str):
-                            return json_response
-                        return json.dumps(json_response, indent=2)
-                    except json.JSONDecodeError:
-                        text_response = response.text
-                        return (
-                            text_response
-                            if text_response
-                            else "Empty response"
-                        )
-                else:
-                    error_msg = (
-                        f"Error: Server returned {response.status_code}"
-                    )
-                    try:
-                        error_details = response.json()
-                        error_msg += (
-                            f"\nDetails: {json.dumps(error_details, indent=2)}"
-                        )
-                    except (ValueError, json.JSONDecodeError):
-                        if response.text:
-                            error_msg += f"\nDetails: {response.text}"
-                    return error_msg
-
-            except requests.RequestException:
-                continue
-        return "Error: No Orakle servers available"
+        self.llm.add_msg(self.system_message, self.chat_history, "system")
+        if self.summary_enabled:
+            self.llm.add_msg(self.new_summary, self.chat_history, "system")
+            # Summary generation fields
+            self.trimmed_messages_buffer = []
+            # Lock specifically for buffer operations
+            self.buffer_lock = threading.Lock()
+            self.summary_in_progress = False
+            self.summary_executor = ThreadPoolExecutor(max_workers=1)
+            self.current_summary = None
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -371,218 +220,591 @@ class ChatManager:
                 },
             }
 
-    def _process_regular_text(
-        self, text: str, stream_type: Optional[Literal["cli", "json"]] = None
-    ) -> List[str]:
-        """Process and speak regular text content"""
-        # logger.info(text)
-        events = []
+    def _split_text_into_chunks(self, text: str) -> List[str]:
+        """Split text into manageable chunks for better display and TTS processing.
+
+        Splits text by line breaks first, then by sentence boundaries within each paragraph.
+        """
+        chunks = []
 
         if not text.strip():
-            return events
+            return chunks
 
-        logger.info(text)
-        phrases = re.split(r"([.!?]\s+)", text.strip())
-        j = 0
-        while j < len(phrases):
-            if j + 1 < len(phrases):
-                phrase = phrases[j] + phrases[j + 1]
-                j += 2
-            else:
-                phrase = phrases[j]
-                j += 1
+        # First split by line breaks to handle lists and paragraphs
+        paragraphs = text.strip().split("\n")
 
-            if not phrase.strip():
+        for paragraph in paragraphs:
+            if not paragraph.strip():
                 continue
 
-            try:
-                audio_file, duration = self.tts.generate_audio(phrase)
-                if stream_type == "json":
-                    event_data = self._create_audio_stream_event(
-                        audio_file=audio_file,
-                        text_content=phrase,
-                        duration=duration,
-                    )
-                    events.append(ndjson("message", "stream", event_data))
+            # Then split each paragraph by sentence boundaries
+            phrases = re.split(r"([.!?]\s+)", paragraph.strip())
+            j = 0
+            while j < len(phrases):
+                if j + 1 < len(phrases):
+                    phrase = phrases[j] + phrases[j + 1]
+                    j += 2
                 else:
-                    char_delay = duration / len(phrase)
-                    if not self.tts.play_audio(audio_file):
-                        raise RuntimeError("Failed to start audio playback")
-                    for char in phrase:
-                        sys.stdout.write(char)
-                        sys.stdout.flush()
-                        time.sleep(char_delay)
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
+                    phrase = phrases[j]
+                    j += 1
 
-                    while mixer.music.get_busy():
-                        time.sleep(0.001)
+                if phrase.strip():
+                    chunks.append(phrase)
 
-                    # Clean up the audio file after playback
-                    self._cleanup_audio_file(audio_file)
+        return chunks
 
-            except Exception as e:
-                logger.error(f"TTS error: {e}")
-                print(phrase)
+    def _extract_complete_sentences(self, text: str) -> List[str]:
+        """Extract complete sentences from a text buffer.
 
-        return events
+        Returns a list of complete sentences, leaving incomplete sentences in the buffer.
+        """
+        if not text.strip():
+            return []
 
-    def _process_command(
+        # Function to check if paragraph contains special patterns that should skip NLTK processing
+        def contains_special_patterns(text):
+            # Check for markdown URLs: [text](url)
+            if re.search(r"\[([^\]]+)\]\(([^)]+)\)", text):
+                return True
+            # Check for regular URLs: http://example.com
+            if re.search(r"https?://[^\s)>]+", text):
+                return True
+            # Check for inline code: `code`
+            if re.search(r"`([^`]+)`", text):
+                return True
+            # Check for code blocks: ```code```
+            if re.search(r"```[^`]*```", text):
+                return True
+            # Check for bullet points or numbered lists
+            if re.search(r"^\s*[\*\-\d]+\.?\s+", text, re.MULTILINE):
+                return True
+            # Check for numbered lists
+            # if re.search(r'^\s*\d+\.\s+.+', text, re.MULTILINE):
+            if re.search(
+                r"^\s*(\d+\.\s+|\*\s+|-\s+|\+\s+).+", text, re.MULTILINE
+            ):
+                return True
+            return False
+
+        # Find sentence boundaries (periods, exclamation marks, question marks followed by space or newline)
+        sentence_ends = list(
+            # re.finditer(r"(?<!\d)[.](\s|$)|[:!?](\s|$)|\n", text)
+            re.finditer(r"\n", text)
+        )
+
+        if not sentence_ends:
+            return []
+
+        sentences = []
+        last_end = 0
+
+        for match in sentence_ends:
+            end_pos = match.end()
+            sentence = text[last_end:end_pos].strip()
+            if sentence:
+                if contains_special_patterns(sentence):
+                    sentences.append(sentence)
+                else:
+                    try:
+                        # Use NLTK to split the paragraph into sentences
+                        # logger.info("NLTK PRE:")
+                        # logger.info(pprint.pformat(paragraph))
+                        paragraph_sentences = nltk.sent_tokenize(sentence)
+                        # logger.info("NLTK POST:")
+                        # logger.info(pprint.pformat(paragraph))
+                        # logger.info("NLTK END")
+                        sentences.extend(paragraph_sentences)
+                    except (LookupError, ImportError):
+                        raise RuntimeError(
+                            "Failed to split sentences via NLTK"
+                        )
+            last_end = end_pos
+
+        return sentences
+
+    # def _extract_complete_sentences(self, text: str) -> List[str]:
+    #     """Extract complete sentences from a text buffer.
+    #
+    #     Returns a list of complete sentences, leaving incomplete sentences in the buffer.
+    #     """
+    #     if not text.strip():
+    #         return []
+    #
+    #     # Function to check if paragraph contains special patterns that should skip NLTK processing
+    #     def contains_special_patterns(text):
+    #         # Check for markdown URLs: [text](url)
+    #         if re.search(r'\[([^\]]+)\]\(([^)]+)\)', text):
+    #             return True
+    #         # Check for regular URLs: http://example.com
+    #         if re.search(r'https?://[^\s)>]+', text):
+    #             return True
+    #         # Check for inline code: `code`
+    #         if re.search(r'`([^`]+)`', text):
+    #             return True
+    #         # Check for code blocks: ```code```
+    #         if re.search(r'```[^`]*```', text):
+    #             return True
+    #         # Check for bullet points or numbered lists
+    #         if re.search(r'^\s*[\*\-\d]+\.?\s+', text, re.MULTILINE):
+    #             return True
+    #         # Check for numbered lists
+    #         # if re.search(r'^\s*\d+\.\s+.+', text, re.MULTILINE):
+    #         if re.search(r'^\s*(\d+\.\s+|\*\s+|-\s+|\+\s+).+', text, re.MULTILINE):
+    #             return True
+    #         return False
+    #
+    #     # Split text by newlines
+    #     logger.info("TEXT SPLIT:")
+    #     logger.info(pprint.pformat(text))
+    #     paragraphs = text.split("\n")
+    #     sentences = []
+    #
+    #     for paragraph in paragraphs:
+    #         paragraph = paragraph.strip()
+    #         if paragraph:
+    #             sentences.append(paragraph)
+    #         # Only process non-empty paragraphs
+    #         # if paragraph and not contains_special_patterns(paragraph):
+    #         #     try:
+    #         #         # Use NLTK to split the paragraph into sentences
+    #         #         logger.info("NLTK PRE:")
+    #         #         logger.info(pprint.pformat(paragraph))
+    #         #         paragraph_sentences = nltk.sent_tokenize(paragraph)
+    #         #         logger.info("NLTK POST:")
+    #         #         logger.info(pprint.pformat(paragraph))
+    #         #         logger.info("NLTK END")
+    #         #         sentences.extend(paragraph_sentences)
+    #         #     except (LookupError, ImportError):
+    #         #         raise RuntimeError("Failed to split sentences via NLTK")
+    #         # elif paragraph:  # If it has special patterns but isn't empty
+    #         #     sentences.append(paragraph)
+    #
+    #     return sentences
+
+    def _process_streaming_sentence(
         self,
-        cmd_name: str,
-        cmd_type: str,
-        cmd: Optional[str],
-        next_part: str,
+        sentence: str,
         stream_type: Optional[Literal["cli", "json"]] = None,
-    ) -> List[str]:
-        """Process and speak command-related content"""
-        events = []
+    ) -> Generator[str, None, None]:
+        """Process and speak a single sentence for streaming output.
+
+        Instead of collecting events, this now yields them immediately for better streaming.
+        """
+        if not sentence.strip():
+            return
+
+        # if "Processing" in sentence:
+        if re.match(r"^Processing [A-Za-z_][A-Za-z0-9_]+\.\.\.$", sentence):
+            # if re.match(r'^Processing[.*]\.\.\.$', sentence):
+            logger.info(f"PROCESSING: '{sentence}'")
+            yield ndjson("signal", "loading", {"state": "start"})
+
         try:
-            phrase = f"Requesting {cmd_type} {cmd_name}"
+            # # Check if this is a JSON signal that needs to be passed through directly
+            # if stream_type == "json" and sentence.startswith('{"event"'):
+            #     yield sentence
+            #     # events.append(ndjson("signal", "command", {"name": cmd_name}))
+            #     # audio_file, duration = self.tts.generate_audio(phrase)
+            #     # event_data = self._create_audio_stream_event(
+            #     #     audio_file=audio_file,
+            #     #     text_content=phrase,
+            #     #     duration=duration,
+            #     #     skill=True,
+            #     # )
+            #     # events.append(ndjson("message", "stream", event_data))
+            #      return
+            #
+            #     try:
+            #         # Attempt to parse the JSON string
+            #         data = json.loads(sentence)
+            #         if 'type' in data and data['type'] == 'signal':
+            #             logger.info("_process_streaming_sentence 2 '" + sentence + "'")
+            #             # This is a signal from middleware, pass it through directly
+            #             yield sentence
+            #             return
+            #     except json.JSONDecodeError:
+            #         # Handle the case where the string is not valid JSON
+            #         pass
+
+            # logger.info("_process_streaming_sentence 3 '" + sentence + "'")
+            audio_file, duration = self.tts.generate_audio(sentence)
             if stream_type == "json":
-                events.append(ndjson("signal", "command", {"name": cmd_name}))
-                audio_file, duration = self.tts.generate_audio(phrase)
                 event_data = self._create_audio_stream_event(
                     audio_file=audio_file,
-                    text_content=phrase,
+                    text_content=sentence,
                     duration=duration,
-                    skill=True,
                 )
-                events.append(ndjson("message", "stream", event_data))
+                yield ndjson("message", "stream", event_data)
             else:
-                self.tts.speak(phrase)
+                # logger.info("_process_streaming_sentence 4 '" + sentence + "'")
+                char_delay = duration / len(sentence)
+                if not self.tts.play_audio(audio_file):
+                    raise RuntimeError("Failed to start audio playback")
+                for char in sentence:
+                    sys.stdout.write(char)
+                    sys.stdout.flush()
+                    time.sleep(char_delay)
+                sys.stdout.write("\n")
+                sys.stdout.flush()
 
-            if cmd and not stream_type == "cli":
-                # Pretty printed command name / parameters
-                # if stream_type == "json":
-                #     events.append(
-                #         ndjson(
-                #             "signal",
-                #             "command",
-                #             {"name": f"{format_orakle_command(cmd)}"},
-                #         )
-                #     )
-                # else:
-                print(f"Executing:\n{format_orakle_command(cmd)}")
+                while mixer.music.get_busy():
+                    time.sleep(0.001)
 
-            # Extract and print result
-            result_match = re.search(
-                r"Result:\n```json\n(.*?)\n```", next_part, re.DOTALL
-            )
-            if result_match:
-                logger.info("HAVE MATCH IN RESULT")
-                result = "Here's the result: " + result_match.group(1)
-                if stream_type == "json":
-                    audio_file, duration = self.tts.generate_audio(result)
-                    event_data = self._create_audio_stream_event(
-                        audio_file=audio_file,
-                        text_content=result,
-                        duration=duration,
-                    )
-                    events.append(ndjson("message", "stream", event_data))
-                else:
-                    print(result)
-                    self.tts.speak(result)
-            else:
-                logger.info("NO MATCH IN RESULT")
+                # Clean up the audio file after playback
+                self._cleanup_audio_file(audio_file)
 
         except Exception as e:
-            logger.error(f"TTS error during command processing: {e}")
+            logger.error(f"TTS error: {e}")
+            print(sentence)
 
-        return events
-
-    def tts_response_output(
-        self,
-        processed_answer: str,
-        stream_type: Optional[Literal["cli", "json"]] = None,
-    ) -> List[str]:
-        """Process structured response with text-to-speech and streaming output"""
-        # logger.info("Starting tts_response_output")
-        events = []
-
-        if not self.tts:
-            return events
-
-        # Split the text by command markers
-        parts = re.split(
-            r"__COMMAND_START__(.+?)__COMMAND_DISPLAY__.*?__COMMAND_END__",
-            processed_answer,
-            flags=re.DOTALL,
-        )
-
-        cmda = re.split(
-            r"__COMMAND_START__.+?__COMMAND_DISPLAY__(.*?)__COMMAND_END__",
-            processed_answer,
-            flags=re.DOTALL,
-        )
-
-        try:
-            cmd = cmda[1].split("\n")[0]
-            cmd_type = re.search(r"\b\w+\b", cmda[1]).group(0)
-            if cmd == "none":
-                return events
-        except (IndexError, AttributeError):
-            cmd = None
-
-        for i, part in enumerate(parts):
-            if i % 2 == 0:  # Regular text
-                events.extend(self._process_regular_text(part, stream_type))
-                # logger.info("tts_response_output 1")
-            else:  # Command name and result
-                cmd_name = part
-                next_part = parts[i + 1] if i + 1 < len(parts) else ""
-                events.extend(
-                    self._process_command(
-                        cmd_name, cmd_type, cmd, next_part, stream_type
-                    )
-                )
-
-        # logger.info("tts_response_output 2")
-        return events
-
-    def get_command_interpretation(
-        self,
-        results: List[str],
-        command_types: List[str],
-        stream: Optional[Literal["cli", "json"]] = "cli",
+    def _process_regular_text(
+        self, text: str, stream_type: Optional[Literal["cli", "json"]] = None
     ) -> Generator[str, None, None]:
-        """Get LLM interpretation of command results"""
-        formatted_results = []
-        for r in results:
-            try:
-                json.loads(r)
-                formatted_results.append(f"```json\n{r}\n```")
-            except json.JSONDecodeError:
-                formatted_results.append(f"```text\n{r}\n```")
+        """Process and speak regular text content, yielding events as they're generated"""
+        if not text.strip():
+            return
 
-        instruction = (
-            "This was a RECIPE command. Please reproduce the command result"
-            " verbatim in your response, maintaining all formatting and"
-            " structure. Add a brief introduction explaining what the recipe"
-            " did:"
-            if command_types and command_types[0] == "RECIPE"
-            else (
-                "This was a SKILL command. Don't reproduce the command result"
-                " verbatim in your next answer, instead write your"
-                " interpretation about the result in the context of the"
-                " conversation. Only reproduce the command result verbatim if"
-                " the user explicitly asks for that:"
+        # Use the extracted method to split text into chunks
+        chunks = self._split_text_into_chunks(text)
+
+        for phrase in chunks:
+            yield from self._process_streaming_sentence(phrase, stream_type)
+
+    def _count_tokens_in_history(self, history=None):
+        """Count tokens in the entire chat history using stored token counts when available"""
+        history = history or self.chat_history
+        total = 0
+        role_counts = {"system": 0, "user": 0, "assistant": 0, "other": 0}
+
+        for msg in history:
+            if isinstance(msg, dict):
+                role = msg["role"]
+                tokens = msg["tokens"]
+                total += tokens
+                # Track tokens by role
+                if role in role_counts:
+                    role_counts[role] += tokens
+                else:
+                    role_counts["other"] += tokens
+
+        # Log detailed breakdown
+        logger.info(
+            f"Token count breakdown - System: {role_counts['system']}, User:"
+            f" {role_counts['user']}, Assistant: {role_counts['assistant']},"
+            f" Other: {role_counts['other']}"
+        )
+
+        return total
+
+    def _create_template_summary(self, messages):
+        """Create a simple template-based summary as fallback"""
+        user_msgs = [
+            msg["content"] for msg in messages if msg.get("role") == "user"
+        ]
+        assistant_msgs = [
+            msg["content"]
+            for msg in messages
+            if msg.get("role") == "assistant"
+        ]
+
+        summary = (
+            f"The conversation included {len(user_msgs)} user messages and"
+            f" {len(assistant_msgs)} assistant responses. "
+        )
+
+        # Add topics if we have them
+        if user_msgs:
+            # Extract potential topics from user messages
+            topics = []
+            for msg in user_msgs[
+                :3
+            ]:  # Use first few messages as topic indicators
+                # Extract first sentence or up to 50 chars
+                topic = msg.split(".")[0][:50].strip()
+                if topic:
+                    topics.append(topic)
+
+            if topics:
+                summary += f"Topics discussed: {'; '.join(topics)}"
+
+        return summary
+
+    def _generate_conversation_summary(self, messages_to_summarize):
+        """Generate a summary of conversation messages using the LLM
+
+        Args:
+            messages_to_summarize: List of message dictionaries to summarize
+
+        Returns:
+            str: Generated summary text
+        """
+        if not messages_to_summarize:
+            return ""
+
+        # Format messages for the LLM
+        formatted_messages = []
+        for msg in messages_to_summarize:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            formatted_messages.append(f"{role}: {content}")
+
+        conversation_text = "\n".join(formatted_messages)
+
+        # Calculate maximum summary length (e.g., 5% of context window)
+        context_window = self.llm.get_context_window()
+        max_summary_tokens = int(context_window * 0.05)  # 5% of context window
+        max_summary_chars = (
+            max_summary_tokens * 4
+        )  # Rough estimate: ~4 chars per token
+
+        # Prepare template context
+        template_context = {
+            "conversation_text": conversation_text,
+            "max_summary_tokens": max_summary_tokens,
+            "max_summary_chars": max_summary_chars,
+        }
+
+        # If we already have a summary, include it to maintain continuity
+        current_summary = self.chat_history[1]["content"]
+        if current_summary:
+            template_context["current_summary"] = current_summary
+            prompt = self.template_manager.render(
+                "framework.chat_manager.update_summary", template_context
             )
+        else:
+            prompt = self.template_manager.render(
+                "framework.chat_manager.new_summary", template_context
+            )
+
+        # Use the LLM to generate a summary
+        try:
+            # Create a temporary chat history for this summary request
+            temp_history = []
+            self.llm.add_msg(
+                "You are a helpful assistant that summarizes conversations.",
+                temp_history,
+                "system",
+            )
+            self.llm.add_msg(prompt, temp_history, "user")
+            summary = self.llm.chat(chat_history=temp_history, stream=False)
+
+            # Clean up the summary
+            summary = summary.strip()
+            if summary.startswith("Summary:"):
+                summary = summary[8:].strip()
+            if summary.startswith("Updated summary:"):
+                summary = summary[16:].strip()
+
+            # Apply hard cut if summary exceeds maximum length
+            if len(summary) > max_summary_chars:
+                logger.warning(
+                    f"Summary exceeded maximum length ({len(summary)} >"
+                    f" {max_summary_chars}). Truncating."
+                )
+                # Find the last sentence boundary before the cutoff
+                cutoff_point = max_summary_chars
+                last_period = summary.rfind(".", 0, cutoff_point)
+                if last_period > 0:
+                    summary = summary[: last_period + 1]  # Include the period
+                else:
+                    # If no sentence boundary found, just cut at the character limit
+                    summary = summary[:cutoff_point]
+
+            logger.info(f"Generated conversation summary: {summary[:50]}...")
+            return summary
+        except Exception as e:
+            logger.error(f"Error generating conversation summary: {e}")
+            # Fall back to template-based summary
+            return self._create_template_summary(messages_to_summarize)
+
+    def _update_summary_in_background(self):
+        """Trigger background task to update the conversation summary"""
+        # Check if summary is already in progress without locking the buffer
+        if self.summary_in_progress:
+            return
+
+        # Check if there are messages to summarize
+        with self.buffer_lock:
+            if not self.trimmed_messages_buffer:
+                return
+            self.summary_in_progress = True
+            # Get messages to summarize with minimal lock time
+            messages_to_summarize = self.trimmed_messages_buffer.copy()
+            self.trimmed_messages_buffer = []
+
+        def _background_summary_task():
+            try:
+                # Generate the summary
+                new_summary = self._generate_conversation_summary(
+                    messages_to_summarize
+                )
+                # Safely update the new_summary with the lock
+                with self.buffer_lock:
+                    self.new_summary = new_summary
+                    self.summary_in_progress = False
+                    logger.info(
+                        f"Generated new summary: {new_summary[:50]}..."
+                    )
+
+            except Exception as e:
+                logger.error(f"Error in background summary task: {e}")
+                with self.buffer_lock:
+                    self.summary_in_progress = False
+                # If there was an error, put the messages back in the buffer
+                with self.buffer_lock:
+                    self.trimmed_messages_buffer = (
+                        messages_to_summarize + self.trimmed_messages_buffer
+                    )
+
+        # Submit the task to our executor
+        self.summary_executor.submit(_background_summary_task)
+
+    def trim_context(self, max_tokens=None):
+        """
+        Trim the chat history to stay within token limits while preserving context.
+
+        Args:
+            max_tokens: Maximum tokens to allow (defaults to model's context window)
+        """
+        if not self.chat_history:
+            logger.info("No chat history to trim")
+            return
+
+        # Use model's context window if not specified
+        if max_tokens is None:
+            max_tokens = self.llm.get_context_window()
+            logger.info(f"Using model's context window: {max_tokens} tokens")
+
+        logger.info(
+            f"Starting context trimming process. Target: {max_tokens} tokens"
+        )
+        logger.info(
+            f"Current chat history length: {len(self.chat_history)} messages"
         )
 
-        interpretation_prompt = (
-            "Based on the Orakle command results:\n"
-            + "\n".join(formatted_results)
-            + "\n\n"
-            + instruction
-            + "\n"
+        system_message = self.chat_history[0]
+        summary_message = self.chat_history[1]
+        system_tokens = system_message["tokens"] + summary_message["tokens"]
+        available_tokens = max_tokens - system_tokens
+
+        logger.info(f"System message uses {system_tokens} tokens")
+        logger.info(
+            f"Available tokens for conversation: {available_tokens} tokens"
         )
-        return self.llm.process_text(
-            text=interpretation_prompt,
-            system_message=self.system_message,
-            chat_history=self.chat_history,
-            stream=stream if isinstance(stream, bool) else (stream == "cli"),
+
+        current_tokens = self._count_tokens_in_history()
+        logger.info(f"Current conversation uses {current_tokens} tokens")
+
+        if current_tokens <= available_tokens:
+            logger.info(
+                "No trimming needed. Using"
+                f" {current_tokens}/{available_tokens} tokens"
+            )
+            logger.info(f"chat history: {pprint.pformat(self.chat_history)}")
+            return
+
+        logger.info(f"Need to trim {current_tokens - available_tokens} tokens")
+
+        # Get user-assistant exchanges (skip system message)
+        exchanges = [
+            msg
+            for msg in self.chat_history
+            if isinstance(msg, dict) and msg.get("role") != "system"
+        ]
+
+        logger.info(
+            f"Found {len(exchanges)} messages (excluding system messages)"
         )
+
+        # Keep most recent exchanges that fit within token limit
+        kept_exchanges = []
+        tokens_used = 0
+
+        # Always keep the last exchange (most recent) regardless of token count
+        # TODO Group messages by role for more flexible exchange handling
+        if (
+            len(exchanges) >= 2
+        ):  # Assuming exchanges come in pairs (user + assistant)
+            last_exchange = exchanges[
+                -2:
+            ]  # Last user question and assistant response
+
+            logger.info("Keeping last exchange regardless of token count:")
+            for msg in last_exchange:
+                logger.info(
+                    f"  - {msg.get('role', 'unknown')} message:"
+                    f" {msg['tokens']} tokens"
+                )
+                kept_exchanges.insert(0, msg)
+                tokens_used += msg["tokens"]
+
+            exchanges = exchanges[
+                :-2
+            ]  # Remove the last exchange from consideration
+            logger.info(f"Last exchange uses {tokens_used} tokens")
+        else:
+            logger.info("Not enough messages for a complete exchange")
+
+        # Process remaining exchanges from newest to oldest
+        logger.info(
+            f"Processing {len(exchanges)} remaining messages from newest to"
+            " oldest"
+        )
+        kept_count = 0
+        skipped_count = 0
+
+        for msg in reversed(exchanges):
+            # Use stored token count if available, otherwise calculate
+            if "tokens" in msg:
+                msg_tokens = msg["tokens"]
+            else:
+                raise RuntimeError("Missing tokens")
+            if system_tokens + tokens_used + msg_tokens <= available_tokens:
+                kept_exchanges.insert(0, msg)  # Add to front to maintain order
+                tokens_used += msg_tokens
+                kept_count += 1
+                logger.info(
+                    f"Keeping {msg.get('role', 'unknown')} message:"
+                    f" {msg_tokens} tokens"
+                )
+            else:
+                # We can't fit any more messages
+                skipped_count += 1
+                logger.info(
+                    f"Skipping {msg.get('role', 'unknown')} message:"
+                    f" {msg_tokens} tokens (would exceed limit)"
+                )
+                # Add skipped message to the buffer for summarization
+                with self.buffer_lock:
+                    self.trimmed_messages_buffer.append(msg)
+                break
+
+        logger.info(
+            f"Kept {kept_count} additional messages, skipped"
+            f" {skipped_count} messages"
+        )
+        logger.info(
+            f"Total tokens used so far: {tokens_used}/{available_tokens}"
+        )
+
+        # Rebuild chat history with system message and kept exchanges
+        new_history = []
+        new_history.append(system_message)
+        new_history.append(summary_message)
+        new_history.extend(kept_exchanges)
+        logger.info(f"Added {len(kept_exchanges)} messages to new history")
+
+        new_token_count = self._count_tokens_in_history(new_history)
+        logger.info(
+            f"Trimmed context from {current_tokens} to"
+            f" {new_token_count} tokens"
+            f" ({current_tokens - new_token_count} tokens removed)"
+        )
+        logger.info(f"New history has {len(new_history)} messages")
+
+        logger.info(f"new_history: {pprint.pformat(new_history)}")
+
+        self.chat_history = new_history
 
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
@@ -608,34 +830,101 @@ class ChatManager:
         elif stream == "json":
             yield ndjson("signal", "loading", {"state": "start"})
 
+        processed_answer = ""
         try:
-            # Get initial response
-            answer = ""
-            response = self.llm.process_text(
-                text=question,
-                system_message=self.system_message,
-                chat_history=self.chat_history,
-                stream=True,
+            if self.chat_memory:
+                self.chat_memory.add_entry(question, {"role": "user"})
+
+            # Check if the last message is from a user, and if so, log a warning
+            if (
+                self.chat_history
+                and isinstance(self.chat_history[-1], dict)
+                and self.chat_history[-1].get("role") == "user"
+            ):
+                logger.warning(
+                    "Adding a user message when the last message was also from"
+                    " a user"
+                )
+
+            self.llm.add_msg(question, self.chat_history, "user")
+            # Atomically check and apply any new summary
+            if self.summary_enabled:
+                with self.buffer_lock:  # Use the existing lock for consistency
+                    if self.new_summary:
+                        new_summary_copy = self.new_summary
+                        self.new_summary = (  # Clear it while holding the lock
+                            ""
+                        )
+                        logger.info("Retrieved new summary for application")
+
+            # Token counting can happen outside the lock
+            if "new_summary_copy" in locals():
+                new_summary_tokens = self.llm._get_token_count(
+                    new_summary_copy, "system"
+                )
+                self.chat_history[1]["content"] = new_summary_copy
+                self.chat_history[1]["tokens"] = new_summary_tokens
+                logger.info(f"Applied new summary: {new_summary_copy[:50]}...")
+            self.trim_context()
+            llm_response_stream = self.llm.chat(
+                chat_history=self.chat_history, stream=True
             )
 
-            for chunk in response:
-                if chunk:
-                    answer += chunk
-                    if stream == "cli" and not self.tts:
-                        print(chunk, end="", flush=True)
+            processed_answer = ""
+            text_buffer = ""
 
-            if not answer:
-                if stream == "cli":
-                    loading.stop()
-                elif stream == "json":
-                    yield ndjson("signal", "loading", {"state": "stop"})
-                    yield ndjson(
-                        "signal",
-                        "error",
-                        {"message": "No answer from the LLM"},
-                    )
-                logger.info("NO ANSWER")
-                return {} if stream == "json" else ""
+            # Process the stream through the Orakle middleware
+            # This now handles command execution and interpretation internally
+            for chunk in self.orakle_middleware.process_stream(
+                llm_response_stream, self
+            ):
+                if not chunk:
+                    continue
+
+                processed_answer += chunk
+                text_buffer += chunk
+
+                # Process complete sentences for immediate TTS
+                if self.tts:
+                    sentences = self._extract_complete_sentences(text_buffer)
+                    # if len(sentences) > 0:
+                    #     logger.info(" --- SENTENCES --- ")
+                    #     logger.info(pprint.pformat(sentences))
+                    if stream == "cli":
+                        loading.stop()
+                    elif stream == "json":
+                        yield ndjson("signal", "loading", {"state": "stop"})
+                    for sentence in sentences:
+                        if stream == "json":
+                            yield from self._process_streaming_sentence(
+                                sentence, stream
+                            )
+                        else:
+                            # For CLI mode, just process without collecting events
+                            for _ in self._process_streaming_sentence(
+                                sentence, stream
+                            ):
+                                pass
+
+                    # Keep any incomplete sentence in the buffer
+                    if sentences:
+                        last_sentence = sentences[-1]
+                        last_pos = text_buffer.rfind(last_sentence) + len(
+                            last_sentence
+                        )
+                        text_buffer = text_buffer[last_pos:].strip()
+                elif stream == "cli":
+                    # For CLI without TTS, print directly
+                    print(chunk, end="", flush=True)
+
+            # Process any remaining text in the buffer
+            if text_buffer and self.tts:
+                if stream == "json":
+                    yield from self._process_regular_text(text_buffer, stream)
+                else:
+                    # For CLI mode, just process without collecting events
+                    for _ in self._process_regular_text(text_buffer, stream):
+                        pass
 
         except Exception as e:
             if loading:
@@ -643,131 +932,86 @@ class ChatManager:
             logger.error(f"Error during LLM response: {e}")
             if stream == "json":
                 yield ndjson("signal", "error", {"message": str(e)})
-            return "" if stream != "json" else {}
+            processed_answer = (  # Set a default error message
+                f"Error: {str(e)}"
+            )
 
-        # Process any Orakle commands
-        processed_answer, results, command_types = (
-            self.process_orakle_commands(answer)
-        )
+        finally:
+            # Always add the processed answer to chat history, even if it's empty or an error
+            if processed_answer:
+                # Add the processed answer to chat history
+                self.llm.add_msg(
+                    processed_answer, self.chat_history, "assistant"
+                )
 
-        logger.info("processed_answer: " + processed_answer)
+                # Log assistant response to chat memory
+                if self.chat_memory:
+                    self.chat_memory.add_entry(
+                        processed_answer, {"role": "assistant"}
+                    )
+            else:
+                # If there's no processed answer, add a placeholder
+                logger.warning("No answer from the LLM, adding placeholder")
+                self.llm.add_msg(
+                    "No response generated", self.chat_history, "assistant"
+                )
+                if self.chat_memory:
+                    self.chat_memory.add_entry(
+                        "No response generated", {"role": "assistant"}
+                    )
 
-        # Process initial response with TTS and streaming
-        # logger.info("PRE tts_response_output")
-        if stream == "cli":
-            loading.stop()
-        elif stream == "json":
-            yield ndjson("signal", "loading", {"state": "stop"})
-        events = self.tts_response_output(processed_answer, stream)
-        # logger.info("POST tts_response_output")
-        for event in events:
-            if stream == "json":
-                # logger.info("YIELD EVENT")
-                yield event
-        # logger.info("POST tts_response_output")
+            # Stop loading animation
+            if stream == "cli":
+                loading.stop()
+            elif stream == "json":
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
 
-        if results:
-            final_answer = ""
-            for chunk in self.get_command_interpretation(
-                results, command_types, stream
-            ):
-                if chunk:
-                    if self.tts:
-                        final_answer += chunk
-                    else:
-                        print(chunk, end="", flush=True)
-                        final_answer += chunk
+            # Trigger background summary generation
+            if self.summary_enabled:
+                self._update_summary_in_background()
 
-            if final_answer:
-                separator = "\n\nResult:\n"
-                processed_answer += f"{separator}{final_answer}\n"
-                # Process command interpretation with TTS and streaming
-                if self.tts:
-                    events = self.tts_response_output(final_answer, stream)
-                    if stream == "json":
-                        # logger.info(f"Yielding {len(list(events))} final TTS events")
-                        for event in events:
-                            # logger.info(f"Yielding event: {event[:100]}...")
-                            yield event
+            # For non-streaming mode, return the processed answer
+            if not stream:
+                return processed_answer
 
-        if stream == "json":
-            yield ndjson("signal", "completed", None)
+    def add_chat_history_to_params(
+        self, params: dict, skill_info: dict
+    ) -> dict:
+        """Add chat history to parameters if the skill requires it"""
+        # Check if skill requires chat history
+        if any(
+            param.get("name") == "_chat_history"
+            for param in skill_info.get("parameters", [])
+        ):
+            params["_chat_history"] = self.prepare_chat_history_for_skill()
+        return params
 
-        return processed_answer
+    def prepare_chat_history_for_skill(self) -> list:
+        """Prepare chat history in a format suitable for skills"""
+        # If we have chat memory, use recent entries from it
+        if self.chat_memory:
+            recent_entries = self.chat_memory.get_recent_entries(
+                20
+            )  # Get more entries from memory
+            formatted_history = []
 
-    def _process_orakle_recipes(self, raw_capabilities: dict) -> List[dict]:
-        """Process raw recipe capabilities into structured format"""
-        recipes = []
-        if "recipes" in raw_capabilities:
-            for endpoint, recipe in raw_capabilities["recipes"].items():
-                recipe_data = {
-                    "name": endpoint,
-                    "description": recipe.get("description", ""),
-                    "parameters": recipe.get("parameters", []),
-                }
+            for entry in recent_entries:
+                role = entry["metadata"].get("role")
+                if role in ["user", "assistant"]:
+                    formatted_history.append(
+                        {"role": role, "content": entry["content"]}
+                    )
 
-                # Extract return type from flow if available
-                if "flow" in recipe and recipe["flow"]:
-                    last_step = recipe["flow"][-1]
-                    recipe_data["return_type"] = last_step.get("output_type", "")
+            return formatted_history
 
-                recipes.append(recipe_data)
-        return recipes
-
-    def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
-        """Process raw skill capabilities into structured format"""
-        skills = []
-        if "skills" in raw_capabilities:
-            for skill_name, skill_info in raw_capabilities["skills"].items():
-                run_info = skill_info["run"]
-                logger.info(" ---------------------- ")
-                logger.info(pprint.pformat(run_info))
-                skill_data = {
-                    "name": skill_name,
-                    "description": skill_info.get("description", "").replace("\n", ""),
-                    "runinfo": run_info.get("description", "").replace("\n", ""),
-                    "parameters": [],
-                }
-
-                # Process parameters
-                if run_info.get("parameters"):
-                    for param_name, param_info in run_info["parameters"].items():
-                        param_data = {
-                            "name": param_name,
-                            "type": param_info.get("type", "any"),
-                        }
-                        skill_data["parameters"].append(param_data)
-
-                skills.append(skill_data)
-        return skills
-
-    def get_orakle_capabilities(self):
-        """Query Orakle servers for capabilities and store them in structured format"""
-        print("Retrieving Orakle server capabilities...")
-        self.capabilities = {"recipes": [], "skills": []}
-        logger.info("get_orakle_capabilities 1")
-
-        for server in self.orakle_servers:
-            try:
-                logger.info("get_orakle_capabilities 2")
-                response = requests.get(f"{server}/capabilities", timeout=2)
-                logger.info(f"...capabilities status code: {response.status_code}")
-                if response.status_code == 200:
-                    logger.info("get_orakle_capabilities 3")
-                    raw_capabilities = response.json()
-
-                    # Process recipes and skills using the new methods
-                    self.capabilities["recipes"] = self._process_orakle_recipes(raw_capabilities)
-                    self.capabilities["skills"] = self._process_orakle_skills(raw_capabilities)
-
-                    logger.info(" ---- ")
-                    logger.info("...capabilities loaded successfully:")
-                    logger.info(pprint.pformat(self.capabilities))
-                    return self.capabilities
-            except requests.RequestException:
-                continue
-
-        logger.warning(
-            "No Orakle capabilities found, is the Orakle server running?"
-        )
-        return self.capabilities
+        # Otherwise, fall back to the existing implementation
+        formatted_history = []
+        for msg in self.chat_history:
+            # Only include user and assistant messages, skip system messages
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                if msg["role"] in ["user", "assistant"]:
+                    formatted_history.append(
+                        {"role": msg["role"], "content": msg["content"]}
+                    )
+        return formatted_history

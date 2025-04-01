@@ -37,7 +37,7 @@ class LLMBackend(ABC):
         else:
             self.logger.error("Unexpected response format")
             return ""
-            
+
         # Clean up the response
         content = content.strip()
         # Remove markdown code block if present
@@ -50,27 +50,27 @@ class LLMBackend(ABC):
             else:
                 # Just remove the ``` markers
                 content = content.replace("```", "")
-                
+
         return content.strip()
 
-    def _prepare_messages(
-        self, text: str, system_message: str = "", chat_history: list = None
-    ) -> list:
-        """Prepare messages list for LLM processing"""
-        messages = [{"role": "system", "content": system_message}]
-
-        # Add chat history if provided
-        if chat_history:
-            for i in range(0, len(chat_history), 2):
-                messages.append({"role": "user", "content": chat_history[i]})
-                if i + 1 < len(chat_history):
-                    messages.append(
-                        {"role": "assistant", "content": chat_history[i + 1]}
-                    )
-
-        # Add current message
-        messages.append({"role": "user", "content": text})
-        return messages
+    # def _prepare_messages(
+    #     self, text: str, system_message: str = "", chat_history: list = None
+    # ) -> list:
+    #     """Prepare messages list for LLM processing"""
+    #     messages = [{"role": "system", "content": system_message}]
+    #
+    #     # Add chat history if provided
+    #     if chat_history:
+    #         for i in range(0, len(chat_history), 2):
+    #             messages.append({"role": "user", "content": chat_history[i]})
+    #             if i + 1 < len(chat_history):
+    #                 messages.append(
+    #                     {"role": "assistant", "content": chat_history[i + 1]}
+    #                 )
+    #
+    #     # Add current message
+    #     messages.append({"role": "user", "content": text})
+    #     return messages
 
     def check_provider_availability(self, api_base: str) -> bool:
         """Check if a provider endpoint is available"""
@@ -86,19 +86,19 @@ class LLMBackend(ABC):
             return False
         return self.check_provider_availability(self.provider["api_base"])
 
+    @abstractmethod
     def get_context_window(self) -> int:
         """Get the context window size for the current model
-        
+
         Returns:
             Maximum number of tokens the model can process
         """
-        return 4000  # Default conservative value
+        pass
+        # return 4000  # Default conservative value
 
     @abstractmethod
-    async def process_text(
+    async def chat(
         self,
-        text: str,
-        system_message: str = "",
         chat_history: list = None,
         stream: bool = False,
     ) -> Union[str, Generator]:

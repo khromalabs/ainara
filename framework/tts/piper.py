@@ -293,17 +293,6 @@ class PiperTTS(TTSBackend):
 
         return [p.strip() for p in phrases if p.strip()]
 
-    def _clean_text(self, text: str) -> str:
-        """Remove symbols that shouldn't be read by TTS
-
-        Args:
-            text: Text to clean
-
-        Returns:
-            str: Cleaned text with removed symbols
-        """
-        return re.sub("[*#]", "", text)
-
     def stop(self) -> bool:
         """Stop current speech and audio playback
 

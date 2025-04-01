@@ -12,11 +12,10 @@ class TimeWeather(Skill):
     def __init__(self):
         super().__init__()
         self.name = "weather"
-        self.description = """
-        Get weather information based on IP location. Assistant doesn't
-        need to ask for location, this skill will retrive the location using
-        the IP
-        """
+        self.matcher_info = (
+            "Assistant doesn't need to ask for location, this skill will"
+            " retrive the location using the IP"
+        )
         self.logger = logging.getLogger(__name__)
 
     def get_location_from_ip(self):
@@ -131,14 +130,14 @@ class TimeWeather(Skill):
 
     async def run(self, location: str = None, api_key: str = None):
         """
-        Get weather information for a location or current IP-based location.
+        Gets weather info.
 
         Args:
             location: Location name (optional, will use IP-based location
-            if not provided)
+            if not provided).
 
         Returns:
-            Dict containing weather information
+            Dict containing weather information.
         """
         if location:
             return self.get_weather_by_city(location)

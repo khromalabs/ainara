@@ -15,7 +15,7 @@
     bottom: 60px;  /* Adjust this value to position it where you want */
     left: 50%;
     transform: translateX(-50%);
-    width: 80%;
+    width: 93%;
     padding: 10px;
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -66,17 +66,17 @@
     opacity: 1;
     transform: translateY(0);
     text-align: left;
-    max-width: 80%;
+    max-width: 95%;
     margin-left: 0;
     letter-spacing: 1px;
-    white-space: pre-wrap;       /* Preserve spaces and line breaks, but wrap text */
-    overflow-wrap: break-word;   /* Allow breaking words at any character */
-    word-break: break-word;      /* More elegant word breaking than 'break-all' */
-    hyphens: auto;               /* Enable automatic hyphenation */
     font-weight: 300;
     animation: textPulse 2s infinite;
     background-color: rgba(0,0,0,0.3);
     border-radius: 10px;
+     /* Better text handling properties */
+     display: inline-block; /* Makes the element only as wide as its content */
+     white-space: normal; /* Normal word wrapping */
+     box-sizing: border-box; /* Ensures padding is included in width calculations */
 }
 
 .message.user {
@@ -130,3 +130,24 @@
 .character.visible {
     opacity: 1;
 }
+
+.word {
+    display: inline-block;
+    white-space: normal;
+}
+
+.link-text {
+    color: #78c8ff; /* For AI messages */
+    font-weight: 500;
+}
+
+.message.user .link-text {
+    color: rgba(255, 255, 255, 0.9); /* For user messages */
+}
+
+.link-domain {
+    font-size: 0.85em;
+    opacity: 0.7;
+    font-style: italic;
+}
+

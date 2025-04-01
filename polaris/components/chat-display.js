@@ -10,20 +10,22 @@ class ChatDisplay extends BaseComponent {
         this.maxVisibleMessages = 5;
         this.messageTimeouts = [];
         this.animationTimeouts = [];
-        this.isTypingMode = false;
         const { ipcRenderer } = require('electron');
         this.ipcRenderer = ipcRenderer;
         this.keydownHandler = null;
     }
 
-    enterTypingMode() {
-        this.isTypingMode = true;
+    async enterTypingMode() {
+        // Set state in window first
+        await this.ipcRenderer.invoke('set-typing-mode-state', true);
+
+        // Then update UI
         this.typingArea.style.opacity = '1';
         this.textInput.style.display = 'block';
         this.textInput.focus();
         this.container.style.marginBottom = '60px';
 
-        this.keydownHandler = (e) => {
+        this.keydownHandler = async (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 const text = this.textInput.value.trim();
@@ -42,13 +44,16 @@ class ChatDisplay extends BaseComponent {
         this.textInput.addEventListener('keydown', this.keydownHandler);
     }
 
-    exitTypingMode() {
+    async exitTypingMode() {
         if (this.keydownHandler) {
             this.textInput.removeEventListener('keydown', this.keydownHandler);
             this.keydownHandler = null;
         }
 
-        this.isTypingMode = false;
+        // Set state in window first
+        await this.ipcRenderer.invoke('set-typing-mode-state', false);
+
+        // Then update UI
         this.typingArea.style.opacity = '0';
         this.textInput.style.display = 'none';
         this.textInput.value = '';
@@ -112,6 +117,26 @@ class ChatDisplay extends BaseComponent {
                 const { ipcRenderer } = electron;
                 console.log('ChatDisplay: Setting up IPC listeners');
 
+                // Add listener for typing mode changes from window
+                this.ipcRenderer.on('typing-mode-changed', async (event, isTypingMode) => {
+
+                    // Update UI based on state from window
+                    if (isTypingMode) {
+                        this.typingArea.style.opacity = '1';
+                        this.textInput.style.display = 'block';
+                        this.container.style.marginBottom = '60px';
+                    } else {
+                        if (this.keydownHandler) {
+                            this.textInput.removeEventListener('keydown', this.keydownHandler);
+                            this.keydownHandler = null;
+                        }
+                        this.typingArea.style.opacity = '0';
+                        this.textInput.style.display = 'none';
+                        this.textInput.value = '';
+                        this.container.style.marginBottom = '0';
+                    }
+                });
+
                 ipcRenderer.on('add-message', (event, text) => {
                     console.log('ChatDisplay: Received user message:', text);
                     this.addMessage(text, 1, false);
@@ -132,7 +157,14 @@ class ChatDisplay extends BaseComponent {
                                 // Handle both string content and object content
                                 const textContent = content.content.content;
                                 if (textContent) {
-                                    const messageElement = this.addMessage(textContent, content.content.flags.duration, true);
+                                    // Pass the messageId from the event to addMessage
+                                    const messageId = content.content.messageId;
+                                    const messageElement = this.addMessage(
+                                        textContent,
+                                        content.content.flags.duration,
+                                        true,
+                                        messageId
+                                    );
                                     this.animateAIResponse(messageElement, content.content.flags.duration);
                                 }
                             }
@@ -205,31 +237,54 @@ class ChatDisplay extends BaseComponent {
         fadingMessages.forEach(msg => msg.remove());
     }
 
-    addMessage(text, duration, isAI = false) {
+    addMessage(text, duration, isAI = false, messageId = null) {
         this.resetContainerProperties();
 
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${isAI ? 'ai' : 'user'}`;
 
+        // Use provided messageId if available, otherwise generate one
+        messageDiv.id = messageId || `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
         if (isAI) {
-            // Split text into words and spaces
-            const parts = text.split(/(\s+)/);
+            // Parse markdown and split text into words and spaces
+            const parsedText = this.parseMarkdown(text);
+            const parts = parsedText.split(/(\s+)/);
+
             parts.forEach(part => {
                 if (part.length === 0) return;
 
                 if (part.match(/\s+/)) {
                     messageDiv.appendChild(document.createTextNode(part));
                 } else {
-                    [...part].forEach(char => {
-                        const span = document.createElement('span');
-                        span.className = 'character';
-                        span.textContent = char;
-                        messageDiv.appendChild(span);
-                    });
+                    // Create a span for the entire word
+                    const wordSpan = document.createElement('span');
+                    wordSpan.className = 'word';
+
+                    // Check if this word contains HTML tags from markdown parsing
+                    if (/<[^>]*>/g.test(part)) {
+                        // Create a temporary container to parse HTML
+                        const tempContainer = document.createElement('div');
+                        tempContainer.innerHTML = part;
+
+                        // Process each node in the parsed HTML
+                        this.processNodesForAnimation(tempContainer, wordSpan);
+                    } else {
+                        // Regular word without formatting - add individual character spans
+                        [...part].forEach(char => {
+                            const span = document.createElement('span');
+                            span.className = 'character';
+                            span.textContent = char;
+                            wordSpan.appendChild(span);
+                        });
+                    }
+
+                    messageDiv.appendChild(wordSpan);
                 }
             });
         } else {
-            messageDiv.textContent = text;
+            // For user messages, we can just render the markdown without animation
+            messageDiv.innerHTML = this.parseMarkdown(text);
         }
 
         this.container.appendChild(messageDiv);
@@ -250,11 +305,75 @@ class ChatDisplay extends BaseComponent {
         return messageDiv;
     }
 
+    parseMarkdown(text) {
+        // Handle bold text with ** or __
+        text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/g, '<strong>$1$2</strong>');
+
+        // Handle italic text with * or _
+        text = text.replace(/\*(.*?)\*|_(.*?)_/g, '<em>$1$2</em>');
+
+        // Handle code blocks with `
+        text = text.replace(/`(.*?)`/g, '<code>$1</code>');
+
+        // Handle links [text](url)
+        text = text.replace(/\[(.*?)\]\((.*?)\)/g, function(match, linkText, url) {
+            // Extract domain from URL
+            let domain = "";
+            try {
+                domain = new URL(url).hostname.replace(/^www\./, '');
+                // Truncate if too long
+                if (domain.length > 20) {
+                    domain = domain.substring(0, 17) + '...';
+                }
+            } catch (e) {
+                // If URL parsing fails, skip domain
+            }
+
+            // Create a properly formatted HTML string
+            return '"' + linkText + '"' +
+                   (domain ? ' [' + domain + ']' : '');
+        });
+
+        return text;
+    }
+
+    processNodesForAnimation(container, targetElement) {
+        // Process each child node
+        Array.from(container.childNodes).forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                // Text node - add character spans
+                [...node.textContent].forEach(char => {
+                    const span = document.createElement('span');
+                    span.className = 'character';
+                    span.textContent = char;
+                    targetElement.appendChild(span);
+                });
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                // Element node (like <strong>, <em>, etc.)
+                const wrapper = document.createElement(node.tagName);
+
+                // Copy all attributes
+                Array.from(node.attributes).forEach(attr => {
+                    wrapper.setAttribute(attr.name, attr.value);
+                });
+
+                // Process children of this element
+                this.processNodesForAnimation(node, wrapper);
+
+                // Add the element to the target
+                targetElement.appendChild(wrapper);
+            }
+        });
+    }
+
     async animateAIResponse(messageElement, duration) {
         if (!messageElement) return;
 
         const characters = messageElement.querySelectorAll('.character');
         const charDelay = duration / characters.length;
+
+        // Emit animation start event
+        ipcRenderer.send('animation-started', { messageId: messageElement.id });
 
         for (const char of characters) {
             const timeout = setTimeout(() => {
@@ -263,6 +382,9 @@ class ChatDisplay extends BaseComponent {
             this.animationTimeouts.push(timeout);
             await new Promise(resolve => setTimeout(resolve, charDelay * 1000));
         }
+
+        // Emit animation complete event
+        ipcRenderer.send('animation-completed', { messageId: messageElement.id });
     }
 }
 

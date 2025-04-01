@@ -9,6 +9,8 @@ from ainara.framework.config import config
 class MessagingTelegram(Skill):
     """Interact with the Telegram API"""
 
+    hiddenCapability = True
+
     def __init__(self):
         super().__init__()
         self.name = "messaging.telegram"

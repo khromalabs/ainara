@@ -5,10 +5,11 @@ const path = require('path');
 const process = require('process');
 
 class BaseWindow {
-    constructor(config, prefix, options = {}) {
+    constructor(config, prefix, options = {}, basePath) {
         this.config = config;
         this.prefix = prefix;
         this.name = `${prefix}Window`;
+        this.basePath = basePath;
 
         this.defaultOptions = {
             webPreferences: {
@@ -90,16 +91,31 @@ class BaseWindow {
     }
 
     loadContent(filePath) {
-        Logger.log(`${this.name} loading content from: ${filePath}`);
-        this.window.loadFile(filePath);
+        const fullPath = path.join(this.basePath, filePath);
+        Logger.log(`${this.name} loading content from: ${fullPath}`);
+        this.window.loadFile(fullPath);
     }
 
     show() {
         this.window.show();
+        // Disable background throttling when window is shown
+        if (this.window.webContents) {
+            this.window.webContents.setBackgroundThrottling(false);
+            // Restore normal frame rate
+            this.window.webContents.setFrameRate(60);
+            Logger.log(`${this.name} background throttling disabled, frame rate restored`);
+        }
     }
 
     hide() {
         this.window.hide();
+        // Enable background throttling when window is hidden
+        if (this.window.webContents) {
+            this.window.webContents.setBackgroundThrottling(true);
+            // Set minimum possible frame rate when hidden
+            this.window.webContents.setFrameRate(1); // 1 FPS is the minimum
+            Logger.log(`${this.name} background throttling enabled, frame rate set to minimum`);
+        }
     }
 
     isVisible() {
@@ -133,6 +149,7 @@ class BaseWindow {
             onShow: () => {},
             onHide: () => {},
             beforeHide: () => {},
+            onFocus: () => {},
         };
     }
 }

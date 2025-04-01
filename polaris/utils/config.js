@@ -43,7 +43,8 @@ class ConfigManager {
                                 service: 'custom',
                                 custom: {
                                     apiKey: 'local',
-                                    apiUrl: 'http://127.0.0.1:8080/inference',
+                                    apiUrl: 'http://127.0.0.1:5001/framework/stt',
+                                    // apiUrl: 'http://127.0.0.1:8080/inference',
                                     headers: {}
                                 }
                             }
@@ -68,7 +69,7 @@ class ConfigManager {
                         opacity: 0.95
                     },
                     shortcuts: {
-                        toggle: 'Super+K'
+                        toggle: 'F1'
                     },
                     ring: {
                         volume: 0,

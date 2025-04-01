@@ -1,0 +1,3 @@
+git root
+source venv/bin/activate
+bin/_build.py $@

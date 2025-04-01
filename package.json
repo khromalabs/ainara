@@ -1,7 +1,7 @@
 {
   "name": "polaris",
   "version": "0.1.0",
-  "main": "main.js",
+  "main": "polaris/main.js",
   "dependencies": {
     "@ricky0123/vad-web": "^0.0.22",
     "fluent-ffmpeg": "^2.1.3",
@@ -13,6 +13,7 @@
     "@eove/eslint-config-electron": "^2.0.1",
     "@eslint/js": "^9.20.0",
     "electron": "^34.0.2",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.20.1",
     "eslint-config-prettier": "^10.0.1",
     "eslint-formatter-compact": "^8.40.0",
@@ -32,5 +33,38 @@
       "x64",
       "ia32"
     ]
+  },
+  "scripts": {
+    "start": "electron polaris/main.js",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.ainara.polaris",
+    "productName": "Polaris",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "polaris/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icons/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icons/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icons/icon.png",
+      "category": "Utility"
+    }
   }
 }
