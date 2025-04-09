@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import requests
 
@@ -9,6 +9,9 @@ from ainara.framework.skill import Skill
 
 class FinanceStocks(Skill):
     """Get stock market information"""
+
+    if not config.get("apis.finance.alphavantage_api_key"):
+        hiddenCapability = True
 
     matcher_info = (
         "Valid only for queries in which the user asks about last day's or"
@@ -23,25 +26,18 @@ class FinanceStocks(Skill):
         self.name = "stocks"
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://www.alphavantage.co/query"
-
-    def get_api_key(self) -> Optional[str]:
-        """Get Alpha Vantage API key from config"""
-        api_key = config.get("apis.finance.alphavantage_api_key")
-        if not api_key:
-            self.logger.error("Alpha Vantage API key not configured")
-        return api_key
+        self.api_key = config.get("apis.finance.alphavantage_api_key")
 
     async def get_quote(self, symbol: str) -> Dict[str, Any]:
         """Get current stock quote information"""
-        api_key = self.get_api_key()
-        if not api_key:
+        if not self.api_key:
             return {"error": "Alpha Vantage API key not configured"}
 
         try:
             params = {
                 "function": "GLOBAL_QUOTE",
                 "symbol": symbol,
-                "apikey": api_key,
+                "apikey": self.api_key,
             }
 
             response = requests.get(self.base_url, params=params)

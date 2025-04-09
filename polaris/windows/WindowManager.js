@@ -83,16 +83,16 @@ class WindowManager {
                 setTimeout(() => {
                     if (!this.isAnyApplicationWindowFocused()) {
                         Logger.log('WindowManager: Focus lost to external window - hiding all windows');
-                        this.hideAll();
+                        this.hideAll(true);
+                        // // Call this window's specific blur handler if it exists
+                        // if (window.handlers.onBlur) {
+                        //     window.handlers.onBlur(window, this);
+                        // }
                     } else {
                         Logger.log('WindowManager: Focus still within application windows');
                     }
                 }, 100);
 
-                // Call this window's specific blur handler if it exists
-                if (window.handlers.onBlur) {
-                    window.handlers.onBlur(window, this);
-                }
             });
 
             window.window.webContents.on('crashed', () => {
@@ -165,7 +165,7 @@ class WindowManager {
 
         // Remove throttling before showing windows
         this.applyBackgroundThrottling(false);
-    
+
         this.windows.forEach(window => window.show());
         this.handlers.onShow(this);
         this.updateTrayIcon('active'); // Update tray icon to active state
@@ -184,7 +184,7 @@ class WindowManager {
                 }
             });
             this.updateTrayIcon('inactive'); // Update tray icon to inactive state
-        
+
             // Apply additional throttling to all windows
             this.applyBackgroundThrottling(true);
         }
@@ -192,7 +192,7 @@ class WindowManager {
 
     toggleVisibility() {
         if (this.isAnyVisible()) {
-            this.hideAll();
+            this.hideAll(true);
         } else {
             this.showAll();
         }
@@ -233,11 +233,11 @@ class WindowManager {
     // New method to apply background throttling to all windows
     applyBackgroundThrottling(enable) {
         Logger.log(`${enable ? 'Enabling' : 'Disabling'} background throttling for all windows`);
-        
+
         this.windows.forEach(window => {
             if (window.window && window.window.webContents) {
                 window.window.webContents.setBackgroundThrottling(enable);
-                
+
                 // Set frame rate based on visibility
                 if (enable) {
                     // Set to absolute minimum (1 FPS) when hidden

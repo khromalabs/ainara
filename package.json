@@ -6,6 +6,8 @@
     "@ricky0123/vad-web": "^0.0.22",
     "fluent-ffmpeg": "^2.1.3",
     "iohook": "^0.9.3",
+    "js-yaml": "^4.1.0",
+    "node-fetch": "^2.7.0",
     "web-audio-api": "^0.2.2",
     "yargs": "^17.7.2"
   },
@@ -54,16 +56,16 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icons/icon.ico"
+      "icon": "polaris/assets/tray-icon-active-light.png"
     },
     "mac": {
       "target": "dmg",
-      "icon": "build/icons/icon.icns",
+      "icon": "polaris/assets/tray-icon-active-light.png",
       "category": "public.app-category.productivity"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "build/icons/icon.png",
+      "icon": "polaris/assets/tray-icon-active-light.png",
       "category": "Utility"
     }
   }

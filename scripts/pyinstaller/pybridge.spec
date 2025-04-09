@@ -1,35 +1,94 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 import importlib
+import platform
 
 # Get the project root directory (2 levels up from this spec file)
 project_root = os.path.abspath(os.path.join(os.path.dirname(SPECPATH), '..', '..'))
 
 block_cipher = None
 
-# Create array of package data directories
-package_data_dirs = [
-    ('emoji', 'unicode_codes'),
-    ('normalise', 'data'),
-    ('faster_whisper', 'assets'),
-    ('litellm', 'litellm_core_utils/tokenizers'),
+# # Create array of package data directories
+# package_data_dirs = [
+#     ('emoji', 'unicode_codes'),
+#     ('normalise', 'data'),
+#     ('faster_whisper', 'assets'),
+#     ('litellm', 'litellm_core_utils/tokenizers'),
+#     ('litellm', 'model_prices_and_context_window_backup.json'),
+# ]
+#
+# # Generate datas array from package data directories
+# package_datas = [
+#     (os.path.join(os.path.dirname(importlib.util.find_spec(pkg).origin), subdir),
+#      f'{pkg}/{subdir}')
+#     for pkg, subdir in package_data_dirs
+# ]
+
+# New format
+package_data_entries = [
+    ('emoji', ['unicode_codes']),
+    ('faster_whisper', ['assets']),
+    ('litellm', [
+        'litellm_core_utils/tokenizers',
+        'model_prices_and_context_window_backup.json'
+    ]),
 ]
 
-# Generate datas array from package data directories
-package_datas = [
-    (os.path.join(os.path.dirname(importlib.util.find_spec(pkg).origin), subdir),
-     f'{pkg}/{subdir}')
-    for pkg, subdir in package_data_dirs
-]
+# Modify the package data collection logic
+package_datas = []
+for pkg, paths in package_data_entries:
+    pkg_dir = os.path.dirname(importlib.util.find_spec(pkg).origin)
+    for rel_path in paths:
+        src_path = os.path.join(pkg_dir, rel_path)
+        # Handle individual files
+        if os.path.isfile(src_path):
+            package_datas.append(
+                (src_path, os.path.dirname(f'{pkg}/{rel_path}')),
+            )
+        # Handle directories
+        elif os.path.isdir(src_path):
+            package_datas.append(
+                (src_path, f'{pkg}/{rel_path}'),
+            )
+
+
+# Add platform-specific binaries and TTS models
+binaries = []
+datas = []
+
+# Add TTS models
+tts_models_dir = os.path.join(project_root, 'resources/tts/models')
+if os.path.exists(tts_models_dir):
+    datas.append((tts_models_dir, 'resources/tts/models'))
+
+# Add platform-specific binaries
+system = platform.system()
+if system == "Windows":
+    # Add Windows-specific binaries
+    piper_bin_dir = os.path.join(project_root, 'resources/bin/windows')
+    if os.path.exists(piper_bin_dir):
+        binaries.append((piper_bin_dir, 'resources/bin/windows'))
+elif system == "Darwin":  # macOS
+    # Add macOS-specific binaries
+    piper_bin_dir = os.path.join(project_root, 'resources/bin/macos')
+    if os.path.exists(piper_bin_dir):
+        binaries.append((piper_bin_dir, 'resources/bin/macos'))
+else:  # Linux
+    # Add Linux-specific binaries
+    piper_bin_dir = os.path.join(project_root, 'resources/bin/linux')
+    if os.path.exists(piper_bin_dir):
+        binaries.append((piper_bin_dir, 'resources/bin/linux'))
 
 a = Analysis(
     [os.path.join(project_root, 'ainara', 'framework', 'pybridge.py')],  # Main entry point for PyBridge
     pathex=[project_root],
-    binaries=[],
+    binaries=binaries,
     datas=[
         (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
         (os.path.join(project_root, 'ainara/static'), 'ainara/static'),
         (os.path.join(project_root, 'ainara/config'), 'ainara/config'),
+        (os.path.join(project_root, 'ainara/resources'), 'ainara/resources'),
+        *datas,
         *package_datas
     ],
     hiddenimports=[

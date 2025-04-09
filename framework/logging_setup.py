@@ -81,7 +81,7 @@ class LoggingManager:
         if log_dir:
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
-            log_file = os.path.join(log_dir, "orakle.log")
+            log_file = os.path.join(log_dir, "ainara.log")
             file_handler = RotatingFileHandler(
                 log_file, maxBytes=1024 * 1024, backupCount=5  # 1MB
             )

@@ -83,7 +83,7 @@ class ChatManager:
         self.orakle_servers = orakle_servers
         self.last_audio_file = None
         self.ndjson = ndjson
-        self.new_summary = ""
+        self.new_summary = "-"
 
         # Initialize NLTK for sentence tokenization
         try:
@@ -263,12 +263,12 @@ class ChatManager:
 
         # Function to check if paragraph contains special patterns that should skip NLTK processing
         def contains_special_patterns(text):
-            # Check for markdown URLs: [text](url)
-            if re.search(r"\[([^\]]+)\]\(([^)]+)\)", text):
-                return True
-            # Check for regular URLs: http://example.com
-            if re.search(r"https?://[^\s)>]+", text):
-                return True
+            # # Check for markdown URLs: [text](url)
+            # if re.search(r"\[([^\]]+)\]\(([^)]+)\)", text):
+            #     return True
+            # # Check for regular URLs: http://example.com
+            # if re.search(r"https?://[^\s)>]+", text):
+            #     return True
             # Check for inline code: `code`
             if re.search(r"`([^`]+)`", text):
                 return True
@@ -853,7 +853,7 @@ class ChatManager:
                     if self.new_summary:
                         new_summary_copy = self.new_summary
                         self.new_summary = (  # Clear it while holding the lock
-                            ""
+                            "-"
                         )
                         logger.info("Retrieved new summary for application")
 

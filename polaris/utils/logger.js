@@ -2,6 +2,7 @@ const util = require('util');
 
 class Logger {
     static debugMode = false;
+    static className = "LOGGER";
 
     static setDebugMode(enabled) {
         Logger.debugMode = enabled;
@@ -23,21 +24,21 @@ class Logger {
         const timestamp = new Date().toISOString();
         const message = util.format(...args);
         const caller = this.getCallerInfo();
-        process.stdout.write(`[${timestamp}] [${caller}] ${message}\n`);
+        process.stdout.write(`[${timestamp}][${this.className}][${caller}] ${message}\n`);
     }
 
     static info(...args) {
         const timestamp = new Date().toISOString();
         const message = util.format(...args);
         const caller = this.getCallerInfo();
-        process.stdout.write(`[${timestamp}] [${caller}] INFO: ${message}\n`);
+        process.stdout.write(`[${timestamp}][${this.className}][${caller}] INFO: ${message}\n`);
     }
 
     static error(...args) {
         const timestamp = new Date().toISOString();
         const message = util.format(...args);
         const caller = this.getCallerInfo();
-        process.stderr.write(`[${timestamp}] [${caller}] ERROR: ${message}\n`);
+        process.stderr.write(`[${timestamp}][${this.className}][${caller}] ERROR: ${message}\n`);
     }
 }
 

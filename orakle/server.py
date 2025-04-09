@@ -19,7 +19,7 @@ import argparse
 import time
 from datetime import datetime
 
-from flask import Flask
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from ainara.framework.capabilities_manager import CapabilitiesManager
@@ -28,9 +28,9 @@ from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
 from ainara.framework.llm import create_llm_backend
 
-config_manager = ConfigManager()
-config_manager.load_config()
-llm = create_llm_backend(config_manager.get("llm", {}))
+config = ConfigManager()
+config.load_config()
+llm = create_llm_backend(config.get("llm", {}))
 
 
 def parse_args():
@@ -65,7 +65,7 @@ def health_check():
     start_time = time.time()
 
     # Get memory configuration
-    memory_config = config_manager.get("memory", {})
+    memory_config = config.get("memory", {})
     memory_enabled = memory_config.get("enabled", False)
 
     status = {
@@ -74,11 +74,11 @@ def health_check():
         "uptime_seconds": (datetime.utcnow() - startup_time).total_seconds(),
         "services": {
             "capabilities_manager": app.capabilities_manager is not None,
-            "config_manager": config_manager is not None,
+            "config": config is not None,
             "logging": logging_manager is not None,
         },
         "dependencies": {
-            "llm_available": llm and llm.is_available(),
+            "llm_available": llm is not None
         },
     }
 
@@ -102,17 +102,49 @@ def health_check():
     return status
 
 
-# def register_framework_endpoints(app):
-#     """Register framework-specific endpoints for non-Python clients"""
-#     # Framework endpoints moved to PyBridge server
-#     pass
-
-
 def create_app():
     """Create and configure the Flask application"""
-    capabilities_manager = CapabilitiesManager(app)
     # Store reference to capabilities manager
-    app.capabilities_manager = capabilities_manager
+    app.capabilities_manager = CapabilitiesManager(app)
+
+    @app.route("/config", methods=["PUT"])
+    def update_config():
+        """Update the configuration"""
+        try:
+            data = request.get_json()
+            if not data:
+                return (
+                    jsonify({"success": False, "error": "No data provided"}),
+                    400,
+                )
+
+            # Validate the configuration
+            validation_result = config.validate_config(data)
+            if not validation_result["valid"]:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "Invalid configuration",
+                            "errors": validation_result["errors"],
+                        }
+                    ),
+                    400,
+                )
+
+            # Update the configuration without saving
+            config.update_config(new_config=data, save=False)
+            llm.initialize_provider()
+            logger.info("Configuration updated successfully")
+
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Error updating configuration: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"success": False, "error": str(e)}), 500
+
     return app
 
 

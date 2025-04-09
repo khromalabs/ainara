@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Polaris Setup</title>
+    <link rel="stylesheet" href="setup.css">
+    <meta charset="UTF-8">
+</head>
+<body>
+    <div class="setup-container">
+        <div class="setup-header">
+            <button title="Close setup wizard" class="close-btn">&times;</button>
+            <h1>Welcome to Ainara Polaris</h1>
+            <p>Let's get everything set up for you</p>
+            <img src="../../assets/logo.png" alt="Ainara Polaris Logo" class="logo">
+        </div>
+
+        <div class="setup-content">
+            <!-- Step indicators -->
+            <div class="setup-steps">
+                <div class="step active" data-step="welcome">Welcome</div>
+                <div class="step" data-step="llm">LLM Setup</div>
+                <div class="step" data-step="stt">Speech2Text</div>
+                <div class="step" data-step="skills">Skills Setup</div>
+                <div class="step" data-step="finish">Finish</div>
+            </div>
+
+            <!-- Step content -->
+            <div class="step-content">
+                <!-- Welcome step -->
+                <div class="step-panel active" id="welcome-panel">
+                    <h2>Welcome to Ainara Polaris Setup</h2>
+                    <p>This wizard will help you configure Polaris for first use.</p>
+                    <p>We'll set up your LLM provider and configure API keys for various skills.</p>
+                    <div class="button-row">
+                        <div></div> <!-- Empty div to maintain spacing -->
+                        <button class="next-btn">Next</button>
+                    </div>
+                </div>
+
+                <!-- LLM setup step -->
+                <div class="step-panel" id="llm-panel">
+                    <h2>LLM Provider Setup</h2>
+                    <p>Polaris needs access to a Large Language Model (LLM) to function.</p>
+                    <p>Please select your preferred provider:</p>
+
+                    <div class="provider-options" id="provider-options">
+                        <p>Loading providers...</p>
+                    </div>
+
+                    <div class="provider-details" id="provider-details">
+                        <!-- This section will be dynamically updated based on selection -->
+                    </div>
+
+                    <div class="test-connection-container">
+                        <button id="test-connection-btn" class="test-connection-btn" disabled>Test Connection</button>
+                        <div id="test-result" class="hidden"></div>
+                        <br>
+                        <br>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="back-btn">Back</button>
+                        <button class="next-btn" id="llm-next" disabled>Next</button>
+                    </div>
+                </div>
+
+                <!-- STT setup step -->
+                <div class="step-panel" id="stt-panel">
+                    <h2>Speech-to-Text Setup</h2>
+                    <p>Configure how Polaris will convert your voice to text.</p>
+
+                    <div class="stt-options">
+                        <div class="stt-option">
+                            <input type="radio" name="stt-backend" id="stt-faster-whisper" value="faster_whisper" checked>
+                            <label for="stt-faster-whisper">Use built-in Whisper (recommended)</label>
+                            <p class="option-description">Uses the local Faster Whisper engine for speech recognition. Works offline and provides good accuracy.</p>
+                        </div>
+
+                        <div class="stt-option">
+                            <input type="radio" name="stt-backend" id="stt-custom" value="custom">
+                            <label for="stt-custom">Use custom Whisper API</label>
+                            <p class="option-description">Connect to a custom Whisper API endpoint.</p>
+
+                            <div class="stt-details" id="custom-stt-details" style="display: none;">
+                                <div class="form-group">
+                                    <label for="custom-api-url">API URL:</label>
+                                    <input type="text" id="custom-api-url" placeholder="http://example.com/api/whisper">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-api-key">API Key (if required):</label>
+                                    <input type="password" id="custom-api-key" placeholder="Optional API key">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="stt-test-result" class="hidden"></div>
+
+                    <div class="button-row">
+                        <button class="back-btn">Back</button>
+                        <button class="next-btn" id="stt-next">Next</button>
+                    </div>
+                </div>
+
+                <!-- Skills setup step -->
+                <div class="step-panel" id="skills-panel">
+                    <h2>Skills API Keys</h2>
+                    <p>Many skills require API keys to function properly.</p>
+                    <p>Configure the ones you plan to use (all are optional):</p>
+
+                    <div class="skills-list">
+                        <!-- This will be populated dynamically -->
+                        <p>Loading available skills...</p>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="back-btn">Back</button>
+                        <button class="next-btn">Next</button>
+                    </div>
+                </div>
+
+                <!-- Finish step -->
+                <div class="step-panel" id="finish-panel">
+                    <h2>Setup Complete!</h2>
+                    <p>Polaris has been successfully configured and is ready to use.</p>
+                    <p>Click the button below to start using Polaris.</p>
+                    <div class="button-row">
+                        <button class="back-btn">Back</button>
+                        <button class="finish-btn">Start Polaris</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="setup.js"></script>
+</body>
+</html>

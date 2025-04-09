@@ -77,17 +77,18 @@ class ComRing extends BaseComponent {
     }
 
 
-    async connectedCallback() {
+    async connectedCallback(recursion=null) {
         try {
             console.log('ComRing: connectedCallback started');
-            // Component is added to the DOM
-            this.dispatchEvent(new CustomEvent('com-ring-connected'));
-            console.log('ComRing: connected event dispatched');
 
             console.log('ComRing: Initializing STT');
             // Initialize STT
             await this.stt.initialize();
             console.log('ComRing: STT initialized');
+
+            // Component is added to the DOM
+            this.dispatchEvent(new CustomEvent('com-ring-connected'));
+            console.log('ComRing: connected event dispatched');
 
             const template =
                 this.requireTemplate('com-ring-template');
@@ -117,8 +118,16 @@ class ComRing extends BaseComponent {
             this.emitEvent('ready');
 
         } catch (error) {
-            this.showError(error);
-            throw error;
+            if (recursion < 10) {
+                recursion++;
+                // wait two seconds and try again if an error happened
+                console.log('ComRing: Attempt ' + recursion + ' in connectedCallback...')
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                await this.connectedCallback(recursion)
+            } else {
+                this.showError(error);
+                throw error;
+            }
         }
     }
 
@@ -177,6 +186,37 @@ class ComRing extends BaseComponent {
             this.isWindowVisible = true;
         });
 
+        function truncateMiddle(str, maxLength) {
+            if (str.length <= maxLength) {
+                return str;
+            }
+
+            const startLength = Math.ceil((maxLength - 3) / 2);
+            const endLength = Math.floor((maxLength - 3) / 2);
+
+            const start = str.substring(0, startLength);
+            const end = str.substring(str.length - endLength);
+
+            return start + '...' + end;
+        }
+
+        // Add listener for LLM provider changes
+        ipcRenderer.on('llm-provider-changed', (event, providerName) => {
+            console.log('ComRing: LLM provider changed to', providerName);
+            if (this.isWindowVisible) {
+                // Show provider change notification
+                const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                sttStatus.innerHTML = `Switched LLM model to:<br>${truncateMiddle(providerName, 44)}`;
+                sttStatus.classList.add('active2');
+
+                // Hide the message after 3 seconds
+                setTimeout(() => {
+                    sttStatus.classList.remove('active2');
+                    sttStatus.textContent = '';
+                }, 5000);
+            }
+        });
+
         ipcRenderer.on('window-hide', () => {
             console.log('ComRing: Received window-hide event');
             this.isWindowVisible = false;
@@ -205,7 +245,7 @@ class ComRing extends BaseComponent {
         });
 
         ipcRenderer.on('exit-typing-mode', () => {
-            console.log("RECEIVED COMRING EXIT TYPING MODE");
+            console.log("ComRing: exit typing mode");
             this.exitTypingMode();
         });
 
@@ -632,7 +672,7 @@ class ComRing extends BaseComponent {
 
     showError(error) {
         console.error('Error:', error);
-        this.circle.classList.add('error');
+        this.circle?.classList.add('error');
         ipcRenderer.send('chat-error', error.toString());
 
         // Remove error state after a delay

@@ -16,9 +16,12 @@
 # <https://www.gnu.org/licenses/>
 
 # import os
-import pprint
-
+# import pprint
+import json
+import os
 from typing import Generator, List, Union
+
+import pkg_resources
 from litellm import acompletion, completion, get_max_tokens, token_counter
 
 from ainara.framework.config import ConfigManager
@@ -34,8 +37,17 @@ class LiteLLM(LLMBackend):
         super().__init__(self.config)
         self.completion = completion
         self.acompletion = acompletion
-        self.provider = self._initialize_provider()
+        try:
+            self.provider = self.initialize_provider()
+        except Exception as e:
+            # Create a placeholder provider that's invisible to the external world
+            self.provider = {"_placeholder": True, "model": "gpt-3.5-turbo"}
+            self.logger.warning(
+                "No LLM providers configured. Creating placeholder provider"
+                f" for initialization only. Exception: {str(e)}"
+            )
         self._context_window = self._get_context_window()
+        self.logger.info("RUBEN GOMEZ")
 
     def _get_context_window(self) -> int:
         """Get the context window size for the current model"""
@@ -79,47 +91,117 @@ class LiteLLM(LLMBackend):
         """Return the cached context window size"""
         return self._context_window
 
-    def _initialize_provider(self) -> dict:
+    def normalize_model_name(self, model: str, provider: str) -> str:
+        """Ensure model name follows <provider>/<model> format"""
+        if not model or not provider or provider in ["custom", "custom_api"]:
+            return model
+
+        provider = provider.lower()
+        provider_prefix = f"{provider}/"
+
+        # Case-insensitive check if model already starts with provider
+        if model.lower().startswith(provider_prefix):
+            return model
+
+        return f"{provider_prefix}{model}"
+
+    def get_available_providers(self):
+        """
+        Get a list of available LLM providers and their models from LiteLLM's model info file.
+
+        Returns:
+            dict: Dictionary of provider information including models, keyed by provider name
+        """
+        try:
+            # Find the path to the LiteLLM package
+            litellm_path = pkg_resources.resource_filename("litellm", "")
+            model_info_path = os.path.join(
+                litellm_path, "model_prices_and_context_window_backup.json"
+            )
+
+            self.logger.info(
+                f"Loading model information from: {model_info_path}"
+            )
+
+            # Load the model information file
+            with open(model_info_path, "r") as f:
+                model_info = json.load(f)
+
+            # Remove the sample_spec entry which is just documentation
+            if "sample_spec" in model_info:
+                del model_info["sample_spec"]
+
+            # Organize by provider
+            providers = {}
+
+            for model_name, model_data in model_info.items():
+                # Skip entries that don't have provider information
+                if "litellm_provider" not in model_data:
+                    continue
+
+                provider = model_data["litellm_provider"]
+
+                # Initialize provider entry if it doesn't exist
+                if provider not in providers:
+                    providers[provider] = {"name": provider, "models": []}
+
+                # Get context window size
+                context_window = None
+                if "max_tokens" in model_data:
+                    context_window = model_data["max_tokens"]
+                elif "max_input_tokens" in model_data:
+                    context_window = model_data["max_input_tokens"]
+
+                # Add model information
+                providers[provider]["models"].append(
+                    {
+                        "name": model_name,
+                        "full_name": model_name,
+                        "context_window": context_window,
+                        "mode": model_data.get("mode", "unknown"),
+                        "supports_vision": model_data.get(
+                            "supports_vision", False
+                        ),
+                        "supports_function_calling": model_data.get(
+                            "supports_function_calling", False
+                        ),
+                    }
+                )
+
+            self.logger.info(
+                f"Retrieved {len(providers)} providers with"
+                f" {sum(len(p['models']) for p in providers.values())} models from"
+                " LiteLLM"
+            )
+            return providers
+
+        except Exception as e:
+            self.logger.error(
+                "Error getting available providers from LiteLLM model info"
+                f" file: {str(e)}"
+            )
+            import traceback
+
+            self.logger.error(traceback.format_exc())
+            return {}
+
+    def initialize_provider(self, config=None) -> dict:
         """Initialize provider configuration"""
         provider = {}
 
-        # Define environment variable mappings
-        # env_vars = {
-        #     "model": ("AI_API_MODEL", True),  # (env_var_name, required)
-        #     "api_base": ("OPENAI_API_BASE", False),
-        #     "api_key": ("OPENAI_API_KEY", False),
-        # }
+        self.logger.info("initialize_provider")
 
-        # # First try environment variables
-        # self.logger.info("Checking environment variables:")
-        # for key, (env_var, required) in env_vars.items():
-        #     value = os.environ.get(env_var)
-        #     self.logger.info(
-        #         f"{env_var}: {'[SET]' if value else '[MISSING]'}"
-        #     )
-        #     if required and not value:
-        #         raise ValueError(
-        #             f"Missing required environment variable: {env_var}"
-        #         )
-        #     if value:  # Only add to provider if value exists
-        #         provider[key] = value
-        #
-        # # If we have required env vars, return the provider config
-        # if "model" in provider:
-        #     return provider
-
-        # # If no env vars, try configured providers
-        # if not self.config.get("providers"):
-        #     raise ValueError("No LLM providers configured")
+        config = config or self.config
 
         # Try each provider until we find one that works
-        for p in self.config.get("llm.providers", {}):
-            if "api_base" in p and self.check_provider_availability(p["api_base"]):
+        for p in config.get("llm.providers", {}):
+            config_selected_provider = config.get("llm.selected_provider")
+            # Check if this is the selected provider
+            if config_selected_provider == p.get("model"):
                 provider.update(p)
-                self.logger.info(f"Using LLM provider: {p['api_base']}")
-                return provider
-            else:
-                provider.update(p)
+                self.logger.info(
+                    f"Using selected LLM provider: {p.get('model', 'unknown')}"
+                )
                 return provider
 
         raise RuntimeError("No working LLM providers found")
@@ -146,7 +228,9 @@ class LiteLLM(LLMBackend):
         except Exception:
             raise RuntimeError("Can't get the amount of tokens for " + role)
 
-    def add_msg(self, new_message: str, chat_history: List, role: str) -> List[dict]:
+    def add_msg(
+        self, new_message: str, chat_history: List, role: str
+    ) -> List[dict]:
         """Format user chat message for LLM processing with token count"""
         token_count = self._get_token_count(new_message, role)
         chat_history.append(
@@ -159,48 +243,58 @@ class LiteLLM(LLMBackend):
         self,
         chat_history: list = None,
         stream: bool = False,
+        provider: dict = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM"""
-        try:
+        # Check if we're using the placeholder provider
+        if not provider and self.provider.get("_placeholder", False):
+            self.logger.error("Cannot chat: No LLM providers configured")
+            return ""
 
+        try:
             # self.logger.info(" LITELLM ---------------- ")
             # self.logger.info(str(type(chat_history)))
             # self.logger.info(pprint.pformat(chat_history))
 
+            # Create a clean copy of chat history without 'tokens' field
+            clean_messages = []
+            for msg in chat_history:
+                clean_msg = {k: v for k, v in msg.items() if k != "tokens"}
+                clean_messages.append(clean_msg)
+
+            if not provider:
+                provider = self.provider
+
             completion_kwargs = {
-                "model": self.provider["model"],
-                "messages": chat_history,
+                "model": provider["model"],
+                "messages": clean_messages,
                 "temperature": 0.2,
                 "stream": stream,
-                # "reasoning": {
-                #     "exclude": True
-                # },
                 **(
-                    {"api_base": self.provider["api_base"]}
-                    if "api_base" in self.provider
+                    {"api_base": provider["api_base"]}
+                    if "api_base" in provider
                     else {}
                 ),
                 **(
-                    {"api_key": self.provider["api_key"]}
-                    if "api_key" in self.provider
-                    else {}
+                    {"api_key": provider["api_key"]}
+                    if "api_key" in provider
+                    else {"api_key": "nokey"}
                 ),
                 "logger_fn": self.my_custom_logging_fn,
             }
 
             self.logger.info(
-                "Sending completion request to model:"
-                f" {self.provider['model']}"
+                f"Sending completion request to model: {provider['model']}"
             )
             self.logger.info(
-                f"API base: {self.provider.get('api_base', 'default')}"
+                f"API base: {provider.get('api_base', 'default')}"
             )
 
             try:
                 response = self.completion(**completion_kwargs)
-                self.logger.info(
-                    "Received response from LLM:" + pprint.pformat(response)
-                )
+                # self.logger.info(
+                #     "Received response from LLM:" + pprint.pformat(response)
+                # )
 
                 if stream:
                     self.logger.info("Streaming response enabled")
@@ -244,8 +338,14 @@ class LiteLLM(LLMBackend):
         self,
         chat_history: list = None,
         stream: bool = False,
+        provider: dict = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM (async version)"""
+        # Check if we're using the placeholder provider
+        if not provider and self.provider.get("_placeholder", False):
+            self.logger.error("Cannot chat: No LLM providers configured")
+            return ""
+
         try:
             # Add detailed logging of the chat being sent
             self.logger.info("Preparing to send chat to LLM (async):")
@@ -271,19 +371,28 @@ class LiteLLM(LLMBackend):
                         f" content_length={len(msg.get('content', ''))}"
                     )
 
+            # Create a clean copy of chat history without 'tokens' field
+            clean_messages = []
+            for msg in chat_history:
+                clean_msg = {k: v for k, v in msg.items() if k != "tokens"}
+                clean_messages.append(clean_msg)
+
+            if not provider:
+                provider = self.provider
+
             completion_kwargs = {
-                "model": self.provider["model"],
-                "messages": chat_history,
+                "model": provider["model"],
+                "messages": clean_messages,
                 "temperature": 0.2,
                 "stream": stream,
                 **(
-                    {"api_base": self.provider["api_base"]}
-                    if "api_base" in self.provider
+                    {"api_base": provider["api_base"]}
+                    if "api_base" in provider
                     else {}
                 ),
                 **(
-                    {"api_key": self.provider["api_key"]}
-                    if "api_key" in self.provider
+                    {"api_key": provider["api_key"]}
+                    if "api_key" in provider
                     else {}
                 ),
                 "logger_fn": self.my_custom_logging_fn,
@@ -291,10 +400,10 @@ class LiteLLM(LLMBackend):
 
             self.logger.info(
                 "Sending async completion request to model:"
-                f" {self.provider['model']}"
+                f" {provider['model']}"
             )
             self.logger.info(
-                f"API base: {self.provider.get('api_base', 'default')}"
+                f"API base: {provider.get('api_base', 'default')}"
             )
 
             try:

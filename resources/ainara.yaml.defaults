@@ -1,0 +1,108 @@
+# Default Ainara Configuration
+
+# Speech-to-Text configuration
+stt:
+  # Default backend to use
+  selected_module: "faster_whisper"
+  modules:
+    faster_whisper:
+      language: "en"
+      model_size: "small"
+    whisper:
+      service: "custom"
+      language: "en"
+      custom:
+        api_key: ""
+        api_url: "http://127.0.0.1:8080/inference"
+        model: "whisper-1"
+        headers: {}
+
+# Text-to-Speech configuration
+tts:
+  # Default backend to use
+  selected_module: "piper"
+  modules:
+    piper:
+      # Piper binary location:
+      # - "auto": Auto-detect bundled binary or system installation
+      # - "/path/to/piper": Use specific binary path
+      binary: "auto"
+
+      # Voice model to use:
+      # - "en_US-amy-medium": Default English (US) female voice
+      # - "en_GB-alba-medium": English (UK) female voice
+      # - "es_ES-mls_10246-medium": Spanish female voice
+      # - "fr_FR-siwis-medium": French female voice
+      # - "de_DE-thorsten-medium": German male voice
+      # - "/path/to/model.onnx": Use specific model file
+      voice: "en_US-amy-medium"
+
+      # Voice model directory:
+      # - "auto": Use bundled models or standard location
+      # - "/path/to/models": Use specific directory
+      model_dir: "auto"
+
+      # TTS options
+      options: "--output_raw --length_scale 0.7"
+
+# LLM configuration
+llm:
+  # Default backend to use
+  selected_backend: "litellm"
+  selected_provider: ""
+  providers:
+  #  - model: "openai/gpt-3.5-turbo"
+  #    api_base: "http://127.0.0.1:8000/v1"
+  #    api_key: "nokey"
+  model_contexts:
+    "openai/samplecustommodel": 4096
+
+# Ainara configuration
+orakle:
+  servers:
+    - "http://127.0.0.1:5000"
+
+# Audio configuration
+audio:
+  buffer_size_mb: 10
+
+# Memory configuration
+memory:
+  enabled: false
+  storage_path: "~/.config/ainara/chat_memory.db"
+  vector_db_path: "~/.config/ainara/vector_db"
+  embedding_model: "sentence-transformers/all-mpnet-base-v2"
+  vector_db_enabled: true
+
+# APIs
+apis:
+  crypto:
+    coinmarketcap_api_key: ""
+  finance:
+    alphavantage_api_key: ""
+  helius:
+    api_key: ""
+  reddit:
+    client_id: ""
+    client_secret: ""
+  search:
+    google:
+      api_key: ""
+      cx: ""
+    metaphor:
+      api_key: ""
+    newsapi:
+      api_key: ""
+    perplexity:
+      api_key: ""
+    tavily:
+      api_key: ""
+  twitter:
+    access_token: ""
+    access_token_secret: ""
+    api_key: ""
+    api_secret: ""
+    bearer_token: ""
+  weather:
+    openweathermap_api_key: ""
+  session_id: "default_session"

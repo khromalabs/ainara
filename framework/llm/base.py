@@ -80,11 +80,22 @@ class LLMBackend(ABC):
         except requests.RequestException:
             return False
 
-    def is_available(self) -> bool:
-        """Check if the backend is available"""
-        if "api_base" not in self.provider:
-            return False
-        return self.check_provider_availability(self.provider["api_base"])
+    # TODO add proper health check
+    # def is_available(self) -> bool:
+    #     """Check if the backend is available"""
+    #     if "api_base" not in self.provider:
+    #         return False
+    #     return self.check_provider_availability(self.provider["api_base"])
+
+    @abstractmethod
+    def get_available_providers(self):
+        """
+        Get a list of available LLM providers and their models.
+
+        Returns:
+            list: List of provider information including models
+        """
+        pass
 
     @abstractmethod
     def get_context_window(self) -> int:

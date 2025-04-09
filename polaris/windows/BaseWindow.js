@@ -1,5 +1,5 @@
 // windows/BaseWindow.js
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, nativeTheme } = require('electron');
 const Logger = require('../utils/logger');
 const path = require('path');
 const process = require('process');
@@ -17,6 +17,11 @@ class BaseWindow {
                 contextIsolation: false,
                 webSecurity: false
             },
+            icon: path.join(
+                this.basePath, 
+                'assets', 
+                `tray-icon-active-${nativeTheme.shouldUseDarkColors ? 'dark' : 'light'}.png`
+            ),
             show: false,
             frame: config.get(`${prefix}.frame`, false),
             transparent: config.get(`${prefix}.transparent`, true),

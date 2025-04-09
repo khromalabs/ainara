@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 class SearchWeb(Skill):
     """Search the internet for information about any topic or product or news or current events or factual questions."""
 
+    if not config.get("apis.search"):
+        hiddenCapability = True
+
     matcher_info = (
         "Perform a web search or research on the Internet using specified or"
         " best available provider whenever the required information is not"

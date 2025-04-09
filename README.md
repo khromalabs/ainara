@@ -14,15 +14,16 @@ Another component of the system is 'kommander', a CLI application designed to ch
 
 As a proof of concept, I've developed several skills in Orakle that allow the AI assistant to search for real-time news. I've also created a more complex recipe that can download a web page, extract any articles within it, and process the content according to the desired profile - whether that's a layman's summary, easy-to-read language, or even content adapted for a young child, which works remarkably well.
 
-UPDATE February 24th, 2025: This is the 7th video in my series featuring Ainara, and the 2nd featuring the desktop client, Polaris. It features a new local file search skill, a minimalisty typing functionality, and behind the scenes a new LLM based skill matcher much more effective determining the user intent. 
+This video demonstrates using Ainara to search for recent news about a major company and quickly assess its investment potential.  
+An important aspect to highlight in this video: I'm not using any commercial LLM backend, but rather running llama.cpp with a 5-bit quantized version of Qwen 2.5 14B on my own server, which features a 'humble' NVidia RTX 3060 card. I'm quite impressed by how well it understands the instructions to interact with my local Orakle server, as demonstrated in this video.
 
-[![Watch the video](https://img.youtube.com/vi/mBimxZjGlWM/0.jpg)](https://www.youtube.com/watch?v=mBimxZjGlWM)
+[![Watch the video](https://img.youtube.com/vi/prahMiHDaYM/0.jpg)](https://www.youtube.com/watch?v=prahMiHDaYM)
 
 ## $AINARA Token
 
 The Ainara Project has now it's own Solana cryptocurrency token, CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump
 
-While the project will always remain open-source and aims to be a universal AI assistant tool, the officially developed 'skills' and 'recipes' (allowing AI to interact with the external world through Ainara's Orakle server) will primarily focus on cryptocurrency integrations. The project's official token will serve as the payment method for all related services.
+While the project will always remain open-source and aims to be a universal AI assistant tool, some officially developed 'skills' will primarily focus on cryptocurrency integrations using a w3 platform. The project's official token will serve as the payment method for all related services.
 
 ## Components
 
@@ -44,14 +45,7 @@ A REST API server that provides:
 - Text processing with LLMs
 
 ### Polaris
-A modern desktop application that provides:
-- Native integration with system features
-- Intuitive, minimalistic AI interaction interface
-- Rich graphical interface for chat interactions
-- Real-time skill execution feedback
-- System tray presence for quick access
-- Cross-platform support (Linux, Windows, macOS)
-
+Desktop integrated app (TODO)
 
 ## Installation
 

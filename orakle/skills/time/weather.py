@@ -9,6 +9,9 @@ from ainara.framework.skill import Skill
 class TimeWeather(Skill):
     """Get weather info determining location with geolocation, optionally allowing a location parameter"""
 
+    if not config.get("apis.weather.openweathermap_api_key"):
+        hiddenCapability = True
+
     def __init__(self):
         super().__init__()
         self.name = "weather"
@@ -17,6 +20,7 @@ class TimeWeather(Skill):
             " retrive the location using the IP"
         )
         self.logger = logging.getLogger(__name__)
+        self.api_key = config.get("apis.weather.openweathermap_api_key")
 
     def get_location_from_ip(self):
         """Get location information from IP address"""
@@ -97,7 +101,7 @@ class TimeWeather(Skill):
 
         # Using OpenWeatherMap API (you'll need to add API key to config)
         api_key = config.get("apis.weather.openweathermap_api_key")
-        if not api_key:
+        if not self.api_key:
             return {"error": "OpenWeatherMap API key not configured"}
 
         try:

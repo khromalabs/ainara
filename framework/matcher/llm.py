@@ -155,7 +155,7 @@ class OrakleMatcherLLM(OrakleMatcherBase):
             return valid_matches[:top_k]
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Failed to parse LLM response as JSON: {e} ... response: {response}")
             return []
         except Exception as e:
             logger.error(f"Error matching skills: {str(e)}")

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Polaris</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            padding-top: 2px !important;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: transparent;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            user-select: none;
+        }
+
+        .splash-container {
+            width: 500px;
+            height: 500px;
+            background-color: transparent;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 0;
+            padding-top: 5px;
+        }
+
+        .logo {
+            width: calc(100% - 4px);
+            height: calc(100% - 4px);
+            object-fit: contain;
+            /* border: 1px solid #333; */
+            box-sizing: border-box;
+            position: absolute;
+            top: 1px;
+        }
+
+        h1 {
+            margin: 0 0 20px;
+            font-weight: 300;
+            font-size: 28px;
+        }
+
+        .bottom-container {
+            position: absolute;
+            bottom: 10px;
+            left: 0;
+            right: 0;
+            padding: 0 20px;
+        }
+
+        .status-bar {
+            background-color: rgba(0, 0, 0, 0);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px 4px 0 0;
+            font-size: 14px;
+            margin-bottom: 0;
+            text-align: right;
+            width: 100%;
+            opacity: 0.7;
+            position: relative;
+            right: 12px;
+        }
+
+        .progress-container {
+            width: 100%;
+            height: 4px;
+            background-color: rgba(80, 80, 80, 0.7);
+            border-radius: 2px;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #3498db, #9b59b6);
+            transition: width 0.3s ease;
+        }
+
+        .version {
+            color: white;
+            font-size: 12px;
+            opacity: 0.7;
+            margin-top: 20px;
+            position: absolute;
+            top: 0;
+            right: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="splash-container">
+        <img src="../assets/logo.png" class="logo" alt="Polaris Logo">
+        <h1>Polaris</h1>
+        <div class="bottom-container">
+            <div class="status-bar" id="status">Initializing...</div>
+            <div class="progress-container">
+                <div class="progress-bar" id="progress"></div>
+            </div>
+        </div>
+        <div class="version" id="version">Version 0.1.0</div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        // Listen for progress updates
+        ipcRenderer.on('update-progress', (event, data) => {
+            const { status, progress } = data;
+
+            // Update status text
+            document.getElementById('status').textContent = status;
+
+            // Update progress bar
+            document.getElementById('progress').style.width = `${progress}%`;
+        });
+    </script>
+</body>
+</html>

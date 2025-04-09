@@ -1,4 +1,4 @@
-config/ainara.yaml
+config/*.yaml
 **/nltk_data/
 **/__pycache__/
 docs/paper/*
@@ -8,3 +8,5 @@ static/
 build/orakle/*
 build/pybridge/*
 dist/*
+resources/*
+!/resources/ainara.yaml.defaults

@@ -21,24 +21,25 @@ import argparse
 import atexit
 import logging
 import os
+import pprint
 import shutil
-import sys
 import signal
+import sys
 import time
+from datetime import datetime, timezone
 
 from flask import Flask, Response, jsonify, request, send_file
-from datetime import datetime, timezone
 from flask_cors import CORS
 
+from ainara import __version__
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
-from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
+from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
-
-from ainara import __version__
+from ainara.framework.utils.dependency_checker import DependencyChecker
 
 config = ConfigManager()
 config.load_config()
@@ -135,30 +136,37 @@ def create_app():
 
     # Check STT dependencies
     try:
-        from ainara.framework.utils.dependency_checker import DependencyChecker
-        # stt_deps = DependencyChecker.print_stt_dependency_report()
         DependencyChecker.print_stt_dependency_report()
     except ImportError:
-        logger.info("Dependency checker not available, skipping dependency check")
+        logger.info(
+            "Dependency checker not available, skipping dependency check"
+        )
 
     tts = PiperTTS()
 
     # Choose STT backend based on configuration
-    stt_backend = config.get("stt.backend", "http_whisper")
-    if stt_backend == "faster_whisper":
+    stt_selected_module = config.get("stt.selected_module", "faster_whisper")
+    if stt_selected_module == "faster_whisper":
         # Pre-download the model if using faster-whisper
-        model_size = config.get("stt.modules.faster_whisper.model_size", "small")
+        model_size = config.get(
+            "stt.modules.faster_whisper.model_size", "small"
+        )
         try:
-            logger.info(f"Pre-downloading Faster-Whisper {model_size} model...")
+            logger.info(
+                f"Pre-downloading Faster-Whisper {model_size} model..."
+            )
             from huggingface_hub import hf_hub_download
 
             cache_dir = os.path.expanduser("~/.cache/whisper")
             model_path = hf_hub_download(
                 repo_id=f"guillaumekln/faster-whisper-{model_size}",
                 filename="model.bin",
-                cache_dir=cache_dir
+                cache_dir=cache_dir,
             )
-            logger.info(f"Faster-Whisper {model_size} model downloaded to {model_path}")
+            logger.info(
+                f"Faster-Whisper {model_size} model cached/downloaded to"
+                f" {model_path}"
+            )
         except Exception as e:
             logger.warning(f"Failed to pre-download model: {e}")
             logger.warning("Model will be downloaded when first used")
@@ -168,6 +176,18 @@ def create_app():
     else:
         stt = WhisperSTT()
         logger.info("Using HTTP Whisper STT backend")
+
+    # Initialize TTS with auto-setup
+    try:
+        logger.info("Initializing TTS system...")
+        tts = PiperTTS()
+        logger.info("TTS system initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize TTS system: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        raise
 
     # Add static directory for audio files and clean any previous files
     app.static_folder = "../static/pybridge"
@@ -199,26 +219,28 @@ def create_app():
         start_time = time.time()
 
         # Get memory configuration
-        memory_config = config.get('memory', {})
-        memory_enabled = memory_config.get('enabled', False)
+        memory_config = config.get("memory", {})
+        memory_enabled = memory_config.get("enabled", False)
 
         status = {
             "status": "ok",
             "version": __version__,
-            "uptime_seconds": (datetime.now(timezone.utc) - startup_time).total_seconds(),
+            "uptime_seconds": (
+                (datetime.now(timezone.utc) - startup_time).total_seconds()
+            ),
             "services": {
-                "capabilities_manager": app.capabilities_manager is not None,
+                "chat_manager": app.chat_manager is not None,
                 "config_manager": config is not None,
-                "logging": logging_manager is not None
+                "logging": logging_manager is not None,
             },
-            "dependencies": {
-                "llm_available": llm and llm.is_available(),
-            }
+            "dependencies": {"llm_available": llm is not None},
         }
 
         # Only include storage check if memory is enabled
         if memory_enabled:
-            status["dependencies"]["storage_available"] = False  # Should implement actual storage check
+            status["dependencies"][
+                "storage_available"
+            ] = False  # Should implement actual storage check
 
         # Check if all essential services are available
         all_services_ok = all(status["services"].values())
@@ -232,6 +254,62 @@ def create_app():
         status["response_time_ms"] = (time.time() - start_time) * 1000
 
         return status
+
+    @app.route("/config", methods=["GET"])
+    def get_config():
+        """Return the current configuration with sensitive information masked"""
+        # Check if the request includes a parameter to show unmasked values
+        show_sensitive = (
+            request.args.get("show_sensitive", "false").lower() == "true"
+        )
+
+        if show_sensitive:
+            # Return the full config without masking
+            return jsonify(config.config)
+        else:
+            # Return the masked config for normal use
+            safe_config = config.get_safe_config()
+            return jsonify(safe_config)
+
+    @app.route("/config", methods=["PUT"])
+    def update_config():
+        """Update the configuration"""
+        try:
+            data = request.get_json()
+            if not data:
+                return (
+                    jsonify({"success": False, "error": "No data provided"}),
+                    400,
+                )
+
+            # Validate the configuration
+            validation_result = config.validate_config(data)
+            if not validation_result["valid"]:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "Invalid configuration",
+                            "errors": validation_result["errors"],
+                        }
+                    ),
+                    400,
+                )
+
+            # Update the configuration
+            config.update_config(data)
+            logger.info(f"new configuration: {pprint.pformat(data)}")
+            # llm.initialize_provider(config)
+            new_llm = create_llm_backend(config.get("llm", {}))
+            app.chat_manager.llm = new_llm
+
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Error updating configuration: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/static/audio/<filename>")
     def serve_audio(filename):
@@ -267,15 +345,19 @@ def create_app():
     @app.route("/framework/stt", methods=["GET"])
     def framework_stt_status():
         """Simple endpoint to check if the STT service is available"""
-        return jsonify({
-            "status": "available",
-            "service": "PyBridge STT",
-            "models": ["whisper-1"]
-        })
+        return jsonify(
+            {
+                "status": "available",
+                "service": "PyBridge STT",
+                "models": ["whisper-1"],
+            }
+        )
 
     @app.route("/framework/stt", methods=["POST"])
     def framework_stt():
-        logger.info(f"Received STT request with files: {list(request.files.keys())}")
+        logger.info(
+            f"Received STT request with files: {list(request.files.keys())}"
+        )
         logger.info(f"Form data: {dict(request.form)}")
 
         if "file" not in request.files:
@@ -292,14 +374,17 @@ def create_app():
         language = request.form.get("language", "auto")
         task = request.form.get("task", "transcribe")
 
-        logger.info(f"STT request: model={model}, format={response_format}, language={language}, task={task}")
+        logger.info(
+            f"STT request: model={model}, format={response_format},"
+            f" language={language}, task={task}"
+        )
 
         # Always save the uploaded file to a temporary location for consistent handling
-        import tempfile
         import os
+        import tempfile
 
         # Create a temporary file
-        fd, temp_path = tempfile.mkstemp(suffix='.wav')
+        fd, temp_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
 
         try:
@@ -314,18 +399,315 @@ def create_app():
                 "task": task,
                 "language": language,
                 "duration": 0,  # We don't have actual duration info
-                "model": model
+                "model": model,
             }
             return jsonify(response)
         except Exception as e:
             logger.error(f"Error transcribing audio: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return jsonify({"error": str(e), "text": ""}), 500
         finally:
             # Clean up
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    @app.route("/providers", methods=["GET"])
+    def get_providers():
+        """Return a list of available LLM providers from LiteLLM with optional filtering"""
+        try:
+            # Get filter parameter (comma-separated list of model name fragments)
+            filter_models = request.args.get("filter", "").lower().split(",")
+            filter_models = [
+                f.strip() for f in filter_models if f.strip()
+            ]  # Clean up filters
+
+            logger.info(
+                "Model filter requested:"
+                f" {filter_models if filter_models else 'None'}"
+            )
+
+            providers = llm.get_available_providers()
+            # logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
+
+            # Format the response
+            formatted_providers = {}
+            for provider_name, provider_data in providers.items():
+                models = provider_data["models"]
+
+                # Format models for the UI
+                formatted_models = []
+                for model in models:
+                    # Only include chat models
+                    if model.get("mode") in [
+                        "chat",
+                        "completion",
+                        None,
+                        "unknown",
+                    ]:
+                        # Apply filter if specified
+                        model_name_lower = model["name"].lower()
+
+                        if filter_models:
+                            # Split into positive and negative filters
+                            positive_filters = [
+                                f
+                                for f in filter_models
+                                if not f.startswith("-")
+                            ]
+                            negative_filters = [
+                                f[1:]
+                                for f in filter_models
+                                if f.startswith("-")
+                            ]
+
+                            # Check if model matches any positive filter (if there are any)
+                            if positive_filters and not any(
+                                f in model_name_lower for f in positive_filters
+                            ):
+                                continue
+
+                            # Check if model matches any negative filter (exclude if it does)
+                            if any(
+                                f in model_name_lower for f in negative_filters
+                            ):
+                                continue
+
+                        formatted_models.append(
+                            {
+                                "id": model["full_name"],
+                                "name": model["name"],
+                                # "default": (
+                                #     False
+                                # ),  # First one will be set to default below
+                                "context_window": model.get("context_window"),
+                            }
+                        )
+
+                # Skip providers with no usable models
+                if not formatted_models:
+                    continue
+
+                # # Set first model as default if available
+                # if formatted_models:
+                #     formatted_models[0]["default"] = True
+
+                formatted_providers[provider_name.lower()] = {
+                    "name": provider_name,
+                    "models": formatted_models,
+                    "fields": [
+                        {
+                            "id": "api_key",
+                            "name": "API Key",
+                            "type": "password",
+                            "required": True,
+                        }
+                    ],
+                }
+
+                # Add api_base field for providers that might need it
+                if provider_name.lower() not in [
+                    "openai",
+                    "anthropic",
+                    "google",
+                ]:
+                    formatted_providers[provider_name.lower()][
+                        "fields"
+                    ].append(
+                        {
+                            "id": "api_base",
+                            "name": "API Base URL",
+                            "type": "text",
+                            "required": False,
+                        }
+                    )
+
+            # Add a custom provider option
+            formatted_providers["custom"] = {
+                "name": "Custom API",
+                "fields": [
+                    {
+                        "id": "api_base",
+                        "name": "API Base URL",
+                        "type": "text",
+                        "placeholder": "http://localhost:8000/v1",
+                        "required": True,
+                    },
+                    {
+                        "id": "api_key",
+                        "name": "API Key (if required)",
+                        "type": "password",
+                        "required": False,
+                    },
+                    {
+                        "id": "model",
+                        "name": "Model Name",
+                        "type": "text",
+                        "required": True,
+                    },
+                ],
+            }
+
+            # Add filter information to response
+            response_data = {
+                "providers": formatted_providers,
+                "meta": {
+                    "filtered": bool(filter_models),
+                    "filters": filter_models if filter_models else [],
+                },
+            }
+
+            logger.info(
+                f"Returning {len(formatted_providers)} providers with filter:"
+                f" {filter_models}"
+            )
+            return jsonify(response_data)
+        except Exception as e:
+            logger.error(f"Error getting providers: {str(e)}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"error": str(e), "providers": {}}), 500
+
+    @app.route("/test-llm", methods=["POST"])
+    def test_llm_connection():
+        """Test LLM connection with provided parameters"""
+        try:
+            data = request.get_json()
+            if "model" not in data:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": (
+                                "Missing required parameters: model is"
+                                " required"
+                            ),
+                        }
+                    ),
+                    400,
+                )
+
+            # Extract parameters
+            model = data.get("model")
+            provider = data.get("provider")
+            api_key = data.get("api_key", None)  # Optional
+            api_base = data.get("api_base", None)  # Optional
+
+            # Create a temporary provider config for the LLM backend
+            normalized_model = llm.normalize_model_name(model, provider)
+
+            logger.info(
+                f"Testing LLM connection for model: provider: {provider} "
+                f" model (normalized): {normalized_model}"
+            )
+
+            temp_provider = {"model": normalized_model}
+
+            # Add optional parameters if provided
+            if api_key:
+                temp_provider["api_key"] = api_key
+            if api_base:
+                temp_provider["api_base"] = api_base
+
+            # Test with a simple conversation
+            test_message = (
+                "Hello, this is a test message. Please respond with a short"
+                " greeting."
+            )
+            try:
+                response = llm.chat(
+                    chat_history=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a helpful assistant. Keep responses"
+                                " very brief for this test."
+                            ),
+                        },
+                        {"role": "user", "content": test_message},
+                    ],
+                    stream=False,
+                    provider=temp_provider,
+                )
+
+                return jsonify(
+                    {
+                        "success": bool(response),
+                        "message": (
+                            "LLM connection test successful"
+                            if response
+                            else "LLM connection test failed"
+                        ),
+                        "test_prompt": test_message,
+                        "response": response,
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error during LLM test chat: {e}")
+                import traceback
+
+                logger.error(traceback.format_exc())
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": (
+                                f"Error during test conversation: {str(e)}"
+                            ),
+                        }
+                    ),
+                    500,
+                )
+
+        except Exception as e:
+            logger.error(f"Error in test-llm endpoint: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/config/models_contexts", methods=["GET"])
+    def get_llm_models():
+        """Return available LLM models and their context sizes"""
+
+        configured_providers = config.get("llm.providers", {})
+
+        try:
+            providers = llm.get_available_providers()
+            result_models = []
+
+            for configured_model in configured_providers:
+                configured_model_get = configured_model.get("model")
+                # First look in manually configured models contexts
+                manual_model_contexts = config.get("llm.model_contexts")
+                if configured_model_get in manual_model_contexts:
+                    result_models.append({
+                        "model": configured_model_get,
+                        "context_window": manual_model_contexts.get(configured_model_get)
+                    })
+                    continue
+
+                # Then look in the complete providers list
+                configured_model_provider, configured_model_name = (
+                    configured_model_get.split("/", 1)
+                )
+                if configured_model_provider in providers:
+                    provider = providers[configured_model_provider]
+                    for model in provider["models"]:
+                        model_name = model.get("name")
+                        if model_name == configured_model_name or model_name == configured_model_get:
+                            result_models.append({
+                                "model": configured_model.get("model"),
+                                "context_window": model.get("context_window")
+                            })
+                            break
+
+            return jsonify({"models": result_models})
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
 

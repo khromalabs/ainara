@@ -12,6 +12,7 @@ block_cipher = None
 # Create array of package data directories
 package_data_dirs = [
     ('litellm', 'litellm_core_utils/tokenizers'),
+    ('litellm', 'model_prices_and_context_window_backup.json'),
 ]
 
 # Generate datas array from package data directories
