@@ -8,7 +8,7 @@ Ainara is a (work-in-progress) modular AI assistant framework that combines loca
 
 ## Demonstration video
 
-This video demonstrates the first foundation stone what I'm working on, which is the ability to interact with the real world in real-time. For this purpose, I'm developing what I call Ainara's Orakle server - a REST API that provides 'skills' (concrete actions) and 'recipes' (chained actions of skills potentially combined with LLM processing).
+UPDATE February 24th, 2025: This is the 7th video in my series featuring Ainara, and the 2nd featuring the desktop client, Polaris. It features a new local file search skill, a minimalisty typing functionality, and behind the scenes a new LLM based skill matcher much more effective determining the user intent.
 
 Another component of the system is 'kommander', a CLI application designed to chat with the LLM, process Orakle commands in real-time, and make the LLM aware of the feedback from those commands.
 
@@ -45,7 +45,14 @@ A REST API server that provides:
 - Text processing with LLMs
 
 ### Polaris
-Desktop integrated app (TODO)
+A modern desktop application that provides:
+- Native integration with system features
+- Intuitive, minimalistic AI interaction interface
+- Rich graphical interface for chat interactions
+- Real-time skill execution feedback
+- System tray presence for quick access
+- Cross-platform support (Linux, Windows, macOS)
+
 
 ## Installation
 
