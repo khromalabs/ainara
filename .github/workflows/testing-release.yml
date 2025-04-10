@@ -3,6 +3,7 @@ name: Testing Release Build
 on:
   push:
     branches: [ testing ]
+    tags: [ 'testing-*' ]
   pull_request:
     branches: [ testing ]
 
