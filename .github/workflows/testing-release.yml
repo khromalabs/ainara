@@ -28,6 +28,7 @@ jobs:
     - name: Create virtual environment
       shell: bash
       run: |
+        python -m venv venv
         if [ "${{ runner.os }}" == "Windows" ]; then
           source venv/Scripts/activate
         else
