@@ -127,8 +127,7 @@ async function appInitialization() {
         appSetupEventHandlers();
         appSetupShortcuts();
         await appCreateTray();
-        await waitForWindowsReady();
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await waitForWindowsAndComponentsReady();
 
         // If services are being managed externally finish the setup
         await ServiceManager.checkServicesHealth();
@@ -204,6 +203,8 @@ async function appInitialization() {
         } else {
             showWindows(true);
         }
+        let llmProviders = await ConfigHelper.getLLMProviders();
+        tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
@@ -288,8 +289,9 @@ async function appCreateTray() {
         }
     ]);
 
-    let llmProviders = await ConfigHelper.getLLMProviders();
-    tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+    // let llmProviders = await ConfigHelper.getLLMProviders();
+    // tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+    tray.setToolTip('Ainara Polaris v' + config.get('setup.version'));
     tray.setContextMenu(contextMenu);
 
     // Update the provider submenu
@@ -481,33 +483,57 @@ function appSetupEventHandlers() {
     });
 }
 
-// Wait for all windows to be fully loaded and ready
-async function waitForWindowsReady() {
-    Logger.info('Waiting for all windows to be ready...');
 
-    const windows = Array.from(windowManager.windows.values());
+// Wait for all windows to be fully loaded and ready
+async function waitForWindowsAndComponentsReady() {
+    Logger.info('Waiting for all windows and components to be ready...');
+    const windows = windowManager.getWindows();
     const readyPromises = windows.map(window => {
-        return new Promise(resolve => {
-            if (window.window && window.window.webContents) {
-                if (window.window.webContents.isLoading()) {
-                    Logger.log(`Waiting for ${window.prefix} window to finish loading...`);
-                    window.window.webContents.once('did-finish-load', () => {
-                        Logger.log(`${window.prefix} window finished loading`);
-                        resolve();
-                    });
+        // Outer promise resolves when both loading and component ready are done for this window
+        return new Promise(resolveOuter => {
+            // Inner promise for the basic 'did-finish-load' event
+            const loadPromise = new Promise(resolveLoad => {
+                if (window.window && window.window.webContents) {
+                    if (window.window.webContents.isLoading()) {
+                        Logger.log(`Waiting for ${window.prefix} window to finish loading...`);
+                        window.window.webContents.once('did-finish-load', () => {
+                            Logger.log(`${window.prefix} window finished loading`);
+                            resolveLoad(); // Resolve loadPromise when loaded
+                        });
+                    } else {
+                        Logger.log(`${window.prefix} window already loaded`);
+                        resolveLoad(); // Resolve loadPromise immediately if already loaded
+                    }
                 } else {
-                    Logger.log(`${window.prefix} window already loaded`);
-                    resolve();
+                    Logger.log(`${window.prefix} window not properly initialized, resolving anyway`);
+                    resolveLoad(); // Resolve loadPromise even if window is weird
                 }
-            } else {
-                Logger.log(`${window.prefix} window not properly initialized, resolving anyway`);
-                resolve();
-            }
+            });
+
+            // Create an additional promise to wait for the component's specific ready signal
+            const readySignal = `${window.prefix}-ready`;
+            const componentReadyPromise = new Promise(resolveComponent => {
+                // IMPORTANT: Attach the listener only *after* this window's load is complete
+                loadPromise.then(() => {
+                    Logger.log(`Waiting for ${readySignal} signal from ${window.prefix}...`);
+                    ipcMain.once(readySignal, () => {
+                        Logger.log(`${readySignal} signal received from ${window.prefix}`);
+                        resolveComponent(); // Resolve componentReadyPromise when signal received
+                    });
+                    // Consider adding a timeout for this ipcMain.once listener here
+                    // for extra robustness, in case a component never sends its signal.
+                });
+            });
+
+            // Resolve the outer promise only when BOTH load and component ready are done
+            Promise.all([loadPromise, componentReadyPromise]).then(resolveOuter);
         });
     });
 
+    // Wait for all windows to complete both loading and component ready signal
     await Promise.all(readyPromises);
-    Logger.info('All windows are ready');
+
+    Logger.info('All windows and components are ready');
 }
 
 function appHandleCriticalError(error) {

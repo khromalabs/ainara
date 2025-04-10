@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import psutil
+import requests
 
 # Log file paths
 LOG_DIR = "/tmp"
@@ -22,6 +23,10 @@ ORAKLE_CMD = "python -m ainara.orakle.server"
 PYBRIDGE_CMD = "python -m ainara.framework.pybridge"
 OLLAMA_CMD = "ollama"
 
+# Service health endpoints
+ORAKLE_HEALTH_URL = "http://localhost:5000/health"
+PYBRIDGE_HEALTH_URL = "http://localhost:5001/health"
+
 # Virtual environment paths to check (in order of preference)
 VENV_PATHS = [
     os.path.expanduser("~/ainara-env"),
@@ -31,6 +36,75 @@ VENV_PATHS = [
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "venv"
     ),
 ]
+
+
+def check_service_health(url, service_name, timeout=2):
+    """Check if a service is healthy by calling its health endpoint"""
+    try:
+        response = requests.get(url, timeout=timeout)
+        response_json = json.loads(response.text)
+        if (
+            response.status_code == 200
+            and response_json["status"].strip().lower() == "ok"
+        ):
+            return True
+        else:
+            return False
+    except requests.RequestException:
+        return False
+
+
+def watch_services_health(services_to_watch, check_interval=3):
+    """
+    Watch the health of services and report any issues
+
+    Args:
+        services_to_watch: Dict of service names to their health URLs
+        check_interval: How often to check health in seconds
+    """
+    try:
+        print("Monitoring...")
+        fails = 0
+        fails_limit = 4
+        was_unhealthy = False
+
+        while True:
+            health_status = {}
+            unhealthy_services = []
+            time.sleep(check_interval)
+
+            for service, url in services_to_watch.items():
+                is_healthy = check_service_health(url, service)
+                health_status[service] = (
+                    "healthy" if is_healthy else "unhealthy"
+                )
+
+                if not is_healthy:
+                    unhealthy_services.append(service)
+
+            # Alert about unhealthy services
+            if unhealthy_services:
+                was_unhealthy = True
+                print(
+                    "ERROR: The following service(s) are unhealthy:"
+                    f" {', '.join(unhealthy_services)}"
+                )
+                fails += 1
+                if fails == fails_limit:
+                    print("Max fail limits reached, exiting...")
+                    stop_services()
+                    sys.exit(1)
+                else:
+                    print("Retrying...")
+            else:
+                if was_unhealthy:
+                    print("Services are healthy now")
+                    was_unhealthy = False
+
+    except KeyboardInterrupt:
+        print("Exiting...")
+        stop_services()
+        sys.exit(0)
 
 
 def find_and_activate_venv():
@@ -236,9 +310,7 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
                     with open(temp_batch, "w") as batch:
                         batch.write("@echo off\n")
                         batch.write(f'call "{activate_script}"\n')
-                        batch.write(
-                            f'python -m {module} {" ".join(args)}\n'
-                        )
+                        batch.write(f'python -m {module} {" ".join(args)}\n')
 
                     # print("CURRENT DIR: " + os.getcwd())
                     # print(f"WILL LAUNCH: {temp_batch}")
@@ -255,9 +327,7 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
 
                     # For Linux/macOS, we can use source directly
                     shell = "/bin/bash"
-                    if sys.platform == "darwin" and os.path.exists(
-                        "/bin/zsh"
-                    ):
+                    if sys.platform == "darwin" and os.path.exists("/bin/zsh"):
                         shell = "/bin/zsh"  # Use zsh on newer macOS
 
                     full_cmd = (
@@ -394,28 +464,17 @@ def run_setup(install=False):
         return {"status": "error", "message": f"Error running setup: {e}"}
 
 
-def handle_service_failure(service_failed, results, json_output):
+def handle_service_failure(service_failed, results):
     """Handle a service failure by stopping all services and exiting"""
     if service_failed:
-        if not json_output:
-            print("A service failed to start. Stopping all services...")
+        print("A service failed to start. Stopping all services...")
         stop_services()
-        if json_output:
-            print(
-                json.dumps(
-                    {
-                        "status": "error",
-                        "message": "Aborted due to service startup failure",
-                        "services": results,
-                    }
-                )
-            )
         return True
     return False
 
 
 def check_and_start_service(
-    service_name, args, results, venv_active, venv_path, json_output
+    service_name, args, results, venv_active, venv_path
 ):
     """Start a service and handle any failures"""
     if not getattr(args, f"skip_{service_name}"):
@@ -426,11 +485,10 @@ def check_and_start_service(
             venv_path=venv_path,
         )
         if results[service_name]["status"] == "error" and not args.force:
-            if not json_output:
-                print(
-                    f"ERROR: Failed to start {service_name}:"
-                    f" {results[service_name]['message']}"
-                )
+            print(
+                f"ERROR: Failed to start {service_name}:"
+                f" {results[service_name]['message']}"
+            )
             return True
     return False
 
@@ -463,9 +521,6 @@ def main():
         "--status", action="store_true", help="Check status of all services"
     )
     parser.add_argument(
-        "--json", action="store_true", help="Output in JSON format"
-    )
-    parser.add_argument(
         "--setup", action="store_true", help="Run the environment setup script"
     )
     parser.add_argument(
@@ -485,6 +540,17 @@ def main():
         action="store_true",
         help="Continue even if some services fail to start",
     )
+    parser.add_argument(
+        "--health-check",
+        action="store_true",
+        help="Monitor health of services after starting",
+    )
+    parser.add_argument(
+        "--health-interval",
+        type=int,
+        default=30,
+        help="Interval in seconds between health checks (default: 30)",
+    )
     args = parser.parse_args()
     global argsg
     argsg = args
@@ -492,9 +558,6 @@ def main():
     # Set Ollama model if specified
     if args.ollama_model:
         os.environ["LOCAL_LLM_MODEL"] = args.ollama_model
-
-    # Check if we should output in JSON format
-    json_output = args.json
 
     # Just tail logs if requested
     if args.tail:
@@ -504,45 +567,25 @@ def main():
     # Check status if requested
     if args.status:
         status = get_services_status()
-        if json_output:
-            print(json.dumps({"status": "success", "services": status}))
-        else:
-            print("Service Status:")
-            print(f"  Orakle:   {status['orakle']}")
-            print(f"  Pybridge: {status['pybridge']}")
-            print(f"  Ollama:   {status['ollama']}")
+        print("Service Status:")
+        print(f"  Orakle:   {status['orakle']}")
+        print(f"  Pybridge: {status['pybridge']}")
+        print(f"  Ollama:   {status['ollama']}")
         return
 
     # Stop services if requested
     if args.stop:
         success = stop_services()
-        if json_output:
-            print(
-                json.dumps(
-                    {
-                        "status": "success" if success else "error",
-                        "message": (
-                            "All servers stopped"
-                            if success
-                            else "Failed to stop some servers"
-                        ),
-                    }
-                )
-            )
+        if success:
+            print("All servers stopped successfully")
         else:
-            if success:
-                print("All servers stopped successfully")
-            else:
-                print("Failed to stop some servers")
+            print("Failed to stop some servers")
         return
 
     # Run setup if requested
     if args.setup or args.install:
         result = run_setup(install=args.install)
-        if json_output:
-            print(json.dumps(result))
-        else:
-            print(result["message"])
+        print(result["message"])
         return
 
     # Try to find and activate a virtual environment unless --no-venv is specified
@@ -550,60 +593,31 @@ def main():
     venv_path = None
     if not args.no_venv:
         venv_active, venv_path = find_and_activate_venv()
-        if venv_active and not json_output:
+        if venv_active:
             print(f"Using virtual environment: {venv_path}")
-        elif not venv_active and not json_output:
+        elif not venv_active:
             print(
                 "Warning: No virtual environment found. Services may not work"
                 " correctly."
             )
             print("Use --no-venv to suppress this warning.")
 
-    # # Check environment file
-    # env_file = "/tmp/ai.env"
-    # if not os.path.exists(env_file):
-    #     if json_output:
-    #         print(
-    #             json.dumps(
-    #                 {"status": "error", "message": f"Missing {env_file}"}
-    #             )
-    #         )
-    #     else:
-    #         print(f"Missing {env_file}")
-    #     return 1
-    #
-    # # Load environment variables
-    # try:
-    #     with open(env_file, "r") as f:
-    #         for line in f:
-    #             if line.strip() and not line.startswith("#"):
-    #                 key, value = line.strip().split("=", 1)
-    #                 os.environ[key] = value
-    # except Exception as e:
-    #     if json_output:
-    #         print(
-    #             json.dumps(
-    #                 {
-    #                     "status": "error",
-    #                     "message": f"Error loading environment: {e}",
-    #                 }
-    #             )
-    #         )
-    #     else:
-    #         print(f"Error loading environment: {e}")
-    #     return 1
-
     # Start services
+    # TODO force configuration restart
+#    if os.path.exists("/home/ruben/.config/ainara/ainara.yaml"):
+#        os.remove("/home/ruben/.config/ainara/ainara.yaml")
+#    if os.path.exists("/home/ruben/.config/ainara/polaris/polaris.json"):
+#        os.remove("/home/ruben/.config/ainara/polaris/polaris.json")
     results = {}
     service_failed = False
 
     # Start Orakle
     service_failed = check_and_start_service(
-        "orakle", args, results, venv_active, venv_path, json_output
+        "orakle", args, results, venv_active, venv_path
     )
 
     # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results, json_output):
+    if handle_service_failure(service_failed, results):
         return 1
 
     # Wait a bit before starting Pybridge
@@ -611,39 +625,46 @@ def main():
 
     # Start Pybridge
     service_failed = check_and_start_service(
-        "pybridge", args, results, venv_active, venv_path, json_output
+        "pybridge", args, results, venv_active, venv_path
     )
 
     # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results, json_output):
+    if handle_service_failure(service_failed, results):
         return 1
 
     # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results, json_output):
+    if handle_service_failure(service_failed, results):
         return 1
 
     # Start Ollama
     service_failed = check_and_start_service(
-        "ollama", args, results, venv_active, venv_path, json_output
+        "ollama", args, results, venv_active, venv_path
     )
 
     # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results, json_output):
+    if handle_service_failure(service_failed, results):
         return 1
 
     # Output results
-    if json_output:
-        print(json.dumps({"status": "success", "services": results}))
-    else:
-        for service, result in results.items():
-            print(f"{service}: {result['message']}")
+    for service, result in results.items():
+        print(f"{service}: {result['message']}")
 
-    # If not in JSON mode, tail the logs
-    # if not json_output:
-    #    print("\nTailing logs (press Ctrl+C to exit):")
-    #    tail_logs()
     try:
-        print("Running...")
+        # If health check is enabled, monitor service health
+        if args.health_check:
+            services_to_watch = {}
+            if not args.skip_orakle:
+                services_to_watch["orakle"] = ORAKLE_HEALTH_URL
+            if not args.skip_pybridge:
+                services_to_watch["pybridge"] = PYBRIDGE_HEALTH_URL
+
+            if services_to_watch:
+                watch_services_health(services_to_watch)
+            else:
+                print("No services to monitor for health.")
+                print("Running...")
+        else:
+            print("Running...")
         while True:
             time.sleep(1)  # Sleep for 1 second
     except KeyboardInterrupt:

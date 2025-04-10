@@ -224,6 +224,10 @@ class WindowManager {
         this.tray.setImage(iconPath);
     }
 
+    getWindows() {
+        return Array.from(this.windows.values());
+    }
+
     updateTheme() {
         if (this.tray && this.iconPath) {
             this.updateTrayIcon(this.currentState);

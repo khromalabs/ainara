@@ -27,6 +27,7 @@ block_cipher = None
 # New format
 package_data_entries = [
     ('emoji', ['unicode_codes']),
+    ('normalise', ['data']),
     ('faster_whisper', ['assets']),
     ('litellm', [
         'litellm_core_utils/tokenizers',
@@ -86,7 +87,6 @@ a = Analysis(
     datas=[
         (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
         (os.path.join(project_root, 'ainara/static'), 'ainara/static'),
-        (os.path.join(project_root, 'ainara/config'), 'ainara/config'),
         (os.path.join(project_root, 'ainara/resources'), 'ainara/resources'),
         *datas,
         *package_datas

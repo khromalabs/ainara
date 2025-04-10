@@ -83,7 +83,9 @@ class ComRing extends BaseComponent {
 
             console.log('ComRing: Initializing STT');
             // Initialize STT
-            await this.stt.initialize();
+            // TODO disabled this check as doesn't allow early component load
+            // (before services are started)
+            // await this.stt.initialize();
             console.log('ComRing: STT initialized');
 
             // Component is added to the DOM
@@ -378,6 +380,7 @@ class ComRing extends BaseComponent {
         console.log('ComRing: Event listeners initialized');
         console.log('ComRing: Sending ready confirmation to main process');
         ipcRenderer.send('com-ring-ready');
+        ipcRenderer.send('comRing-ready');
     }
 
 

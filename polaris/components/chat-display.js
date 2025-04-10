@@ -212,6 +212,8 @@ class ChatDisplay extends BaseComponent {
                 });
 
                 console.log('ChatDisplay: IPC listeners setup complete');
+                ipcRenderer.send('chatDisplay-ready');
+
             } catch (error) {
                 console.error('ChatDisplay: Error setting up IPC:', error);
             }
@@ -327,6 +329,7 @@ class ChatDisplay extends BaseComponent {
                 }
             } catch (e) {
                 // If URL parsing fails, skip domain
+                console.log("Error parsing: " + e);
             }
 
             // Create a properly formatted HTML string
