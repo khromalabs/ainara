@@ -119,4 +119,5 @@ jobs:
         draft: true
         prerelease: true
         files: |
-          dist/**
+          dist/*.exe
+          dist/*.exe.blockmap
