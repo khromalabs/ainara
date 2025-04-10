@@ -1,3 +1,6 @@
 cd "$(git rev-parse --show-toplevel)"
-source venv/bin/activate
-bin/_build.py $@
+if [ -e venv/bin/activate ]; then
+	echo Activating venv...
+	source venv/bin/activate
+fi
+echo bin/_build.py $@

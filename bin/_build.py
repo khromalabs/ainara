@@ -117,6 +117,8 @@ def build_executables(targets=None, force=False):
         ):
             print("\n=== Building Orakle ===\n")
             run_command(["pyinstaller", orakle_spec, "--clean"])
+            print("\n=== Waiting briefly for file handles to release (Windows Antivirus fix) ===\n")
+            time.sleep(15)
             # Copy the executable to the combined directory
             print("\n=== Copying Orakle to combined distribution ===\n")
             shutil.copytree(
@@ -136,6 +138,8 @@ def build_executables(targets=None, force=False):
         ):
             print("\n=== Building PyBridge ===\n")
             run_command(["pyinstaller", pybridge_spec, "--clean"])
+            print("\n=== Waiting briefly for file handles to release (Windows Antivirus fix) ===\n")
+            time.sleep(15)
             # Copy the executable to the combined directory
             print("\n=== Copying PyBridge to combined distribution ===\n")
             shutil.copytree(
