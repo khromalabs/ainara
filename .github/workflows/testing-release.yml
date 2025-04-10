@@ -28,27 +28,43 @@ jobs:
     - name: Create virtual environment
       shell: bash
       run: |
-        python -m venv venv
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          source venv/Scripts/activate
+        else
+          source venv/bin/activate
+        fi
         source venv/bin/activate
         echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
 
     - name: Verify Python version
       shell: bash
       run: |
-        source venv/bin/activate
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          source venv/Scripts/activate
+        else
+          source venv/bin/activate
+        fi
         python --version  # Verify correct Python version
 
     - name: Install dependencies
       shell: bash
       run: |
-        source venv/bin/activate
+        if [ "${{ runner.os }}" == "windows" ]; then
+          source venv/scripts/activate
+        else
+          source venv/bin/activate
+        fi
         pip install --upgrade pip
         pip install -r requirements.txt
 
     - name: Run build script
       shell: bash
       run: |
-        source venv/bin/activate
+        if [ "${{ runner.os }}" == "windows" ]; then
+          source venv/scripts/activate
+        else
+          source venv/bin/activate
+        fi
         chmod +x bin/build
         bin/build
 
