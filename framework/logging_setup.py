@@ -79,9 +79,9 @@ class LoggingManager:
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
 
-        # Use provided log_dir or get platform-specific directory
+        # Use provided log_dir or get from config
         if log_dir is None:
-            log_dir = config.get_log_directory()
+            log_dir = config.get("logging.directory")
             
         # File handler setup
         if log_dir:
