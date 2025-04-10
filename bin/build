@@ -3,4 +3,4 @@ if [ -e venv/bin/activate ]; then
 	echo Activating venv...
 	source venv/bin/activate
 fi
-echo bin/_build.py $@
+bin/_build.py $@
