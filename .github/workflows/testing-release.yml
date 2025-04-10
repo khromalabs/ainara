@@ -121,3 +121,5 @@ jobs:
         files: |
           dist/*.exe
           dist/*.exe.blockmap
+          dist/orakle/**
+          dist/pybridge/**
