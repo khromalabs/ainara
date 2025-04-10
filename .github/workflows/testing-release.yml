@@ -49,7 +49,7 @@ jobs:
     - name: Install dependencies
       shell: bash
       run: |
-        if [ "${{ runner.os }}" == "windows" ]; then
+        if [ "${{ runner.os }}" == "Windows" ]; then
           source venv/scripts/activate
         else
           source venv/bin/activate
@@ -60,7 +60,7 @@ jobs:
     - name: Run build script
       shell: bash
       run: |
-        if [ "${{ runner.os }}" == "windows" ]; then
+        if [ "${{ runner.os }}" == "Windows" ]; then
           source venv/scripts/activate
         else
           source venv/bin/activate
