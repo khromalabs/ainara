@@ -34,7 +34,6 @@ jobs:
         else
           source venv/bin/activate
         fi
-        source venv/bin/activate
         echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
 
     - name: Verify Python version
