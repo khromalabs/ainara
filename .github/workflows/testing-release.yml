@@ -13,10 +13,10 @@ jobs:
       matrix:
         #os: [ubuntu-latest, macos-latest, windows-latest]
         os: [windows-latest]
-      runs-on: ${{ matrix.os }}
-      # Add permissions block here for the job
-      permissions:
-        contents: write # Needed to create releases and upload assets
+    runs-on: ${{ matrix.os }}
+    # Add permissions block here for the job
+    permissions:
+      contents: write # Needed to create releases and upload assets
 
 
     steps:
