@@ -51,13 +51,33 @@ jobs:
         chmod +x bin/build
         bin/build
 
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16'  # Matches Electron and other dependencies version requirements
+
+    - name: Install npm dependencies
+      shell: bash
+      run: |
+        npm install
+
+    - name: Build frontend for ${{ matrix.os }}
+      shell: bash
+      run: |
+        if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+          npm run build:linux
+        elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+          npm run build:mac
+        else
+          npm run build:win
+        fi
+
     - name: Package testing artifacts
       uses: actions/upload-artifact@v3
       with:
         name: ${{ matrix.os }}-testing-servers
         path: |
-          dist/orakle
-          dist/pybridge
+          dist/**
         if-no-files-found: error
 
     - name: Create testing release
@@ -74,6 +94,4 @@ jobs:
         draft: true
         prerelease: true
         files: |
-          dist/orakle/**
-          dist/pybridge/**
-
+          dist/**
