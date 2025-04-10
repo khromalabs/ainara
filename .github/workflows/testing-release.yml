@@ -41,21 +41,24 @@ jobs:
       run: |
         if [ "${{ runner.os }}" == "Windows" ]; then
           source venv/Scripts/activate
+          venv/Scripts/python.exe --version
         else
           source venv/bin/activate
+          python --version  # Verify correct Python version
         fi
-        python --version  # Verify correct Python version
 
     - name: Install dependencies
       shell: bash
       run: |
         if [ "${{ runner.os }}" == "Windows" ]; then
           source venv/scripts/activate
+          venv/Scripts/python.exe -m pip install --upgrade pip
+          venv/Scripts/python.exe -m pip install -r requirements.txt
         else
           source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
         fi
-        pip install --upgrade pip
-        pip install -r requirements.txt
 
     - name: Run build script
       shell: bash
