@@ -39,9 +39,6 @@ def parse_args():
         "--port", type=int, default=5000, help="Port to run the server on"
     )
     parser.add_argument(
-        "--log-dir", type=str, help="Directory for log files (optional)"
-    )
-    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -150,7 +147,7 @@ def create_app():
 
 if __name__ == "__main__":
     args = parse_args()
-    logging_manager.setup(log_dir=args.log_dir, log_level=args.log_level)
+    logging_manager.setup(log_level=args.log_level)
     # Get logger after setup
     logger = logging_manager.logger
     logger.info(f"Starting Orakle development server on port {args.port}")

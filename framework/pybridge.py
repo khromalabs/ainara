@@ -103,7 +103,8 @@ app = Flask(__name__)
 CORS(app)
 
 # Set up logging first, before any logger calls
-logging_manager.setup(log_dir="/tmp", log_level="INFO")
+# Use the log directory from config
+logging_manager.setup(log_level="INFO")
 logging_manager.addFilter(["pybridge", "chat_completion"])
 
 
