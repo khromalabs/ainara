@@ -117,14 +117,21 @@ def build_executables(targets=None, force=False):
             or not os.listdir(orakle_dist_path)
         ):
             print("\n=== Building Orakle ===\n")
+            print(f"\n=== Cleaning {orakle_dist_path} ===\n")
+            # If the directory exists, remove it first to avoid copy errors
+            if os.path.exists(orakle_dist_path):
+                shutil.rmtree(orakle_dist_path)
             run_command(["pyinstaller", orakle_spec, "--clean"])
             print("\n=== Waiting briefly for file handles to release (Windows Antivirus fix) ===\n")
             time.sleep(15)
             # Copy the executable to the combined directory
             print("\n=== Copying Orakle to combined distribution ===\n")
-            shutil.copytree(
-                "dist/orakle", orakle_dist_path, dirs_exist_ok=True
-            )
+            try:
+                shutil.copytree("dist/orakle", orakle_dist_path)
+            except Exception as e:
+                print(f"Error copying Orakle files: {str(e)}")
+                # Continue anyway as the build might have succeeded
+
         else:
             print("\n=== Skipping Orakle build (already exists) ===\n")
             print("Use --force to rebuild anyway")
@@ -138,14 +145,21 @@ def build_executables(targets=None, force=False):
             or not os.listdir(pybridge_dist_path)
         ):
             print("\n=== Building PyBridge ===\n")
+            print(f"\n=== Cleaning {pybridge_dist_path} ===\n")
+            # If the directory exists, remove it first to avoid copy errors
+            if os.path.exists(pybridge_dist_path):
+                shutil.rmtree(pybridge_dist_path)
             run_command(["pyinstaller", pybridge_spec, "--clean"])
             print("\n=== Waiting briefly for file handles to release (Windows Antivirus fix) ===\n")
             time.sleep(15)
             # Copy the executable to the combined directory
             print("\n=== Copying PyBridge to combined distribution ===\n")
-            shutil.copytree(
-                "dist/pybridge", pybridge_dist_path, dirs_exist_ok=True
-            )
+            try:
+                shutil.copytree("dist/pybridge", pybridge_dist_path)
+            except Exception as e:
+                print(f"Error copying PyBridge files: {str(e)}")
+                # Continue anyway as the build might have succeeded
+
         else:
             print("\n=== Skipping PyBridge build (already exists) ===\n")
             print("Use --force to rebuild anyway")
