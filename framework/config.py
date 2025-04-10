@@ -211,6 +211,40 @@ class ConfigManager:
         mask_sensitive_values(safe_config)
         return safe_config
 
+    def get_log_directory(self):
+        """Get log directory based on config or platform defaults"""
+        # First check environment variable
+        env_log_path = os.environ.get("AINARA_LOGS")
+        if env_log_path:
+            log_dir = Path(os.path.expanduser(env_log_path))
+            os.makedirs(log_dir, exist_ok=True)
+            return log_dir
+
+        # Determine OS-specific log locations
+        system = platform.system()
+        
+        if system == "Linux":
+            # XDG standard for Linux
+            data_home = os.environ.get(
+                "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+            )
+            log_dir = Path(data_home) / "ainara/logs"
+        elif system == "Darwin":  # macOS
+            log_dir = Path(os.path.expanduser("~/Library/Logs/Ainara"))
+        elif system == "Windows":
+            # Windows standard locations
+            localappdata = os.environ.get(
+                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
+            )
+            log_dir = Path(localappdata) / "Ainara/logs"
+        else:
+            # Fallback for other systems
+            log_dir = Path(os.path.expanduser("~/.ainara/logs"))
+        
+        # Ensure the directory exists
+        os.makedirs(log_dir, exist_ok=True)
+        return log_dir
+
     def validate_config(self, config_data):
         """Basic validation of configuration data"""
         # This is a simple validation - in a real implementation, you might want to use
