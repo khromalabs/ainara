@@ -92,7 +92,7 @@ def build_executables(targets=None, force=False):
                 orakle_build = os.path.join("build", "orakle")
                 if os.path.exists(orakle_build):
                     shutil.rmtree(orakle_build)
-                orakle_dist = os.path.join(dist_dir, "orakle") 
+                orakle_dist = os.path.join(dist_dir, "orakle")
                 if os.path.exists(orakle_dist):
                     shutil.rmtree(orakle_dist)
             if "pybridge" in targets:
