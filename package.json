@@ -45,6 +45,7 @@
   },
   "build": {
     "appId": "com.ainara.polaris",
+	"publish": "never",
     "productName": "Polaris",
     "directories": {
       "output": "dist",
