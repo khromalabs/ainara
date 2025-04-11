@@ -55,25 +55,40 @@
       "polaris/**/*",
       "package.json"
     ],
-    "extraResources": [
-        {
-            "from": "dist/servers",
-            "to": "bin/servers"
-        }
-    ],
     "win": {
       "target": "nsis",
-      "icon": "polaris/assets/tray-icon-active-light.png"
+      "icon": "polaris/assets/tray-icon-active-light.png",
+      "extraResources": [
+        {
+          "from": "dist/servers",
+          "to": "bin/servers",
+          "filter": ["**/*", "!**/_internal/ainara/resources/bin/macos/**", "!**/_internal/ainara/resources/bin/linux/**"]
+        }
+      ]
     },
     "mac": {
       "target": "dmg",
       "icon": "polaris/assets/tray-icon-active-light.png",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extraResources": [
+        {
+          "from": "dist/servers",
+          "to": "bin/servers",
+          "filter": ["**/*", "!**/_internal/ainara/resources/bin/windows/**", "!**/_internal/ainara/resources/bin/linux/**"]
+        }
+      ]
     },
     "linux": {
       "target": "AppImage",
       "icon": "polaris/assets/tray-icon-active-light.png",
-      "category": "Utility"
+      "category": "Utility",
+      "extraResources": [
+        {
+          "from": "dist/servers",
+          "to": "bin/servers",
+          "filter": ["**/*", "!**/_internal/ainara/resources/bin/windows/**", "!**/_internal/ainara/resources/bin/macos/**"]
+        }
+      ]
     }
   }
 }
