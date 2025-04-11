@@ -192,9 +192,12 @@ async function appInitialization() {
         // Services are ready, initialize the rest of the app
         splashWindow.updateProgress('Initializing application...', 80);
 
+        // Update the provider submenu
+        await updateProviderSubmenu();
+
         // Close splash and show main window
         splashWindow.updateProgress('Ready! Launching com-ring...', 100);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
         splashWindow.close();
         // Check if this is the first run
         if (isFirstRun()) {
@@ -203,8 +206,8 @@ async function appInitialization() {
         } else {
             showWindows(true);
         }
-        let llmProviders = await ConfigHelper.getLLMProviders();
-        tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+        // let llmProviders = await ConfigHelper.getLLMProviders();
+        // tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
@@ -232,7 +235,7 @@ function appSetupShortcuts() {
         shortcutRegistered = globalShortcut.register(shortcutKey, showWindows);
 
         if (shortcutRegistered) {
-            Logger.info('Successfully registered shortcut:', shortcutKey);
+           Logger.info('Successfully registered shortcut:', shortcutKey);
         } else {
             Logger.error('Failed to register shortcut:', shortcutKey);
             app.exit(1);
@@ -294,9 +297,6 @@ async function appCreateTray() {
     // tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
     tray.setToolTip('Ainara Polaris v' + config.get('setup.version'));
     tray.setContextMenu(contextMenu);
-
-    // Update the provider submenu
-    await updateProviderSubmenu();
 
     // Optional: Single click to toggle windows
     tray.on('click', () => windowManager.toggleVisibility());
