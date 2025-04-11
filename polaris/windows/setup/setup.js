@@ -223,18 +223,18 @@ function getKeyDescription(pathArray) {
 }
 
 // Function to generate the skills UI
-function generateSkillsUI() {
+async function generateSkillsUI() {
     try {
-        // Load the sample config
-        const samplePath = path.join(__dirname, '..', '..', '..', 'resources', 'ainara.yaml.defaults');
-        let sampleConfig;
-
-        if (fs.existsSync(samplePath)) {
-            const sampleContents = fs.readFileSync(samplePath, 'utf8');
-            sampleConfig = yaml.load(sampleContents);
-        } else {
-            throw new Error('Sample config file not found');
+        // Load the sample config from the API instead of the file
+        const response = await fetch(
+            config.get('pybridge.api_url') + '/config/defaults'
+        );
+        
+        if (!response.ok) {
+            throw new Error('Failed to load default configuration');
         }
+        
+        const sampleConfig = await response.json();
 
         // Extract API keys
         const apiKeys = extractApiKeysFromConfig(sampleConfig);
