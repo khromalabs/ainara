@@ -712,7 +712,7 @@ def create_app():
 
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-            
+
     @app.route("/config/defaults", methods=["GET"])
     def get_default_config():
         """Return the default configuration"""
@@ -720,17 +720,17 @@ def create_app():
             # Get the path to the default config file
             import yaml
             import os
-            
+
             default_config_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "resources",
                 "ainara.yaml.defaults"
             )
-            
+
             # Load the default config
             with open(default_config_path, "r") as f:
                 default_config = yaml.safe_load(f)
-                
+
             return jsonify(default_config)
         except Exception as e:
             logger.error(f"Error loading default configuration: {e}")
