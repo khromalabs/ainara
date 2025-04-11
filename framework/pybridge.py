@@ -717,15 +717,29 @@ def create_app():
     def get_default_config():
         """Return the default configuration"""
         try:
-            # Get the path to the default config file
             import yaml
             import os
+            import sys
 
-            default_config_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "resources",
-                "ainara.yaml.defaults"
-            )
+            # Check if we're running in a PyInstaller bundle
+            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                # Running in PyInstaller bundle
+                # Use the bundled resource path
+                default_config_path = os.path.join(sys._MEIPASS, "ainara", "resources", "ainara.yaml.defaults")
+                logger.info(f"Running from PyInstaller bundle, looking for config at: {default_config_path}")
+            else:
+                # Running from source - use the original approach
+                default_config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "resources",
+                    "ainara.yaml.defaults"
+                )
+                logger.info(f"Running from source, looking for config at: {default_config_path}")
+
+            # Check if the file exists
+            if not os.path.exists(default_config_path):
+                logger.error(f"Default config file not found at: {default_config_path}")
+                return jsonify({"error": "Default configuration file not found"}), 404
 
             # Load the default config
             with open(default_config_path, "r") as f:
