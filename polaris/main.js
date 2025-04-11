@@ -296,7 +296,7 @@ async function appCreateTray() {
     tray.setContextMenu(contextMenu);
 
     // Update the provider submenu
-    updateProviderSubmenu();
+    await updateProviderSubmenu();
 
     // Optional: Single click to toggle windows
     tray.on('click', () => windowManager.toggleVisibility());
@@ -319,6 +319,9 @@ function truncateMiddle(str, maxLength) {
 // Add function to update provider submenu
 async function updateProviderSubmenu() {
     try {
+
+        Logger.info('UPDATING PROVIDER SUBMENU');
+
         // Get the current providers
         const { providers, selected_provider } = await ConfigHelper.getLLMProviders();
 
@@ -338,7 +341,7 @@ async function updateProviderSubmenu() {
                     const success = await ConfigHelper.selectLLMProvider(model);
                     if (success) {
                         // Update the menu
-                        updateProviderSubmenu();
+                        await updateProviderSubmenu();
                         // Notify com-ring about provider change
                         BrowserWindow.getAllWindows().forEach(window => {
                             if (!window.isDestroyed()) {
