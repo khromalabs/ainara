@@ -159,7 +159,7 @@ async function appInitialization() {
                 'Service Error',
                 'Failed to start required services. Please check the logs for details.'
             );
-            app.quit();
+            app.exit(1);
             return;
         }
 
@@ -235,6 +235,7 @@ function appSetupShortcuts() {
             Logger.info('Successfully registered shortcut:', shortcutKey);
         } else {
             Logger.error('Failed to register shortcut:', shortcutKey);
+            app.exit(1);
         }
     }
 }

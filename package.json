@@ -57,12 +57,8 @@
     ],
     "extraResources": [
         {
-            "from": "dist/orakle",
-            "to": "bin/orakle"
-        },
-        {
-            "from": "dist/pybridge",
-            "to": "bin/pybridge"
+            "from": "dist/servers",
+            "to": "bin/servers"
         }
     ],
     "win": {
