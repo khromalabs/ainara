@@ -243,7 +243,7 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
     if service == "orakle":
         cmd = ORAKLE_CMD
         log_file = ORAKLE_LOG
-        args = ["--log-dir", LOG_DIR]
+        args = []
     elif service == "pybridge":
         cmd = PYBRIDGE_CMD
         log_file = PYBRIDGE_LOG

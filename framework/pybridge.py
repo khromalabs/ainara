@@ -40,6 +40,7 @@ from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils.dependency_checker import DependencyChecker
+from ainara.framework.utils.paths import get_user_data_dir
 
 config = ConfigManager()
 config.load_config()
@@ -103,8 +104,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Set up logging first, before any logger calls
-# Use the log directory from config
-logging_manager.setup(log_level="INFO")
+logging_manager.setup(log_dir="/tmp", log_level="INFO")
 logging_manager.addFilter(["pybridge", "chat_completion"])
 
 
@@ -190,8 +190,11 @@ def create_app():
         logger.error(traceback.format_exc())
         raise
 
-    # Add static directory for audio files and clean any previous files
-    app.static_folder = "../static/pybridge"
+    # Use the appropriate user data directory
+    user_data_dir = get_user_data_dir()
+    static_dir = os.path.join(user_data_dir, 'static', 'pybridge')
+    os.makedirs(static_dir, exist_ok=True)
+    app.static_folder = static_dir
     cleanup_audio_directory(app.static_folder)
 
     # Register cleanup function to run on server shutdown
