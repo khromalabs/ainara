@@ -106,9 +106,14 @@ class ServiceManager {
             Logger.log(`Starting ${service.name} service from: ${service.executablePath}`);
 
             try {
+                const parentDir = path.dirname(path.dirname(service.executablePath));
                 service.process = spawn(service.executablePath, service.args, {
                     stdio: 'pipe',
-                    shell: false
+                    shell: false,
+                    cwd: parentDir,
+                    env: {
+                        PYTHONPATH: parentDir
+                    }
                 });
 
                 // Handle process output

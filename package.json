@@ -45,7 +45,7 @@
   },
   "build": {
     "appId": "com.ainara.polaris",
-	"publish": null,
+    "publish": null,
     "productName": "Polaris",
     "directories": {
       "output": "dist",
@@ -54,6 +54,16 @@
     "files": [
       "polaris/**/*",
       "package.json"
+    ],
+    "extraResources": [
+        {
+            "from": "dist/orakle",
+            "to": "bin/orakle"
+        },
+        {
+            "from": "dist/pybridge",
+            "to": "bin/pybridge"
+        }
     ],
     "win": {
       "target": "nsis",
