@@ -1,8 +1,9 @@
+> **License**: Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:rgomez@khromalabs.org))
+
 # Ainara AI Assistant Framework
 
 ![Ainara logo](./assets/ainara_logo.png)
 
-> **License**: Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:rgomez@khromalabs.org))
 **Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 <br><br>
 
