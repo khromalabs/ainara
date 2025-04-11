@@ -19,6 +19,8 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
+from ainara.framework.config import config
+
 
 class LoggingManager:
     """Manages application-wide logging configuration"""
@@ -57,7 +59,6 @@ class LoggingManager:
 
     def setup(self, log_dir=None, log_level="INFO", log_filter=None):
         """Configure logging to console and optionally to rotating file"""
-        from framework.config import config  # Import here to avoid circular imports
         
         if log_filter:
             self.addFilter(log_filter)
@@ -82,7 +83,7 @@ class LoggingManager:
         # Use provided log_dir or get from config
         if log_dir is None:
             log_dir = config.get("logging.directory")
-            
+
         # File handler setup
         if log_dir:
             log_file = os.path.join(log_dir, "ainara.log")
