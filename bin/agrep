@@ -1,2 +1,2 @@
 #!/bin/bash
-find -type f ! -regex ".*\(binary file matches\|/build\|.git\|venv\|/dist\|node_modules\|.aider\|__pycache__\|package-lock.json\|.tags\).*" -exec grep -HI $1 {} \;
+find -type f ! -regex ".*\(binary file matches\|/build\|.git\|venv\|/dist\|node_modules\|.aider\|__pycache__\|package-lock.json\|.tags\).*" -exec grep -EHI $1 {} \;

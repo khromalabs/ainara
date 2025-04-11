@@ -22,10 +22,10 @@ class ServiceManager {
         let executablesDir;
         if (isDevMode) {
             // In development, look for executables in a relative path
-            executablesDir = path.join(process.cwd(), 'dist');
+            executablesDir = path.join(process.cwd(), 'dist', 'servers');
         } else {
             // In production, look in the resources directory
-            executablesDir = path.join(process.resourcesPath, 'bin');
+            executablesDir = path.join(process.resourcesPath, 'bin', 'servers');
         }
 
         // Define services with their executables and health endpoints
@@ -36,7 +36,7 @@ class ServiceManager {
                 healthy: false,
                 name: 'Orakle',
                 executable: platform === 'win32' ? 'orakle.exe' : 'orakle',
-                executablePath: path.join(executablesDir, 'orakle', platform === 'win32' ? 'orakle.exe' : 'orakle'),
+                executablePath: path.join(executablesDir, platform === 'win32' ? 'orakle.exe' : 'orakle'),
                 args: []
             },
             pybridge: {
@@ -45,7 +45,7 @@ class ServiceManager {
                 healthy: false,
                 name: 'Pybridge',
                 executable: platform === 'win32' ? 'pybridge.exe' : 'pybridge',
-                executablePath: path.join(executablesDir, 'pybridge', platform === 'win32' ? 'pybridge.exe' : 'pybridge'),
+                executablePath: path.join(executablesDir, platform === 'win32' ? 'pybridge.exe' : 'pybridge'),
                 args: []
             }
         };
@@ -106,14 +106,9 @@ class ServiceManager {
             Logger.log(`Starting ${service.name} service from: ${service.executablePath}`);
 
             try {
-                const parentDir = path.dirname(path.dirname(service.executablePath));
                 service.process = spawn(service.executablePath, service.args, {
                     stdio: 'pipe',
-                    shell: false,
-                    cwd: parentDir,
-                    env: {
-                        PYTHONPATH: parentDir
-                    }
+                    shell: false
                 });
 
                 // Handle process output
