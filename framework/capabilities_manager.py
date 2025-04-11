@@ -211,7 +211,7 @@ class CapabilitiesManager:
                 rel_path = skill_file.relative_to(skills_dir)
                 # Convert path to module path
                 # (e.g., html/url_downloader -> html.url_downloader)
-                module_path = str(rel_path.with_suffix("")).replace("/", ".")
+                module_path = ".".join(rel_path.with_suffix("").parts)
 
                 # Get the parent directory name and file name
                 dir_name = skill_file.parent.name
