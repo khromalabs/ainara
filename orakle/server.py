@@ -147,7 +147,7 @@ def create_app():
 
 if __name__ == "__main__":
     args = parse_args()
-    logging_manager.setup(log_level=args.log_level)
+    logging_manager.setup(log_level=args.log_level, log_name="orakle.log")
     # Get logger after setup
     logger = logging_manager.logger
     logger.info(f"Starting Orakle development server on port {args.port}")

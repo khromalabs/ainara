@@ -229,11 +229,11 @@ async function generateSkillsUI() {
         const response = await fetch(
             config.get('pybridge.api_url') + '/config/defaults'
         );
-        
+
         if (!response.ok) {
             throw new Error('Failed to load default configuration');
         }
-        
+
         const sampleConfig = await response.json();
 
         // Extract API keys

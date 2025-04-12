@@ -57,9 +57,9 @@ class LoggingManager:
             self._logger.handlers = handlers
             self._logger.setLevel(level)
 
-    def setup(self, log_dir=None, log_level="INFO", log_filter=None):
+    def setup(self, log_dir=None, log_level="INFO", log_filter=None, log_name="ainara.log"):
         """Configure logging to console and optionally to rotating file"""
-        
+
         if log_filter:
             self.addFilter(log_filter)
 
@@ -86,7 +86,7 @@ class LoggingManager:
 
         # File handler setup
         if log_dir:
-            log_file = os.path.join(log_dir, "ainara.log")
+            log_file = os.path.join(log_dir, log_name)
             file_handler = RotatingFileHandler(
                 log_file, maxBytes=1024 * 1024, backupCount=5  # 1MB
             )
