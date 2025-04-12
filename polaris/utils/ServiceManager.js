@@ -276,6 +276,128 @@ class ServiceManager {
         return Object.values(this.services).every(service => service.healthy);
     }
 
+    async checkResourcesInitialization() {
+        try {
+            // Make sure pybridge is healthy before checking resources
+            if (!this.services.pybridge.healthy) {
+                Logger.error('Cannot check resources: PyBridge service is not healthy');
+                return {
+                    initialized: false,
+                    error: 'PyBridge service is not healthy'
+                };
+            }
+
+            const response = await fetch(this.services.pybridge.url.replace('/health', '/setup/check'));
+            
+            if (!response.ok) {
+                Logger.error(`Failed to check resources: ${response.status} ${response.statusText}`);
+                return {
+                    initialized: false,
+                    error: `Failed to check resources: ${response.status} ${response.statusText}`
+                };
+            }
+            
+            const result = await response.json();
+            Logger.log('Resource initialization check result:', result);
+            return result;
+        } catch (error) {
+            Logger.error('Error checking resources initialization:', error);
+            return {
+                initialized: false,
+                error: error.message
+            };
+        }
+    }
+    
+    async initializeResources() {
+        try {
+            // Make sure pybridge is healthy before initializing resources
+            if (!this.services.pybridge.healthy) {
+                Logger.error('Cannot initialize resources: PyBridge service is not healthy');
+                return {
+                    success: false,
+                    error: 'PyBridge service is not healthy'
+                };
+            }
+
+            this.updateProgress('Starting resource initialization...', 0);
+            
+            // Start the initialization process
+            const response = await fetch(
+                this.services.pybridge.url.replace('/health', '/setup/initialize'),
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                }
+            );
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                Logger.error(`Failed to initialize resources: ${response.status} ${response.statusText} - ${errorText}`);
+                return {
+                    success: false,
+                    error: `Failed to initialize resources: ${response.status} ${response.statusText}`
+                };
+            }
+            
+            // Start polling for progress updates
+            this._pollResourceInitProgress();
+            
+            const result = await response.json();
+            Logger.log('Resource initialization result:', result);
+            return result;
+        } catch (error) {
+            Logger.error('Error initializing resources:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    async _pollResourceInitProgress() {
+        // Poll for progress updates
+        const pollInterval = setInterval(async () => {
+            try {
+                if (!this.services.pybridge.healthy) {
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                const progressResponse = await fetch(
+                    this.services.pybridge.url.replace('/health', '/setup/progress')
+                );
+                
+                if (!progressResponse.ok) {
+                    Logger.error(`Failed to get initialization progress: ${progressResponse.status} ${progressResponse.statusText}`);
+                    clearInterval(pollInterval);
+                    return;
+                }
+                
+                const progressData = await progressResponse.json();
+                
+                // Update progress through the callback
+                this.updateProgress(progressData.message, progressData.progress);
+                
+                // If initialization is complete or errored, stop polling
+                if (progressData.status === 'complete' || progressData.status === 'error') {
+                    clearInterval(pollInterval);
+                    
+                    if (progressData.status === 'error') {
+                        Logger.error(`Resource initialization error: ${progressData.message}`);
+                    } else {
+                        Logger.log('Resource initialization completed successfully');
+                    }
+                }
+            } catch (error) {
+                Logger.error('Error polling initialization progress:', error);
+                clearInterval(pollInterval);
+            }
+        }, 1000);
+    }
 }
 
 module.exports = new ServiceManager();

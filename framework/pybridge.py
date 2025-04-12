@@ -41,6 +41,14 @@ from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils.dependency_checker import DependencyChecker
 
+# Add global variable for setup progress tracking
+setup_progress = {
+    "status": "idle",
+    "progress": 0,
+    "message": "Setup not started",
+    "details": {}
+}
+
 config = ConfigManager()
 config.load_config()
 llm = create_llm_backend(config.get("llm", {}))
@@ -311,6 +319,124 @@ def create_app():
             logger.error(traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @app.route("/setup/check", methods=["GET"])
+    def check_resources():
+        """Check if required resources are available"""
+        try:
+            results = {
+                "status": "success",
+                "initialized": True,
+                "details": {}
+            }
+            
+            # Check NLTK data
+            nltk_status = check_nltk_data()
+            results["details"]["nltk"] = nltk_status
+            
+            # Check Whisper models
+            whisper_status = check_whisper_models()
+            results["details"]["whisper"] = whisper_status
+            
+            # If any resource is not initialized, set the overall status
+            if not nltk_status["initialized"] or not whisper_status["initialized"]:
+                results["initialized"] = False
+            
+            return jsonify(results)
+        except Exception as e:
+            logger.error(f"Error checking resources: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return jsonify({
+                "status": "error", 
+                "message": str(e),
+                "initialized": False
+            }), 500
+
+    @app.route("/setup/initialize", methods=["POST"])
+    def initialize_resources():
+        """Initialize required resources"""
+        global setup_progress
+        setup_progress = {
+            "status": "running",
+            "progress": 0,
+            "message": "Starting initialization...",
+            "details": {}
+        }
+        
+        try:
+            # First check what needs to be initialized
+            check_result = check_resources().json
+            resources_to_init = []
+            
+            for resource, status in check_result.get("details", {}).items():
+                if not status.get("initialized", False):
+                    resources_to_init.append(resource)
+            
+            results = {
+                "status": "success",
+                "details": {}
+            }
+            
+            total_resources = len(resources_to_init)
+            if total_resources == 0:
+                setup_progress["status"] = "complete"
+                setup_progress["progress"] = 100
+                setup_progress["message"] = "All resources already initialized"
+                return jsonify(results)
+                
+            completed_resources = 0
+            
+            # Initialize NLTK if needed
+            if "nltk" in resources_to_init:
+                setup_progress["progress"] = int(completed_resources / total_resources * 100)
+                setup_progress["message"] = "Setting up NLTK data..."
+                
+                nltk_result = setup_nltk()
+                results["details"]["nltk"] = {
+                    "success": nltk_result,
+                    "message": "NLTK setup completed successfully" if nltk_result else "NLTK setup failed"
+                }
+                setup_progress["details"]["nltk"] = results["details"]["nltk"]
+                
+                completed_resources += 1
+                setup_progress["progress"] = int(completed_resources / total_resources * 100)
+            
+            # Initialize Whisper models if needed
+            if "whisper" in resources_to_init:
+                setup_progress["message"] = "Setting up Whisper models..."
+                
+                whisper_result = setup_whisper_models()
+                results["details"]["whisper"] = {
+                    "success": whisper_result["success"],
+                    "message": whisper_result["message"]
+                }
+                setup_progress["details"]["whisper"] = results["details"]["whisper"]
+                
+                completed_resources += 1
+                setup_progress["progress"] = int(completed_resources / total_resources * 100)
+            
+            # Complete the setup
+            setup_progress["status"] = "complete"
+            setup_progress["progress"] = 100
+            setup_progress["message"] = "Initialization completed successfully"
+            
+            return jsonify(results)
+        except Exception as e:
+            logger.error(f"Error initializing resources: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            # Update progress with error
+            setup_progress["status"] = "error"
+            setup_progress["message"] = f"Error during initialization: {str(e)}"
+            
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/setup/progress", methods=["GET"])
+    def get_setup_progress():
+        """Get the current setup progress"""
+        return jsonify(setup_progress)
+
     @app.route("/static/audio/<filename>")
     def serve_audio(filename):
         """Serve audio files and maintain buffer size"""
@@ -322,6 +448,158 @@ def create_app():
         return send_file(
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
+
+    def check_nltk_data():
+        """Check if NLTK data is available"""
+        try:
+            import nltk
+            import os
+            from pathlib import Path
+            
+            # Configure NLTK paths using the config
+            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+            nltk_data_path = str(Path(nltk_data_dir).absolute())
+            
+            # Check if directory exists
+            if not os.path.exists(nltk_data_path):
+                return {
+                    "initialized": False,
+                    "message": "NLTK data directory does not exist"
+                }
+            
+            # Check for required resources
+            resources = ['brown', 'punkt', 'averaged_perceptron_tagger', 'wordnet']
+            missing_resources = []
+            
+            for resource in resources:
+                try:
+                    # Try to find the resource
+                    nltk.data.find(f'{resource}', paths=[nltk_data_path])
+                except LookupError:
+                    missing_resources.append(resource)
+            
+            if missing_resources:
+                return {
+                    "initialized": False,
+                    "message": f"Missing NLTK resources: {', '.join(missing_resources)}",
+                    "missing": missing_resources
+                }
+            else:
+                return {
+                    "initialized": True,
+                    "message": "NLTK data is available"
+                }
+        except Exception as e:
+            logger.error(f"Error checking NLTK data: {e}")
+            return {
+                "initialized": False,
+                "message": f"Error checking NLTK data: {str(e)}"
+            }
+
+    def check_whisper_models():
+        """Check if Whisper models are available"""
+        try:
+            import os
+            
+            # Get model size from config
+            model_size = config.get("stt.modules.faster_whisper.model_size", "small")
+            cache_dir = config.get_subdir("cache.directory", "whisper")
+            
+            # Check if model file exists
+            model_path = os.path.join(cache_dir, "models--guillaumekln--faster-whisper-" + model_size, "snapshots")
+            
+            if os.path.exists(model_path):
+                # Find the snapshot directory
+                snapshot_dirs = [d for d in os.listdir(model_path) if os.path.isdir(os.path.join(model_path, d))]
+                
+                if snapshot_dirs:
+                    # Check if model.bin exists in any snapshot directory
+                    for snapshot in snapshot_dirs:
+                        model_bin = os.path.join(model_path, snapshot, "model.bin")
+                        if os.path.exists(model_bin):
+                            return {
+                                "initialized": True,
+                                "message": f"Whisper {model_size} model is available",
+                                "path": model_bin
+                            }
+            
+            return {
+                "initialized": False,
+                "message": f"Whisper {model_size} model is not available"
+            }
+        except Exception as e:
+            logger.error(f"Error checking Whisper models: {e}")
+            return {
+                "initialized": False,
+                "message": f"Error checking Whisper models: {str(e)}"
+            }
+
+    def setup_nltk():
+        """Download NLTK and TextBlob data to project-local directory"""
+        try:
+            # Import the necessary libraries
+            import nltk
+            from textblob.download_corpora import download_lite
+            import tempfile
+            import os
+            from pathlib import Path
+            
+            # Configure NLTK paths using the config
+            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+            nltk_data_path = str(Path(nltk_data_dir).absolute())
+            os.environ['NLTK_DATA'] = nltk_data_path
+            nltk.data.path = [nltk_data_path]  # Override default paths
+            
+            os.makedirs(nltk_data_path, exist_ok=True)
+            logger.info(f"Downloading NLTK data to: {nltk_data_path}")
+            
+            # Download required resources
+            resources = ['brown', 'punkt', 'averaged_perceptron_tagger', 'wordnet']
+            for resource in resources:
+                nltk.download(resource, download_dir=nltk_data_path, quiet=True)
+                logger.info(f"Downloaded {resource}")
+            
+            # Download TextBlob corpora
+            logger.info("Downloading TextBlob corpora...")
+            old_dir = tempfile.tempdir
+            tempfile.tempdir = nltk_data_path
+            download_lite()
+            tempfile.tempdir = old_dir
+            
+            logger.info("NLTK setup complete!")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting up NLTK: {e}")
+            return False
+
+    def setup_whisper_models():
+        """Download and setup whisper models"""
+        try:
+            # Get model size from config
+            model_size = config.get("stt.modules.faster_whisper.model_size", "small")
+            
+            logger.info(f"Downloading Faster-Whisper {model_size} model...")
+            from huggingface_hub import hf_hub_download
+            
+            cache_dir = config.get_subdir("cache.directory", "whisper")
+            model_path = hf_hub_download(
+                repo_id=f"guillaumekln/faster-whisper-{model_size}",
+                filename="model.bin",
+                cache_dir=cache_dir,
+            )
+            
+            logger.info(f"Faster-Whisper {model_size} model downloaded to {model_path}")
+            return {
+                "success": True,
+                "message": f"Whisper {model_size} model downloaded successfully",
+                "path": model_path
+            }
+        except Exception as e:
+            logger.error(f"Error downloading whisper model: {e}")
+            return {
+                "success": False,
+                "message": f"Error downloading whisper model: {str(e)}"
+            }
 
     @app.route("/framework/chat", methods=["POST"])
     def framework_chat():

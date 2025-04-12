@@ -192,6 +192,26 @@ async function appInitialization() {
         // Services are ready, initialize the rest of the app
         splashWindow.updateProgress('Initializing application...', 80);
 
+        // Check if required resources are available
+        splashWindow.updateProgress('Checking required resources...', 85);
+        const resourceCheck = await ServiceManager.checkResourcesInitialization();
+        
+        // If resources are not initialized, initialize them
+        if (resourceCheck && !resourceCheck.initialized) {
+            Logger.info('Some resources need initialization, starting download process...');
+            splashWindow.updateProgress('Downloading required resources...', 87);
+            
+            // Start the initialization process
+            const initResult = await ServiceManager.initializeResources();
+            
+            if (!initResult.success) {
+                Logger.error('Failed to initialize resources:', initResult.error);
+                // Continue anyway, as this is not critical for the app to function
+            }
+        } else {
+            Logger.info('All required resources are already initialized');
+        }
+
         // Update the provider submenu
         await updateProviderSubmenu();
 
