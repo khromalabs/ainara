@@ -139,8 +139,13 @@ async function appInitialization() {
                 Logger.info('Some resources need initialization, starting download process...');
                 // Start the initialization process
                 const initResult = await ServiceManager.initializeResources();
-                if (!initResult.success) {
+                if (!('status' in initResult) || initResult.status != "success" ) {
                     Logger.error('Failed to initialize resources:', initResult.error);
+                    dialog.showErrorBox(
+                        'Service Error',
+                        'Failed to download required resources.'
+                    );
+                    app.exit(1);
                 }
             } else {
                 Logger.info('All required resources are already initialized');
@@ -218,9 +223,14 @@ async function appInitialization() {
             // Start the initialization process
             const initResult = await ServiceManager.initializeResources();
 
-            if (!initResult.success) {
+            if (!('status' in initResult) || initResult.status != "success" ) {
+                splashWindow.close();
                 Logger.error('Failed to initialize resources:', initResult.error);
-                // Continue anyway, as this is not critical for the app to function
+                dialog.showErrorBox(
+                    'Service Error',
+                    'Failed to download required resources.'
+                );
+                app.exit(1);
             }
         } else {
             Logger.info('All required resources are already initialized');
@@ -354,7 +364,7 @@ function truncateMiddle(str, maxLength) {
 async function updateProviderSubmenu() {
     try {
 
-        Logger.info('UPDATING PROVIDER SUBMENU');
+        // Logger.info('UPDATING PROVIDER SUBMENU');
 
         // Get the current providers
         const { providers, selected_provider } = await ConfigHelper.getLLMProviders();

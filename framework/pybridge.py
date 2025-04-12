@@ -493,7 +493,8 @@ def create_app():
             # Check for required resources
             resources = [
                 # "corpora/brown",
-                "tokenizers/punkt",
+                # "tokenizers/punkt",
+                "tokenizers/punkt_tab",
                 # "taggers/averaged_perceptron_tagger",
                 # "corpora/wordnet",
             ]
@@ -606,7 +607,7 @@ def create_app():
             # Download required resources
             resources = [
                 # "brown",
-                "punkt",
+                "punkt_tab",
                 # "averaged_perceptron_tagger",
                 # "wordnet",
             ]

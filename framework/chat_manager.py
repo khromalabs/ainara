@@ -246,6 +246,12 @@ class ChatManager:
         if not text.strip():
             return []
 
+        # nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+        # logger.info("-------------------------------------------")
+        # logger.info(f"env NLTK_DATA={os.environ['NLTK_DATA']}")
+        # logger.info(f"nltk.data.path={nltk.data.path}")
+        # logger.info(f"NLTK in {nltk_data_dir} processing text: `{text}`")
+
         # Function to check if paragraph contains special patterns that should skip NLTK processing
         def contains_special_patterns(text):
             # # Check for markdown URLs: [text](url)
@@ -299,9 +305,19 @@ class ChatManager:
                         # logger.info(pprint.pformat(paragraph))
                         # logger.info("NLTK END")
                         sentences.extend(paragraph_sentences)
-                    except (LookupError, ImportError):
+                    except (LookupError, ImportError) as e:
+                        # raise RuntimeError(
+                        #     "Failed to split sentences via NLTK"
+                        # )
+                        logger.error(f"NLTK tokenization error: {e}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error details: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        logger.error(f"NLTK data path during error: {nltk.data.path}")
+                        logger.error(f"Text that caused the error: '{sentence}'")
                         raise RuntimeError(
-                            "Failed to split sentences via NLTK"
+                            f"Failed to split sentences via NLTK: {str(e)}"
                         )
             last_end = end_pos
 
@@ -741,7 +757,7 @@ class ChatManager:
                 os.environ["NLTK_DATA"] = nltk_data_dir
                 nltk.data.path = [nltk_data_dir]  # Override default paths
                 # Test if punkt tokenizer is available
-                nltk.data.find("tokenizers/punkt")
+                nltk.data.find("tokenizers/punkt_tab")
                 logger.info("NLTK sentence tokenization initialized successfully")
                 self.nltk_initialized = True
                 return None
