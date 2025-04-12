@@ -5,7 +5,7 @@ import platform
 import shutil
 import sys
 from pathlib import Path
-
+# import traceback
 import yaml
 
 
@@ -114,26 +114,33 @@ class ConfigManager:
                     if "logging" not in self.config:
                         self.config["logging"] = {}
                     if "directory" not in self.config["logging"]:
-                        self.config["logging"]["directory"] = str(self._get_log_directory())
+                        self.config["logging"]["directory"] = str(
+                            self._get_log_directory()
+                        )
 
                     # Set up cache directory in config
                     if "cache" not in self.config:
                         self.config["cache"] = {}
                     if "directory" not in self.config["cache"]:
-                        self.config["cache"]["directory"] = str(self._get_cache_directory())
+                        self.config["cache"]["directory"] = str(
+                            self._get_cache_directory()
+                        )
 
                     # Set up data directory in config
                     if "data" not in self.config:
                         self.config["data"] = {}
                     if "directory" not in self.config["data"]:
-                        self.config["data"]["directory"] = str(self._get_data_directory())
+                        self.config["data"]["directory"] = str(
+                            self._get_data_directory()
+                        )
 
                     return
                 except Exception as e:
                     print(
                         f"Error loading configuration from {config_path}: {e}"
                     )
-                    # Continue to next path
+                    # trace = traceback.print_exc()
+                    # print(f"Traceback: {trace}")
 
         # If we get here, no config file was found - create one
         # Use the first path from the OS-specific list (skip env var path)
@@ -150,7 +157,9 @@ class ConfigManager:
         if "logging" not in self.config:
             self.config["logging"] = {}
         if "directory" not in self.config["logging"]:
-            self.config["logging"]["directory"] = str(self._get_log_directory())
+            self.config["logging"]["directory"] = str(
+                self._get_log_directory()
+            )
 
     def get(self, key_path: str, default=None):
         """Get a config value using dot notation"""
@@ -323,18 +332,26 @@ class ConfigManager:
         system = platform.system()
         if system == "Windows":
             # On Windows, use %LOCALAPPDATA%\app_name
-            return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~/AppData/Local")), app_name)
+            return os.path.join(
+                os.environ.get(
+                    "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
+                ),
+                app_name,
+            )
         elif system == "Darwin":  # macOS
             # On macOS, use ~/Library/Application Support/app_name
-            return os.path.join(os.path.expanduser("~/Library/Application Support"), app_name)
+            return os.path.join(
+                os.path.expanduser("~/Library/Application Support"), str(app_name)
+            )
         else:  # Linux and others
             # On Linux, use ~/.local/state/app_name (for state data)
-            return os.path.join(os.path.expanduser("~/.local/state"), app_name)
+            return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
 
     def get_subdir(self, directory, subdirectory):
-        full_path = os.path.join(self.get(directory), subdirectory)
+
+        full_path = os.path.join(str(self.get(directory)), str(subdirectory))
         os.makedirs(full_path, exist_ok=True)
-        return full_path
+        return str(full_path)
 
     def validate_config(self, config_data):
         """Basic validation of configuration data"""

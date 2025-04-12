@@ -754,7 +754,7 @@ if __name__ == "__main__":
     args = parse_args()
     # Set up logging first, before any logger calls
     logging_manager.setup(log_level=args.log_level, log_name="pybridge.log")
-    logging_manager.addFilter(["pybridge", "chat_completion"])
+    # logging_manager.addFilter(["pybridge", "chat_completion"])
     app = create_app()
 
     # Add signal handler for graceful shutdown
