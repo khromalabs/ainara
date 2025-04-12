@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 # logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
 
+config_manager = ConfigManager()
 
 def get_optimal_whisper_config():
     """
@@ -208,12 +209,16 @@ class FasterWhisperSTT(STTBackend):
 
                 logger.info(f"compute_type: {self.compute_type}")
 
+                # Get the cache directory for whisper
+                cache_dir = str(config_manager.get_cache_directory("whisper"))
+                logger.info(f"Using cache directory: {cache_dir}")
+
                 # Prepare kwargs based on device
                 model_kwargs = {
                     "model_size_or_path": self.model_size,
                     "device": self.device,
                     "compute_type": self.compute_type,
-                    "download_root": os.path.expanduser("~/.cache/whisper"),
+                    "download_root": cache_dir,
                 }
 
                 # Only add cpu_threads for CPU device
@@ -237,11 +242,14 @@ class FasterWhisperSTT(STTBackend):
                         self.compute_type = "int8"
                         logger.info(f"Retrying with device={self.device}, compute_type={self.compute_type}")
 
+                        # Get the cache directory for whisper
+                        cache_dir = str(config_manager.get_cache_directory("whisper"))
+
                         self.model = WhisperModel(
                             self.model_size,
                             device="cpu",
                             compute_type="int8",
-                            download_root=os.path.expanduser("~/.cache/whisper"),
+                            download_root=cache_dir,
                             cpu_threads=self.num_workers
                         )
                         logger.info("Successfully loaded model with CPU fallback")

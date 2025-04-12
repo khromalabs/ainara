@@ -257,6 +257,62 @@ class ConfigManager:
         # Ensure the directory exists
         os.makedirs(log_dir, exist_ok=True)
         return log_dir
+        
+    def get_cache_directory(self, subdirectory=None):
+        """Get cache directory based on platform defaults
+        
+        Args:
+            subdirectory: Optional subdirectory within the cache directory
+            
+        Returns:
+            Path object for the cache directory
+        """
+        # First check environment variable
+        env_cache_path = os.environ.get("AINARA_CACHE")
+        if env_cache_path:
+            cache_dir = Path(os.path.expanduser(env_cache_path))
+            if subdirectory:
+                cache_dir = cache_dir / subdirectory
+            os.makedirs(cache_dir, exist_ok=True)
+            return cache_dir
+        
+        # Check if user has specified a cache directory in config
+        if "cache" in self.config and "directory" in self.config["cache"]:
+            user_cache_dir = self.config["cache"]["directory"]
+            cache_dir = Path(os.path.expanduser(user_cache_dir))
+            if subdirectory:
+                cache_dir = cache_dir / subdirectory
+            os.makedirs(cache_dir, exist_ok=True)
+            return cache_dir
+        
+        # Determine OS-specific cache locations
+        system = platform.system()
+        
+        if system == "Linux":
+            # XDG standard for Linux
+            cache_home = os.environ.get(
+                "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
+            )
+            cache_dir = Path(cache_home) / "ainara"
+        elif system == "Darwin":  # macOS
+            cache_dir = Path(os.path.expanduser("~/Library/Caches/Ainara"))
+        elif system == "Windows":
+            # Windows standard locations
+            localappdata = os.environ.get(
+                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
+            )
+            cache_dir = Path(localappdata) / "Ainara/Cache"
+        else:
+            # Fallback for other systems
+            cache_dir = Path(os.path.expanduser("~/.ainara/cache"))
+        
+        # Add subdirectory if specified
+        if subdirectory:
+            cache_dir = cache_dir / subdirectory
+        
+        # Ensure the directory exists
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
 
     def validate_config(self, config_data):
         """Basic validation of configuration data"""

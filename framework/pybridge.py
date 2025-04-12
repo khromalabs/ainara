@@ -154,7 +154,7 @@ def create_app():
             )
             from huggingface_hub import hf_hub_download
 
-            cache_dir = os.path.expanduser("~/.cache/whisper")
+            cache_dir = str(config.get_cache_directory("whisper"))
             model_path = hf_hub_download(
                 repo_id=f"guillaumekln/faster-whisper-{model_size}",
                 filename="model.bin",
