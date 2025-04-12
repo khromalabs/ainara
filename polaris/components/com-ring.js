@@ -394,9 +394,8 @@ class ComRing extends BaseComponent {
             await this.processAIResponse(message);
             this.circle.classList.add('faded');
         } catch (error) {
-            console.error('LLM Processing Error:', error);
+            await this.showError('LLM Processing Error:' + error.message)
             ipcRenderer.send('llm-error', error.message);
-            this.circle.classList.add('error');
         }
         this.state.isAwaitingResponse = false;
         this.circle.classList.remove('awaiting');
@@ -665,7 +664,7 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
-            this.showError(event.content.message + " " + error);
+            await this.showError(event.content.message + " " + error);
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
@@ -673,15 +672,21 @@ class ComRing extends BaseComponent {
         }
     }
 
-    showError(error) {
+    async showError(error) {
         console.error('Error:', error);
-        this.circle?.classList.add('error');
+        // this.circle?.classList.add('error');
         ipcRenderer.send('chat-error', error.toString());
+
+        // Show provider change notification
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        sttStatus.innerHTML = "Error: " + error.toString();
+        sttStatus.classList.add('active3');
 
         // Remove error state after a delay
         setTimeout(() => {
-            this.circle.classList.remove('error');
-        }, 3000);
+            sttStatus.classList.remove('active3');
+            sttStatus.textContent = '';
+        }, 5000);
     }
 
 
@@ -1123,7 +1128,7 @@ class ComRing extends BaseComponent {
 
             case 'error':
                 if (event.type === 'signal') {
-                    this.showError(event.content.message);
+                    await this.showError(event.content.message);
                     ipcRenderer.send('chat-error', event.content.message);
                 }
                 break;
