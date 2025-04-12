@@ -16,7 +16,6 @@ from pygame import USEREVENT, mixer
 
 from ..config import config
 from .base import TTSBackend
-from ..utils.paths import get_user_data_dir
 
 
 class PiperTTS(TTSBackend):
@@ -199,7 +198,7 @@ class PiperTTS(TTSBackend):
             return str(bundled_model_dir)
 
         # Use standard XDG data directory
-        user_data_dir = get_user_data_dir("ainara")
+        user_data_dir = config.get("data.directory")
         model_dir = os.path.join(user_data_dir, "tts", "models")
         os.makedirs(model_dir, exist_ok=True)
         self.logger.info(f"Using standard model directory: {model_dir}")

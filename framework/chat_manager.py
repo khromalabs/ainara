@@ -83,19 +83,7 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
-
-        # Initialize NLTK for sentence tokenization
-        try:
-            # Use the configured NLTK data path
-            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
-            os.environ["NLTK_DATA"] = nltk_data_dir
-            nltk.data.path = [nltk_data_dir]  # Override default paths
-            # Test if punkt tokenizer is available
-            nltk.data.find("tokenizers/punkt")
-            logger.info("NLTK sentence tokenization initialized successfully")
-        except (ImportError, LookupError) as e:
-            logger.error(f"NLTK sentence tokenization not available: {e}")
-            raise RuntimeError("Failed to import NLTK sentence tokenization")
+        self.nltk_initialized = False
 
         # # Add a reentrant lock for thread safety
         # self.chat_lock = threading.RLock()
@@ -744,6 +732,24 @@ class ChatManager:
 
         self.chat_history = new_history
 
+    def _check_nltk(self):
+        # Initialize NLTK for sentence tokenization
+        try:
+            if not self.nltk_initialized:
+                # Use the configured NLTK data path
+                nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+                os.environ["NLTK_DATA"] = nltk_data_dir
+                nltk.data.path = [nltk_data_dir]  # Override default paths
+                # Test if punkt tokenizer is available
+                nltk.data.find("tokenizers/punkt")
+                logger.info("NLTK sentence tokenization initialized successfully")
+                self.nltk_initialized = True
+                return None
+        except (ImportError, LookupError) as e:
+            logger.error(f"NLTK sentence tokenization not available: {e}")
+            # raise RuntimeError("Failed to import NLTK sentence tokenization")
+            return "NLTK sentence tokenization not available"
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -759,6 +765,11 @@ class ChatManager:
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
             stream = "cli" if stream else None
+
+        msg_error = self._check_nltk()
+        if msg_error:
+            yield ndjson("signal", "error", {"message": msg_error})
+            return
 
         # Start loading animation for CLI mode or send start event for JSON mode
         loading = None

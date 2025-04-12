@@ -122,6 +122,11 @@ body {
     animation: fadeInOut 5s infinite;
 }
 
+.stt-status.active3 {
+    animation: fadeInOut 5s infinite;
+    color: rgba(255, 0, 0, 1);
+}
+
 @keyframes fadeInOut {
     0% {
         opacity: 0;

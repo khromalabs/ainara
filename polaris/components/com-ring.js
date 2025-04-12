@@ -680,12 +680,14 @@ class ComRing extends BaseComponent {
         // Create error queue if it doesn't exist
         if (!this.errorQueue) {
             this.errorQueue = [];
+            this.errorQueueIndex = 0;
             this.isShowingError = false;
         }
 
         // Add error to queue
-        this.errorQueue.push(error.toString());
-        
+        this.errorQueueIndex++;
+        this.errorQueue.push("Error #" + this.errorQueueIndex + ": " + error.toString());
+
         // Start processing the queue if not already doing so
         if (!this.isShowingError) {
             this.processErrorQueue();
@@ -700,13 +702,13 @@ class ComRing extends BaseComponent {
 
         // Set flag to indicate we're showing an error
         this.isShowingError = true;
-        
+
         // Get the next error from the queue
         const errorMessage = this.errorQueue.shift();
-        
+
         // Show the error
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
-        sttStatus.innerHTML = "Error: " + errorMessage;
+        sttStatus.innerHTML = errorMessage;
         sttStatus.classList.add('active3');
 
         // Wait for the error to be displayed for a set time
@@ -715,7 +717,7 @@ class ComRing extends BaseComponent {
                 sttStatus.classList.remove('active3');
                 sttStatus.textContent = '';
                 this.isShowingError = false;
-                
+
                 // Process next error in queue if any
                 setTimeout(() => this.processErrorQueue(), 100);
                 resolve();
