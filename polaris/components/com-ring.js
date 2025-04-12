@@ -677,16 +677,50 @@ class ComRing extends BaseComponent {
         // this.circle?.classList.add('error');
         ipcRenderer.send('chat-error', error.toString());
 
-        // Show provider change notification
+        // Create error queue if it doesn't exist
+        if (!this.errorQueue) {
+            this.errorQueue = [];
+            this.isShowingError = false;
+        }
+
+        // Add error to queue
+        this.errorQueue.push(error.toString());
+        
+        // Start processing the queue if not already doing so
+        if (!this.isShowingError) {
+            this.processErrorQueue();
+        }
+    }
+
+    async processErrorQueue() {
+        // If queue is empty or already showing an error, return
+        if (this.errorQueue.length === 0 || this.isShowingError) {
+            return;
+        }
+
+        // Set flag to indicate we're showing an error
+        this.isShowingError = true;
+        
+        // Get the next error from the queue
+        const errorMessage = this.errorQueue.shift();
+        
+        // Show the error
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
-        sttStatus.innerHTML = "Error: " + error.toString();
+        sttStatus.innerHTML = "Error: " + errorMessage;
         sttStatus.classList.add('active3');
 
-        // Remove error state after a delay
-        setTimeout(() => {
-            sttStatus.classList.remove('active3');
-            sttStatus.textContent = '';
-        }, 5000);
+        // Wait for the error to be displayed for a set time
+        await new Promise(resolve => {
+            setTimeout(() => {
+                sttStatus.classList.remove('active3');
+                sttStatus.textContent = '';
+                this.isShowingError = false;
+                
+                // Process next error in queue if any
+                setTimeout(() => this.processErrorQueue(), 100);
+                resolve();
+            }, 5000);
+        });
     }
 
 
