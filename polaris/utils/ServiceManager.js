@@ -29,6 +29,7 @@ class ServiceManager {
         }
 
         // Define services with their executables and health endpoints
+        // TODO Don't use hardcoded URL use config URL instead
         this.services = {
             orakle: {
                 process: null,
@@ -288,7 +289,7 @@ class ServiceManager {
             }
 
             const response = await fetch(this.services.pybridge.url.replace('/health', '/setup/check'));
-            
+
             if (!response.ok) {
                 Logger.error(`Failed to check resources: ${response.status} ${response.statusText}`);
                 return {
@@ -296,7 +297,7 @@ class ServiceManager {
                     error: `Failed to check resources: ${response.status} ${response.statusText}`
                 };
             }
-            
+
             const result = await response.json();
             Logger.log('Resource initialization check result:', result);
             return result;
@@ -308,7 +309,7 @@ class ServiceManager {
             };
         }
     }
-    
+
     async initializeResources() {
         try {
             // Make sure pybridge is healthy before initializing resources
@@ -321,7 +322,7 @@ class ServiceManager {
             }
 
             this.updateProgress('Starting resource initialization...', 0);
-            
+
             // Start the initialization process
             const response = await fetch(
                 this.services.pybridge.url.replace('/health', '/setup/initialize'),
@@ -333,7 +334,7 @@ class ServiceManager {
                     body: JSON.stringify({})
                 }
             );
-            
+
             if (!response.ok) {
                 const errorText = await response.text();
                 Logger.error(`Failed to initialize resources: ${response.status} ${response.statusText} - ${errorText}`);
@@ -342,10 +343,10 @@ class ServiceManager {
                     error: `Failed to initialize resources: ${response.status} ${response.statusText}`
                 };
             }
-            
+
             // Start polling for progress updates
             this._pollResourceInitProgress();
-            
+
             const result = await response.json();
             Logger.log('Resource initialization result:', result);
             return result;
@@ -370,22 +371,22 @@ class ServiceManager {
                 const progressResponse = await fetch(
                     this.services.pybridge.url.replace('/health', '/setup/progress')
                 );
-                
+
                 if (!progressResponse.ok) {
                     Logger.error(`Failed to get initialization progress: ${progressResponse.status} ${progressResponse.statusText}`);
                     clearInterval(pollInterval);
                     return;
                 }
-                
+
                 const progressData = await progressResponse.json();
-                
+
                 // Update progress through the callback
                 this.updateProgress(progressData.message, progressData.progress);
-                
+
                 // If initialization is complete or errored, stop polling
                 if (progressData.status === 'complete' || progressData.status === 'error') {
                     clearInterval(pollInterval);
-                    
+
                     if (progressData.status === 'error') {
                         Logger.error(`Resource initialization error: ${progressData.message}`);
                     } else {

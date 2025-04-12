@@ -348,7 +348,7 @@ class ConfigManager:
             return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
 
     def get_subdir(self, directory, subdirectory):
-
+        """Returns a subdirectory ensuring it exists"""
         full_path = os.path.join(str(self.get(directory)), str(subdirectory))
         os.makedirs(full_path, exist_ok=True)
         return str(full_path)

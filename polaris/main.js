@@ -129,9 +129,22 @@ async function appInitialization() {
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
 
-        // If services are being managed externally finish the setup
+        // If services are being managed externally alternate start without splash
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
+            // Alternate application start for dev purposes
+            const resourceCheck = await ServiceManager.checkResourcesInitialization();
+            // If resources are not initialized, initialize them
+            if (resourceCheck && !resourceCheck.initialized) {
+                Logger.info('Some resources need initialization, starting download process...');
+                // Start the initialization process
+                const initResult = await ServiceManager.initializeResources();
+                if (!initResult.success) {
+                    Logger.error('Failed to initialize resources:', initResult.error);
+                }
+            } else {
+                Logger.info('All required resources are already initialized');
+            }
             // Check if this is the first run
             !debugDisableWizard && isFirstRun() ?
                 showSetupWizard()
@@ -195,15 +208,15 @@ async function appInitialization() {
         // Check if required resources are available
         splashWindow.updateProgress('Checking required resources...', 85);
         const resourceCheck = await ServiceManager.checkResourcesInitialization();
-        
+
         // If resources are not initialized, initialize them
         if (resourceCheck && !resourceCheck.initialized) {
             Logger.info('Some resources need initialization, starting download process...');
             splashWindow.updateProgress('Downloading required resources...', 87);
-            
+
             // Start the initialization process
             const initResult = await ServiceManager.initializeResources();
-            
+
             if (!initResult.success) {
                 Logger.error('Failed to initialize resources:', initResult.error);
                 // Continue anyway, as this is not critical for the app to function
