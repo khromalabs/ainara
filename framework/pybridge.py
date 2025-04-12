@@ -40,7 +40,6 @@ from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils.dependency_checker import DependencyChecker
-from ainara.framework.utils.paths import get_user_data_dir
 
 config = ConfigManager()
 config.load_config()
@@ -125,6 +124,8 @@ def parse_args():
     )
     return parser.parse_args()
 
+# def setup_app()
+
 
 def create_app():
 
@@ -186,8 +187,8 @@ def create_app():
         raise
 
     # Use the appropriate user data directory
-    user_data_dir = get_user_data_dir()
-    static_dir = os.path.join(user_data_dir, 'static', 'pybridge')
+    user_data_dir = config.get("data.directory")
+    static_dir = os.path.join(user_data_dir, 'pybridge', 'static')
     os.makedirs(static_dir, exist_ok=True)
     app.static_folder = static_dir
     cleanup_audio_directory(app.static_folder)
