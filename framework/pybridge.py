@@ -103,10 +103,6 @@ def cleanup_audio_buffer(directory, max_size_mb):
 app = Flask(__name__)
 CORS(app)
 
-# Set up logging first, before any logger calls
-logging_manager.setup(log_dir="/tmp", log_level="INFO")
-logging_manager.addFilter(["pybridge", "chat_completion"])
-
 
 # Add at module level
 startup_time = datetime.now(timezone.utc)
@@ -757,6 +753,9 @@ def create_app():
 
 if __name__ == "__main__":
     args = parse_args()
+    # Set up logging first, before any logger calls
+    logging_manager.setup(log_level=args.log_level, log_name="pybridge.log")
+    logging_manager.addFilter(["pybridge", "chat_completion"])
     app = create_app()
 
     # Add signal handler for graceful shutdown

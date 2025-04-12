@@ -78,20 +78,20 @@ memory:
 # logging:
 #   # Enable or disable file logging (console logging is always enabled)
 #   file_enabled: true
-#   
+#
 #   # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 #   level: "INFO"
-#   
+#
 #   # Custom log directory (leave empty for platform-specific default)
 #   # Examples:
 #   # - Windows: %LOCALAPPDATA%\Ainara\logs
 #   # - macOS: ~/Library/Logs/Ainara
 #   # - Linux: ~/.local/share/ainara/logs
 #   directory: ""
-#   
+#
 #   # Maximum log file size in MB before rotation
 #   max_size_mb: 1
-#   
+#
 #   # Number of backup log files to keep
 #   backup_count: 5
 

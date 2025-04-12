@@ -109,13 +109,13 @@ class ConfigManager:
                         self.config = yaml.safe_load(f) or {}
                     self.config_file_path = config_path
                     print(f"Configuration loaded from: {config_path}")
-                    
+
                     # Set up log directory in config
                     if "logging" not in self.config:
                         self.config["logging"] = {}
                     if "directory" not in self.config["logging"]:
                         self.config["logging"]["directory"] = str(self._get_log_directory())
-                    
+
                     return
                 except Exception as e:
                     print(
@@ -133,7 +133,7 @@ class ConfigManager:
         # Now load the newly created config
         with open(self.config_file_path) as f:
             self.config = yaml.safe_load(f) or {}
-            
+
         # Set up log directory in config
         if "logging" not in self.config:
             self.config["logging"] = {}
@@ -235,7 +235,7 @@ class ConfigManager:
 
         # Determine OS-specific log locations
         system = platform.system()
-        
+
         if system == "Linux":
             # XDG standard for Linux
             data_home = os.environ.get(
@@ -253,7 +253,7 @@ class ConfigManager:
         else:
             # Fallback for other systems
             log_dir = Path(os.path.expanduser("~/.ainara/logs"))
-        
+
         # Ensure the directory exists
         os.makedirs(log_dir, exist_ok=True)
         return log_dir
