@@ -145,6 +145,7 @@ async function appInitialization() {
             } else {
                 Logger.info('All required resources are already initialized');
             }
+            await updateProviderSubmenu();
             // Check if this is the first run
             !debugDisableWizard && isFirstRun() ?
                 showSetupWizard()

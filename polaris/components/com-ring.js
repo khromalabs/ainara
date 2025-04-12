@@ -391,10 +391,12 @@ class ComRing extends BaseComponent {
             ipcRenderer.send('transcription-received', message);
         }
         try {
-            await this.processAIResponse(message);
-            this.circle.classList.add('faded');
+            if (message) {
+                await this.processAIResponse(message);
+                this.circle.classList.add('faded');
+            }
         } catch (error) {
-            await this.showError('LLM Processing Error:' + error.message)
+            await this.showError('LLM Processing Error in message "' + message + '": ' + error.message)
             ipcRenderer.send('llm-error', error.message);
         }
         this.state.isAwaitingResponse = false;
@@ -668,12 +670,18 @@ class ComRing extends BaseComponent {
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
-            this.window.focus();
+            // this.window.focus();
         }
     }
 
     async showError(error) {
-        console.error('Error:', error);
+        let callstack = null;
+        try {
+            throw new Error('Stack Trace');
+        } catch (e) {
+            callstack = e.stack;
+        }
+        console.error('Error:', error, callstack);
         // this.circle?.classList.add('error');
         ipcRenderer.send('chat-error', error.toString());
 
