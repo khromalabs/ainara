@@ -26,7 +26,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Generator, List, Literal, Optional, Union
 
 import nltk
@@ -88,9 +87,7 @@ class ChatManager:
         # Initialize NLTK for sentence tokenization
         try:
             # Use the configured NLTK data path
-            nltk_data_dir = os.path.join(
-                str(Path.home()), ".cache", "ainara", "nltk_data"
-            )
+            nltk_data_dir = str(config.get_cache_directory("nltk"))
             os.environ["NLTK_DATA"] = nltk_data_dir
             nltk.data.path = [nltk_data_dir]  # Override default paths
             # Test if punkt tokenizer is available
@@ -321,65 +318,6 @@ class ChatManager:
             last_end = end_pos
 
         return sentences
-
-    # def _extract_complete_sentences(self, text: str) -> List[str]:
-    #     """Extract complete sentences from a text buffer.
-    #
-    #     Returns a list of complete sentences, leaving incomplete sentences in the buffer.
-    #     """
-    #     if not text.strip():
-    #         return []
-    #
-    #     # Function to check if paragraph contains special patterns that should skip NLTK processing
-    #     def contains_special_patterns(text):
-    #         # Check for markdown URLs: [text](url)
-    #         if re.search(r'\[([^\]]+)\]\(([^)]+)\)', text):
-    #             return True
-    #         # Check for regular URLs: http://example.com
-    #         if re.search(r'https?://[^\s)>]+', text):
-    #             return True
-    #         # Check for inline code: `code`
-    #         if re.search(r'`([^`]+)`', text):
-    #             return True
-    #         # Check for code blocks: ```code```
-    #         if re.search(r'```[^`]*```', text):
-    #             return True
-    #         # Check for bullet points or numbered lists
-    #         if re.search(r'^\s*[\*\-\d]+\.?\s+', text, re.MULTILINE):
-    #             return True
-    #         # Check for numbered lists
-    #         # if re.search(r'^\s*\d+\.\s+.+', text, re.MULTILINE):
-    #         if re.search(r'^\s*(\d+\.\s+|\*\s+|-\s+|\+\s+).+', text, re.MULTILINE):
-    #             return True
-    #         return False
-    #
-    #     # Split text by newlines
-    #     logger.info("TEXT SPLIT:")
-    #     logger.info(pprint.pformat(text))
-    #     paragraphs = text.split("\n")
-    #     sentences = []
-    #
-    #     for paragraph in paragraphs:
-    #         paragraph = paragraph.strip()
-    #         if paragraph:
-    #             sentences.append(paragraph)
-    #         # Only process non-empty paragraphs
-    #         # if paragraph and not contains_special_patterns(paragraph):
-    #         #     try:
-    #         #         # Use NLTK to split the paragraph into sentences
-    #         #         logger.info("NLTK PRE:")
-    #         #         logger.info(pprint.pformat(paragraph))
-    #         #         paragraph_sentences = nltk.sent_tokenize(paragraph)
-    #         #         logger.info("NLTK POST:")
-    #         #         logger.info(pprint.pformat(paragraph))
-    #         #         logger.info("NLTK END")
-    #         #         sentences.extend(paragraph_sentences)
-    #         #     except (LookupError, ImportError):
-    #         #         raise RuntimeError("Failed to split sentences via NLTK")
-    #         # elif paragraph:  # If it has special patterns but isn't empty
-    #         #     sentences.append(paragraph)
-    #
-    #     return sentences
 
     def _process_streaming_sentence(
         self,

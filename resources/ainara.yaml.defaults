@@ -74,42 +74,6 @@ memory:
   embedding_model: "sentence-transformers/all-mpnet-base-v2"
   vector_db_enabled: true
 
-# Logging configuration (uncomment to customize)
-# logging:
-#   # Enable or disable file logging (console logging is always enabled)
-#   file_enabled: true
-#
-#   # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-#   level: "INFO"
-#
-#   # Custom log directory (leave empty for platform-specific default)
-#   # Examples:
-#   # - Windows: %LOCALAPPDATA%\Ainara\logs
-#   # - macOS: ~/Library/Logs/Ainara
-#   # - Linux: ~/.local/share/ainara/logs
-#   directory: ""
-#
-#   # Maximum log file size in MB before rotation
-#   max_size_mb: 1
-#
-#   # Number of backup log files to keep
-#   backup_count: 5
-
-# Cache configuration (uncomment to customize)
-# cache:
-#   # Custom cache directory (leave empty for platform-specific default)
-#   # Examples:
-#   # - Windows: %LOCALAPPDATA%\Ainara\Cache
-#   # - macOS: ~/Library/Caches/Ainara
-#   # - Linux: ~/.cache/ainara
-#   directory: ""
-#
-#   # Maximum cache size in MB (0 for unlimited)
-#   max_size_mb: 1000
-#
-#   # Cache retention period in days (0 for no automatic cleanup)
-#   retention_days: 30
-
 # APIs
 apis:
   crypto:
@@ -142,3 +106,34 @@ apis:
   weather:
     openweathermap_api_key: ""
   session_id: "default_session"
+
+# Logging configuration (uncomment to customize)
+# logging:
+#   # Enable or disable file logging (console logging is always enabled)
+#   file_enabled: true
+#   # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+#   level: "INFO"
+#   # Custom log directory (leave empty for platform-specific default)
+#   # Examples:
+#   # - Windows: %LOCALAPPDATA%\Ainara\logs
+#   # - macOS: ~/Library/Logs/Ainara
+#   # - Linux: ~/.local/share/ainara/logs
+#   directory: ""
+#   # Maximum log file size in MB before rotation
+#   max_size_mb: 1
+#   # Number of backup log files to keep
+#   backup_count: 5
+
+# Cache configuration (uncomment to customize)
+# cache:
+#   # Custom cache directory (leave empty for platform-specific default)
+#   # Examples:
+#   # - Windows: %LOCALAPPDATA%\Ainara\Cache
+#   # - macOS: ~/Library/Caches/Ainara
+#   # - Linux: ~/.cache/ainara
+#   directory: ""
+#   # Maximum cache size in MB (0 for unlimited)
+#   max_size_mb: 1000
+#   # Cache retention period in days (0 for no automatic cleanup)
+#   retention_days: 30
+
