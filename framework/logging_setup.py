@@ -24,6 +24,7 @@ from ainara.framework.config import config
 
 class LoggingManager:
     """Manages application-wide logging configuration"""
+
     _instance = None
     _logger = None
     _filters = set()  # Add this to track filters
@@ -57,7 +58,13 @@ class LoggingManager:
             self._logger.handlers = handlers
             self._logger.setLevel(level)
 
-    def setup(self, log_dir=None, log_level="INFO", log_filter=None, log_name="ainara.log"):
+    def setup(
+        self,
+        log_dir=None,
+        log_level="INFO",
+        log_filter=None,
+        log_name="ainara.log",
+    ):
         """Configure logging to console and optionally to rotating file"""
 
         if log_filter:
@@ -88,7 +95,9 @@ class LoggingManager:
         if log_dir:
             log_file = os.path.join(log_dir, log_name)
             file_handler = RotatingFileHandler(
-                log_file, maxBytes=1024 * 1024, backupCount=5  # 1MB
+                log_file,
+                maxBytes=config.get("logging.max_size_mb", 1024 * 1024),
+                backupCount=config.get("logging.backup_count", 5),
             )
             file_handler.setLevel(log_level)
             file_formatter = logging.Formatter(

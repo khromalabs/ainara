@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 config_manager = ConfigManager()
 
+
 def get_optimal_whisper_config():
     """
     Determine optimal faster-whisper configuration based on available hardware.
@@ -210,7 +211,11 @@ class FasterWhisperSTT(STTBackend):
                 logger.info(f"compute_type: {self.compute_type}")
 
                 # Get the cache directory for whisper
-                cache_dir = str(config_manager.get_cache_directory("whisper"))
+                cache_dir = config_manager.get_subdir(
+                    "cache.directory",
+                    "whisper"
+                )
+
                 logger.info(f"Using cache directory: {cache_dir}")
 
                 # Prepare kwargs based on device
@@ -243,7 +248,10 @@ class FasterWhisperSTT(STTBackend):
                         logger.info(f"Retrying with device={self.device}, compute_type={self.compute_type}")
 
                         # Get the cache directory for whisper
-                        cache_dir = str(config_manager.get_cache_directory("whisper"))
+                        cache_dir = config_manager.get_subdir(
+                            "cache.directory",
+                            "whisper"
+                        )
 
                         self.model = WhisperModel(
                             self.model_size,

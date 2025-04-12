@@ -17,7 +17,7 @@ class ConfigManager:
         self.config_file_path = None
         self.load_config()
 
-    def get_config_paths(self):
+    def _get_config_paths(self):
         """Get platform-specific configuration paths"""
         # First check environment variable
         env_config_path = os.environ.get("AINARA_CONFIG")
@@ -56,7 +56,7 @@ class ConfigManager:
 
         return config_paths
 
-    def get_default_config_path(self):
+    def _get_default_config_path(self):
         """Get the path to the default configuration template"""
         # Look for defaults in several possible locations
         possible_paths = [
@@ -76,7 +76,7 @@ class ConfigManager:
 
     def create_default_config(self, target_path):
         """Create a new configuration file from defaults"""
-        default_path = self.get_default_config_path()
+        default_path = self._get_default_config_path()
 
         if not default_path:
             print("ERROR: Default configuration template not found.")
@@ -99,7 +99,7 @@ class ConfigManager:
 
     def load_config(self):
         """Load config from appropriate location or create from defaults"""
-        config_paths = self.get_config_paths()
+        config_paths = self._get_config_paths()
 
         # Try to load from existing config file
         for config_path in config_paths:
@@ -116,6 +116,18 @@ class ConfigManager:
                     if "directory" not in self.config["logging"]:
                         self.config["logging"]["directory"] = str(self._get_log_directory())
 
+                    # Set up cache directory in config
+                    if "cache" not in self.config:
+                        self.config["cache"] = {}
+                    if "directory" not in self.config["cache"]:
+                        self.config["cache"]["directory"] = str(self._get_cache_directory())
+
+                    # Set up data directory in config
+                    if "data" not in self.config:
+                        self.config["data"] = {}
+                    if "directory" not in self.config["data"]:
+                        self.config["data"]["directory"] = str(self._get_data_directory())
+
                     return
                 except Exception as e:
                     print(
@@ -125,7 +137,7 @@ class ConfigManager:
 
         # If we get here, no config file was found - create one
         # Use the first path from the OS-specific list (skip env var path)
-        default_config_location = self.get_config_paths()[0]
+        default_config_location = self._get_config_paths()[0]
         self.config_file_path = self.create_default_config(
             default_config_location
         )
@@ -257,13 +269,13 @@ class ConfigManager:
         # Ensure the directory exists
         os.makedirs(log_dir, exist_ok=True)
         return log_dir
-        
-    def get_cache_directory(self, subdirectory=None):
+
+    def _get_cache_directory(self):
         """Get cache directory based on platform defaults
-        
+
         Args:
             subdirectory: Optional subdirectory within the cache directory
-            
+
         Returns:
             Path object for the cache directory
         """
@@ -271,23 +283,19 @@ class ConfigManager:
         env_cache_path = os.environ.get("AINARA_CACHE")
         if env_cache_path:
             cache_dir = Path(os.path.expanduser(env_cache_path))
-            if subdirectory:
-                cache_dir = cache_dir / subdirectory
             os.makedirs(cache_dir, exist_ok=True)
             return cache_dir
-        
+
         # Check if user has specified a cache directory in config
         if "cache" in self.config and "directory" in self.config["cache"]:
             user_cache_dir = self.config["cache"]["directory"]
             cache_dir = Path(os.path.expanduser(user_cache_dir))
-            if subdirectory:
-                cache_dir = cache_dir / subdirectory
             os.makedirs(cache_dir, exist_ok=True)
             return cache_dir
-        
+
         # Determine OS-specific cache locations
         system = platform.system()
-        
+
         if system == "Linux":
             # XDG standard for Linux
             cache_home = os.environ.get(
@@ -305,14 +313,28 @@ class ConfigManager:
         else:
             # Fallback for other systems
             cache_dir = Path(os.path.expanduser("~/.ainara/cache"))
-        
-        # Add subdirectory if specified
-        if subdirectory:
-            cache_dir = cache_dir / subdirectory
-        
+
         # Ensure the directory exists
         os.makedirs(cache_dir, exist_ok=True)
         return cache_dir
+
+    def _get_data_directory(app_name="ainara"):
+        """Get the appropriate user data directory for the current platform"""
+        system = platform.system()
+        if system == "Windows":
+            # On Windows, use %LOCALAPPDATA%\app_name
+            return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~/AppData/Local")), app_name)
+        elif system == "Darwin":  # macOS
+            # On macOS, use ~/Library/Application Support/app_name
+            return os.path.join(os.path.expanduser("~/Library/Application Support"), app_name)
+        else:  # Linux and others
+            # On Linux, use ~/.local/state/app_name (for state data)
+            return os.path.join(os.path.expanduser("~/.local/state"), app_name)
+
+    def get_subdir(self, directory, subdirectory):
+        full_path = os.path.join(self.get(directory), subdirectory)
+        os.makedirs(full_path, exist_ok=True)
+        return full_path
 
     def validate_config(self, config_data):
         """Basic validation of configuration data"""

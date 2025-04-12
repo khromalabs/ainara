@@ -87,7 +87,7 @@ class ChatManager:
         # Initialize NLTK for sentence tokenization
         try:
             # Use the configured NLTK data path
-            nltk_data_dir = str(config.get_cache_directory("nltk"))
+            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
             os.environ["NLTK_DATA"] = nltk_data_dir
             nltk.data.path = [nltk_data_dir]  # Override default paths
             # Test if punkt tokenizer is available
