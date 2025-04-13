@@ -21,7 +21,7 @@ class ConfigManager {
     _getConfigDirectory() {
         const platform = process.platform;
         const homeDir = os.homedir();
-        
+
         // Follow platform-specific standards for config locations
         if (platform === 'win32') {
             // Windows: %APPDATA%\ainara\polaris
