@@ -327,7 +327,7 @@ class ConfigManager:
         os.makedirs(cache_dir, exist_ok=True)
         return cache_dir
 
-    def _get_data_directory(app_name="ainara"):
+    def _get_data_directory(self, app_name="ainara"):
         """Get the appropriate user data directory for the current platform"""
         system = platform.system()
         if system == "Windows":
