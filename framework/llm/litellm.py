@@ -316,23 +316,22 @@ class LiteLLM(LLMBackend):
                         f" {e.response.text if hasattr(e.response, 'text') else 'unknown'}"
                     )
 
-                # Log the actual chat that caused the error
-                self.logger.error("chat that caused the error:")
-                for i, msg in enumerate(chat_history):
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    self.logger.error(
-                        f"Message {i} (role={role}, length={len(content)}):"
-                        f" {content[:200]}..."
-                    )
+                # # Log the actual chat that caused the error
+                # self.logger.error("chat that caused the error:")
+                # for i, msg in enumerate(chat_history):
+                #     role = msg.get("role", "unknown")
+                #     content = msg.get("content", "")
+                #     self.logger.error(
+                #         f"Message {i} (role={role}, length={len(content)}):"
+                #         f" {content[:200]}..."
+                #     )
 
                 raise
 
         except Exception as e:
-            self.logger.error(
-                f"Unable to get a response from the AI: {str(e)}"
-            )
-            return ""
+            msg_error = f"Error: Unable to get a response from the AI: {str(e)}"
+            self.logger.error(msg_error)
+            raise ValueError(msg_error)
 
     async def achat(
         self,

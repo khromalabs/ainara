@@ -896,6 +896,7 @@ class ChatManager:
                 loading.stop()
             logger.error(f"Error during LLM response: {e}")
             if stream == "json":
+                logger.error("Sending error yield signal")
                 yield ndjson("signal", "error", {"message": str(e)})
             processed_answer = (  # Set a default error message
                 f"Error: {str(e)}"

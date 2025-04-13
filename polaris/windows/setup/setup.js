@@ -1,9 +1,9 @@
 const { ipcRenderer } = require('electron');
 const ConfigManager = require('../../utils/config');
 const Logger = require('../../utils/logger');
-const fs = require('fs');
-const path = require('path');
-const yaml = require('js-yaml');
+// const fs = require('fs');
+// const path = require('path');
+// const yaml = require('js-yaml');
 
 // Create a ConfigManager instance
 const config = new ConfigManager();
@@ -374,7 +374,7 @@ function setupEventListeners() {
     // Close button
     document.querySelector('.close-btn').addEventListener('click', () => {
         event.preventDefault(); // Prevent any default behavior
-        if (confirm('Do you really wish to close the setup wizard?')) {
+        if (confirm('Do you really want to close the setup wizard?')) {
             ipcRenderer.send('close-setup-window');
         }
     });

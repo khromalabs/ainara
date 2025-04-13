@@ -674,6 +674,7 @@ class ComRing extends BaseComponent {
         }
     }
 
+    // TODO extend the queued approach used to show errors to display all messages
     async showError(error) {
         let callstack = null;
         try {
@@ -682,7 +683,6 @@ class ComRing extends BaseComponent {
             callstack = e.stack;
         }
         console.error('Error:', error, callstack);
-        // this.circle?.classList.add('error');
         ipcRenderer.send('chat-error', error.toString());
 
         // Create error queue if it doesn't exist
@@ -719,20 +719,32 @@ class ComRing extends BaseComponent {
         sttStatus.innerHTML = errorMessage;
         sttStatus.classList.add('active3');
 
-        // Wait for the error to be displayed for a set time
-        await new Promise(resolve => {
-            setTimeout(() => {
+        // Keep the message visible by refreshing it periodically
+        const refreshInterval = 1000; // 1 second
+        const totalDuration = 5000;   // 5 seconds total
+        const refreshCount = Math.floor(totalDuration / refreshInterval);
+
+        // Use a single interval instead of multiple timeouts
+        let count = 0;
+        const intervalId = setInterval(() => {
+            count++;
+            // Refresh the message
+            const sttStatus = this.shadowRoot.querySelector('.stt-status');
+            sttStatus.innerHTML = errorMessage;
+            sttStatus.classList.add('active3');
+
+            // If we've reached the desired duration, clean up
+            if (count >= refreshCount) {
+                clearInterval(intervalId);
                 sttStatus.classList.remove('active3');
                 sttStatus.textContent = '';
                 this.isShowingError = false;
 
                 // Process next error in queue if any
                 setTimeout(() => this.processErrorQueue(), 100);
-                resolve();
-            }, 5000);
-        });
+            }
+        }, refreshInterval);
     }
-
 
     abortLLMResponse() {
         console.log('Aborting LLM response');
