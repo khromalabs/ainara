@@ -41,7 +41,7 @@ class ChatDisplayWindow extends BaseWindow {
         let windowY;
         if (process.platform === 'win32') {
             // Windows: Position higher on screen
-            windowY = Math.floor(screenHeight * 0.6) - (windowHeight / 2);
+            windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
         } else if (process.platform === 'darwin') {
             // macOS: Account for menu bar
             windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);

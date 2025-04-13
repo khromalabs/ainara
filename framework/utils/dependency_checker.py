@@ -119,7 +119,7 @@ class DependencyChecker:
 
             if torch.cuda.is_available():
                 cuda_version = torch.version.cuda
-                
+
                 # Get GPU info for logging
                 gpu_name = "Unknown"
                 gpu_memory = "Unknown"
@@ -131,12 +131,12 @@ class DependencyChecker:
                         logger.info(f"Detected GPU: {gpu_name} with {gpu_memory} VRAM")
                 except Exception as e:
                     logger.warning(f"Error getting GPU info: {e}")
-                
+
                 # On Windows, we'll trust torch.cuda.is_available() and not check for system libraries
                 # as the DLLs are typically bundled with PyTorch or in the system PATH
                 if platform.system() == "Windows":
                     return True, cuda_version, []
-                
+
                 # For Linux and macOS, perform additional checks
                 # Check for cuDNN
                 cudnn_available = DependencyChecker.check_system_library(
@@ -246,7 +246,7 @@ class DependencyChecker:
             logger.info(
                 f"✅ CUDA: Available (version {results['cuda']['version']})"
             )
-            
+
             # Check if we're on Windows and add a note about potential issues
             if platform.system() == "Windows" and results["faster_whisper"]["available"]:
                 logger.info(
