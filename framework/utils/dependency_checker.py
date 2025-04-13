@@ -119,7 +119,25 @@ class DependencyChecker:
 
             if torch.cuda.is_available():
                 cuda_version = torch.version.cuda
-
+                
+                # Get GPU info for logging
+                gpu_name = "Unknown"
+                gpu_memory = "Unknown"
+                try:
+                    if torch.cuda.device_count() > 0:
+                        device_props = torch.cuda.get_device_properties(0)
+                        gpu_name = device_props.name
+                        gpu_memory = f"{device_props.total_memory / (1024**3):.1f}GB"
+                        logger.info(f"Detected GPU: {gpu_name} with {gpu_memory} VRAM")
+                except Exception as e:
+                    logger.warning(f"Error getting GPU info: {e}")
+                
+                # On Windows, we'll trust torch.cuda.is_available() and not check for system libraries
+                # as the DLLs are typically bundled with PyTorch or in the system PATH
+                if platform.system() == "Windows":
+                    return True, cuda_version, []
+                
+                # For Linux and macOS, perform additional checks
                 # Check for cuDNN
                 cudnn_available = DependencyChecker.check_system_library(
                     "cudnn"
@@ -139,7 +157,11 @@ class DependencyChecker:
                     if not DependencyChecker.check_system_library(lib):
                         missing_libs.append(lib)
 
-                return len(missing_libs) == 0, cuda_version, missing_libs
+                # Even if we're missing some libs, if torch.cuda.is_available() is True,
+                # we'll consider CUDA available but log the missing libs
+                if missing_libs:
+                    logger.warning(f"CUDA available but missing libraries: {', '.join(missing_libs)}")
+                return True, cuda_version, missing_libs
             else:
                 return False, None, ["CUDA driver"]
         except Exception as e:
@@ -224,6 +246,13 @@ class DependencyChecker:
             logger.info(
                 f"✅ CUDA: Available (version {results['cuda']['version']})"
             )
+            
+            # Check if we're on Windows and add a note about potential issues
+            if platform.system() == "Windows" and results["faster_whisper"]["available"]:
+                logger.info(
+                    "   Note: On Windows, if STT fails silently with CUDA, try setting"
+                    " 'compute_type' to 'float16' or 'float32' in your STT configuration"
+                )
         else:
             # if results["cuda"]["missing"]:
             #     logger.info(
