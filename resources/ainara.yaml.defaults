@@ -55,7 +55,7 @@ llm:
   #    api_base: "http://127.0.0.1:8000/v1"
   #    api_key: "nokey"
   model_contexts:
-    "openai/samplecustommodel": 4096
+    "openai/sample_custom_model": 4096
 
 # Ainara configuration
 orakle:
@@ -69,10 +69,10 @@ audio:
 # Memory configuration
 memory:
   enabled: false
-  storage_path: "~/.config/ainara/chat_memory.db"
-  vector_db_path: "~/.config/ainara/vector_db"
-  embedding_model: "sentence-transformers/all-mpnet-base-v2"
-  vector_db_enabled: true
+  vector_db_enabled: false
+#  embedding_model: "sentence-transformers/all-mpnet-base-v2"
+#  storage_path: "~/.config/ainara/chat_memory.db"
+#  vector_db_path: "~/.config/ainara/vector_db"
 
 # APIs
 apis:

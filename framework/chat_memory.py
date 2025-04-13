@@ -55,7 +55,7 @@ class ChatMemory:
             text_type = config.get("memory.text_storage.type", "sqlite")
             text_path = config.get(
                 "memory.text_storage.storage_path",
-                "~/.config/ainara/chat_memory.db"
+                os.path.join(config.get("data.directory"), "chat_memory.db")
             )
 
             # Ensure path is expanded
@@ -78,8 +78,8 @@ class ChatMemory:
         # Initialize vector storage if configured
         vector_type = config.get("memory.vector_storage.type", "chroma")
         vector_path = config.get(
-            "memory.vector_storage.storage_path",
-            "~/.config/ainara/vector_db"
+            "memory.vector_db_path",
+            os.path.join(config.get("data.directory"), "vector_db")
         )
         embedding_model = config.get(
             "memory.vector_storage.embedding_model",
@@ -207,7 +207,7 @@ class ChatMemory:
             text_type = config.get("memory.text_storage.type", "sqlite")
             text_path = config.get(
                 "memory.text_storage.storage_path",
-                "~/.config/ainara/chat_memory.db"
+                os.path.join(config.get("data.directory"), "chat_memory.db")
             )
 
             # Create new text backend with new context
@@ -220,7 +220,7 @@ class ChatMemory:
             vector_type = config.get("memory.vector_storage.type", "chroma")
             vector_path = config.get(
                 "memory.vector_storage.storage_path",
-                "~/.config/ainara/vector_db"
+                os.path.join(config.get("data.directory"), "chat_memory.db")
             )
             embedding_model = config.get(
                 "memory.vector_storage.embedding_model",
