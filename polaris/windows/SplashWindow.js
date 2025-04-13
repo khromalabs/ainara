@@ -8,7 +8,7 @@ class SplashWindow extends BaseWindow {
             width: 500,
             height: 500,
             frame: false,
-            transparent: true,
+            transparent: false,
             resizable: false,
             center: true,
             skipTaskbar: true,
