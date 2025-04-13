@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 // const Logger = require('./logger');
 const defaultConfig = require('../resources/defaultConfig');
+const os = require('os');
 class ConfigManager {
     constructor() {
         // Singleton pattern
@@ -12,10 +13,26 @@ class ConfigManager {
         this.config = {};
         this.lastLoadTimestamp = 0; // Track when we last loaded the config
 
-        const homeDir = require('os').homedir();
-        this.configDir = path.join(homeDir, '.config', 'ainara', 'polaris');
+        this.configDir = this._getConfigDirectory();
         this.configFile = path.join(this.configDir, 'polaris.json');
         this.loadConfig();
+    }
+
+    _getConfigDirectory() {
+        const platform = process.platform;
+        const homeDir = os.homedir();
+        
+        // Follow platform-specific standards for config locations
+        if (platform === 'win32') {
+            // Windows: %APPDATA%\ainara\polaris
+            return path.join(homeDir, 'AppData', 'Roaming', 'ainara', 'polaris');
+        } else if (platform === 'darwin') {
+            // macOS: ~/Library/Application Support/ainara/polaris
+            return path.join(homeDir, 'Library', 'Application Support', 'ainara', 'polaris');
+        } else {
+            // Linux/Unix: ~/.config/ainara/polaris
+            return path.join(homeDir, '.config', 'ainara', 'polaris');
+        }
     }
 
     loadConfig() {
