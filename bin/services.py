@@ -22,6 +22,7 @@ OLLAMA_LOG = os.path.join(LOG_DIR, "ollama.log")
 ORAKLE_CMD = "python -m ainara.orakle.server"
 PYBRIDGE_CMD = "python -m ainara.framework.pybridge"
 OLLAMA_CMD = "ollama"
+TEMPORARILY_DISABLE_OLLAMA = True  # Set to False to re-enable Ollama
 
 # Service health endpoints
 ORAKLE_HEALTH_URL = "http://localhost:5000/health"
@@ -167,17 +168,15 @@ def is_service_running(command):
 
 def get_services_status():
     """Get status of all services"""
-    return {
+    status = {
         "orakle": "running" if is_service_running(ORAKLE_CMD) else "stopped",
-        "pybridge": (
-            "running" if is_service_running(PYBRIDGE_CMD) else "stopped"
-        ),
-        "ollama": (
-            "running"
-            if is_service_running(OLLAMA_CMD + " serve")
-            else "stopped"
-        ),
+        "pybridge": "running" if is_service_running(PYBRIDGE_CMD) else "stopped",
     }
+    if not TEMPORARILY_DISABLE_OLLAMA:
+        status["ollama"] = "running" if is_service_running(OLLAMA_CMD + " serve") else "stopped"
+    else:
+        status["ollama"] = "temporarily disabled"
+    return status
 
 
 def stop_services():
@@ -187,8 +186,9 @@ def stop_services():
         service_identifiers = {
             "orakle": "ainara.orakle.server",
             "pybridge": "ainara.framework.pybridge",
-            "ollama": OLLAMA_CMD,
         }
+        if not TEMPORARILY_DISABLE_OLLAMA:
+            service_identifiers["ollama"] = OLLAMA_CMD
 
         # Find and terminate processes
         for service, identifier in service_identifiers.items():
@@ -249,6 +249,11 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
         log_file = PYBRIDGE_LOG
         args = []
     elif service == "ollama":
+        if TEMPORARILY_DISABLE_OLLAMA:
+            return {
+                "status": "info",
+                "message": "Ollama is temporarily disabled (change TEMPORARILY_DISABLE_OLLAMA to False to enable)"
+            }
         cmd = OLLAMA_CMD
         log_file = OLLAMA_LOG
         args = ["serve"]
@@ -571,6 +576,8 @@ def main():
         print(f"  Orakle:   {status['orakle']}")
         print(f"  Pybridge: {status['pybridge']}")
         print(f"  Ollama:   {status['ollama']}")
+        if TEMPORARILY_DISABLE_OLLAMA:
+            print("    Note: Ollama is temporarily disabled (change TEMPORARILY_DISABLE_OLLAMA to False to enable)")
         return
 
     # Stop services if requested
