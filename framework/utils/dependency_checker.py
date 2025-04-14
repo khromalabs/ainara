@@ -15,13 +15,13 @@ class DependencyChecker:
     def detect_nvidia_gpus() -> Tuple[bool, List[Dict[str, str]]]:
         """
         Detect NVIDIA GPUs in the system regardless of driver installation
-        
+
         Returns:
             tuple: (has_nvidia_gpu, gpu_list)
         """
         gpus = []
         has_nvidia = False
-        
+
         try:
             if sys.platform == 'win32':
                 # Windows detection using WMI
@@ -29,7 +29,7 @@ class DependencyChecker:
                     ['wmic', 'path', 'win32_VideoController', 'get', 'name,PNPDeviceID,AdapterRAM,DriverVersion'],
                     capture_output=True, text=True, check=False
                 )
-                
+
                 if result.returncode == 0:
                     lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
                     # Skip the header line
@@ -37,10 +37,10 @@ class DependencyChecker:
                         parts = line.split()
                         if not parts:
                             continue
-                            
+
                         # Join all parts except the last few which are the other properties
                         name = ' '.join(parts[:-3]) if len(parts) > 3 else ' '.join(parts)
-                        
+
                         if 'nvidia' in name.lower():
                             has_nvidia = True
                             # Try to extract more details if available
@@ -77,17 +77,17 @@ class DependencyChecker:
                 # Linux detection using lspci
                 try:
                     result = subprocess.run(
-                        ['lspci', '-nn'], 
+                        ['lspci', '-nn'],
                         capture_output=True, text=True, check=False
                     )
-                    
+
                     if result.returncode == 0:
                         for line in result.stdout.split('\n'):
                             if 'NVIDIA' in line or 'nvidia' in line.lower():
                                 has_nvidia = True
                                 # Extract the device name
                                 name = line.split(':')[-1].strip()
-                                
+
                                 # Try to get more details with nvidia-smi
                                 try:
                                     detailed_info = subprocess.run(
@@ -119,7 +119,7 @@ class DependencyChecker:
                                     })
                 except Exception as e:
                     logger.debug(f"Error using lspci to detect GPUs: {e}")
-                    
+
                     # Fallback to checking for nvidia-smi directly
                     try:
                         result = subprocess.run(
@@ -138,7 +138,7 @@ class DependencyChecker:
                                     })
                     except Exception:
                         pass
-                    
+
             elif sys.platform == 'darwin':
                 # macOS detection - NVIDIA GPUs are rare on Macs, but check anyway
                 try:
@@ -146,7 +146,7 @@ class DependencyChecker:
                         ['system_profiler', 'SPDisplaysDataType'],
                         capture_output=True, text=True, check=False
                     )
-                    
+
                     if result.returncode == 0:
                         for line in result.stdout.split('\n'):
                             if 'NVIDIA' in line:
@@ -158,10 +158,10 @@ class DependencyChecker:
                                 })
                 except Exception as e:
                     logger.debug(f"Error detecting GPUs on macOS: {e}")
-                    
+
         except Exception as e:
             logger.error(f"Error detecting NVIDIA GPUs: {e}")
-        
+
         return has_nvidia, gpus
 
     @staticmethod
@@ -266,7 +266,7 @@ class DependencyChecker:
             "pytorch_cuda_available": False,
             "driver_issue": False
         }
-        
+
         # First detect if NVIDIA hardware is present
         has_nvidia_gpu, gpu_list = DependencyChecker.detect_nvidia_gpus()
         details["has_nvidia_hardware"] = has_nvidia_gpu
@@ -299,7 +299,7 @@ class DependencyChecker:
                         gpu_name = device_props.name
                         gpu_memory = f"{device_props.total_memory / (1024**3):.1f}GB"
                         logger.info(f"Detected GPU: {gpu_name} with {gpu_memory} VRAM")
-                        
+
                         # Add to details
                         details["device_count"] = torch.cuda.device_count()
                         details["current_device"] = torch.cuda.current_device()
@@ -352,7 +352,7 @@ class DependencyChecker:
                 # Hardware detected but CUDA not available - likely a driver issue
                 if has_nvidia_gpu:
                     details["driver_issue"] = True
-                    
+
                     # Try to get more specific error information
                     try:
                         # Force CUDA initialization to get error message
@@ -360,7 +360,7 @@ class DependencyChecker:
                     except Exception as e:
                         error_msg = str(e)
                         details["error_message"] = error_msg
-                        
+
                         if "Found no NVIDIA driver" in error_msg:
                             missing_libs.append("NVIDIA driver")
                         elif "library not found" in error_msg.lower():
@@ -369,7 +369,7 @@ class DependencyChecker:
                             missing_libs.append("CUDA runtime")
                 else:
                     missing_libs.append("NVIDIA GPU")
-                    
+
                 return False, None, missing_libs, details
         except Exception as e:
             logger.warning(f"Error checking CUDA: {e}")
@@ -425,17 +425,17 @@ class DependencyChecker:
         results["cuda"]["gpu_list"] = cuda_details["gpu_list"]
 
         return results
-        
+
     @staticmethod
     def get_acceleration_recommendation() -> Dict:
         """
         Get platform-specific recommendations for hardware acceleration
-        
+
         Returns:
             dict: Recommendations for the current platform
         """
         cuda_available, cuda_version, missing_libs, details = DependencyChecker.check_cuda_availability()
-        
+
         recommendations = {
             "cuda_available": cuda_available,
             "has_nvidia_hardware": details["has_nvidia_hardware"],
@@ -443,7 +443,7 @@ class DependencyChecker:
             "gpu_list": details["gpu_list"],
             "action_needed": not cuda_available and details["has_nvidia_hardware"],
         }
-        
+
         # Add platform-specific recommendations
         if sys.platform == 'win32':
             if details["has_nvidia_hardware"] and not cuda_available:
@@ -490,7 +490,7 @@ class DependencyChecker:
                 "macOS uses Metal for GPU acceleration, not CUDA",
                 "No action needed for Apple Silicon Macs"
             ]
-        
+
         return recommendations
 
     @staticmethod
@@ -536,11 +536,11 @@ class DependencyChecker:
             logger.warning(
                 "⚠️ NVIDIA GPU detected but CUDA is not available. Check driver installation."
             )
-            
+
             # Log detected GPUs
             for gpu in results["cuda"]["gpu_list"]:
                 logger.info(f"   Detected GPU: {gpu['name']} (Driver: {gpu['driver_version']})")
-                
+
             # Platform-specific advice
             if platform.system() == "Windows":
                 logger.info(

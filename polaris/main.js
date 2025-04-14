@@ -377,9 +377,11 @@ async function updateProviderSubmenu() {
         // Create menu items for each provider
         const providerItems = providers.map(provider => {
             const model = provider.model || 'Unknown model';
-            const context_window = "C" + (provider.context_window / 1024) + "K" || '';
+            const context_window = provider.context_window ?
+                "(C" + (provider.context_window / 1024) + "K)" :
+                '';
             return {
-                label: `${model} (${context_window})`,
+                label: `${model} ${context_window}`,
                 type: 'radio',
                 checked: selected_provider === model,
                 click: async () => {
