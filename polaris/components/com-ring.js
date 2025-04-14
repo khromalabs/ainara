@@ -1034,19 +1034,20 @@ class ComRing extends BaseComponent {
                         // Check flag again before showing skill status
                         if (this.ignoreIncomingEvents) return;
 
-                        // Show skill request message in status
-                        const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                        // Add loading state to both status and ring
-                        sttStatus.textContent = `${content.content}`;
-                        sttStatus.classList.add('active');
-
-                        // Remove after 3 seconds
-                        setTimeout(() => {
-                            if (!this.ignoreIncomingEvents) {  // Check flag before removing
-                                sttStatus.classList.remove('active');
-                                sttStatus.textContent = '';
-                            }
-                        }, 3000);
+                        // TODO Show skill in com-ring?
+                        // // Show skill request message in status
+                        // const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                        // // Add loading state to both status and ring
+                        // sttStatus.textContent = `${content.content}`;
+                        // sttStatus.classList.add('active');
+                        //
+                        // // Remove after 3 seconds
+                        // setTimeout(() => {
+                        //     if (!this.ignoreIncomingEvents) {  // Check flag before removing
+                        //         sttStatus.classList.remove('active');
+                        //         sttStatus.textContent = '';
+                        //     }
+                        // }, 3000);
                     }
 
                     // Add message ID to the event
