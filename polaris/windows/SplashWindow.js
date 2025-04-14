@@ -14,6 +14,7 @@ class SplashWindow extends BaseWindow {
             skipTaskbar: true,
             backgroundColor: '#000000FF',
             alwaysOnTop: true,
+            opacity: 1,
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false
