@@ -9,7 +9,7 @@ const Logger = require('../../utils/logger');
 const config = new ConfigManager();
 
 // Step navigation
-const steps = ['welcome', 'llm', 'stt', 'skills', 'finish'];
+const steps = ['welcome', 'llm', 'stt', 'skills', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 let providersData = null;
 
@@ -379,7 +379,10 @@ function setupEventListeners() {
         }
     });
     
-    // Add CSS for hardware acceleration info
+    // Setup shortcut key capture
+    setupShortcutCapture();
+    
+    // Add CSS for hardware acceleration info and shortcuts
     const style = document.createElement('style');
     style.textContent = `
         .hardware-info {
@@ -444,6 +447,65 @@ function setupEventListeners() {
         
         .gpu-details li {
             margin-bottom: 5px;
+        }
+        
+        /* Shortcuts panel styles */
+        .shortcuts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .shortcut-group {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .shortcut-group h3 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        
+        .shortcut-description {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        
+        .usage-instructions {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .usage-instructions h3 {
+            margin-top: 0;
+            color: #28a745;
+        }
+        
+        .usage-instructions ol {
+            padding-left: 20px;
+        }
+        
+        .usage-instructions li {
+            margin-bottom: 10px;
+        }
+        
+        #toggle-key-display,
+        #trigger-key-display {
+            background-color: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: bold;
+        }
+        
+        input.capturing {
+            background-color: #ffe8e8;
+            border-color: #dc3545;
         }
     `;
     document.head.appendChild(style);
@@ -1421,6 +1483,9 @@ async function saveCurrentStepData() {
         case 'skills':
             await saveSkillsConfig();
             break;
+        case 'shortcuts':
+            saveShortcutsConfig();
+            break;
     }
 }
 
@@ -1702,6 +1767,106 @@ async function saveSkillsConfig() {
     } catch (error) {
         console.error('Error updating skills config:', error);
     }
+}
+
+// Function to save shortcuts configuration
+function saveShortcutsConfig() {
+    try {
+        // Get shortcut values
+        const toggleShortcut = document.getElementById('toggle-shortcut').value.trim();
+        const triggerShortcut = document.getElementById('trigger-shortcut').value.trim();
+
+        // Update config
+        if (toggleShortcut) {
+            config.set('shortcuts.toggle', toggleShortcut);
+        }
+        
+        if (triggerShortcut) {
+            config.set('shortcuts.trigger', triggerShortcut);
+        }
+
+        // Save to disk
+        config.saveConfig();
+        
+        return true;
+    } catch (error) {
+        console.error('Error saving shortcuts config:', error);
+        return false;
+    }
+}
+
+// Function to handle shortcut key capture
+function setupShortcutCapture() {
+    const toggleInput = document.getElementById('toggle-shortcut');
+    const triggerInput = document.getElementById('trigger-shortcut');
+    const toggleDisplay = document.getElementById('toggle-key-display');
+    const triggerDisplay = document.getElementById('trigger-key-display');
+    
+    // Load current values from config
+    const currentToggle = config.get('shortcuts.toggle', 'F1');
+    const currentTrigger = config.get('shortcuts.trigger', 'Space');
+    
+    // Set initial values
+    toggleInput.value = currentToggle;
+    triggerInput.value = currentTrigger;
+    toggleDisplay.textContent = currentToggle;
+    triggerDisplay.textContent = currentTrigger;
+    
+    // Function to handle key capture
+    function captureKey(input, displayElement) {
+        input.addEventListener('focus', () => {
+            input.value = 'Press a key...';
+            input.classList.add('capturing');
+        });
+        
+        input.addEventListener('blur', () => {
+            if (input.value === 'Press a key...') {
+                // Restore previous value if no key was pressed
+                input.value = displayElement.textContent;
+            }
+            input.classList.remove('capturing');
+        });
+        
+        input.addEventListener('keydown', (e) => {
+            e.preventDefault();
+            
+            // Get the key name
+            let keyName;
+            if (e.key === ' ') {
+                keyName = 'Space';
+            } else if (e.key === 'Escape') {
+                // Cancel and restore previous value
+                keyName = displayElement.textContent;
+            } else {
+                keyName = e.key;
+            }
+            
+            // Special handling for modifier keys
+            if (e.ctrlKey && e.key !== 'Control') keyName = 'Ctrl+' + keyName;
+            if (e.altKey && e.key !== 'Alt') keyName = 'Alt+' + keyName;
+            if (e.shiftKey && e.key !== 'Shift') keyName = 'Shift+' + keyName;
+            
+            // Update input and display
+            input.value = keyName;
+            displayElement.textContent = keyName;
+            
+            // Remove focus to complete capture
+            input.blur();
+        });
+    }
+    
+    // Set up key capture for both inputs
+    captureKey(toggleInput, toggleDisplay);
+    captureKey(triggerInput, triggerDisplay);
+    
+    // Update display when input changes directly
+    toggleInput.addEventListener('input', () => {
+        toggleDisplay.textContent = toggleInput.value;
+    });
+    
+    triggerInput.addEventListener('input', () => {
+        triggerDisplay.textContent = triggerInput.value;
+    });
 }
 
 async function finishSetup() {

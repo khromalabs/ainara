@@ -21,6 +21,7 @@
                 <div class="step" data-step="llm">LLM Setup</div>
                 <div class="step" data-step="stt">Speech2Text</div>
                 <div class="step" data-step="skills">Skills Setup</div>
+                <div class="step" data-step="shortcuts">Shortcuts</div>
                 <div class="step" data-step="finish">Finish</div>
             </div>
 
@@ -111,6 +112,46 @@
                     <div class="skills-list">
                         <!-- This will be populated dynamically -->
                         <p>Loading available skills...</p>
+                    </div>
+
+                    <div class="button-row">
+                        <button class="back-btn">Back</button>
+                        <button class="next-btn">Next</button>
+                    </div>
+                </div>
+
+                <!-- Shortcuts setup step -->
+                <div class="step-panel" id="shortcuts-panel">
+                    <h2>Keyboard Shortcuts</h2>
+                    <p>Configure how you'll interact with Ainara Polaris.</p>
+
+                    <div class="shortcuts-container">
+                        <div class="shortcut-group">
+                            <h3>Essential Shortcuts</h3>
+                            
+                            <div class="form-group">
+                                <label for="toggle-shortcut">Toggle UI Shortcut:</label>
+                                <input type="text" id="toggle-shortcut" placeholder="Press a key..." value="F1">
+                                <p class="shortcut-description">This key shows/hides the Polaris interface.</p>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="trigger-shortcut">Push-to-Talk Shortcut:</label>
+                                <input type="text" id="trigger-shortcut" placeholder="Press a key..." value="Space">
+                                <p class="shortcut-description">Hold this key while speaking to the assistant.</p>
+                            </div>
+                        </div>
+
+                        <div class="usage-instructions">
+                            <h3>How to Use Polaris</h3>
+                            <ol>
+                                <li><strong>Show the interface</strong>: Press the Toggle UI key (<span id="toggle-key-display">F1</span>) to make Polaris appear.</li>
+                                <li><strong>Talk to Polaris</strong>: Hold down the Push-to-Talk key (<span id="trigger-key-display">Space</span>) while speaking.</li>
+                                <li><strong>Release to send</strong>: Release the Push-to-Talk key when you're done speaking to process your request.</li>
+                                <li><strong>Hide the interface</strong>: Press the Toggle UI key again or click outside the interface to hide it.</li>
+                            </ol>
+                            <p>You can also interact with Polaris using text input if you prefer typing.</p>
+                        </div>
                     </div>
 
                     <div class="button-row">
