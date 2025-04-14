@@ -8,7 +8,8 @@ class SplashWindow extends BaseWindow {
             width: 500,
             height: 500,
             frame: false,
-            transparent: false,
+            transparent: true,
+            // transparent: false,
             resizable: false,
             center: true,
             skipTaskbar: true,
@@ -26,9 +27,9 @@ class SplashWindow extends BaseWindow {
         this.loadContent('html/splash.html');
 
         // // Windows-specific fix for transparency issues
-        if (process.platform === 'win32') {
-            this.window.setBackgroundColor('#000000FF');
-        }
+        // if (process.platform === 'win32') {
+        //     this.window.setBackgroundColor('#000000FF');
+        // }
     }
 
     updateProgress(status, progress) {
