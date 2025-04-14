@@ -133,8 +133,8 @@ class ServiceManager {
                     }
                 });
 
-                // Check if service starts successfully
-                this.waitForHealth(serviceId, 30000)
+                // Check if service starts successfully in a minute top
+                this.waitForHealth(serviceId, 60000)
                     .then(() => resolve())
                     .catch(err => reject(err));
 
