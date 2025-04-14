@@ -378,10 +378,10 @@ function setupEventListeners() {
             ipcRenderer.send('close-setup-window');
         }
     });
-    
+
     // Setup shortcut key capture
     setupShortcutCapture();
-    
+
     // Add CSS for hardware acceleration info and shortcuts
     const style = document.createElement('style');
     style.textContent = `
@@ -392,7 +392,7 @@ function setupEventListeners() {
             border-radius: 8px;
             border-left: 4px solid #6c757d;
         }
-        
+
         .success-message {
             color: #28a745;
             font-weight: bold;
@@ -400,7 +400,7 @@ function setupEventListeners() {
             display: flex;
             align-items: center;
         }
-        
+
         .warning-message {
             color: #ffc107;
             font-weight: bold;
@@ -408,7 +408,7 @@ function setupEventListeners() {
             display: flex;
             align-items: center;
         }
-        
+
         .info-message {
             color: #17a2b8;
             font-weight: bold;
@@ -416,84 +416,84 @@ function setupEventListeners() {
             display: flex;
             align-items: center;
         }
-        
+
         .success-message .icon,
         .warning-message .icon,
         .info-message .icon {
             margin-right: 8px;
             font-size: 1.2em;
         }
-        
+
         .hardware-info p {
             margin: 8px 0;
         }
-        
+
         .hardware-info a {
             color: #007bff;
             text-decoration: underline;
         }
-        
+
         .gpu-details {
             background-color: #f0f0f0;
             padding: 10px;
             border-radius: 4px;
             margin-top: 10px;
         }
-        
+
         .gpu-details ul {
             margin: 5px 0 0 20px;
             padding: 0;
         }
-        
+
         .gpu-details li {
             margin-bottom: 5px;
         }
-        
+
         /* Shortcuts panel styles */
         .shortcuts-container {
             display: flex;
             flex-direction: column;
             gap: 20px;
         }
-        
+
         .shortcut-group {
             background-color: #f8f9fa;
             padding: 15px;
             border-radius: 8px;
             border-left: 4px solid #007bff;
         }
-        
+
         .shortcut-group h3 {
             margin-top: 0;
             color: #007bff;
         }
-        
+
         .shortcut-description {
             font-size: 0.9em;
             color: #6c757d;
             margin-top: 5px;
         }
-        
+
         .usage-instructions {
             background-color: #f8f9fa;
             padding: 15px;
             border-radius: 8px;
             border-left: 4px solid #28a745;
         }
-        
+
         .usage-instructions h3 {
             margin-top: 0;
             color: #28a745;
         }
-        
+
         .usage-instructions ol {
             padding-left: 20px;
         }
-        
+
         .usage-instructions li {
             margin-bottom: 10px;
         }
-        
+
         #toggle-key-display,
         #trigger-key-display {
             background-color: #e9ecef;
@@ -502,7 +502,7 @@ function setupEventListeners() {
             font-family: monospace;
             font-weight: bold;
         }
-        
+
         input.capturing {
             background-color: #ffe8e8;
             border-color: #dc3545;
@@ -1257,8 +1257,8 @@ async function checkHardwareAcceleration() {
         return await response.json();
     } catch (error) {
         console.error('Error checking hardware acceleration:', error);
-        return { 
-            cuda_available: false, 
+        return {
+            cuda_available: false,
             message: 'Unable to check hardware acceleration status'
         };
     }
@@ -1268,7 +1268,7 @@ async function checkHardwareAcceleration() {
 function setupSTTEventListeners() {
     const sttNextButton = document.getElementById('stt-next');
     const sttPanel = document.getElementById('stt-panel');
-    
+
     // Add hardware acceleration info section if it doesn't exist
     if (!document.getElementById('hardware-acceleration-info')) {
         const infoHtml = `
@@ -1277,13 +1277,13 @@ function setupSTTEventListeners() {
                 <div id="hardware-status">Checking hardware acceleration status...</div>
             </div>
         `;
-        
+
         // Insert before the STT options
         const sttOptions = sttPanel.querySelector('.stt-options');
         if (sttOptions) {
             sttOptions.insertAdjacentHTML('beforebegin', infoHtml);
         }
-        
+
         // Check hardware acceleration status
         checkHardwareAcceleration().then(result => {
             const statusElement = document.getElementById('hardware-status');
@@ -1296,7 +1296,7 @@ function setupSTTEventListeners() {
                         </div>
                         <p>Your system will use GPU acceleration for faster speech recognition.</p>
                     `;
-                    
+
                     // Show GPU details if available
                     if (result.gpu_list && result.gpu_list.length > 0) {
                         let gpuHtml = `<div class="gpu-details"><p>Using GPU(s):</p><ul>`;
@@ -1324,7 +1324,7 @@ function setupSTTEventListeners() {
                             <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
                         `;
                     }
-                    
+
                     // Show GPU details if available
                     if (result.gpu_list && result.gpu_list.length > 0) {
                         helpText += `<div class="gpu-details"><p>Detected GPU(s):</p><ul>`;
@@ -1333,7 +1333,7 @@ function setupSTTEventListeners() {
                         });
                         helpText += `</ul></div>`;
                     }
-                    
+
                     statusElement.innerHTML = `
                         <div class="warning-message">
                             <span class="icon">⚠</span>
@@ -1347,7 +1347,7 @@ function setupSTTEventListeners() {
                         <p>On macOS, Metal is used for acceleration on Apple Silicon.</p>
                         <p>CPU will be used on Intel Macs, which may be slower for speech recognition.</p>
                     `;
-                    
+
                     statusElement.innerHTML = `
                         <div class="info-message">
                             <span class="icon">ℹ</span>
@@ -1361,7 +1361,7 @@ function setupSTTEventListeners() {
                         <p>Your system will use CPU for speech recognition, which may be slower.</p>
                         <p>If you have an NVIDIA GPU, installing CUDA drivers can improve performance.</p>
                     `;
-                    
+
                     statusElement.innerHTML = `
                         <div class="info-message">
                             <span class="icon">ℹ</span>
@@ -1780,14 +1780,14 @@ function saveShortcutsConfig() {
         if (toggleShortcut) {
             config.set('shortcuts.toggle', toggleShortcut);
         }
-        
+
         if (triggerShortcut) {
             config.set('shortcuts.trigger', triggerShortcut);
         }
 
         // Save to disk
         config.saveConfig();
-        
+
         return true;
     } catch (error) {
         console.error('Error saving shortcuts config:', error);
@@ -1801,24 +1801,24 @@ function setupShortcutCapture() {
     const triggerInput = document.getElementById('trigger-shortcut');
     const toggleDisplay = document.getElementById('toggle-key-display');
     const triggerDisplay = document.getElementById('trigger-key-display');
-    
+
     // Load current values from config
     const currentToggle = config.get('shortcuts.toggle', 'F1');
     const currentTrigger = config.get('shortcuts.trigger', 'Space');
-    
+
     // Set initial values
     toggleInput.value = currentToggle;
     triggerInput.value = currentTrigger;
     toggleDisplay.textContent = currentToggle;
     triggerDisplay.textContent = currentTrigger;
-    
+
     // Function to handle key capture
     function captureKey(input, displayElement) {
         input.addEventListener('focus', () => {
             input.value = 'Press a key...';
             input.classList.add('capturing');
         });
-        
+
         input.addEventListener('blur', () => {
             if (input.value === 'Press a key...') {
                 // Restore previous value if no key was pressed
@@ -1826,10 +1826,10 @@ function setupShortcutCapture() {
             }
             input.classList.remove('capturing');
         });
-        
+
         input.addEventListener('keydown', (e) => {
             e.preventDefault();
-            
+
             // Get the key name
             let keyName;
             if (e.key === ' ') {
@@ -1840,30 +1840,30 @@ function setupShortcutCapture() {
             } else {
                 keyName = e.key;
             }
-            
+
             // Special handling for modifier keys
             if (e.ctrlKey && e.key !== 'Control') keyName = 'Ctrl+' + keyName;
             if (e.altKey && e.key !== 'Alt') keyName = 'Alt+' + keyName;
             if (e.shiftKey && e.key !== 'Shift') keyName = 'Shift+' + keyName;
-            
+
             // Update input and display
             input.value = keyName;
             displayElement.textContent = keyName;
-            
+
             // Remove focus to complete capture
             input.blur();
         });
     }
-    
+
     // Set up key capture for both inputs
     captureKey(toggleInput, toggleDisplay);
     captureKey(triggerInput, triggerDisplay);
-    
+
     // Update display when input changes directly
     toggleInput.addEventListener('input', () => {
         toggleDisplay.textContent = toggleInput.value;
     });
-    
+
     triggerInput.addEventListener('input', () => {
         triggerDisplay.textContent = triggerInput.value;
     });

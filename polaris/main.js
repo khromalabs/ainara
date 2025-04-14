@@ -22,6 +22,7 @@ let tray = null;
 let shortcutRegistered = false;
 let splashWindow = null;
 let setupWindow = null;
+let wizardActive = false;
 
 const shortcutKey = config.get('shortcuts.toggle', 'F1');
 
@@ -37,6 +38,9 @@ function showSetupWizard() {
     // Get the appropriate icon based on theme
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
+
+    wizardActive = true;
+    globalShortcut.unregister(shortcutKey);
 
     // Create setup window
     setupWindow = new BrowserWindow({
@@ -75,6 +79,9 @@ function showSetupWizard() {
         } catch (error) {
             Logger.error('Error closing setupWindow:' + error);
         }
+        wizardActive = false;
+        appSetupShortcuts();
+        updateProviderSubmenu();
         showWindows(true);
     });
 
@@ -86,6 +93,8 @@ function showSetupWizard() {
         } else {
             try {
                 setupWindow?.close();
+                wizardActive = false;
+                appSetupShortcuts();
                 updateProviderSubmenu();
             } catch (error) {
                 Logger.error('Error closing setupWindow:' + error);
@@ -276,7 +285,7 @@ function showWindows(force=false) {
 }
 
 function appSetupShortcuts() {
-    if (!shortcutRegistered) {
+    if (!wizardActive && !shortcutRegistered) {
         shortcutRegistered = globalShortcut.register(shortcutKey, showWindows);
 
         if (shortcutRegistered) {
