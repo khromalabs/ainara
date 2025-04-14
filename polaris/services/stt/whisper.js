@@ -42,6 +42,7 @@ class WhisperSTT extends STTBackend {
         try {
             console.log("WhisperSTT initialize starting");
             console.log("apiUrl is:", this.apiUrl);
+            console.log("ffmpegPath is:", ffmpegPath);
             // const url = new URL(this.apiUrl);
             // // Check if server is available by requesting the root URL
             // const baseUrl = `${url.protocol}//${url.host}`;
