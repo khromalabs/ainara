@@ -413,7 +413,7 @@ def tail_logs():
             log_files["pybridge"] = open(PYBRIDGE_LOG, "r")
             log_positions["pybridge"] = 0
 
-        if not argsg.skip_ollama:
+        if not TEMPORARILY_DISABLE_OLLAMA and not argsg.skip_ollama:
             log_files["ollama"] = open(OLLAMA_LOG, "r")
             log_positions["ollama"] = 0
 
