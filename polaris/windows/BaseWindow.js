@@ -144,8 +144,19 @@ class BaseWindow {
     }
 
     close() {
-        Logger.log(`Closing ${this.name}`);
-        this.window.close();
+        if (this.window && !this.window.isDestroyed()) {
+            try {
+                Logger.log(`Closing window ${this.name}`);
+                if (this.window.isClosable()) {
+                    this.window.close();
+                } else {
+                    this.window.destroy();
+                }
+            } catch (err) {
+                Logger.error(`Error closing, forzing destroy on window ${this.name}:`, err);
+                this.window.destroy();
+            }
+        }
     }
 
     static getHandlers() {
