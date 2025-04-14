@@ -310,8 +310,7 @@ class ComRing extends BaseComponent {
         // Debug keyboard events
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
-            if (event.key === 'Escape') {
-                // event.key === this.config.get('shortcuts.toggle', 'F1')) {
+            if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
 ;
                 console.log("EVENT ESCAPE");
                 // Always abort any ongoing LLM response first

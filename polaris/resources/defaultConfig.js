@@ -33,7 +33,8 @@ module.exports = {
         opacity: 0.95
     },
     shortcuts: {
-        toggle: 'F1',
+        show: 'F1',
+        hide: 'Escape',
         trigger: 'Space'
     },
     ring: {

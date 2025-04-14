@@ -494,7 +494,8 @@ function setupEventListeners() {
             margin-bottom: 10px;
         }
 
-        #toggle-key-display,
+        #show-key-display,
+        #hide-key-display,
         #trigger-key-display {
             background-color: #e9ecef;
             padding: 2px 6px;

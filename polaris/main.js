@@ -24,7 +24,7 @@ let splashWindow = null;
 let setupWindow = null;
 let wizardActive = false;
 
-const shortcutKey = config.get('shortcuts.toggle', 'F1');
+const shortcutKey = config.get('shortcuts.show', 'F1');
 
 // Check if this is the first run of the application
 function isFirstRun() {
