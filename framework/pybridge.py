@@ -144,6 +144,19 @@ def create_app():
     # Check STT dependencies
     try:
         DependencyChecker.print_stt_dependency_report()
+        
+        # Log more detailed information about hardware acceleration
+        cuda_available, cuda_version, missing_libs, cuda_details = DependencyChecker.check_cuda_availability()
+        if cuda_available:
+            logger.info(f"CUDA {cuda_version} is available for hardware acceleration")
+            if cuda_details.get("device_name"):
+                logger.info(f"Using GPU: {cuda_details['device_name']}")
+        elif cuda_details["has_nvidia_hardware"]:
+            logger.warning("NVIDIA GPU detected but CUDA is not available")
+            logger.warning("Speech recognition will use CPU mode (slower)")
+            if sys.platform == 'win32':
+                logger.warning("On Windows, you may need to install NVIDIA CUDA drivers manually")
+                logger.warning("Visit https://www.nvidia.com/Download/index.aspx to download drivers")
     except ImportError:
         logger.info(
             "Dependency checker not available, skipping dependency check"
@@ -1063,6 +1076,30 @@ def create_app():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/hardware/acceleration", methods=["GET"])
+    def check_hardware_acceleration():
+        """Check if hardware acceleration is available"""
+        try:
+            # Get detailed acceleration information and recommendations
+            cuda_available, cuda_version, missing_libs, details = DependencyChecker.check_cuda_availability()
+            recommendations = DependencyChecker.get_acceleration_recommendation()
+            
+            return jsonify({
+                "cuda_available": cuda_available,
+                "cuda_version": cuda_version,
+                "has_nvidia_hardware": details["has_nvidia_hardware"],
+                "platform": sys.platform,
+                "gpu_list": details["gpu_list"],
+                "missing_libs": missing_libs,
+                "details": details,
+                "recommendations": recommendations
+            })
+        except Exception as e:
+            logger.error(f"Error checking hardware acceleration: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
+            
     @app.route("/config/defaults", methods=["GET"])
     def get_default_config():
         """Return the default configuration"""

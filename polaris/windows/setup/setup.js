@@ -378,6 +378,75 @@ function setupEventListeners() {
             ipcRenderer.send('close-setup-window');
         }
     });
+    
+    // Add CSS for hardware acceleration info
+    const style = document.createElement('style');
+    style.textContent = `
+        .hardware-info {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #6c757d;
+        }
+        
+        .success-message {
+            color: #28a745;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .warning-message {
+            color: #ffc107;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .info-message {
+            color: #17a2b8;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .success-message .icon,
+        .warning-message .icon,
+        .info-message .icon {
+            margin-right: 8px;
+            font-size: 1.2em;
+        }
+        
+        .hardware-info p {
+            margin: 8px 0;
+        }
+        
+        .hardware-info a {
+            color: #007bff;
+            text-decoration: underline;
+        }
+        
+        .gpu-details {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .gpu-details ul {
+            margin: 5px 0 0 20px;
+            padding: 0;
+        }
+        
+        .gpu-details li {
+            margin-bottom: 5px;
+        }
+    `;
+    document.head.appendChild(style);
 
     // Handle external links to open in system browser
     document.addEventListener('click', (event) => {
@@ -1116,9 +1185,144 @@ function validateCurrentStep() {
     }
 }
 
+// Add a function to check hardware acceleration status
+async function checkHardwareAcceleration() {
+    try {
+        const response = await fetch(config.get('pybridge.api_url') + '/hardware/acceleration');
+        if (!response.ok) {
+            throw new Error('Failed to check hardware acceleration');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error checking hardware acceleration:', error);
+        return { 
+            cuda_available: false, 
+            message: 'Unable to check hardware acceleration status'
+        };
+    }
+}
+
 // Add event listeners for STT options
 function setupSTTEventListeners() {
     const sttNextButton = document.getElementById('stt-next');
+    const sttPanel = document.getElementById('stt-panel');
+    
+    // Add hardware acceleration info section if it doesn't exist
+    if (!document.getElementById('hardware-acceleration-info')) {
+        const infoHtml = `
+            <div id="hardware-acceleration-info" class="hardware-info">
+                <h3>Hardware Acceleration</h3>
+                <div id="hardware-status">Checking hardware acceleration status...</div>
+            </div>
+        `;
+        
+        // Insert before the STT options
+        const sttOptions = sttPanel.querySelector('.stt-options');
+        if (sttOptions) {
+            sttOptions.insertAdjacentHTML('beforebegin', infoHtml);
+        }
+        
+        // Check hardware acceleration status
+        checkHardwareAcceleration().then(result => {
+            const statusElement = document.getElementById('hardware-status');
+            if (statusElement) {
+                if (result.cuda_available) {
+                    statusElement.innerHTML = `
+                        <div class="success-message">
+                            <span class="icon">✓</span>
+                            <span>CUDA ${result.cuda_version || ''} is available</span>
+                        </div>
+                        <p>Your system will use GPU acceleration for faster speech recognition.</p>
+                    `;
+                    
+                    // Show GPU details if available
+                    if (result.gpu_list && result.gpu_list.length > 0) {
+                        let gpuHtml = `<div class="gpu-details"><p>Using GPU(s):</p><ul>`;
+                        result.gpu_list.forEach(gpu => {
+                            gpuHtml += `<li>${gpu.name} ${gpu.memory ? '(' + gpu.memory + ')' : ''}</li>`;
+                        });
+                        gpuHtml += `</ul></div>`;
+                        statusElement.innerHTML += gpuHtml;
+                    }
+                } else if (result.has_nvidia_hardware) {
+                    // NVIDIA hardware detected but CUDA not available
+                    let helpText = '';
+                    if (result.platform === 'win32') {
+                        helpText = `
+                            <p>An NVIDIA GPU was detected, but CUDA drivers are not installed or not working properly.</p>
+                            <p>For faster speech recognition, we recommend installing NVIDIA CUDA drivers:</p>
+                            <p><a href="#" class="external-link" data-url="https://www.nvidia.com/Download/index.aspx">Download NVIDIA Drivers</a></p>
+                            <p><a href="#" class="external-link" data-url="https://developer.nvidia.com/cuda-downloads">Download CUDA Toolkit</a></p>
+                            <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
+                        `;
+                    } else if (result.platform === 'linux') {
+                        helpText = `
+                            <p>An NVIDIA GPU was detected, but CUDA drivers are not installed or not working properly.</p>
+                            <p>For faster speech recognition, install NVIDIA drivers using your distribution's package manager.</p>
+                            <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
+                        `;
+                    }
+                    
+                    // Show GPU details if available
+                    if (result.gpu_list && result.gpu_list.length > 0) {
+                        helpText += `<div class="gpu-details"><p>Detected GPU(s):</p><ul>`;
+                        result.gpu_list.forEach(gpu => {
+                            helpText += `<li>${gpu.name} ${gpu.driver_version ? '(Driver: ' + gpu.driver_version + ')' : ''}</li>`;
+                        });
+                        helpText += `</ul></div>`;
+                    }
+                    
+                    statusElement.innerHTML = `
+                        <div class="warning-message">
+                            <span class="icon">⚠</span>
+                            <span>Hardware acceleration not available</span>
+                        </div>
+                        ${helpText}
+                    `;
+                } else if (result.platform === 'darwin') {
+                    // macOS - no NVIDIA hardware
+                    let helpText = `
+                        <p>On macOS, Metal is used for acceleration on Apple Silicon.</p>
+                        <p>CPU will be used on Intel Macs, which may be slower for speech recognition.</p>
+                    `;
+                    
+                    statusElement.innerHTML = `
+                        <div class="info-message">
+                            <span class="icon">ℹ</span>
+                            <span>Using macOS native acceleration</span>
+                        </div>
+                        ${helpText}
+                    `;
+                } else {
+                    // No NVIDIA hardware detected
+                    let helpText = `
+                        <p>Your system will use CPU for speech recognition, which may be slower.</p>
+                        <p>If you have an NVIDIA GPU, installing CUDA drivers can improve performance.</p>
+                    `;
+                    
+                    statusElement.innerHTML = `
+                        <div class="info-message">
+                            <span class="icon">ℹ</span>
+                            <span>No NVIDIA GPU detected</span>
+                        </div>
+                        ${helpText}
+                    `;
+                }
+            }
+        }).catch(error => {
+            console.error('Failed to check hardware acceleration:', error);
+            const statusElement = document.getElementById('hardware-status');
+            if (statusElement) {
+                statusElement.innerHTML = `
+                    <div class="warning-message">
+                        <span class="icon">⚠</span>
+                        <span>Unable to check hardware acceleration status</span>
+                    </div>
+                    <p>Speech recognition will work, but may be slower without GPU acceleration.</p>
+                `;
+            }
+        });
+    }
 
     // Show/hide details based on selection
     document.querySelectorAll('input[name="stt-backend"]').forEach(radio => {
