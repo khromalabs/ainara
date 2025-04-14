@@ -114,7 +114,6 @@ body {
 }
 
 .stt-status.active {
-    opacity: 1;
     animation: text-fluctuation 2s ease-in-out infinite;
 }
 

@@ -26,11 +26,9 @@ from ainara.framework.capabilities_manager import CapabilitiesManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
-from ainara.framework.llm import create_llm_backend
 
 config = ConfigManager()
 config.load_config()
-llm = create_llm_backend(config.get("llm", {}))
 
 
 def parse_args():
@@ -75,7 +73,7 @@ def health_check():
             "logging": logging_manager is not None,
         },
         "dependencies": {
-            "llm_available": llm is not None
+            "dummy": True
         },
     }
 
@@ -132,9 +130,6 @@ def create_app():
             # Update the configuration without saving
             config.update_config(new_config=data, save=False)
             # logger.info(f"new configuration: {pprint.pformat(data)}")
-            # llm.initialize_provider(config)
-            new_llm = create_llm_backend(config.get("llm", {}))
-            app.chat_manager.llm = new_llm
 
             return jsonify({"success": True})
         except Exception as e:
