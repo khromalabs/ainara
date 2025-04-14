@@ -1,5 +1,6 @@
 const STTBackend = require('./base');
 const ConfigManager = require('../../utils/config');
+const ConfigHelper = require('../../utils/ConfigHelper');
 const { ipcRenderer } = require('electron');
 const { promisify } = require('util');
 const fs = require('fs');
@@ -8,7 +9,7 @@ const path = require('path');
 
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
-ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfmpegPath(ConfigHelper.resolveBinaryPath(ffmpegPath));
 
 
 
@@ -42,7 +43,7 @@ class WhisperSTT extends STTBackend {
         try {
             console.log("WhisperSTT initialize starting");
             console.log("apiUrl is:", this.apiUrl);
-            console.log("ffmpegPath is:", ffmpegPath);
+            console.log("ffmpegPath is:", ConfigHelper.resolveBinaryPath(ffmpegPath));
             // const url = new URL(this.apiUrl);
             // // Check if server is available by requesting the root URL
             // const baseUrl = `${url.protocol}//${url.host}`;

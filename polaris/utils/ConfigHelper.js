@@ -5,6 +5,22 @@ const ConfigManager = require('./config');
 
 
 class ConfigHelper {
+    /**
+     * Resolves paths to binary files that might be in app.asar.unpacked when packaged with Electron
+     * @param {string} originalPath - The original path to the binary file
+     * @returns {string} - The corrected path that works in both development and production
+     */
+    static resolveBinaryPath(originalPath) {
+        // Only perform the replacement if we're in an Electron packaged environment
+        // and the path contains app.asar
+        if (process.resourcesPath && originalPath && originalPath.includes('app.asar')) {
+            const correctedPath = originalPath.replace('app.asar', 'app.asar.unpacked');
+            Logger.log(`Binary path corrected: ${originalPath} → ${correctedPath}`);
+            return correctedPath;
+        }
+        return originalPath;
+    }
+    
     static async fetchBackendConfig() {
         const config1 = new ConfigManager();
         try {
