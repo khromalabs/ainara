@@ -86,6 +86,7 @@ function showSetupWizard() {
         } else {
             try {
                 setupWindow?.close();
+                updateProviderSubmenu();
             } catch (error) {
                 Logger.error('Error closing setupWindow:' + error);
             }
