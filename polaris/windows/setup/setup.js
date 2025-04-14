@@ -1773,12 +1773,17 @@ async function saveSkillsConfig() {
 function saveShortcutsConfig() {
     try {
         // Get shortcut values
-        const toggleShortcut = document.getElementById('toggle-shortcut').value.trim();
+        const showShortcut = document.getElementById('show-shortcut').value.trim();
+        const hideShortcut = document.getElementById('hide-shortcut').value.trim();
         const triggerShortcut = document.getElementById('trigger-shortcut').value.trim();
 
         // Update config
-        if (toggleShortcut) {
-            config.set('shortcuts.toggle', toggleShortcut);
+        if (showShortcut) {
+            config.set('shortcuts.show', showShortcut);
+        }
+        
+        if (hideShortcut) {
+            config.set('shortcuts.hide', hideShortcut);
         }
 
         if (triggerShortcut) {
@@ -1797,19 +1802,24 @@ function saveShortcutsConfig() {
 
 // Function to handle shortcut key capture
 function setupShortcutCapture() {
-    const toggleInput = document.getElementById('toggle-shortcut');
+    const showInput = document.getElementById('show-shortcut');
+    const hideInput = document.getElementById('hide-shortcut');
     const triggerInput = document.getElementById('trigger-shortcut');
-    const toggleDisplay = document.getElementById('toggle-key-display');
+    const showDisplay = document.getElementById('show-key-display');
+    const hideDisplay = document.getElementById('hide-key-display');
     const triggerDisplay = document.getElementById('trigger-key-display');
 
     // Load current values from config
-    const currentToggle = config.get('shortcuts.toggle', 'F1');
+    const currentShow = config.get('shortcuts.show', 'F1');
+    const currentHide = config.get('shortcuts.hide', 'Escape');
     const currentTrigger = config.get('shortcuts.trigger', 'Space');
 
     // Set initial values
-    toggleInput.value = currentToggle;
+    showInput.value = currentShow;
+    hideInput.value = currentHide;
     triggerInput.value = currentTrigger;
-    toggleDisplay.textContent = currentToggle;
+    showDisplay.textContent = currentShow;
+    hideDisplay.textContent = currentHide;
     triggerDisplay.textContent = currentTrigger;
 
     // Function to handle key capture
@@ -1856,12 +1866,17 @@ function setupShortcutCapture() {
     }
 
     // Set up key capture for both inputs
-    captureKey(toggleInput, toggleDisplay);
+    captureKey(showInput, showDisplay);
+    captureKey(hideInput, hideDisplay);
     captureKey(triggerInput, triggerDisplay);
 
     // Update display when input changes directly
-    toggleInput.addEventListener('input', () => {
-        toggleDisplay.textContent = toggleInput.value;
+    showInput.addEventListener('input', () => {
+        showDisplay.textContent = showInput.value;
+    });
+    
+    hideInput.addEventListener('input', () => {
+        hideDisplay.textContent = hideInput.value;
     });
 
     triggerInput.addEventListener('input', () => {
