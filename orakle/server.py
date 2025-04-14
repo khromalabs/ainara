@@ -131,8 +131,10 @@ def create_app():
 
             # Update the configuration without saving
             config.update_config(new_config=data, save=False)
-            llm.initialize_provider()
-            logger.info("Configuration updated successfully")
+            # logger.info(f"new configuration: {pprint.pformat(data)}")
+            # llm.initialize_provider(config)
+            new_llm = create_llm_backend(config.get("llm", {}))
+            app.chat_manager.llm = new_llm
 
             return jsonify({"success": True})
         except Exception as e:

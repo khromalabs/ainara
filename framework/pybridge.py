@@ -308,7 +308,7 @@ def create_app():
 
             # Update the configuration
             config.update_config(data)
-            logger.info(f"new configuration: {pprint.pformat(data)}")
+            # logger.info(f"new configuration: {pprint.pformat(data)}")
             # llm.initialize_provider(config)
             new_llm = create_llm_backend(config.get("llm", {}))
             app.chat_manager.llm = new_llm

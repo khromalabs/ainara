@@ -12,7 +12,7 @@ class SplashWindow extends BaseWindow {
             resizable: false,
             center: true,
             skipTaskbar: true,
-            backgroundColor: '#000000',
+            // backgroundColor: '#000000',
             alwaysOnTop: true,
             webPreferences: {
                 nodeIntegration: true,
@@ -24,10 +24,10 @@ class SplashWindow extends BaseWindow {
         this.setupBaseEventHandlers();
         this.loadContent('html/splash.html');
 
-        // Windows-specific fix for transparency issues
-        if (process.platform === 'win32') {
-            this.window.setBackgroundColor('#000000');
-        }
+        // // Windows-specific fix for transparency issues
+        // if (process.platform === 'win32') {
+        //     this.window.setBackgroundColor('#000000');
+        // }
     }
 
     updateProgress(status, progress) {
