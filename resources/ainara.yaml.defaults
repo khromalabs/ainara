@@ -70,21 +70,22 @@ audio:
 memory:
   enabled: false
   vector_db_enabled: false
+  session_id: "default_session"
 #  embedding_model: "sentence-transformers/all-mpnet-base-v2"
 #  storage_path: "~/.config/ainara/chat_memory.db"
 #  vector_db_path: "~/.config/ainara/vector_db"
 
 # APIs
 apis:
-  crypto:
-    coinmarketcap_api_key: ""
+  # crypto:
+  #   coinmarketcap_api_key: ""
   finance:
     alphavantage_api_key: ""
-  helius:
-    api_key: ""
-  reddit:
-    client_id: ""
-    client_secret: ""
+  # helius:
+  #   api_key: ""
+  # reddit:
+  #   client_id: ""
+  #   client_secret: ""
   search:
     google:
       api_key: ""
@@ -97,15 +98,14 @@ apis:
       api_key: ""
     tavily:
       api_key: ""
-  twitter:
-    access_token: ""
-    access_token_secret: ""
-    api_key: ""
-    api_secret: ""
-    bearer_token: ""
+  # twitter:
+  #   access_token: ""
+  #   access_token_secret: ""
+  #   api_key: ""
+  #   api_secret: ""
+  #   bearer_token: ""
   weather:
     openweathermap_api_key: ""
-  session_id: "default_session"
 
 # Logging configuration (uncomment to customize)
 # logging:

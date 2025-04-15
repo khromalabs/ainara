@@ -80,8 +80,12 @@ function extractApiKeysFromConfig(config) {
         for (const [key, value] of Object.entries(obj)) {
             const currentPath = [...path, key];
 
+            if (!String(currentPath).startsWith("apis"))
+                continue;
+
             // If the value is "<key>" or contains "api_key" in the key name, it's likely an API key
-            if (value === "<key>" || key.includes('api_key') || key.includes('apiKey')) {
+            // if (value === "<key>" || key.includes('api_key') || key.includes('apiKey')) {
+            if (typeof value !== 'object' && value !== null) {
                 // Create a parent path (everything except the last segment)
                 const parentPath = currentPath.slice(0, -1).join('.');
 
@@ -103,6 +107,7 @@ function extractApiKeysFromConfig(config) {
                 });
             }
             // If it's an object, recursively search it
+            // else if (typeof value === 'object' && value !== null) {
             else if (typeof value === 'object' && value !== null) {
                 findApiKeys(value, currentPath);
             }
@@ -245,6 +250,11 @@ async function generateSkillsUI() {
         // Group keys by category
         const categories = new Map();
 
+        // console.log("-------");
+        // console.log("apiKeys:");
+        // console.log(JSON.stringify(apiKeys));
+        // console.log("-------");
+
         // Group by top-level category first
         for (const [parentPath, keyGroup] of Object.entries(apiKeys)) {
             const pathParts = parentPath.split('.');
@@ -289,7 +299,7 @@ async function generateSkillsUI() {
                     }
 
                     if (group.keys[0].description.url) {
-                        html += `<p>Get API key from: <a href="#" class="external-link" data-url="${group.keys[0].description.url}">${new URL(group.keys[0].description.url).hostname}</a></p>`;
+                        html += `<p>Get API key(s) from: <a href="#" class="external-link" data-url="${group.keys[0].description.url}">${new URL(group.keys[0].description.url).hostname}</a></p>`;
                     }
                 }
 
