@@ -139,16 +139,16 @@ class FasterWhisperSTT(STTBackend):
 
             # Check if CUDA is available
             cuda_available = stt_deps["cuda"]["available"]
-        
-            # Double-check CUDA availability directly with torch on Windows
-            if not cuda_available and platform.system() == "Windows":
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        cuda_available = True
-                        logger.info("CUDA detected directly through torch on Windows")
-                except ImportError:
-                    pass
+
+            # # Double-check CUDA availability directly with torch on Windows
+            # if not cuda_available and platform.system() == "Windows":
+            #     try:
+            #         import torch
+            #         if torch.cuda.is_available():
+            #             cuda_available = True
+            #             logger.info("CUDA detected directly through torch on Windows")
+            #     except ImportError:
+            #         pass
         except ImportError:
             # Dependency checker not available, assume CUDA is not available
             cuda_available = False
@@ -168,8 +168,16 @@ class FasterWhisperSTT(STTBackend):
 
         # Use user config if provided, otherwise use optimal config
         self.model_size = user_model_size or optimal_config.get("model_size", "small")
-        self.device = user_device or optimal_config.get("device", "cpu")
-        self.compute_type = user_compute_type or optimal_config.get("compute_type", "int8")
+
+        # TODO Fix CUDA dependencies error
+        # By not force CPU mode on Linux regardless of other settings
+        if platform.system() == "Linux":
+            self.device = "cpu"
+            self.compute_type = "int8"
+            logger.info("Forcing CPU mode on Linux to avoid CUDA library issues")
+        else:
+            self.device = user_device or optimal_config.get("device", "cpu")
+            self.compute_type = user_compute_type or optimal_config.get("compute_type", "int8")
 
         # If CUDA is not available but device is set to cuda, force CPU mode
         if not cuda_available and self.device == "cuda":
@@ -325,7 +333,7 @@ class FasterWhisperSTT(STTBackend):
             import traceback
 
             logger.error(traceback.format_exc())
-            
+
             # Try to provide more helpful error information
             if "CUDA" in str(e) or "GPU" in str(e):
                 logger.error("This appears to be a CUDA-related error. Try setting 'compute_type' to 'float16' in your config.")

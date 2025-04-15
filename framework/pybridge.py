@@ -144,7 +144,7 @@ def create_app():
     # Check STT dependencies
     try:
         DependencyChecker.print_stt_dependency_report()
-        
+
         # Log more detailed information about hardware acceleration
         cuda_available, cuda_version, missing_libs, cuda_details = DependencyChecker.check_cuda_availability()
         if cuda_available:
@@ -1083,7 +1083,7 @@ def create_app():
             # Get detailed acceleration information and recommendations
             cuda_available, cuda_version, missing_libs, details = DependencyChecker.check_cuda_availability()
             recommendations = DependencyChecker.get_acceleration_recommendation()
-            
+
             return jsonify({
                 "cuda_available": cuda_available,
                 "cuda_version": cuda_version,
@@ -1099,7 +1099,7 @@ def create_app():
             import traceback
             logger.error(traceback.format_exc())
             return jsonify({"error": str(e)}), 500
-            
+
     @app.route("/config/defaults", methods=["GET"])
     def get_default_config():
         """Return the default configuration"""
