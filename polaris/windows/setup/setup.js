@@ -12,6 +12,13 @@ const config = new ConfigManager();
 const steps = ['welcome', 'llm', 'stt', 'skills', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 let providersData = null;
+// Track modified fields
+const modifiedFields = {
+    llm: new Set(),
+    stt: new Set(),
+    skills: new Set(),
+    shortcuts: new Set()
+};
 
 // Initialize the UI
 document.addEventListener('DOMContentLoaded', () => {
@@ -1080,20 +1087,38 @@ function updateProviderDetailsUI() {
 
     // Add input event listeners for validation
     detailsContainer.querySelectorAll('input, select').forEach(input => {
-        input.addEventListener('input', handleInputChange);
+        input.addEventListener('input', (event) => handleInputChange(event));
     });
 
     validateProviderForm();
 }
 
 // New function to handle input changes
-function handleInputChange() {   // event
+function handleInputChange(event) {
     // Hide test result and disable next button when any input changes
     const testResult = document.getElementById('test-result');
     const nextButton = document.getElementById('llm-next');
 
     testResult.classList.add('hidden');
     nextButton.disabled = true;
+
+    // Track the modified field
+    if (event && event.target) {
+        const field = event.target;
+        const fieldId = field.id;
+        
+        // Determine which section this field belongs to
+        if (fieldId.includes('shortcut')) {
+            modifiedFields.shortcuts.add(fieldId);
+        } else if (fieldId.includes('api-key-')) {
+            modifiedFields.skills.add(field.dataset.path);
+        } else if (fieldId.includes('custom-api')) {
+            modifiedFields.stt.add(fieldId);
+        } else {
+            // LLM fields
+            modifiedFields.llm.add(fieldId);
+        }
+    }
 
     // Also validate the form
     validateProviderForm();
@@ -1418,6 +1443,9 @@ function setupSTTEventListeners() {
 
             // Hide any previous validation messages
             document.getElementById('stt-test-result').classList.add('hidden');
+            
+            // Track this change
+            modifiedFields.stt.add('stt-backend');
         });
     });
 
@@ -1610,6 +1638,11 @@ async function saveLLMConfig() {
     if (!llmConfig) {
         return "No provider defined won't save";
     }
+    
+    // If no LLM fields were modified and we're not selecting an existing provider, skip saving
+    if (modifiedFields.llm.size === 0 && !selectedExistingProvider) {
+        return null; // No error, just nothing to save
+    }
     // const notCustomProvider = document.querySelector('input[name="llm-provider"]:checked')?.value !== 'custom';
 
     try {
@@ -1672,6 +1705,10 @@ async function saveLLMConfig() {
         if (changedSelectedProvider) {
             await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
         }
+        
+        // After successful save, clear the modified fields tracking
+        modifiedFields.llm.clear();
+        
         await updateUIAfterSave(provider);
     } catch (error) {
         console.error('Error updating LLM config:', error);
@@ -1681,6 +1718,12 @@ async function saveLLMConfig() {
 // Function to save STT config
 async function saveSTTConfig() {
     const selectedBackend = document.querySelector('input[name="stt-backend"]:checked')?.value || 'faster_whisper';
+    
+    // If no STT fields were modified and we're using the default, skip saving
+    const usingDefault = selectedBackend === 'faster_whisper';
+    if (modifiedFields.stt.size === 0 && usingDefault) {
+        return;
+    }
 
     // Save to Polaris config
     const sttConfig = {
@@ -1743,12 +1786,20 @@ async function saveSTTConfig() {
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         // await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        
+        // After successful save, clear the modified fields tracking
+        modifiedFields.stt.clear();
     } catch (error) {
         console.error('Error updating STT config:', error);
     }
 }
 
 async function saveSkillsConfig() {
+    // If no skill fields were modified, skip saving
+    if (modifiedFields.skills.size === 0) {
+        return;
+    }
+    
     try {
         // Load current backend config
         const backendConfig = await loadBackendConfig();
@@ -1769,13 +1820,14 @@ async function saveSkillsConfig() {
             current[parts[parts.length - 1]] = value;
         }
 
-        // Update each API key in the backend config
+        // Only update modified API keys
         document.querySelectorAll('input[data-path]').forEach(input => {
             const path = input.dataset.path;
-            const value = input.value.trim();
-
-            if (value) {
-                setValueAtPath(backendConfig, path, value);
+            if (modifiedFields.skills.has(path)) {
+                const value = input.value.trim();
+                if (value) {
+                    setValueAtPath(backendConfig, path, value);
+                }
             }
         });
 
@@ -1787,6 +1839,9 @@ async function saveSkillsConfig() {
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        
+        // Clear modified fields after successful save
+        modifiedFields.skills.clear();
     } catch (error) {
         console.error('Error updating skills config:', error);
     }
@@ -1794,6 +1849,11 @@ async function saveSkillsConfig() {
 
 // Function to save shortcuts configuration
 function saveShortcutsConfig() {
+    // If no shortcut fields were modified, skip saving
+    if (modifiedFields.shortcuts.size === 0) {
+        return true;
+    }
+    
     try {
         // Get shortcut values
         const showShortcut = document.getElementById('show-shortcut').value.trim();
@@ -1801,20 +1861,23 @@ function saveShortcutsConfig() {
         const triggerShortcut = document.getElementById('trigger-shortcut').value.trim();
 
         // Update config
-        if (showShortcut) {
+        if (showShortcut && modifiedFields.shortcuts.has('show-shortcut')) {
             config.set('shortcuts.show', showShortcut);
         }
 
-        if (hideShortcut) {
+        if (hideShortcut && modifiedFields.shortcuts.has('hide-shortcut')) {
             config.set('shortcuts.hide', hideShortcut);
         }
 
-        if (triggerShortcut) {
+        if (triggerShortcut && modifiedFields.shortcuts.has('trigger-shortcut')) {
             config.set('shortcuts.trigger', triggerShortcut);
         }
 
         // Save to disk
         config.saveConfig();
+        
+        // Clear modified fields after successful save
+        modifiedFields.shortcuts.clear();
 
         return true;
     } catch (error) {
@@ -1896,14 +1959,17 @@ function setupShortcutCapture() {
     // Update display when input changes directly
     showInput.addEventListener('input', () => {
         showDisplay.textContent = showInput.value;
+        modifiedFields.shortcuts.add('show-shortcut');
     });
 
     hideInput.addEventListener('input', () => {
         hideDisplay.textContent = hideInput.value;
+        modifiedFields.shortcuts.add('hide-shortcut');
     });
 
     triggerInput.addEventListener('input', () => {
         triggerDisplay.textContent = triggerInput.value;
+        modifiedFields.shortcuts.add('trigger-shortcut');
     });
 }
 
