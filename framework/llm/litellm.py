@@ -47,7 +47,6 @@ class LiteLLM(LLMBackend):
                 f" for initialization only. Exception: {str(e)}"
             )
         self._context_window = self._get_context_window()
-        self.logger.info("RUBEN GOMEZ")
 
     def _get_context_window(self) -> int:
         """Get the context window size for the current model"""

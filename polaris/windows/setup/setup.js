@@ -1772,6 +1772,11 @@ async function saveSkillsConfig() {
             }
         });
 
+        console.log("======================");
+        console.log("backendConfig");
+        console.log(JSON.stringify(backendConfig));
+        console.log("======================");
+
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         await saveBackendConfig(backendConfig, config.get('orakle.api_url'));

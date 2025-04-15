@@ -5,6 +5,9 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const os = require('os');
 const { app } = require('electron');
+const ConfigManager = require('./utils/config');
+
+const config = new ConfigManager();
 
 class ServiceManager {
     constructor() {
@@ -29,11 +32,10 @@ class ServiceManager {
         }
 
         // Define services with their executables and health endpoints
-        // TODO Don't use hardcoded URL use config URL instead
         this.services = {
             orakle: {
                 process: null,
-                url: 'http://localhost:5000/health',
+                url: config.get('orakle.api_url') + '/health',
                 healthy: false,
                 name: 'Orakle',
                 executable: platform === 'win32' ? 'orakle.exe' : 'orakle',
@@ -42,7 +44,7 @@ class ServiceManager {
             },
             pybridge: {
                 process: null,
-                url: 'http://localhost:5001/health',
+                url: config.get('pybridge.api_url') + '/health',
                 healthy: false,
                 name: 'Pybridge',
                 executable: platform === 'win32' ? 'pybridge.exe' : 'pybridge',
