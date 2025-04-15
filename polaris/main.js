@@ -140,9 +140,14 @@ async function appInitialization() {
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
 
+        // Create splash window
+        splashWindow = new SplashWindow(config, null, null, __dirname);
+        splashWindow.show();
+
         // If services are being managed externally alternate start without splash
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
+            splashWindow.close();
             // Alternate application start for dev purposes
             const resourceCheck = await ServiceManager.checkResourcesInitialization();
             // If resources are not initialized, initialize them
@@ -169,10 +174,6 @@ async function appInitialization() {
                 showWindows(true);
             return;
         }
-
-        // Create splash window
-        splashWindow = new SplashWindow(config, null, null, __dirname);
-        splashWindow.show();
 
         // Set up service manager progress callback
         ServiceManager.setProgressCallback((status, progress) => {
