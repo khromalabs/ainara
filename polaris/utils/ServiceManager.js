@@ -314,6 +314,11 @@ class ServiceManager {
 
     async restartServices() {
         this.updateProgress('Restarting services...', 0);
+        
+        // Show restart modal
+        if (this.windowManager) {
+            this.windowManager.showRestartModal(true);
+        }
 
         try {
             // First stop all services
@@ -331,7 +336,16 @@ class ServiceManager {
             Logger.error('Error restarting services:', error);
             this.updateProgress(`Error: ${error.message}`, 100);
             return false;
+        } finally {
+            // Hide restart modal whether successful or not
+            if (this.windowManager) {
+                this.windowManager.showRestartModal(false);
+            }
         }
+    }
+
+    setWindowManager(wm) {
+        this.windowManager = wm;
     }
 
     async initializeResources() {
