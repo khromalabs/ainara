@@ -314,7 +314,7 @@ class ServiceManager {
 
     async restartServices() {
         this.updateProgress('Restarting services...', 0);
-        
+
         // Show restart modal
         if (this.windowManager) {
             this.windowManager.showRestartModal(true);

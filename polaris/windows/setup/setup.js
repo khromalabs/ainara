@@ -1505,6 +1505,7 @@ async function deleteProvider(index) {
     try {
         // Load current backend config
         const backendConfig = await loadBackendConfig();
+        let changedSelectedProvider = false;
 
         if (!backendConfig.llm || !backendConfig.llm.providers || !backendConfig.llm.providers[index]) {
             throw new Error('Provider not found');
@@ -1525,11 +1526,14 @@ async function deleteProvider(index) {
                 // No providers left, remove the selected key
                 delete backendConfig.llm.selected_provider;
             }
+            changedSelectedProvider = true;
         }
 
         // Save the updated backend config to both servers
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        if (changedSelectedProvider) {
+            await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        }
 
         // Reload the providers list
         loadExistingProviders();
@@ -1601,6 +1605,7 @@ async function saveLLMConfig() {
     const selectedExistingProvider = document.querySelector('input[name="existing-provider"]:checked');
     // llmConfig is the configuration of the selected new provider
     const llmConfig = getLLMConfig();
+    let changedSelectedProvider = false;
     // we don't have a new provider selected, return
     if (!llmConfig) {
         return "No provider defined won't save";
@@ -1632,6 +1637,7 @@ async function saveLLMConfig() {
             if (backendConfig.llm.providers && backendConfig.llm.providers[providerIndex]) {
                 const provider = backendConfig.llm.providers[providerIndex];
                 backendConfig.llm.selected_provider = provider.model;
+                changedSelectedProvider = true;
             }
         }
 
@@ -1658,13 +1664,14 @@ async function saveLLMConfig() {
         }
 
         // Set this as the selected provider
-        backendConfig.llm.selected_provider = provider.model;
-
-        console.log(backendConfig);
+        // backendConfig.llm.selected_provider = provider.model;
+        // console.log(backendConfig);
 
         // Save the updated backend config to both servers
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        if (changedSelectedProvider) {
+            await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        }
         await updateUIAfterSave(provider);
     } catch (error) {
         console.error('Error updating LLM config:', error);
@@ -1735,7 +1742,7 @@ async function saveSTTConfig() {
 
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        // await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
     } catch (error) {
         console.error('Error updating STT config:', error);
     }

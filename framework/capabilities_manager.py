@@ -40,6 +40,18 @@ class CapabilitiesManager:
         # self.register_recipes_endpoints()
         self.register_capabilities_endpoint()
 
+    def reload_skills(self):
+        """Reload skills without registering new endpoints"""
+        self.logger.info("Reloading skills after configuration update")
+        # Clear existing skills
+        self.skills = {}
+        # Reload skills
+        self.load_skills()
+        # Don't call register_skills_endpoints() here as it would try to
+        # register routes which is not allowed after the app has started
+        # handling requests
+        self.logger.info(f"Reloaded {len(self.skills)} skills")
+
     def get_capabilities(self):
         """Get information about all available skills and recipes"""
         capabilities = {"skills": {}, "recipes": {}}

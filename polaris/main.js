@@ -97,7 +97,7 @@ function showSetupWizard() {
                 wizardActive = false;
                 appSetupShortcuts();
                 updateProviderSubmenu();
-                await ServiceManager.restartServices();
+                // await ServiceManager.restartServices();
             } catch (error) {
                 Logger.error('Error closing setupWindow:' + error);
             }
@@ -112,7 +112,7 @@ function showSetupWizard() {
             Logger.info('Setup was not completed, exiting application');
             app.quit();
         } else {
-            await ServiceManager.restartServices();
+            // await ServiceManager.restartServices();
             showWindows(true);
         }
     });
