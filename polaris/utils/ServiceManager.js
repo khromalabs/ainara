@@ -312,6 +312,28 @@ class ServiceManager {
         }
     }
 
+    async restartServices() {
+        this.updateProgress('Restarting services...', 0);
+        
+        try {
+            // First stop all services
+            await this.stopServices();
+            
+            // Then start them again
+            const success = await this.startServices();
+            
+            if (!success) {
+                throw new Error('Failed to restart services');
+            }
+            
+            return true;
+        } catch (error) {
+            Logger.error('Error restarting services:', error);
+            this.updateProgress(`Error: ${error.message}`, 100);
+            return false;
+        }
+    }
+
     async initializeResources() {
         try {
             // Make sure pybridge is healthy before initializing resources
