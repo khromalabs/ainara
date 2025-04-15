@@ -45,9 +45,9 @@
     "build:linux": "electron-builder --linux"
   },
   "build": {
-    "appId": "com.ainara.polaris",
+    "appId": "app.ainara.polaris",
     "publish": null,
-    "productName": "Polaris",
+    "productName": "Ainara Polaris",
     "directories": {
       "output": "dist",
       "buildResources": "build"
