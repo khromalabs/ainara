@@ -5,7 +5,7 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const os = require('os');
 const { app } = require('electron');
-const ConfigManager = require('./utils/config');
+const ConfigManager = require('../utils/config');
 
 const config = new ConfigManager();
 

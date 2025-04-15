@@ -86,7 +86,7 @@ function showSetupWizard() {
         showWindows(true);
     });
 
-    ipcMain.on('close-setup-window', () => {
+    ipcMain.on('close-setup-window', async () => {
         Logger.info('Setup window close requested');
         if (!config.get('setup.completed', false)) {
             Logger.info('Setup was not completed, exiting application');
@@ -97,6 +97,7 @@ function showSetupWizard() {
                 wizardActive = false;
                 appSetupShortcuts();
                 updateProviderSubmenu();
+                await ServiceManager.restartServices();
             } catch (error) {
                 Logger.error('Error closing setupWindow:' + error);
             }
@@ -104,13 +105,14 @@ function showSetupWizard() {
     });
 
     // If the user closes the setup window without completing setup
-    setupWindow.on('closed', () => {
+    setupWindow.on('closed', async () => {
         setupWindow = null;
         if (!config.get('setup.completed', false)) {
             Logger.info('setup.completed value:' + config.get('setup.completed'));
             Logger.info('Setup was not completed, exiting application');
             app.quit();
         } else {
+            await ServiceManager.restartServices();
             showWindows(true);
         }
     });

@@ -1772,10 +1772,10 @@ async function saveSkillsConfig() {
             }
         });
 
-        console.log("======================");
-        console.log("backendConfig");
-        console.log(JSON.stringify(backendConfig));
-        console.log("======================");
+        // console.log("======================");
+        // console.log("backendConfig");
+        // console.log(JSON.stringify(backendConfig));
+        // console.log("======================");
 
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
@@ -1797,7 +1797,7 @@ function saveShortcutsConfig() {
         if (showShortcut) {
             config.set('shortcuts.show', showShortcut);
         }
-        
+
         if (hideShortcut) {
             config.set('shortcuts.hide', hideShortcut);
         }
@@ -1890,7 +1890,7 @@ function setupShortcutCapture() {
     showInput.addEventListener('input', () => {
         showDisplay.textContent = showInput.value;
     });
-    
+
     hideInput.addEventListener('input', () => {
         hideDisplay.textContent = hideInput.value;
     });
