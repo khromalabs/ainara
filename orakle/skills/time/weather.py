@@ -25,7 +25,7 @@ class TimeWeather(Skill):
     def reload(self):
         super().reload(config)
         self.api_key = config.get("apis.weather.openweathermap_api_key")
-        self.logger.info("TimeWeather RELOAD self.api_key = " + self.api_key)
+        # self.logger.info("TimeWeather RELOAD self.api_key = " + self.api_key)
 
     def get_location_from_ip(self):
         """Get location information from IP address"""
