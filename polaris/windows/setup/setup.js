@@ -335,6 +335,11 @@ async function generateSkillsUI() {
             skillsListContainer.innerHTML = html;
         }
 
+        // Add event listeners to all input fields
+        document.querySelectorAll('.skills-list input[data-path]').forEach(input => {
+            input.addEventListener('input', (event) => handleInputChange(event));
+        });
+
         // Load existing values from config
         loadExistingApiKeys();
 
@@ -1106,7 +1111,7 @@ function handleInputChange(event) {
     if (event && event.target) {
         const field = event.target;
         const fieldId = field.id;
-        
+
         // Determine which section this field belongs to
         if (fieldId.includes('shortcut')) {
             modifiedFields.shortcuts.add(fieldId);
@@ -1443,7 +1448,7 @@ function setupSTTEventListeners() {
 
             // Hide any previous validation messages
             document.getElementById('stt-test-result').classList.add('hidden');
-            
+
             // Track this change
             modifiedFields.stt.add('stt-backend');
         });
@@ -1638,7 +1643,7 @@ async function saveLLMConfig() {
     if (!llmConfig) {
         return "No provider defined won't save";
     }
-    
+
     // If no LLM fields were modified and we're not selecting an existing provider, skip saving
     if (modifiedFields.llm.size === 0 && !selectedExistingProvider) {
         return null; // No error, just nothing to save
@@ -1705,10 +1710,10 @@ async function saveLLMConfig() {
         if (changedSelectedProvider) {
             await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
         }
-        
+
         // After successful save, clear the modified fields tracking
         modifiedFields.llm.clear();
-        
+
         await updateUIAfterSave(provider);
     } catch (error) {
         console.error('Error updating LLM config:', error);
@@ -1718,7 +1723,7 @@ async function saveLLMConfig() {
 // Function to save STT config
 async function saveSTTConfig() {
     const selectedBackend = document.querySelector('input[name="stt-backend"]:checked')?.value || 'faster_whisper';
-    
+
     // If no STT fields were modified and we're using the default, skip saving
     const usingDefault = selectedBackend === 'faster_whisper';
     if (modifiedFields.stt.size === 0 && usingDefault) {
@@ -1786,7 +1791,7 @@ async function saveSTTConfig() {
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         // await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
-        
+
         // After successful save, clear the modified fields tracking
         modifiedFields.stt.clear();
     } catch (error) {
@@ -1799,7 +1804,7 @@ async function saveSkillsConfig() {
     if (modifiedFields.skills.size === 0) {
         return;
     }
-    
+
     try {
         // Load current backend config
         const backendConfig = await loadBackendConfig();
@@ -1839,7 +1844,7 @@ async function saveSkillsConfig() {
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
-        
+
         // Clear modified fields after successful save
         modifiedFields.skills.clear();
     } catch (error) {
@@ -1853,7 +1858,7 @@ function saveShortcutsConfig() {
     if (modifiedFields.shortcuts.size === 0) {
         return true;
     }
-    
+
     try {
         // Get shortcut values
         const showShortcut = document.getElementById('show-shortcut').value.trim();
@@ -1875,7 +1880,7 @@ function saveShortcutsConfig() {
 
         // Save to disk
         config.saveConfig();
-        
+
         // Clear modified fields after successful save
         modifiedFields.shortcuts.clear();
 
