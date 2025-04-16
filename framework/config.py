@@ -100,7 +100,7 @@ class ConfigManager:
 
     def load_config(self, force=False):
         """Load config from appropriate location or create from defaults
-        
+
         Args:
             force: If True, forces reload even if file hasn't changed
         """
@@ -110,7 +110,8 @@ class ConfigManager:
         for config_path in config_paths:
             if config_path.exists():
                 try:
-                    if not force and not self.needs_reload():
+                    if self.config and not force and not self.needs_load():
+                        print("Avoiding configuration reload")
                         return  # File hasn't changed since last load
 
                     with open(config_path) as f:
@@ -363,7 +364,7 @@ class ConfigManager:
         os.makedirs(full_path, exist_ok=True)
         return str(full_path)
 
-    def needs_reload(self):
+    def needs_load(self):
         """Check if the config file has been modified since last load"""
         if not self.config_file_path or not os.path.exists(self.config_file_path):
             return False

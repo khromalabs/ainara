@@ -129,34 +129,6 @@ function extractApiKeysFromConfig(config) {
 
 // Format the key name for display
 function formatKeyName(pathArray) {
-    // Special cases for known services
-    // const lastPart = pathArray[pathArray.length - 1];
-    // const parentPart = pathArray.length > 1 ? pathArray[pathArray.length - 2] : '';
-
-    /*
-    if (lastPart === 'api_key' || lastPart === 'apiKey') {
-        if (parentPart === 'openweathermap') {
-            return 'OpenWeatherMap API Key';
-        } else if (parentPart === 'alphavantage') {
-            return 'Alpha Vantage API Key';
-        } else if (parentPart === 'newsapi') {
-            return 'News API Key';
-        } else if (parentPart === 'google') {
-            return 'Google Search API Key';
-        } else if (parentPart === 'tavily') {
-            return 'Tavily Search API Key';
-        } else if (parentPart === 'perplexity') {
-            return 'Perplexity API Key';
-        } else if (parentPart === 'metaphor') {
-            return 'Metaphor Search API Key';
-        } else if (parentPart === 'coinmarketcap') {
-            return 'CoinMarketCap API Key';
-        } else if (parentPart === 'helius') {
-            return 'Helius API Key';
-        }
-    }
-    */
-
     // Default formatting
     return pathArray.map(part => {
         // Convert snake_case or camelCase to Title Case

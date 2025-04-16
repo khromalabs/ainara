@@ -129,9 +129,9 @@ def create_app():
 
             # Update the configuration without saving
             config.update_config(new_config=data, save=False)
+
             # Reload skills without registering new routes
             app.capabilities_manager.reload_skills()
-            # logger.info(f"new configuration: {pprint.pformat(data)}")
 
             return jsonify({"success": True})
         except Exception as e:

@@ -33,11 +33,8 @@ class CapabilitiesManager:
         self.logger = logging.getLogger(__name__)
         self.app = flask_app
         self.skills = {}
-        # self.recipes = {}
         self.load_skills()
         self.register_skills_endpoints()
-        # TODO Ignore recipes by now
-        # self.register_recipes_endpoints()
         self.register_capabilities_endpoint()
 
     def reload_skills(self):
@@ -47,9 +44,9 @@ class CapabilitiesManager:
         self.skills = {}
         # Reload skills
         self.load_skills()
-        # Don't call register_skills_endpoints() here as it would try to
-        # register routes which is not allowed after the app has started
-        # handling requests
+        for skill in self.skills:
+            self.skills[skill].reload()
+        # Don't call register_skills_endpoints() here again
         self.logger.info(f"Reloaded {len(self.skills)} skills")
 
     def get_capabilities(self):
