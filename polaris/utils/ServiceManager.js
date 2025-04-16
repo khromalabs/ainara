@@ -252,13 +252,25 @@ class ServiceManager {
                     });
 
                     // Force kill after timeout if still running
-                    setTimeout(() => {
+                    let forceKillTimeout = setTimeout(() => {
                         if (service.process && !service.process.killed) {
                             Logger.log(`Force killing ${service.name} service with SIGKILL`);
                             service.process.kill('SIGKILL');
-                            // The 'exit' handler above will still resolve the promise
+                            // Give a small grace period for SIGKILL to take effect
+                            setTimeout(() => {
+                                if (service.process && !service.process.killed) {
+                                    Logger.error(`Failed to kill ${service.name} service even with SIGKILL`);
+                                }
+                                service.healthy = false;
+                                resolve();
+                            }, 1000);
                         }
                     }, 5000);
+
+                    // Clear the timeout if the process exits normally
+                    service.process.once('exit', () => {
+                        clearTimeout(forceKillTimeout);
+                    });
                 });
 
                 terminationPromises.push(terminationPromise);
