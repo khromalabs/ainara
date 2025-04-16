@@ -831,6 +831,17 @@ async function loadExistingProviders() {
         const selectedProvider = backendConfig?.llm?.selected_provider;
 
         if (existingProviders.length === 0) {
+            // Clear any existing container if there are no providers
+            const existingContainer = document.getElementById('existing-providers');
+            if (existingContainer) {
+                existingContainer.innerHTML = '';
+            }
+
+            // Also remove the entire section if it exists
+            const section = document.querySelector('.existing-providers-section');
+            if (section) {
+                section.remove();
+            }
             return; // No existing providers
         }
 
@@ -1544,6 +1555,12 @@ async function deleteProvider(index) {
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         if (changedSelectedProvider) {
             await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        }
+
+        // Clear the existing providers container before reloading
+        const existingContainer = document.getElementById('existing-providers');
+        if (existingContainer) {
+            existingContainer.innerHTML = '';
         }
 
         // Reload the providers list
