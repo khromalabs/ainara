@@ -80,7 +80,7 @@ jobs:
           source venv/bin/activate
         fi
         chmod +x bin/build
-        bin/build
+        bin/build --skip-npm-build --skip-git-tag
 
     - name: Set up Node.js
       uses: actions/setup-node@v3
