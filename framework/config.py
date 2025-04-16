@@ -15,6 +15,7 @@ class ConfigManager:
     def __init__(self):
         self.config = {}
         self.config_file_path = None
+        self.last_modified_time = 0
         self.load_config()
 
     def _get_config_paths(self):
@@ -97,17 +98,25 @@ class ConfigManager:
 
         return target_path
 
-    def load_config(self):
-        """Load config from appropriate location or create from defaults"""
+    def load_config(self, force=False):
+        """Load config from appropriate location or create from defaults
+        
+        Args:
+            force: If True, forces reload even if file hasn't changed
+        """
         config_paths = self._get_config_paths()
 
         # Try to load from existing config file
         for config_path in config_paths:
             if config_path.exists():
                 try:
+                    if not force and not self.needs_reload():
+                        return  # File hasn't changed since last load
+
                     with open(config_path) as f:
                         self.config = yaml.safe_load(f) or {}
                     self.config_file_path = config_path
+                    self.last_modified_time = os.path.getmtime(config_path)
                     print(f"Configuration loaded from: {config_path}")
 
                     # Set up log directory in config
@@ -182,6 +191,7 @@ class ConfigManager:
         with open(self.config_file_path, "w") as f:
             yaml.dump(self.config, f, default_flow_style=False)
             print(f"Configuration saved to: {self.config_file_path}")
+        self.last_modified_time = os.path.getmtime(self.config_file_path)
 
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""
@@ -352,6 +362,12 @@ class ConfigManager:
         full_path = os.path.join(str(self.get(directory)), str(subdirectory))
         os.makedirs(full_path, exist_ok=True)
         return str(full_path)
+
+    def needs_reload(self):
+        """Check if the config file has been modified since last load"""
+        if not self.config_file_path or not os.path.exists(self.config_file_path):
+            return False
+        return os.path.getmtime(self.config_file_path) > self.last_modified_time
 
     def validate_config(self, config_data):
         """Basic validation of configuration data"""
