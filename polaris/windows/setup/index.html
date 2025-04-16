@@ -68,17 +68,19 @@
                 <!-- STT setup step -->
                 <div class="step-panel" id="stt-panel">
                     <h2>Speech-to-Text Setup</h2>
-                    <p>Configure how Polaris will convert your voice to text.</p>
+                    <p><b><span class="note-signal">&nbsp;</span>User configuration temporally disabled, will use the embedded Faster-Whisper engine).</b><br><br>Configure how Polaris will convert your voice to text.</p>
 
                     <div class="stt-options">
                         <div class="stt-option">
-                            <input type="radio" name="stt-backend" id="stt-faster-whisper" value="faster_whisper" checked>
+                            <!-- TODO disabled -->
+                            <input type="radio" name="stt-backend" id="stt-faster-whisper" value="faster_whisper" checked disabled>
                             <label for="stt-faster-whisper">Use built-in Whisper (recommended)</label>
                             <p class="option-description">Uses the local Faster Whisper engine for speech recognition. Works offline and provides good accuracy.</p>
                         </div>
 
                         <div class="stt-option">
-                            <input type="radio" name="stt-backend" id="stt-custom" value="custom">
+                            <!-- TODO disabled -->
+                            <input type="radio" name="stt-backend" id="stt-custom" value="custom" disabled>
                             <label for="stt-custom">Use custom Whisper API</label>
                             <p class="option-description">Connect to a custom Whisper API endpoint.</p>
 
@@ -106,9 +108,9 @@
                 <!-- Skills setup step -->
                 <div class="step-panel" id="skills-panel">
                     <h2>Skills API Keys</h2>
+                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities, simply ask her in a dialog.</b></br></br>
                     <p>Some Ainara's skills require API keys to function properly.</p>
                     <p>Configure the ones you plan to use (all are optional, but all the search services are highly recommended).</p>
-                    <p>To get a complete list about Ainara's capabilities, simply ask her in the dialog Com-Ring window.<p>
 
                     <div class="skills-list">
                         <!-- This will be populated dynamically -->
@@ -150,7 +152,7 @@
                         </div>
 
                         <div class="usage-instructions">
-                            <h3>How to Use Ainara Polaris</h3>
+                            <h3><span class="tip-signal">&nbsp;</span>How to Use Ainara Polaris</h3>
                             <ol>
                                 <li><strong>Show the interface</strong>: Press the Show UI key (<span id="show-key-display">F1</span>) to make Polaris appear.</li>
                                 <li><strong>Talk to Ainara</strong>: Hold down the Push-to-Talk key (<span id="trigger-key-display">Space</span>) while speaking.</li>

@@ -175,6 +175,16 @@ button {
     margin-top: 20px;
 }
 
+.tip-signal:before {
+    color: #007bff;
+    content: '🛈 TIP';
+}
+
+.note-signal:before {
+    color: #ffc107;
+    content: '🗎 NOTE';
+}
+
 .form-group {
     margin-bottom: 15px;
 }
