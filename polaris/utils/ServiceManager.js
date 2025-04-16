@@ -69,6 +69,7 @@ class ServiceManager {
 
     async startServices() {
         this.updateProgress('Starting services...', 10);
+        Logger.info("--- starting services");
 
         // Check if executables exist
         for (const [, service] of Object.entries(this.services)) { // id, service
@@ -89,6 +90,7 @@ class ServiceManager {
 
         try {
             await Promise.all(startPromises);
+            Logger.info("--- all services started successfully");
             this.updateProgress('Services started successfully', 50);
 
             // Start health check monitoring
@@ -315,11 +317,6 @@ class ServiceManager {
     async restartServices() {
         this.updateProgress('Restarting services...', 0);
 
-        // Show restart modal
-        if (this.windowManager) {
-            this.windowManager.showRestartModal(true);
-        }
-
         try {
             // First stop all services
             await this.stopServices();
@@ -336,11 +333,6 @@ class ServiceManager {
             Logger.error('Error restarting services:', error);
             this.updateProgress(`Error: ${error.message}`, 100);
             return false;
-        } finally {
-            // Hide restart modal whether successful or not
-            if (this.windowManager) {
-                this.windowManager.showRestartModal(false);
-            }
         }
     }
 
