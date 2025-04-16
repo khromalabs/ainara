@@ -86,11 +86,19 @@ function showSetupWizard() {
         showWindows(true);
     });
 
+    async function forceExit() {
+        Logger.info('Setup incomplete - forcing immediate exit');
+        await ServiceManager.stopServices();
+        // if (tray && !tray.isDestroyed()) tray.destroy();
+        // if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
+        app.exit(1); // Hard exit without cleanup
+        // process.exit(1); // Double guarantee
+    }
+
     ipcMain.on('close-setup-window', async () => {
-        Logger.info('Setup window close requested');
+        Logger.info('close-setup-window event');
         if (!config.get('setup.completed', false)) {
-            Logger.info('Setup was not completed, exiting application');
-            app.quit();
+            forceExit();
         } else {
             try {
                 setupWindow?.close();
@@ -106,11 +114,10 @@ function showSetupWizard() {
 
     // If the user closes the setup window without completing setup
     setupWindow.on('closed', async () => {
+        Logger.info('closed event');
         setupWindow = null;
         if (!config.get('setup.completed', false)) {
-            Logger.info('setup.completed value:' + config.get('setup.completed'));
-            Logger.info('Setup was not completed, exiting application');
-            app.quit();
+            forceExit();
         } else {
             // await ServiceManager.restartServices();
             showWindows(true);
