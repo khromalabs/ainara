@@ -1186,6 +1186,12 @@ async function testLLMConnectionFetch(llmConfig) {
         result = await response.json();
 
         if (response.ok && result.success) {
+            // Mark the provider as modified when test is successful
+            const selectedProviderId = document.querySelector('input[name="llm-provider"]:checked')?.value;
+            if (selectedProviderId) {
+                modifiedFields.llm.add(selectedProviderId);
+            }
+
             let error_msg = await saveLLMConfig();
             if (error_msg) {
                 testResult.textContent = error_msg;
@@ -1673,9 +1679,11 @@ async function saveLLMConfig() {
             backendConfig.llm.providers = [provider];
         }
 
-        // Set this as the selected provider
-        // backendConfig.llm.selected_provider = provider.model;
-        // console.log(backendConfig);
+        // If this is the only provider or there's no selected provider yet, select it
+        if (!backendConfig.llm.selected_provider || backendConfig.llm.providers.length === 1) {
+            backendConfig.llm.selected_provider = provider.model;
+            changedSelectedProvider = true;
+        }
 
         // Save the updated backend config to both servers
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
