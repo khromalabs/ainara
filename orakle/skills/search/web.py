@@ -53,9 +53,9 @@ class SearchWeb(Skill):
         # Update docstring with available engines
         self._update_docstring()
 
-    def reload(self):
-        super().reload(config)
-        self._initialize_engines()
+    # def reload(self):
+    #     super().reload(config)
+    #     self._initialize_engines()
 
     def _initialize_engines(self):
         """Initialize search engines based on configuration"""

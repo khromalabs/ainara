@@ -21,9 +21,9 @@ class Skill:
         # Define what data this skill requires from the chat manager
         self.required_data = {}
 
-    def reload(self, config=None):
-        if config:
-            config.load_config()
+    # def reload(self, config=None):
+    #     if config:
+    #         config.load_config()
 
     def run(self):
         raise NotImplementedError(

@@ -16,6 +16,7 @@ const { nativeTheme } = require('electron');
 const debugMode = true;
 const debugDisableWizard = false;
 
+
 const config = new ConfigManager();
 let windowManager = null;
 let tray = null;
@@ -23,6 +24,7 @@ let shortcutRegistered = false;
 let splashWindow = null;
 let setupWindow = null;
 let wizardActive = false;
+let externallyManagedServices = false;
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
 
@@ -73,7 +75,7 @@ function showSetupWizard() {
     // setupWindow.webContents.openDevTools();
 
     // Handle setup completion
-    ipcMain.once('setup-complete', () => {
+    ipcMain.once('setup-complete', async () => {
         Logger.info('Setup completed, starting application');
         try {
             setupWindow?.close();
@@ -83,7 +85,9 @@ function showSetupWizard() {
         wizardActive = false;
         appSetupShortcuts();
         updateProviderSubmenu();
-        showWindows(true);
+        // showWindows(true);
+        await ServiceManager.stopServices();
+        await startWithSplash();
     });
 
     async function forceExit() {
@@ -95,34 +99,127 @@ function showSetupWizard() {
         // process.exit(1); // Double guarantee
     }
 
-    ipcMain.on('close-setup-window', async () => {
-        Logger.info('close-setup-window event');
+    // relies in external executables
+    // TODO Unify this with splash window in appInitialization
+    async function startWithSplash() {
+        if (externallyManagedServices) {
+            Logger.info("Externally managed services need manual restart. Exiting.");
+            app.exit(1);
+        }
+        // Create splash window
+        splashWindow = new SplashWindow(config, null, null, __dirname);
+        splashWindow.show();
+        // Set up service manager progress callback
+        ServiceManager.setProgressCallback((status, progress) => {
+            splashWindow.updateProgress(status, progress);
+        });
+        // Start services
+        splashWindow.updateProgress('Starting services...', 10);
+        const servicesStarted = await ServiceManager.startServices();
+        if (!servicesStarted) {
+            splashWindow.close();
+            dialog.showErrorBox(
+                'Service Error',
+                'Failed to start required services. Please check the logs for details.'
+            );
+            app.exit(1);
+            return;
+        }
+        // Wait for services to be healthy
+        splashWindow.updateProgress('Waiting for services to be ready...', 40);
+        // Poll until all services are healthy or timeout
+        const startTime = Date.now();
+        const timeout = 40000; // 40 seconds timeout
+        let servicesHealthy = false;
+        while (Date.now() - startTime < timeout) {
+            if (ServiceManager.isAllHealthy()) {
+                servicesHealthy = true;
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (!servicesHealthy) {
+            splashWindow?.close();
+            splashWindow?.destroy();
+            dialog.showErrorBox(
+                'Service Error',
+                'Services did not become healthy within the timeout period. Please check the logs for details.'
+            );
+            app.exit(1);
+            return;
+        }
+        // Services are ready, initialize the rest of the app
+        splashWindow.updateProgress('Initializing application...', 80);
+        // Check if required resources are available
+        splashWindow.updateProgress('Checking required resources...', 85);
+        const resourceCheck = await ServiceManager.checkResourcesInitialization();
+        // If resources are not initialized, initialize them
+        if (resourceCheck && !resourceCheck.initialized) {
+            Logger.info('Some resources need initialization, starting download process...');
+            splashWindow.updateProgress('Downloading required resources...', 87);
+            // Start the initialization process
+            const initResult = await ServiceManager.initializeResources();
+            if (!('status' in initResult) || initResult.status != "success" ) {
+                splashWindow.close();
+                Logger.error('Failed to initialize resources:', initResult.error);
+                dialog.showErrorBox(
+                    'Service Error',
+                    'Failed to download required resources.'
+                );
+                app.exit(1);
+            }
+        } else {
+            Logger.info('All required resources are already initialized');
+        }
+        // Update the provider submenu
+        await updateProviderSubmenu();
+        // Close splash and show main window
+        splashWindow.updateProgress('Ready!', 100);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        splashWindow.close();
+        // Check if this is the first run
+        if (isFirstRun()) {
+            showSetupWizard();
+            return;
+        } else {
+            showWindows(true);
+        }
+    }
+
+    async function closedWizard() {
+        // Logger.info('CLOSEDWIZARD 1');
         if (!config.get('setup.completed', false)) {
             forceExit();
         } else {
             try {
-                setupWindow?.close();
+                // Logger.info('CLOSEDWIZARD 2');
+                // setupWindow?.close();
                 wizardActive = false;
                 appSetupShortcuts();
-                updateProviderSubmenu();
-                // await ServiceManager.restartServices();
+                // Logger.info('CLOSEDWIZARD 3');
+                await ServiceManager.stopServices();
+                await new Promise(resolve => setTimeout(resolve, 100000));
+                // Logger.info('CLOSEDWIZARD 4');
+                await startWithSplash();
+                await updateProviderSubmenu();
             } catch (error) {
                 Logger.error('Error closing setupWindow:' + error);
             }
         }
-    });
+    }
 
     // If the user closes the setup window without completing setup
-    setupWindow.on('closed', async () => {
-        Logger.info('closed event');
-        setupWindow = null;
-        if (!config.get('setup.completed', false)) {
-            forceExit();
-        } else {
-            // await ServiceManager.restartServices();
-            showWindows(true);
-        }
+    ipcMain.on('close-setup-window', async () => {
+        Logger.info('close-setup-window event');
+        await closedWizard();
+        // forceExit();
     });
+
+    // setupWindow.on('closed', async () => {
+    //     Logger.info('closed event');
+    //     // await closedWizard();
+    //     // forceExit();
+    // });
 }
 
 async function appInitialization() {
@@ -158,6 +255,7 @@ async function appInitialization() {
         if (ServiceManager.isAllHealthy()) {
             splashWindow.close();
             // Alternate application start for dev purposes
+            externallyManagedServices = true;
             const resourceCheck = await ServiceManager.checkResourcesInitialization();
             // If resources are not initialized, initialize them
             if (resourceCheck && !resourceCheck.initialized) {
@@ -261,7 +359,7 @@ async function appInitialization() {
         await updateProviderSubmenu();
 
         // Close splash and show main window
-        splashWindow.updateProgress('Ready! Launching com-ring...', 100);
+        splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 1000));
         splashWindow.close();
         // Check if this is the first run
@@ -492,7 +590,7 @@ function appSetupEventHandlers() {
 
         // Stop services
         try {
-            ServiceManager.stopServices();
+            await ServiceManager.stopServices();
             Logger.info('Services stopped successfully');
         } catch (error) {
             Logger.error('Error stopping services:', error);

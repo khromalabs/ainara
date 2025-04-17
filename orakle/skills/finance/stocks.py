@@ -28,9 +28,9 @@ class FinanceStocks(Skill):
         self.base_url = "https://www.alphavantage.co/query"
         self.api_key = config.get("apis.finance.alphavantage_api_key")
 
-    def reload(self):
-        super().reload(config)
-        self.api_key = config.get("apis.finance.alphavantage_api_key")
+    # def reload(self):
+    #     super().reload(config)
+    #     self.api_key = config.get("apis.finance.alphavantage_api_key")
 
     async def get_quote(self, symbol: str) -> Dict[str, Any]:
         """Get current stock quote information"""
