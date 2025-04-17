@@ -256,9 +256,9 @@ exe_orakle = EXE(
     name='orakle',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=True,
+    strip=True,
+    upx=False,
+    console=False,
 )
 
 # EXE for PyBridge
@@ -270,9 +270,9 @@ exe_pybridge = EXE(
     name='pybridge',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=True,
+    strip=True,
+    upx=False,
+    console=False,
 )
 
 # COLLECT to create the final bundle with both executables
@@ -285,8 +285,8 @@ coll = COLLECT(
     a_pybridge.binaries,
     a_pybridge.zipfiles,
     a_pybridge.datas,
-    strip=False,
-    upx=True,
+    strip=True,
+    upx=False,
     upx_exclude=[],
     name='servers',
 )
