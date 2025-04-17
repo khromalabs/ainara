@@ -83,9 +83,7 @@ function showSetupWizard() {
         wizardActive = false;
         appSetupShortcuts();
         updateProviderSubmenu();
-        // showWindows(true);
-        await ServiceManager.stopServices();
-        await startWithSplash();
+        await restartWithSplash();
     }
 
     // Handle setup completion
@@ -93,7 +91,7 @@ function showSetupWizard() {
 
     // relies in external executables
     // TODO Unify this with splash window in appInitialization
-    async function startWithSplash() {
+    async function restartWithSplash() {
         if (externallyManagedServices) {
             Logger.info("Externally managed services need manual restart. Exiting.");
             app.exit(1);
@@ -101,6 +99,15 @@ function showSetupWizard() {
         // Create splash window
         splashWindow = new SplashWindow(config, null, null, __dirname);
         splashWindow.show();
+        if (! await ServiceManager.stopServices() ) {
+            splashWindow.close();
+            dialog.showErrorBox(
+                'Service Error',
+                'Failed to stop required services. Please check the logs for details.'
+            );
+            app.exit(1);
+            return;
+        }
         // Set up service manager progress callback
         ServiceManager.setProgressCallback((status, progress) => {
             splashWindow.updateProgress(status, progress);
@@ -186,6 +193,7 @@ function showSetupWizard() {
             await ServiceManager.stopServices();
             app.exit(1); // Hard exit without cleanup
         } else {
+            splashWindow.close();
             await setupComplete();
         }
     });
@@ -198,7 +206,7 @@ async function appInitialization() {
         await app.whenReady();
 
         if (process.platform === 'darwin') {
-            app.dock.hide();
+            app.dock.hide()
         }
 
         // Set application icon
@@ -338,8 +346,10 @@ async function appInitialization() {
         } else {
             showWindows(true);
         }
-        // let llmProviders = await ConfigHelper.getLLMProviders();
-        // tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+        let llmProviders = await ConfigHelper.getLLMProviders();
+        if (llmProviders) {
+            tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+        }
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
@@ -425,9 +435,6 @@ async function appCreateTray() {
         }
     ]);
 
-    // let llmProviders = await ConfigHelper.getLLMProviders();
-    // tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
-    tray.setToolTip('Ainara Polaris v' + config.get('setup.version'));
     tray.setContextMenu(contextMenu);
 
     // Optional: Single click to toggle windows

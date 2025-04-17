@@ -129,11 +129,11 @@ class ServiceManager {
                 service.process.on('exit', (code) => {
                     if (code !== 0 && code !== null) {
                         Logger.error(`${service.name} exited with code ${code}`);
-                        service.healthy = false;
-
-                        if (this.healthCheckInterval) {
-                            this.updateProgress(`${service.name} service crashed`, 100);
-                        }
+                        // service.healthy = false;
+                        //
+                        // if (this.healthCheckInterval) {
+                        //     this.updateProgress(`${service.name} service crashed`, 100);
+                        // }
                     }
                 });
 
@@ -260,6 +260,7 @@ class ServiceManager {
                             setTimeout(() => {
                                 if (service.process && !service.process.killed) {
                                     Logger.error(`Failed to kill ${service.name} service even with SIGKILL`);
+                                    return false;
                                 }
                                 service.healthy = false;
                                 resolve();
