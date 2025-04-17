@@ -73,9 +73,7 @@ function showSetupWizard() {
     });
 
     // setupWindow.webContents.openDevTools();
-
-    // Handle setup completion
-    ipcMain.once('setup-complete', async () => {
+    async function setupComplete() {
         Logger.info('Setup completed, starting application');
         try {
             setupWindow?.close();
@@ -88,16 +86,10 @@ function showSetupWizard() {
         // showWindows(true);
         await ServiceManager.stopServices();
         await startWithSplash();
-    });
-
-    async function forceExit() {
-        Logger.info('Setup incomplete - forcing immediate exit');
-        await ServiceManager.stopServices();
-        // if (tray && !tray.isDestroyed()) tray.destroy();
-        // if (setupWindow && !setupWindow.isDestroyed()) setupWindow.destroy();
-        app.exit(1); // Hard exit without cleanup
-        // process.exit(1); // Double guarantee
     }
+
+    // Handle setup completion
+    ipcMain.once('setup-complete', setupComplete);
 
     // relies in external executables
     // TODO Unify this with splash window in appInitialization
@@ -186,40 +178,17 @@ function showSetupWizard() {
         }
     }
 
-    async function closedWizard() {
-        // Logger.info('CLOSEDWIZARD 1');
-        if (!config.get('setup.completed', false)) {
-            forceExit();
-        } else {
-            try {
-                // Logger.info('CLOSEDWIZARD 2');
-                // setupWindow?.close();
-                wizardActive = false;
-                appSetupShortcuts();
-                // Logger.info('CLOSEDWIZARD 3');
-                await ServiceManager.stopServices();
-                await new Promise(resolve => setTimeout(resolve, 100000));
-                // Logger.info('CLOSEDWIZARD 4');
-                await startWithSplash();
-                await updateProviderSubmenu();
-            } catch (error) {
-                Logger.error('Error closing setupWindow:' + error);
-            }
-        }
-    }
-
     // If the user closes the setup window without completing setup
     ipcMain.on('close-setup-window', async () => {
         Logger.info('close-setup-window event');
-        await closedWizard();
-        // forceExit();
+        if (!config.get('setup.completed', false)) {
+            Logger.info('Setup incomplete - forcing immediate exit');
+            await ServiceManager.stopServices();
+            app.exit(1); // Hard exit without cleanup
+        } else {
+            await setupComplete();
+        }
     });
-
-    // setupWindow.on('closed', async () => {
-    //     Logger.info('closed event');
-    //     // await closedWizard();
-    //     // forceExit();
-    // });
 }
 
 async function appInitialization() {
@@ -360,7 +329,7 @@ async function appInitialization() {
 
         // Close splash and show main window
         splashWindow.updateProgress('Ready!', 100);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 500));
         splashWindow.close();
         // Check if this is the first run
         if (isFirstRun()) {
