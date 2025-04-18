@@ -29,6 +29,14 @@ While the project will always remain open-source and aims to be a universal AI a
 
 ## Components
 
+### Orakle
+A REST API server that provides:
+- Extensible skills system
+- Recipe workflow execution
+- Web content processing
+- News search capabilities
+- Text processing with LLMs
+
 ### Kommander
 A CLI chat interface that connects to local/commercial LLM servers and the Orakle API server. Features:
 - Interactive chat with AI models
@@ -38,16 +46,14 @@ A CLI chat interface that connects to local/commercial LLM servers and the Orakl
 - Light/dark theme support
 - Pipe mode for non-interactive use
 
-### Orakle
-A REST API server that provides:
-- Extensible skills system
-- Recipe workflow execution
-- Web content processing
-- News search capabilities
-- Text processing with LLMs
-
 ### Polaris
-Desktop integrated app (TODO)
+A modern desktop-integrated application that provides:
+- Native integration with system features
+- Intuitive, minimalistic AI interaction interface
+- Rich graphical interface for chat interactions
+- Real-time skill execution feedback
+- System tray presence for quick access
+- Cross-platform support (Linux, Windows, macOS)
 
 ## Installation
 
