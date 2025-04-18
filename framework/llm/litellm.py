@@ -1,22 +1,21 @@
-# Ainara - Open Source AI Assistant Framework
-# Copyright (C) 2025 Rubén Gómez http://www.khromalabs.org
-
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
-
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
 
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, see
-# <https://www.gnu.org/licenses/>
-
-# import os
-# import pprint
 import json
 import os
 from typing import Generator, List, Union
@@ -47,7 +46,6 @@ class LiteLLM(LLMBackend):
                 f" for initialization only. Exception: {str(e)}"
             )
         self._context_window = self._get_context_window()
-        self.logger.info("RUBEN GOMEZ")
 
     def _get_context_window(self) -> int:
         """Get the context window size for the current model"""
@@ -316,23 +314,22 @@ class LiteLLM(LLMBackend):
                         f" {e.response.text if hasattr(e.response, 'text') else 'unknown'}"
                     )
 
-                # Log the actual chat that caused the error
-                self.logger.error("chat that caused the error:")
-                for i, msg in enumerate(chat_history):
-                    role = msg.get("role", "unknown")
-                    content = msg.get("content", "")
-                    self.logger.error(
-                        f"Message {i} (role={role}, length={len(content)}):"
-                        f" {content[:200]}..."
-                    )
+                # # Log the actual chat that caused the error
+                # self.logger.error("chat that caused the error:")
+                # for i, msg in enumerate(chat_history):
+                #     role = msg.get("role", "unknown")
+                #     content = msg.get("content", "")
+                #     self.logger.error(
+                #         f"Message {i} (role={role}, length={len(content)}):"
+                #         f" {content[:200]}..."
+                #     )
 
                 raise
 
         except Exception as e:
-            self.logger.error(
-                f"Unable to get a response from the AI: {str(e)}"
-            )
-            return ""
+            msg_error = f"Error: Unable to get a response from the AI: {str(e)}"
+            self.logger.error(msg_error)
+            raise ValueError(msg_error)
 
     async def achat(
         self,

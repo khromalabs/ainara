@@ -1,8 +1,10 @@
 # Ainara AI Assistant Framework
 
 ![Ainara logo](./assets/ainara_logo.png)
+
 **Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 <br><br>
+
 
 Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills and recipes. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
 
@@ -18,9 +20,17 @@ An important aspect to highlight in this video: I'm not using any commercial LLM
 
 The Ainara Project has now it's own Solana cryptocurrency token, CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump
 
-While the project will always remain open-source and aims to be a universal AI assistant tool, some officially developed 'skills' will primarily focus on cryptocurrency integrations using a w3 platform. The project's official token will serve as the payment method for all related services.
+While the project will always remain open-source and aims to be a universal AI assistant tool, the officially developed 'skills' and 'recipes' (allowing AI to interact with the external world through Ainara's Orakle server) will primarily focus on cryptocurrency integrations. The project's official token will serve as the payment method for all related services.
 
 ## Components
+
+### Orakle
+A REST API server that provides:
+- Extensible skills system
+- Recipe workflow execution
+- Web content processing
+- News search capabilities
+- Text processing with LLMs
 
 ### Kommander
 A CLI chat interface that connects to local/commercial LLM servers and the Orakle API server. Features:
@@ -31,16 +41,8 @@ A CLI chat interface that connects to local/commercial LLM servers and the Orakl
 - Light/dark theme support
 - Pipe mode for non-interactive use
 
-### Orakle
-A REST API server that provides:
-- Extensible skills system
-- Recipe workflow execution
-- Web content processing
-- News search capabilities
-- Text processing with LLMs
-
 ### Polaris
-A modern desktop application that provides:
+A modern desktop-integrated application that provides:
 - Native integration with system features
 - Intuitive, minimalistic AI interaction interface
 - Rich graphical interface for chat interactions
@@ -97,7 +99,7 @@ echo "What is 2+2?" | ./kommander/kommander
 
 ## License
 
-[GNU GPL 2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
+Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:your@email.com))
 
 ## Contributing
 

@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-# build/pyinstaller/build.py
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+
 import argparse
 import os
 import shutil
@@ -65,111 +82,49 @@ def check_dependencies():
     return True
 
 
-def build_executables(targets=None, force=False):
+def build_executables(force=False):
     """Build both Orakle and PyBridge executables"""
     # Check dependencies first
     if not check_dependencies():
         return False
 
     # Get paths to spec files
-    orakle_spec = os.path.join("scripts", "pyinstaller", "orakle.spec")
-    pybridge_spec = os.path.join("scripts", "pyinstaller", "pybridge.spec")
+    servers_spec = os.path.join("scripts", "pyinstaller", "servers.spec")
 
     # Create a combined distribution directory
     dist_dir = "dist/"
     os.makedirs(dist_dir, exist_ok=True)
 
-    # Clean up build and dist directories for specific targets if force is True
+    # Clean up build and dist directories if force is True
     if force:
         print("\n=== Cleaning up build and dist directories ===\n")
-        if not targets:  # If no targets specified, clean everything
-            if os.path.exists("build"):
-                shutil.rmtree("build")
-            if os.path.exists(dist_dir):
-                shutil.rmtree(dist_dir)
-        else:  # Only clean specified targets
-            if "orakle" in targets:
-                orakle_build = os.path.join("build", "orakle")
-                if os.path.exists(orakle_build):
-                    shutil.rmtree(orakle_build)
-                orakle_dist = os.path.join(dist_dir, "orakle") 
-                if os.path.exists(orakle_dist):
-                    shutil.rmtree(orakle_dist)
-            if "pybridge" in targets:
-                pybridge_build = os.path.join("build", "pybridge")
-                if os.path.exists(pybridge_build):
-                    shutil.rmtree(pybridge_build)
-                pybridge_dist = os.path.join(dist_dir, "pybridge")
-                if os.path.exists(pybridge_dist):
-                    shutil.rmtree(pybridge_dist)
+        if os.path.exists("build"):
+            shutil.rmtree("build")
+        if os.path.exists(dist_dir):
+            shutil.rmtree(dist_dir)
 
-    # Set default targets if none specified
-    if not targets:
-        targets = ["orakle", "pybridge"]
-
-    # Build Orakle if requested
-    if "orakle" in targets:
-        orakle_dist_path = os.path.join(dist_dir, "orakle")
-        if (
-            force
-            or not os.path.exists(orakle_dist_path)
-            or not os.listdir(orakle_dist_path)
-        ):
-            print("\n=== Building Orakle ===\n")
-            run_command(["pyinstaller", orakle_spec, "--clean"])
-            # Copy the executable to the combined directory
-            print("\n=== Copying Orakle to combined distribution ===\n")
-            shutil.copytree(
-                "dist/orakle", orakle_dist_path, dirs_exist_ok=True
-            )
-        else:
-            print("\n=== Skipping Orakle build (already exists) ===\n")
-            print("Use --force to rebuild anyway")
-
-    # Build PyBridge if requested
-    if "pybridge" in targets:
-        pybridge_dist_path = os.path.join(dist_dir, "pybridge")
-        if (
-            force
-            or not os.path.exists(pybridge_dist_path)
-            or not os.listdir(pybridge_dist_path)
-        ):
-            print("\n=== Building PyBridge ===\n")
-            run_command(["pyinstaller", pybridge_spec, "--clean"])
-            # Copy the executable to the combined directory
-            print("\n=== Copying PyBridge to combined distribution ===\n")
-            shutil.copytree(
-                "dist/pybridge", pybridge_dist_path, dirs_exist_ok=True
-            )
-        else:
-            print("\n=== Skipping PyBridge build (already exists) ===\n")
-            print("Use --force to rebuild anyway")
+    # Build servers if requested (joined build with shared libraries)
+    servers_dist_path = os.path.join(dist_dir, "servers")
+    if (
+        force
+        or not os.path.exists(servers_dist_path)
+        or not os.listdir(servers_dist_path)
+    ):
+        print("\n=== Building joined servers ===\n")
+        run_command(["pyinstaller", servers_spec, "--clean"])
+        print("\n=== Joined servers build complete ===\n")
+    else:
+        print("\n=== Skipping joined servers build (already exists) ===\n")
+        print("Use --force to rebuild anyway")
+    return True
 
     print(f"\nBuild complete! Executables are in {os.path.abspath(dist_dir)}")
-    # print("\nDirectory structure:")
-    # for root, dirs, files in os.walk(dist_dir):
-    #     level = root.replace(dist_dir, "").count(os.sep)
-    #     indent = " " * 4 * level
-    #     print(f"{indent}{os.path.basename(root)}/")
-    #     sub_indent = " " * 4 * (level + 1)
-    #     for f in files[
-    #         :5
-    #     ]:  # Show only first 5 files per directory to avoid clutter
-    #         print(f"{sub_indent}{f}")
-    #     if len(files) > 5:
-    #         print(f"{sub_indent}... ({len(files) - 5} more files)")
 
 
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(
         description="Build Orakle and/or PyBridge executables"
-    )
-    parser.add_argument(
-        "--target",
-        choices=["orakle", "pybridge", "all"],
-        default="all",
-        help="Specify which executable to build (default: all)",
     )
     parser.add_argument(
         "-f",
@@ -179,18 +134,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Determine which targets to build
-    targets = []
-    if args.target == "all":
-        targets = ["orakle", "pybridge"]
-    else:
-        targets = [args.target]
-
-    # # Check if PyInstaller is installed
-    # try:
-    #     import PyInstaller
-    # except ImportError:
-    #     print("PyInstaller is not installed. Installing...")
-    #     run_command([sys.executable, "-m", "pip", "install", "pyinstaller"])
-
-    build_executables(targets=targets, force=args.force)
+    build_executables(force=args.force)

@@ -1,3 +1,21 @@
+// Ainara AI Companion Framework Project
+// Copyright (C) 2025 Rubén Gómez - khromalabs.org
+//
+// This file is dual-licensed under:
+// 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+//    (See the included LICENSE_LGPL3.txt file or look into
+//    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+// 2. Commercial license
+//    (Contact: rgomez@khromalabs.org for licensing options)
+//
+// You may use, distribute and modify this code under the terms of either license.
+// This notice must be preserved in all copies or substantial portions of the code.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Lesser General Public License for more details.
+
 /**
  * Com-Ring Interface Design
  * Original concept and implementation by Rubén Gómez for Ainara/Polaris Project
@@ -83,7 +101,9 @@ class ComRing extends BaseComponent {
 
             console.log('ComRing: Initializing STT');
             // Initialize STT
-            await this.stt.initialize();
+            // TODO disabled this check as doesn't allow early component load
+            // (before services are started)
+            // await this.stt.initialize();
             console.log('ComRing: STT initialized');
 
             // Component is added to the DOM
@@ -308,8 +328,7 @@ class ComRing extends BaseComponent {
         // Debug keyboard events
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
-            if (event.key === 'Escape') {
-                // event.key === this.config.get('shortcuts.toggle', 'F1')) {
+            if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
 ;
                 console.log("EVENT ESCAPE");
                 // Always abort any ongoing LLM response first
@@ -378,6 +397,7 @@ class ComRing extends BaseComponent {
         console.log('ComRing: Event listeners initialized');
         console.log('ComRing: Sending ready confirmation to main process');
         ipcRenderer.send('com-ring-ready');
+        ipcRenderer.send('comRing-ready');
     }
 
 
@@ -388,12 +408,13 @@ class ComRing extends BaseComponent {
             ipcRenderer.send('transcription-received', message);
         }
         try {
-            await this.processAIResponse(message);
-            this.circle.classList.add('faded');
+            if (message) {
+                await this.processAIResponse(message);
+                this.circle.classList.add('faded');
+            }
         } catch (error) {
-            console.error('LLM Processing Error:', error);
+            await this.showError('LLM Processing Error in message "' + message + '": ' + error.message)
             ipcRenderer.send('llm-error', error.message);
-            this.circle.classList.add('error');
         }
         this.state.isAwaitingResponse = false;
         this.circle.classList.remove('awaiting');
@@ -662,25 +683,85 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
-            this.showError(event.content.message + " " + error);
+            await this.showError(event.content.message + " " + error);
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
-            this.window.focus();
+            // this.window.focus();
         }
     }
 
-    showError(error) {
-        console.error('Error:', error);
-        this.circle?.classList.add('error');
+    // TODO extend the queued approach used to show errors to display all messages
+    async showError(error) {
+        let callstack = null;
+        try {
+            throw new Error('Stack Trace');
+        } catch (e) {
+            callstack = e.stack;
+        }
+        console.error('Error:', error, callstack);
         ipcRenderer.send('chat-error', error.toString());
 
-        // Remove error state after a delay
-        setTimeout(() => {
-            this.circle.classList.remove('error');
-        }, 3000);
+        // Create error queue if it doesn't exist
+        if (!this.errorQueue) {
+            this.errorQueue = [];
+            this.errorQueueIndex = 0;
+            this.isShowingError = false;
+        }
+
+        // Add error to queue
+        this.errorQueueIndex++;
+        this.errorQueue.push("Error #" + this.errorQueueIndex + ": " + error.toString());
+
+        // Start processing the queue if not already doing so
+        if (!this.isShowingError) {
+            this.processErrorQueue();
+        }
     }
 
+    async processErrorQueue() {
+        // If queue is empty or already showing an error, return
+        if (this.errorQueue.length === 0 || this.isShowingError) {
+            return;
+        }
+
+        // Set flag to indicate we're showing an error
+        this.isShowingError = true;
+
+        // Get the next error from the queue
+        const errorMessage = this.errorQueue.shift();
+
+        // Show the error
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        sttStatus.innerHTML = errorMessage;
+        sttStatus.classList.add('active3');
+
+        // Keep the message visible by refreshing it periodically
+        const refreshInterval = 1000; // 1 second
+        const totalDuration = 5000;   // 5 seconds total
+        const refreshCount = Math.floor(totalDuration / refreshInterval);
+
+        // Use a single interval instead of multiple timeouts
+        let count = 0;
+        const intervalId = setInterval(() => {
+            count++;
+            // Refresh the message
+            const sttStatus = this.shadowRoot.querySelector('.stt-status');
+            sttStatus.innerHTML = errorMessage;
+            sttStatus.classList.add('active3');
+
+            // If we've reached the desired duration, clean up
+            if (count >= refreshCount) {
+                clearInterval(intervalId);
+                sttStatus.classList.remove('active3');
+                sttStatus.textContent = '';
+                this.isShowingError = false;
+
+                // Process next error in queue if any
+                setTimeout(() => this.processErrorQueue(), 100);
+            }
+        }, refreshInterval);
+    }
 
     abortLLMResponse() {
         console.log('Aborting LLM response');
@@ -970,19 +1051,20 @@ class ComRing extends BaseComponent {
                         // Check flag again before showing skill status
                         if (this.ignoreIncomingEvents) return;
 
-                        // Show skill request message in status
-                        const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                        // Add loading state to both status and ring
-                        sttStatus.textContent = `${content.content}`;
-                        sttStatus.classList.add('active');
-
-                        // Remove after 3 seconds
-                        setTimeout(() => {
-                            if (!this.ignoreIncomingEvents) {  // Check flag before removing
-                                sttStatus.classList.remove('active');
-                                sttStatus.textContent = '';
-                            }
-                        }, 3000);
+                        // TODO Show skill in com-ring?
+                        // // Show skill request message in status
+                        // const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                        // // Add loading state to both status and ring
+                        // sttStatus.textContent = `${content.content}`;
+                        // sttStatus.classList.add('active');
+                        //
+                        // // Remove after 3 seconds
+                        // setTimeout(() => {
+                        //     if (!this.ignoreIncomingEvents) {  // Check flag before removing
+                        //         sttStatus.classList.remove('active');
+                        //         sttStatus.textContent = '';
+                        //     }
+                        // }, 3000);
                     }
 
                     // Add message ID to the event
@@ -1120,7 +1202,7 @@ class ComRing extends BaseComponent {
 
             case 'error':
                 if (event.type === 'signal') {
-                    this.showError(event.content.message);
+                    await this.showError(event.content.message);
                     ipcRenderer.send('chat-error', event.content.message);
                 }
                 break;

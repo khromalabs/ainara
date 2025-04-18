@@ -5,8 +5,7 @@ docs/paper/*
 docs/paper/ainara.tex
 fireworks_ai/
 static/
-build/orakle/*
-build/pybridge/*
+build/*
 dist/*
 resources/*
 !/resources/ainara.yaml.defaults

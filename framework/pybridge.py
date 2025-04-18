@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-
-# Ainara - Open Source AI Assistant Framework
-# Copyright (C) 2025 Rubén Gómez https://www.khromalabs.org
-
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
-
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
 
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
 import argparse
@@ -40,6 +42,14 @@ from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils.dependency_checker import DependencyChecker
+
+# Add global variable for setup progress tracking
+setup_progress = {
+    "status": "idle",
+    "progress": 0,
+    "message": "Setup not started",
+    "details": {},
+}
 
 config = ConfigManager()
 config.load_config()
@@ -102,10 +112,6 @@ def cleanup_audio_buffer(directory, max_size_mb):
 app = Flask(__name__)
 CORS(app)
 
-# Set up logging first, before any logger calls
-logging_manager.setup(log_dir="/tmp", log_level="INFO")
-logging_manager.addFilter(["pybridge", "chat_completion"])
-
 
 # Add at module level
 startup_time = datetime.now(timezone.utc)
@@ -129,6 +135,9 @@ def parse_args():
     return parser.parse_args()
 
 
+# def setup_app()
+
+
 def create_app():
 
     # Get audio buffer size from config
@@ -137,6 +146,19 @@ def create_app():
     # Check STT dependencies
     try:
         DependencyChecker.print_stt_dependency_report()
+
+        # Log more detailed information about hardware acceleration
+        cuda_available, cuda_version, missing_libs, cuda_details = DependencyChecker.check_cuda_availability()
+        if cuda_available:
+            logger.info(f"CUDA {cuda_version} is available for hardware acceleration")
+            if cuda_details.get("device_name"):
+                logger.info(f"Using GPU: {cuda_details['device_name']}")
+        elif cuda_details["has_nvidia_hardware"]:
+            logger.warning("NVIDIA GPU detected but CUDA is not available")
+            logger.warning("Speech recognition will use CPU mode (slower)")
+            if sys.platform == 'win32':
+                logger.warning("On Windows, you may need to install NVIDIA CUDA drivers manually")
+                logger.warning("Visit https://www.nvidia.com/Download/index.aspx to download drivers")
     except ImportError:
         logger.info(
             "Dependency checker not available, skipping dependency check"
@@ -157,7 +179,7 @@ def create_app():
             )
             from huggingface_hub import hf_hub_download
 
-            cache_dir = os.path.expanduser("~/.cache/whisper")
+            cache_dir = config.get_subdir("cache.directory", "whisper")
             model_path = hf_hub_download(
                 repo_id=f"guillaumekln/faster-whisper-{model_size}",
                 filename="model.bin",
@@ -189,8 +211,11 @@ def create_app():
         logger.error(traceback.format_exc())
         raise
 
-    # Add static directory for audio files and clean any previous files
-    app.static_folder = "../static/pybridge"
+    # Use the appropriate user data directory
+    user_data_dir = config.get("data.directory")
+    static_dir = os.path.join(user_data_dir, "pybridge", "static")
+    os.makedirs(static_dir, exist_ok=True)
+    app.static_folder = static_dir
     cleanup_audio_directory(app.static_folder)
 
     # Register cleanup function to run on server shutdown
@@ -298,8 +323,8 @@ def create_app():
 
             # Update the configuration
             config.update_config(data)
-            logger.info(f"new configuration: {pprint.pformat(data)}")
-            # llm.initialize_provider(config)
+            # # logger.info(f"new configuration: {pprint.pformat(data)}")
+
             new_llm = create_llm_backend(config.get("llm", {}))
             app.chat_manager.llm = new_llm
 
@@ -311,17 +336,350 @@ def create_app():
             logger.error(traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @app.route("/setup/check", methods=["GET"])
+    def check_resources():
+        """Check if required resources are available"""
+        try:
+            results = {"status": "success", "initialized": True, "details": {}}
+
+            # Check NLTK data
+            nltk_status = check_nltk_data()
+            results["details"]["nltk"] = nltk_status
+
+            # Check Whisper models
+            whisper_status = check_whisper_models()
+            results["details"]["whisper"] = whisper_status
+
+            # If any resource is not initialized, set the overall status
+            if (
+                not nltk_status["initialized"]
+                or not whisper_status["initialized"]
+            ):
+                results["initialized"] = False
+
+            return jsonify(results)
+        except Exception as e:
+            logger.error(f"Error checking resources: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": str(e),
+                        "initialized": False,
+                    }
+                ),
+                500,
+            )
+
+    @app.route("/setup/initialize", methods=["POST"])
+    def initialize_resources():
+        """Initialize required resources"""
+        global setup_progress
+        setup_progress = {
+            "status": "running",
+            "progress": 0,
+            "message": "Starting initialization...",
+            "details": {},
+        }
+
+        try:
+            # First check what needs to be initialized
+            check_result = check_resources().json
+            resources_to_init = []
+
+            for resource, status in check_result.get("details", {}).items():
+                if not status.get("initialized", False):
+                    resources_to_init.append(resource)
+
+            results = {"status": "success", "details": {}}
+
+            total_resources = len(resources_to_init)
+            if total_resources == 0:
+                setup_progress["status"] = "complete"
+                setup_progress["progress"] = 100
+                setup_progress["message"] = "All resources already initialized"
+                return jsonify(results)
+
+            completed_resources = 0
+
+            # Initialize NLTK if needed
+            if "nltk" in resources_to_init:
+                setup_progress["progress"] = int(
+                    completed_resources / total_resources * 100
+                )
+                setup_progress["message"] = "Setting up NLTK data..."
+
+                nltk_result = setup_nltk()
+                results["details"]["nltk"] = {
+                    "success": nltk_result,
+                    "message": (
+                        "NLTK setup completed successfully"
+                        if nltk_result
+                        else "NLTK setup failed"
+                    ),
+                }
+                setup_progress["details"]["nltk"] = results["details"]["nltk"]
+
+                completed_resources += 1
+                setup_progress["progress"] = int(
+                    completed_resources / total_resources * 100
+                )
+
+            # Initialize Whisper models if needed
+            if "whisper" in resources_to_init:
+                setup_progress["message"] = "Setting up Whisper models..."
+
+                whisper_result = setup_whisper_models()
+                results["details"]["whisper"] = {
+                    "success": whisper_result["success"],
+                    "message": whisper_result["message"],
+                }
+                setup_progress["details"]["whisper"] = results["details"][
+                    "whisper"
+                ]
+
+                completed_resources += 1
+                setup_progress["progress"] = int(
+                    completed_resources / total_resources * 100
+                )
+
+            # Complete the setup
+            setup_progress["status"] = "complete"
+            setup_progress["progress"] = 100
+            setup_progress["message"] = "Initialization completed successfully"
+
+            return jsonify(results)
+        except Exception as e:
+            logger.error(f"Error initializing resources: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+
+            # Update progress with error
+            setup_progress["status"] = "error"
+            setup_progress["message"] = (
+                f"Error during initialization: {str(e)}"
+            )
+
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/setup/progress", methods=["GET"])
+    def get_setup_progress():
+        """Get the current setup progress"""
+        return jsonify(setup_progress)
+
     @app.route("/static/audio/<filename>")
     def serve_audio(filename):
         """Serve audio files and maintain buffer size"""
         audio_dir = os.path.join(app.static_folder, "audio")
 
-        # Check buffer size and cleanup if needed
+        # Check buffer size and" cleanup if needed
         cleanup_audio_buffer(audio_dir, AUDIO_BUFFER_SIZE_MB)
 
         return send_file(
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
+
+    def check_nltk_data():
+        """Check if NLTK data is available"""
+        try:
+            import os
+            from pathlib import Path
+
+            import nltk
+
+            # Configure NLTK paths using the config
+            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+            nltk_data_path = str(Path(nltk_data_dir).absolute())
+            os.environ["NLTK_DATA"] = nltk_data_path
+            nltk.data.path = [nltk_data_path]  # Override default paths
+
+            # Check if directory exists
+            if not os.path.exists(nltk_data_path):
+                return {
+                    "initialized": False,
+                    "message": "NLTK data directory does not exist",
+                    "path": nltk_data_path,
+                }
+
+            # Check for required resources
+            resources = [
+                # "corpora/brown",
+                # "tokenizers/punkt",
+                "tokenizers/punkt_tab",
+                # "taggers/averaged_perceptron_tagger",
+                # "corpora/wordnet",
+            ]
+
+            missing_resources = []
+
+            for resource in resources:
+                try:
+                    # Try to find the resource
+                    nltk.data.find(f"{resource}", paths=[nltk_data_path])
+                except LookupError:
+                    missing_resources.append(resource)
+
+            if missing_resources:
+                return {
+                    "initialized": False,
+                    "message": (
+                        "Missing NLTK resources:"
+                        f" {', '.join(missing_resources)}"
+                    ),
+                    "missing": pprint.pformat(missing_resources),
+                    "path": nltk_data_path,
+                }
+            else:
+                return {
+                    "initialized": True,
+                    "message": "NLTK data is available",
+                    "path": nltk_data_path,
+                }
+        except Exception as e:
+            logger.error(f"Error checking NLTK data: {e}")
+            return {
+                "initialized": False,
+                "message": f"Error checking NLTK data: {str(e)}",
+                "path": nltk_data_path,
+            }
+
+    def check_whisper_models():
+        """Check if Whisper models are available"""
+        try:
+            import os
+
+            # Get model size from config
+            model_size = config.get(
+                "stt.modules.faster_whisper.model_size", "small"
+            )
+            cache_dir = config.get_subdir("cache.directory", "whisper")
+
+            # Check if model file exists
+            model_path = os.path.join(
+                cache_dir,
+                "models--guillaumekln--faster-whisper-" + model_size,
+                "snapshots",
+            )
+
+            if os.path.exists(model_path):
+                # Find the snapshot directory
+                snapshot_dirs = [
+                    d
+                    for d in os.listdir(model_path)
+                    if os.path.isdir(os.path.join(model_path, d))
+                ]
+
+                if snapshot_dirs:
+                    # Check if model.bin exists in any snapshot directory
+                    for snapshot in snapshot_dirs:
+                        model_bin = os.path.join(
+                            model_path, snapshot, "model.bin"
+                        )
+                        if os.path.exists(model_bin):
+                            return {
+                                "initialized": True,
+                                "message": (
+                                    f"Whisper {model_size} model is available"
+                                ),
+                                "path": model_bin,
+                            }
+
+            return {
+                "initialized": False,
+                "message": f"Whisper {model_size} model is not available",
+            }
+        except Exception as e:
+            logger.error(f"Error checking Whisper models: {e}")
+            return {
+                "initialized": False,
+                "message": f"Error checking Whisper models: {str(e)}",
+            }
+
+    def setup_nltk():
+        """Download NLTK and TextBlob data to project-local directory"""
+        try:
+            # Import the necessary libraries
+            import os
+            import tempfile
+            from pathlib import Path
+
+            import nltk
+            from textblob.download_corpora import download_lite
+
+            # Configure NLTK paths using the config
+            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+            nltk_data_path = str(Path(nltk_data_dir).absolute())
+            os.environ["NLTK_DATA"] = nltk_data_path
+            nltk.data.path = [nltk_data_path]  # Override default paths
+
+            os.makedirs(nltk_data_path, exist_ok=True)
+            logger.info(f"Downloading NLTK data to: {nltk_data_path}")
+
+            # Download required resources
+            resources = [
+                # "brown",
+                "punkt_tab",
+                # "averaged_perceptron_tagger",
+                # "wordnet",
+            ]
+            for resource in resources:
+                nltk.download(
+                    resource, download_dir=nltk_data_path, quiet=True
+                )
+                logger.info(f"Downloaded {resource}")
+
+            # Download TextBlob corpora
+            logger.info("Downloading TextBlob corpora...")
+            old_dir = tempfile.tempdir
+            tempfile.tempdir = nltk_data_path
+            download_lite()
+            tempfile.tempdir = old_dir
+
+            logger.info("NLTK setup complete!")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting up NLTK: {e}")
+            return False
+
+    def setup_whisper_models():
+        """Download and setup whisper models"""
+        try:
+            # Get model size from config
+            model_size = config.get(
+                "stt.modules.faster_whisper.model_size", "small"
+            )
+
+            logger.info(f"Downloading Faster-Whisper {model_size} model...")
+            from huggingface_hub import hf_hub_download
+
+            cache_dir = config.get_subdir("cache.directory", "whisper")
+            model_path = hf_hub_download(
+                repo_id=f"guillaumekln/faster-whisper-{model_size}",
+                filename="model.bin",
+                cache_dir=cache_dir,
+            )
+
+            logger.info(
+                f"Faster-Whisper {model_size} model downloaded to {model_path}"
+            )
+            return {
+                "success": True,
+                "message": (
+                    f"Whisper {model_size} model downloaded successfully"
+                ),
+                "path": model_path,
+            }
+        except Exception as e:
+            logger.error(f"Error downloading whisper model: {e}")
+            return {
+                "success": False,
+                "message": f"Error downloading whisper model: {str(e)}",
+                "path": model_path,
+            }
 
     @app.route("/framework/chat", methods=["POST"])
     def framework_chat():
@@ -683,10 +1041,14 @@ def create_app():
                 # First look in manually configured models contexts
                 manual_model_contexts = config.get("llm.model_contexts")
                 if configured_model_get in manual_model_contexts:
-                    result_models.append({
-                        "model": configured_model_get,
-                        "context_window": manual_model_contexts.get(configured_model_get)
-                    })
+                    result_models.append(
+                        {
+                            "model": configured_model_get,
+                            "context_window": manual_model_contexts.get(
+                                configured_model_get
+                            ),
+                        }
+                    )
                     continue
 
                 # Then look in the complete providers list
@@ -697,11 +1059,18 @@ def create_app():
                     provider = providers[configured_model_provider]
                     for model in provider["models"]:
                         model_name = model.get("name")
-                        if model_name == configured_model_name or model_name == configured_model_get:
-                            result_models.append({
-                                "model": configured_model.get("model"),
-                                "context_window": model.get("context_window")
-                            })
+                        if (
+                            model_name == configured_model_name
+                            or model_name == configured_model_get
+                        ):
+                            result_models.append(
+                                {
+                                    "model": configured_model.get("model"),
+                                    "context_window": model.get(
+                                        "context_window"
+                                    ),
+                                }
+                            )
                             break
 
             return jsonify({"models": result_models})
@@ -709,11 +1078,94 @@ def create_app():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/hardware/acceleration", methods=["GET"])
+    def check_hardware_acceleration():
+        """Check if hardware acceleration is available"""
+        try:
+            # Get detailed acceleration information and recommendations
+            cuda_available, cuda_version, missing_libs, details = DependencyChecker.check_cuda_availability()
+            recommendations = DependencyChecker.get_acceleration_recommendation()
+
+            return jsonify({
+                "cuda_available": cuda_available,
+                "cuda_version": cuda_version,
+                "has_nvidia_hardware": details["has_nvidia_hardware"],
+                "platform": sys.platform,
+                "gpu_list": details["gpu_list"],
+                "missing_libs": missing_libs,
+                "details": details,
+                "recommendations": recommendations
+            })
+        except Exception as e:
+            logger.error(f"Error checking hardware acceleration: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/config/defaults", methods=["GET"])
+    def get_default_config():
+        """Return the default configuration"""
+        try:
+            import os
+            import sys
+
+            import yaml
+
+            # Check if we're running in a PyInstaller bundle
+            if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                # Running in PyInstaller bundle
+                # Use the bundled resource path
+                default_config_path = os.path.join(
+                    sys._MEIPASS, "ainara", "resources", "ainara.yaml.defaults"
+                )
+                logger.info(
+                    "Running from PyInstaller bundle, looking for config at:"
+                    f" {default_config_path}"
+                )
+            else:
+                # Running from source - use the original approach
+                default_config_path = os.path.join(
+                    os.path.dirname(
+                        os.path.dirname(os.path.abspath(__file__))
+                    ),
+                    "resources",
+                    "ainara.yaml.defaults",
+                )
+                logger.info(
+                    "Running from source, looking for config at:"
+                    f" {default_config_path}"
+                )
+
+            # Check if the file exists
+            if not os.path.exists(default_config_path):
+                logger.error(
+                    f"Default config file not found at: {default_config_path}"
+                )
+                return (
+                    jsonify({"error": "Default configuration file not found"}),
+                    404,
+                )
+
+            # Load the default config
+            with open(default_config_path, "r") as f:
+                default_config = yaml.safe_load(f)
+
+            return jsonify(default_config)
+        except Exception as e:
+            logger.error(f"Error loading default configuration: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
+
     return app
 
 
 if __name__ == "__main__":
     args = parse_args()
+    # Set up logging first, before any logger calls
+    logging_manager.setup(log_level=args.log_level, log_name="pybridge.log")
+    # logging_manager.addFilter(["pybridge", "chat_completion"])
     app = create_app()
 
     # Add signal handler for graceful shutdown

@@ -1,5 +1,24 @@
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+
 import logging
 import os
+import platform
 from typing import Any, Dict, Optional
 
 from ainara.framework.config import ConfigManager
@@ -8,6 +27,8 @@ from ainara.framework.stt.base import STTBackend
 logger = logging.getLogger(__name__)
 
 # logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
+
+config_manager = ConfigManager()
 
 
 def get_optimal_whisper_config():
@@ -64,7 +85,11 @@ def get_optimal_whisper_config():
 
             # Always use int8_float32 with CUDA to avoid the exclamation marks issue
             config["device"] = "cuda"
-            config["compute_type"] = "int8_float32"
+            # Use float16 on Windows to avoid silent failures
+            if platform.system() == "Windows":
+                config["compute_type"] = "float16"
+            else:
+                config["compute_type"] = "int8_float32"
 
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             # Apple Silicon optimization
@@ -132,6 +157,16 @@ class FasterWhisperSTT(STTBackend):
 
             # Check if CUDA is available
             cuda_available = stt_deps["cuda"]["available"]
+
+            # # Double-check CUDA availability directly with torch on Windows
+            # if not cuda_available and platform.system() == "Windows":
+            #     try:
+            #         import torch
+            #         if torch.cuda.is_available():
+            #             cuda_available = True
+            #             logger.info("CUDA detected directly through torch on Windows")
+            #     except ImportError:
+            #         pass
         except ImportError:
             # Dependency checker not available, assume CUDA is not available
             cuda_available = False
@@ -151,8 +186,16 @@ class FasterWhisperSTT(STTBackend):
 
         # Use user config if provided, otherwise use optimal config
         self.model_size = user_model_size or optimal_config.get("model_size", "small")
-        self.device = user_device or optimal_config.get("device", "cpu")
-        self.compute_type = user_compute_type or optimal_config.get("compute_type", "int8")
+
+        # TODO Fix CUDA dependencies error
+        # By not force CPU mode on Linux regardless of other settings
+        if platform.system() == "Linux":
+            self.device = "cpu"
+            self.compute_type = "int8"
+            logger.info("Forcing CPU mode on Linux to avoid CUDA library issues")
+        else:
+            self.device = user_device or optimal_config.get("device", "cpu")
+            self.compute_type = user_compute_type or optimal_config.get("compute_type", "int8")
 
         # If CUDA is not available but device is set to cuda, force CPU mode
         if not cuda_available and self.device == "cuda":
@@ -201,19 +244,34 @@ class FasterWhisperSTT(STTBackend):
                 from faster_whisper import WhisperModel
 
                 # Based on the GitHub issue #1244, float16 compute_type with CUDA can cause issues
-                # Force int8 compute_type when using CUDA to avoid the exclamation marks issue
-                if self.device == "cuda" and self.compute_type == "float16":
-                    logger.warning("Changing compute_type from float16 to int8_float32 to avoid known issues with CUDA")
-                    self.compute_type = "int8_float32"
+                # On Windows, prefer float16 with CUDA to avoid silent failures
+                if self.device == "cuda":
+                    if platform.system() == "Windows":
+                        if self.compute_type != "float16" and self.compute_type != "float32":
+                            logger.warning("On Windows with CUDA, changing compute_type to float16 to avoid silent failures")
+                            self.compute_type = "float16"
+                    else:
+                        # On other platforms, use int8_float32 with CUDA
+                        if self.compute_type == "float16":
+                            logger.warning("Changing compute_type from float16 to int8_float32 to avoid known issues with CUDA")
+                            self.compute_type = "int8_float32"
 
                 logger.info(f"compute_type: {self.compute_type}")
+
+                # Get the cache directory for whisper
+                cache_dir = config_manager.get_subdir(
+                    "cache.directory",
+                    "whisper"
+                )
+
+                logger.info(f"Using cache directory: {cache_dir}")
 
                 # Prepare kwargs based on device
                 model_kwargs = {
                     "model_size_or_path": self.model_size,
                     "device": self.device,
                     "compute_type": self.compute_type,
-                    "download_root": os.path.expanduser("~/.cache/whisper"),
+                    "download_root": cache_dir,
                 }
 
                 # Only add cpu_threads for CPU device
@@ -237,11 +295,17 @@ class FasterWhisperSTT(STTBackend):
                         self.compute_type = "int8"
                         logger.info(f"Retrying with device={self.device}, compute_type={self.compute_type}")
 
+                        # Get the cache directory for whisper
+                        cache_dir = config_manager.get_subdir(
+                            "cache.directory",
+                            "whisper"
+                        )
+
                         self.model = WhisperModel(
                             self.model_size,
                             device="cpu",
                             compute_type="int8",
-                            download_root=os.path.expanduser("~/.cache/whisper"),
+                            download_root=cache_dir,
                             cpu_threads=self.num_workers
                         )
                         logger.info("Successfully loaded model with CPU fallback")
@@ -283,10 +347,16 @@ class FasterWhisperSTT(STTBackend):
             return transcript
         except Exception as e:
             # logger.info("transcribe_file 4")
-            logger.info(f"Error transcribing with Faster-Whisper: {e}")
+            logger.error(f"Error transcribing with Faster-Whisper: {e}")
             import traceback
 
-            logger.info(traceback.format_exc())
+            logger.error(traceback.format_exc())
+
+            # Try to provide more helpful error information
+            if "CUDA" in str(e) or "GPU" in str(e):
+                logger.error("This appears to be a CUDA-related error. Try setting 'compute_type' to 'float16' in your config.")
+            elif "out of memory" in str(e).lower():
+                logger.error("GPU memory error. Try using a smaller model or setting 'device' to 'cpu' in your config.")
             return ""
 
     def listen(self) -> str:

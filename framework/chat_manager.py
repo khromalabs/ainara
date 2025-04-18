@@ -1,19 +1,21 @@
-# Ainara - Open Source AI Assistant Framework
+# Ainara AI Companion Framework Project
 # Copyright (C) 2025 Rubén Gómez - khromalabs.org
-
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
-
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
 
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, see
-# <https://www.gnu.org/licenses/>
 
 import json
 import logging
@@ -26,7 +28,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Generator, List, Literal, Optional, Union
 
 import nltk
@@ -84,21 +85,7 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
-
-        # Initialize NLTK for sentence tokenization
-        try:
-            # Use the configured NLTK data path
-            nltk_data_dir = os.path.join(
-                str(Path.home()), ".cache", "ainara", "nltk_data"
-            )
-            os.environ["NLTK_DATA"] = nltk_data_dir
-            nltk.data.path = [nltk_data_dir]  # Override default paths
-            # Test if punkt tokenizer is available
-            nltk.data.find("tokenizers/punkt")
-            logger.info("NLTK sentence tokenization initialized successfully")
-        except (ImportError, LookupError) as e:
-            logger.error(f"NLTK sentence tokenization not available: {e}")
-            raise RuntimeError("Failed to import NLTK sentence tokenization")
+        self.nltk_initialized = False
 
         # # Add a reentrant lock for thread safety
         # self.chat_lock = threading.RLock()
@@ -261,6 +248,12 @@ class ChatManager:
         if not text.strip():
             return []
 
+        # nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+        # logger.info("-------------------------------------------")
+        # logger.info(f"env NLTK_DATA={os.environ['NLTK_DATA']}")
+        # logger.info(f"nltk.data.path={nltk.data.path}")
+        # logger.info(f"NLTK in {nltk_data_dir} processing text: `{text}`")
+
         # Function to check if paragraph contains special patterns that should skip NLTK processing
         def contains_special_patterns(text):
             # # Check for markdown URLs: [text](url)
@@ -314,72 +307,23 @@ class ChatManager:
                         # logger.info(pprint.pformat(paragraph))
                         # logger.info("NLTK END")
                         sentences.extend(paragraph_sentences)
-                    except (LookupError, ImportError):
+                    except (LookupError, ImportError) as e:
+                        # raise RuntimeError(
+                        #     "Failed to split sentences via NLTK"
+                        # )
+                        logger.error(f"NLTK tokenization error: {e}")
+                        logger.error(f"Error type: {type(e).__name__}")
+                        logger.error(f"Error details: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        logger.error(f"NLTK data path during error: {nltk.data.path}")
+                        logger.error(f"Text that caused the error: '{sentence}'")
                         raise RuntimeError(
-                            "Failed to split sentences via NLTK"
+                            f"Failed to split sentences via NLTK: {str(e)}"
                         )
             last_end = end_pos
 
         return sentences
-
-    # def _extract_complete_sentences(self, text: str) -> List[str]:
-    #     """Extract complete sentences from a text buffer.
-    #
-    #     Returns a list of complete sentences, leaving incomplete sentences in the buffer.
-    #     """
-    #     if not text.strip():
-    #         return []
-    #
-    #     # Function to check if paragraph contains special patterns that should skip NLTK processing
-    #     def contains_special_patterns(text):
-    #         # Check for markdown URLs: [text](url)
-    #         if re.search(r'\[([^\]]+)\]\(([^)]+)\)', text):
-    #             return True
-    #         # Check for regular URLs: http://example.com
-    #         if re.search(r'https?://[^\s)>]+', text):
-    #             return True
-    #         # Check for inline code: `code`
-    #         if re.search(r'`([^`]+)`', text):
-    #             return True
-    #         # Check for code blocks: ```code```
-    #         if re.search(r'```[^`]*```', text):
-    #             return True
-    #         # Check for bullet points or numbered lists
-    #         if re.search(r'^\s*[\*\-\d]+\.?\s+', text, re.MULTILINE):
-    #             return True
-    #         # Check for numbered lists
-    #         # if re.search(r'^\s*\d+\.\s+.+', text, re.MULTILINE):
-    #         if re.search(r'^\s*(\d+\.\s+|\*\s+|-\s+|\+\s+).+', text, re.MULTILINE):
-    #             return True
-    #         return False
-    #
-    #     # Split text by newlines
-    #     logger.info("TEXT SPLIT:")
-    #     logger.info(pprint.pformat(text))
-    #     paragraphs = text.split("\n")
-    #     sentences = []
-    #
-    #     for paragraph in paragraphs:
-    #         paragraph = paragraph.strip()
-    #         if paragraph:
-    #             sentences.append(paragraph)
-    #         # Only process non-empty paragraphs
-    #         # if paragraph and not contains_special_patterns(paragraph):
-    #         #     try:
-    #         #         # Use NLTK to split the paragraph into sentences
-    #         #         logger.info("NLTK PRE:")
-    #         #         logger.info(pprint.pformat(paragraph))
-    #         #         paragraph_sentences = nltk.sent_tokenize(paragraph)
-    #         #         logger.info("NLTK POST:")
-    #         #         logger.info(pprint.pformat(paragraph))
-    #         #         logger.info("NLTK END")
-    #         #         sentences.extend(paragraph_sentences)
-    #         #     except (LookupError, ImportError):
-    #         #         raise RuntimeError("Failed to split sentences via NLTK")
-    #         # elif paragraph:  # If it has special patterns but isn't empty
-    #         #     sentences.append(paragraph)
-    #
-    #     return sentences
 
     def _process_streaming_sentence(
         self,
@@ -806,6 +750,24 @@ class ChatManager:
 
         self.chat_history = new_history
 
+    def _check_nltk(self):
+        # Initialize NLTK for sentence tokenization
+        try:
+            if not self.nltk_initialized:
+                # Use the configured NLTK data path
+                nltk_data_dir = config.get_subdir("cache.directory", "nltk")
+                os.environ["NLTK_DATA"] = nltk_data_dir
+                nltk.data.path = [nltk_data_dir]  # Override default paths
+                # Test if punkt tokenizer is available
+                nltk.data.find("tokenizers/punkt_tab")
+                logger.info("NLTK sentence tokenization initialized successfully")
+                self.nltk_initialized = True
+                return None
+        except (ImportError, LookupError) as e:
+            logger.error(f"NLTK sentence tokenization not available: {e}")
+            # raise RuntimeError("Failed to import NLTK sentence tokenization")
+            return "NLTK sentence tokenization not available"
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -821,6 +783,11 @@ class ChatManager:
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
             stream = "cli" if stream else None
+
+        msg_error = self._check_nltk()
+        if msg_error:
+            yield ndjson("signal", "error", {"message": msg_error})
+            return
 
         # Start loading animation for CLI mode or send start event for JSON mode
         loading = None
@@ -931,6 +898,7 @@ class ChatManager:
                 loading.stop()
             logger.error(f"Error during LLM response: {e}")
             if stream == "json":
+                logger.error("Sending error yield signal")
                 yield ndjson("signal", "error", {"message": str(e)})
             processed_answer = (  # Set a default error message
                 f"Error: {str(e)}"

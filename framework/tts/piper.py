@@ -1,3 +1,21 @@
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+
 import logging
 import os
 import platform
@@ -134,12 +152,8 @@ class PiperTTS(TTSBackend):
             bundled_path = base_dir / "resources/bin/linux/piper/piper"
 
         if 'bundled_path' in locals() and bundled_path.exists():
-            # Make sure it's executable on Unix systems
-            if system != "Windows":
-                os.chmod(bundled_path, 0o755)
             self.logger.info(f"Using bundled Piper binary: {bundled_path}")
             return str(bundled_path)
-
         # Common locations to check
         common_locations = [
             "/usr/bin/piper-tts",
@@ -202,12 +216,8 @@ class PiperTTS(TTSBackend):
             return str(bundled_model_dir)
 
         # Use standard XDG data directory
-        if platform.system() == "Windows":
-            base_dir = os.path.expanduser("~/AppData/Local/ainara")
-        else:
-            base_dir = os.path.expanduser("~/.local/share/ainara")
-
-        model_dir = os.path.join(base_dir, "tts", "models")
+        user_data_dir = config.get("data.directory")
+        model_dir = os.path.join(user_data_dir, "tts", "models")
         os.makedirs(model_dir, exist_ok=True)
         self.logger.info(f"Using standard model directory: {model_dir}")
         return model_dir
@@ -480,10 +490,6 @@ class PiperTTS(TTSBackend):
                 piper_binary = bin_dir / "piper.exe"
             else:
                 piper_binary = bin_dir / "piper"
-
-            # Make the binary executable on Unix systems
-            if system != "Windows":
-                os.chmod(piper_binary, 0o755)
 
             # Create license file
             with open(bin_dir / "LICENSE-PIPER.txt", "w") as f:

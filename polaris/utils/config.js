@@ -1,7 +1,26 @@
+// Ainara AI Companion Framework Project
+// Copyright (C) 2025 Rubén Gómez - khromalabs.org
+//
+// This file is dual-licensed under:
+// 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+//    (See the included LICENSE_LGPL3.txt file or look into
+//    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+// 2. Commercial license
+//    (Contact: rgomez@khromalabs.org for licensing options)
+//
+// You may use, distribute and modify this code under the terms of either license.
+// This notice must be preserved in all copies or substantial portions of the code.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Lesser General Public License for more details.
+
 const path = require('path');
 const fs = require('fs');
 // const Logger = require('./logger');
 const defaultConfig = require('../resources/defaultConfig');
+const os = require('os');
 class ConfigManager {
     constructor() {
         // Singleton pattern
@@ -12,10 +31,26 @@ class ConfigManager {
         this.config = {};
         this.lastLoadTimestamp = 0; // Track when we last loaded the config
 
-        const homeDir = require('os').homedir();
-        this.configDir = path.join(homeDir, '.config', 'ainara', 'polaris');
+        this.configDir = this._getConfigDirectory();
         this.configFile = path.join(this.configDir, 'polaris.json');
         this.loadConfig();
+    }
+
+    _getConfigDirectory() {
+        const platform = process.platform;
+        const homeDir = os.homedir();
+
+        // Follow platform-specific standards for config locations
+        if (platform === 'win32') {
+            // Windows: %APPDATA%\ainara\polaris
+            return path.join(homeDir, 'AppData', 'Roaming', 'ainara', 'polaris');
+        } else if (platform === 'darwin') {
+            // macOS: ~/Library/Application Support/ainara/polaris
+            return path.join(homeDir, 'Library', 'Application Support', 'ainara', 'polaris');
+        } else {
+            // Linux/Unix: ~/.config/ainara/polaris
+            return path.join(homeDir, '.config', 'ainara', 'polaris');
+        }
     }
 
     loadConfig() {

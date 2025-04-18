@@ -1,3 +1,21 @@
+// Ainara AI Companion Framework Project
+// Copyright (C) 2025 Rubén Gómez - khromalabs.org
+//
+// This file is dual-licensed under:
+// 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+//    (See the included LICENSE_LGPL3.txt file or look into
+//    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+// 2. Commercial license
+//    (Contact: rgomez@khromalabs.org for licensing options)
+//
+// You may use, distribute and modify this code under the terms of either license.
+// This notice must be preserved in all copies or substantial portions of the code.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Lesser General Public License for more details.
+
 const BaseWindow = require('./BaseWindow');
 const Logger = require('../utils/logger');
 
@@ -35,7 +53,24 @@ class ChatDisplayWindow extends BaseWindow {
         const windowWidth = Math.floor(screenWidth * 0.7);
         const windowHeight = 600; // config.get('chatDisplay.height', 300);
         const windowX = Math.floor((screenWidth / 2) - (windowWidth / 2));
-        const windowY = Math.floor(screenHeight * (5/6)) - (windowHeight / 2);
+        // const windowY = Math.floor(screenHeight * (5/6)) - (windowHeight / 2);
+
+        // Adjust position based on OS
+        let windowY;
+        if (process.platform === 'win32') {
+            // Windows: Position higher on screen
+            windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
+        } else if (process.platform === 'darwin') {
+            // macOS: Account for menu bar
+            windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
+        } else {
+            // Linux: Position lower as before
+            windowY = Math.floor(screenHeight * (5/6)) - (windowHeight / 2);
+        }
+
+        Logger.log(`ChatDisplayWindow: Positioning at Y=${windowY} (${process.platform}, screen height=${screenHeight})`);
+
+
         const options = {
             width: windowWidth,
             height: windowHeight,
@@ -45,6 +80,8 @@ class ChatDisplayWindow extends BaseWindow {
             focusable: true,
             frame: false,
             transparent: true,
+            backgroundColor: 'rgba(0,0,0,0)', // Explicit transparent background
+            opacity: 1.0, // Full window opacity
             alwaysOnTop: true,
             show: false,
             skipTaskbar: true,

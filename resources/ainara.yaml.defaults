@@ -55,7 +55,7 @@ llm:
   #    api_base: "http://127.0.0.1:8000/v1"
   #    api_key: "nokey"
   model_contexts:
-    "openai/samplecustommodel": 4096
+    "openai/sample_custom_model": 4096
 
 # Ainara configuration
 orakle:
@@ -69,22 +69,23 @@ audio:
 # Memory configuration
 memory:
   enabled: false
-  storage_path: "~/.config/ainara/chat_memory.db"
-  vector_db_path: "~/.config/ainara/vector_db"
-  embedding_model: "sentence-transformers/all-mpnet-base-v2"
-  vector_db_enabled: true
+  vector_db_enabled: false
+  session_id: "default_session"
+#  embedding_model: "sentence-transformers/all-mpnet-base-v2"
+#  storage_path: "~/.config/ainara/chat_memory.db"
+#  vector_db_path: "~/.config/ainara/vector_db"
 
 # APIs
 apis:
-  crypto:
-    coinmarketcap_api_key: ""
+  # crypto:
+  #   coinmarketcap_api_key: ""
   finance:
     alphavantage_api_key: ""
-  helius:
-    api_key: ""
-  reddit:
-    client_id: ""
-    client_secret: ""
+  # helius:
+  #   api_key: ""
+  # reddit:
+  #   client_id: ""
+  #   client_secret: ""
   search:
     google:
       api_key: ""
@@ -97,12 +98,46 @@ apis:
       api_key: ""
     tavily:
       api_key: ""
-  twitter:
-    access_token: ""
-    access_token_secret: ""
-    api_key: ""
-    api_secret: ""
-    bearer_token: ""
+  # twitter:
+  #   access_token: ""
+  #   access_token_secret: ""
+  #   api_key: ""
+  #   api_secret: ""
+  #   bearer_token: ""
   weather:
     openweathermap_api_key: ""
-  session_id: "default_session"
+
+# Logging configuration (uncomment to customize)
+# logging:
+#   # Enable or disable file logging (console logging is always enabled)
+#   file_enabled: true
+#   # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+#   level: "INFO"
+#   # Custom log directory (leave empty for platform-specific default)
+#   # Examples:
+#   # - Windows: %LOCALAPPDATA%\Ainara\logs
+#   # - macOS: ~/Library/Logs/Ainara
+#   # - Linux: ~/.local/share/ainara/logs
+#   directory: ""
+#   # Maximum log file size in MB before rotation
+#   max_size_mb: 1
+#   # Number of backup log files to keep
+#   backup_count: 5
+
+# Cache configuration (uncomment to customize)
+# cache:
+#   # Custom cache directory (leave empty for platform-specific default)
+#   # Examples:
+#   # - Windows: %LOCALAPPDATA%\Ainara\Cache
+#   # - macOS: ~/Library/Caches/Ainara
+#   # - Linux: ~/.cache/ainara
+#   directory: ""
+
+# Data configuration (uncomment to customize)
+# data:
+#   # Custom cache directory (leave empty for platform-specific default)
+#   # Examples:
+#   # - Windows: %LOCALAPPDATA%\Appdata\Local
+#   # - macOS: ~/Library/Application/Support
+#   # - Linux: ~/.local/state
+#   directory: ""

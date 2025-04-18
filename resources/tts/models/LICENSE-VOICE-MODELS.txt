@@ -1,0 +1,1 @@
+Voice models are released under various open licenses. See https://huggingface.co/rhasspy/piper-voices for details.

@@ -1,3 +1,21 @@
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+
 import copy
 # import logging
 import os
@@ -5,7 +23,7 @@ import platform
 import shutil
 import sys
 from pathlib import Path
-
+# import traceback
 import yaml
 
 
@@ -15,9 +33,10 @@ class ConfigManager:
     def __init__(self):
         self.config = {}
         self.config_file_path = None
+        self.last_modified_time = 0
         self.load_config()
 
-    def get_config_paths(self):
+    def _get_config_paths(self):
         """Get platform-specific configuration paths"""
         # First check environment variable
         env_config_path = os.environ.get("AINARA_CONFIG")
@@ -56,7 +75,7 @@ class ConfigManager:
 
         return config_paths
 
-    def get_default_config_path(self):
+    def _get_default_config_path(self):
         """Get the path to the default configuration template"""
         # Look for defaults in several possible locations
         possible_paths = [
@@ -76,7 +95,7 @@ class ConfigManager:
 
     def create_default_config(self, target_path):
         """Create a new configuration file from defaults"""
-        default_path = self.get_default_config_path()
+        default_path = self._get_default_config_path()
 
         if not default_path:
             print("ERROR: Default configuration template not found.")
@@ -97,28 +116,63 @@ class ConfigManager:
 
         return target_path
 
-    def load_config(self):
-        """Load config from appropriate location or create from defaults"""
-        config_paths = self.get_config_paths()
+    def load_config(self, force=False):
+        """Load config from appropriate location or create from defaults
+
+        Args:
+            force: If True, forces reload even if file hasn't changed
+        """
+        config_paths = self._get_config_paths()
 
         # Try to load from existing config file
         for config_path in config_paths:
             if config_path.exists():
                 try:
+                    if self.config and not force and not self.needs_load():
+                        print("Avoiding configuration reload")
+                        return  # File hasn't changed since last load
+
                     with open(config_path) as f:
                         self.config = yaml.safe_load(f) or {}
                     self.config_file_path = config_path
+                    self.last_modified_time = os.path.getmtime(config_path)
                     print(f"Configuration loaded from: {config_path}")
+
+                    # Set up log directory in config
+                    if "logging" not in self.config:
+                        self.config["logging"] = {}
+                    if "directory" not in self.config["logging"]:
+                        self.config["logging"]["directory"] = str(
+                            self._get_log_directory()
+                        )
+
+                    # Set up cache directory in config
+                    if "cache" not in self.config:
+                        self.config["cache"] = {}
+                    if "directory" not in self.config["cache"]:
+                        self.config["cache"]["directory"] = str(
+                            self._get_cache_directory()
+                        )
+
+                    # Set up data directory in config
+                    if "data" not in self.config:
+                        self.config["data"] = {}
+                    if "directory" not in self.config["data"]:
+                        self.config["data"]["directory"] = str(
+                            self._get_data_directory()
+                        )
+
                     return
                 except Exception as e:
                     print(
                         f"Error loading configuration from {config_path}: {e}"
                     )
-                    # Continue to next path
+                    # trace = traceback.print_exc()
+                    # print(f"Traceback: {trace}")
 
         # If we get here, no config file was found - create one
         # Use the first path from the OS-specific list (skip env var path)
-        default_config_location = self.get_config_paths()[0]
+        default_config_location = self._get_config_paths()[0]
         self.config_file_path = self.create_default_config(
             default_config_location
         )
@@ -126,6 +180,14 @@ class ConfigManager:
         # Now load the newly created config
         with open(self.config_file_path) as f:
             self.config = yaml.safe_load(f) or {}
+
+        # Set up log directory in config
+        if "logging" not in self.config:
+            self.config["logging"] = {}
+        if "directory" not in self.config["logging"]:
+            self.config["logging"]["directory"] = str(
+                self._get_log_directory()
+            )
 
     def get(self, key_path: str, default=None):
         """Get a config value using dot notation"""
@@ -148,6 +210,7 @@ class ConfigManager:
         with open(self.config_file_path, "w") as f:
             yaml.dump(self.config, f, default_flow_style=False)
             print(f"Configuration saved to: {self.config_file_path}")
+        self.last_modified_time = os.path.getmtime(self.config_file_path)
 
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""
@@ -210,6 +273,120 @@ class ConfigManager:
 
         mask_sensitive_values(safe_config)
         return safe_config
+
+    def _get_log_directory(self):
+        """Get log directory based on platform defaults (private method)"""
+        # First check environment variable
+        env_log_path = os.environ.get("AINARA_LOGS")
+        if env_log_path:
+            log_dir = Path(os.path.expanduser(env_log_path))
+            os.makedirs(log_dir, exist_ok=True)
+            return log_dir
+
+        # Determine OS-specific log locations
+        system = platform.system()
+
+        if system == "Linux":
+            # XDG standard for Linux
+            data_home = os.environ.get(
+                "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+            )
+            log_dir = Path(data_home) / "ainara/logs"
+        elif system == "Darwin":  # macOS
+            log_dir = Path(os.path.expanduser("~/Library/Logs/Ainara"))
+        elif system == "Windows":
+            # Windows standard locations
+            localappdata = os.environ.get(
+                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
+            )
+            log_dir = Path(localappdata) / "Ainara/logs"
+        else:
+            # Fallback for other systems
+            log_dir = Path(os.path.expanduser("~/.ainara/logs"))
+
+        # Ensure the directory exists
+        os.makedirs(log_dir, exist_ok=True)
+        return log_dir
+
+    def _get_cache_directory(self):
+        """Get cache directory based on platform defaults
+
+        Args:
+            subdirectory: Optional subdirectory within the cache directory
+
+        Returns:
+            Path object for the cache directory
+        """
+        # First check environment variable
+        env_cache_path = os.environ.get("AINARA_CACHE")
+        if env_cache_path:
+            cache_dir = Path(os.path.expanduser(env_cache_path))
+            os.makedirs(cache_dir, exist_ok=True)
+            return cache_dir
+
+        # Check if user has specified a cache directory in config
+        if "cache" in self.config and "directory" in self.config["cache"]:
+            user_cache_dir = self.config["cache"]["directory"]
+            cache_dir = Path(os.path.expanduser(user_cache_dir))
+            os.makedirs(cache_dir, exist_ok=True)
+            return cache_dir
+
+        # Determine OS-specific cache locations
+        system = platform.system()
+
+        if system == "Linux":
+            # XDG standard for Linux
+            cache_home = os.environ.get(
+                "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
+            )
+            cache_dir = Path(cache_home) / "ainara"
+        elif system == "Darwin":  # macOS
+            cache_dir = Path(os.path.expanduser("~/Library/Caches/Ainara"))
+        elif system == "Windows":
+            # Windows standard locations
+            localappdata = os.environ.get(
+                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
+            )
+            cache_dir = Path(localappdata) / "Ainara/Cache"
+        else:
+            # Fallback for other systems
+            cache_dir = Path(os.path.expanduser("~/.ainara/cache"))
+
+        # Ensure the directory exists
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+
+    def _get_data_directory(self, app_name="ainara"):
+        """Get the appropriate user data directory for the current platform"""
+        system = platform.system()
+        if system == "Windows":
+            # On Windows, use %LOCALAPPDATA%\app_name
+            return os.path.join(
+                os.environ.get(
+                    "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
+                ),
+                app_name,
+            )
+        elif system == "Darwin":  # macOS
+            # On macOS, use ~/Library/Application Support/app_name
+            return os.path.join(
+                os.path.expanduser("~/Library/Application Support"), str(app_name)
+            )
+        else:  # Linux and others
+            # On Linux, use ~/.local/state/app_name (for state data)
+            return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
+
+    def get_subdir(self, directory, subdirectory):
+        """Returns a subdirectory ensuring it exists"""
+        full_path = os.path.join(str(self.get(directory)), str(subdirectory))
+        os.makedirs(full_path, exist_ok=True)
+        return str(full_path)
+
+    def needs_load(self):
+        """Check if the config file has been modified since last load"""
+        if not self.config_file_path or not os.path.exists(self.config_file_path):
+            return False
+        return os.path.getmtime(self.config_file_path) > self.last_modified_time
 
     def validate_config(self, config_data):
         """Basic validation of configuration data"""

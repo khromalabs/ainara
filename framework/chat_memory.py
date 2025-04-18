@@ -1,10 +1,21 @@
-# Ainara - Open Source AI Assistant Framework
+# Ainara AI Companion Framework Project
 # Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
 
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
 
 import logging
 import os
@@ -55,7 +66,7 @@ class ChatMemory:
             text_type = config.get("memory.text_storage.type", "sqlite")
             text_path = config.get(
                 "memory.text_storage.storage_path",
-                "~/.config/ainara/chat_memory.db"
+                os.path.join(config.get("data.directory"), "chat_memory.db")
             )
 
             # Ensure path is expanded
@@ -78,8 +89,8 @@ class ChatMemory:
         # Initialize vector storage if configured
         vector_type = config.get("memory.vector_storage.type", "chroma")
         vector_path = config.get(
-            "memory.vector_storage.storage_path",
-            "~/.config/ainara/vector_db"
+            "memory.vector_db_path",
+            os.path.join(config.get("data.directory"), "vector_db")
         )
         embedding_model = config.get(
             "memory.vector_storage.embedding_model",
@@ -207,7 +218,7 @@ class ChatMemory:
             text_type = config.get("memory.text_storage.type", "sqlite")
             text_path = config.get(
                 "memory.text_storage.storage_path",
-                "~/.config/ainara/chat_memory.db"
+                os.path.join(config.get("data.directory"), "chat_memory.db")
             )
 
             # Create new text backend with new context
@@ -220,7 +231,7 @@ class ChatMemory:
             vector_type = config.get("memory.vector_storage.type", "chroma")
             vector_path = config.get(
                 "memory.vector_storage.storage_path",
-                "~/.config/ainara/vector_db"
+                os.path.join(config.get("data.directory"), "chat_memory.db")
             )
             embedding_model = config.get(
                 "memory.vector_storage.embedding_model",

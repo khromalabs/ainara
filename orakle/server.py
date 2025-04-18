@@ -1,19 +1,21 @@
-# Ainara - Open Source AI Assistant Framework
-# Copyright (C) 2025 Rubén Gómez http://www.khromalabs.org
-
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
-
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
 
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, see
-# <https://www.gnu.org/licenses/>.
 
 import argparse
 import time
@@ -26,20 +28,15 @@ from ainara.framework.capabilities_manager import CapabilitiesManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
-from ainara.framework.llm import create_llm_backend
 
 config = ConfigManager()
 config.load_config()
-llm = create_llm_backend(config.get("llm", {}))
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Orakle Server")
     parser.add_argument(
         "--port", type=int, default=5000, help="Port to run the server on"
-    )
-    parser.add_argument(
-        "--log-dir", type=str, help="Directory for log files (optional)"
     )
     parser.add_argument(
         "--log-level",
@@ -78,7 +75,7 @@ def health_check():
             "logging": logging_manager is not None,
         },
         "dependencies": {
-            "llm_available": llm is not None
+            "dummy": True
         },
     }
 
@@ -134,8 +131,9 @@ def create_app():
 
             # Update the configuration without saving
             config.update_config(new_config=data, save=False)
-            llm.initialize_provider()
-            logger.info("Configuration updated successfully")
+
+            # # Reload skills without registering new routes
+            # app.capabilities_manager.reload_skills()
 
             return jsonify({"success": True})
         except Exception as e:
@@ -150,7 +148,7 @@ def create_app():
 
 if __name__ == "__main__":
     args = parse_args()
-    logging_manager.setup(log_dir=args.log_dir, log_level=args.log_level)
+    logging_manager.setup(log_level=args.log_level, log_name="orakle.log")
     # Get logger after setup
     logger = logging_manager.logger
     logger.info(f"Starting Orakle development server on port {args.port}")

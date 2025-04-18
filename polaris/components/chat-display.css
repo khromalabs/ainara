@@ -1,3 +1,23 @@
+/*
+ * Ainara AI Companion Framework Project
+ * Copyright (C) 2025 Rubén Gómez - khromalabs.org
+ *
+ * This file is dual-licensed under:
+ * 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+ *    (See the included LICENSE_LGPL3.txt file or look into
+ *    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+ * 2. Commercial license
+ *    (Contact: rgomez@khromalabs.org for licensing options)
+ *
+ * You may use, distribute and modify this code under the terms of either license.
+ * This notice must be preserved in all copies or substantial portions of the code.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
+ */
+
 :host {
     position: fixed;
     bottom: 160px;
@@ -28,7 +48,7 @@
     border-radius: 10px;
     border: none;
     background-color: rgba(0, 0, 0, 0.3);
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 1);
     font-family: 'Inter', sans-serif;
     font-size: 1.5em;
     line-height: 1.8;
@@ -80,7 +100,7 @@
 }
 
 .message.user {
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 1);
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5),
                  0 0 20px rgba(255, 255, 255, 0.3),
                  2px 2px 6px rgba(0, 0, 0, 1),
@@ -88,7 +108,7 @@
 }
 
 .message.ai {
-    color: rgba(120, 200, 255, 0.9);
+    color: rgba(120, 200, 255, 1);
     text-shadow: 0 0 10px rgba(120, 200, 255, 0.5),
                  0 0 20px rgba(120, 200, 255, 0.3),
                  2px 2px 6px rgba(0, 0, 0, 1),
@@ -142,7 +162,7 @@
 }
 
 .message.user .link-text {
-    color: rgba(255, 255, 255, 0.9); /* For user messages */
+    color: rgba(255, 255, 255, 1); /* For user messages */
 }
 
 .link-domain {
@@ -150,4 +170,3 @@
     opacity: 0.7;
     font-style: italic;
 }
-

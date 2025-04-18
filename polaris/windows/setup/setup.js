@@ -1,17 +1,42 @@
+// Ainara AI Companion Framework Project
+// Copyright (C) 2025 Rubén Gómez - khromalabs.org
+//
+// This file is dual-licensed under:
+// 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+//    (See the included LICENSE_LGPL3.txt file or look into
+//    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+// 2. Commercial license
+//    (Contact: rgomez@khromalabs.org for licensing options)
+//
+// You may use, distribute and modify this code under the terms of either license.
+// This notice must be preserved in all copies or substantial portions of the code.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Lesser General Public License for more details.
+
 const { ipcRenderer } = require('electron');
 const ConfigManager = require('../../utils/config');
 const Logger = require('../../utils/logger');
-const fs = require('fs');
-const path = require('path');
-const yaml = require('js-yaml');
+// const fs = require('fs');
+// const path = require('path');
+// const yaml = require('js-yaml');
 
 // Create a ConfigManager instance
 const config = new ConfigManager();
 
 // Step navigation
-const steps = ['welcome', 'llm', 'stt', 'skills', 'finish'];
+const steps = ['welcome', 'llm', 'stt', 'skills', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 let providersData = null;
+// Track modified fields
+const modifiedFields = {
+    llm: new Set(),
+    stt: new Set(),
+    skills: new Set(),
+    shortcuts: new Set()
+};
 
 // Initialize the UI
 document.addEventListener('DOMContentLoaded', () => {
@@ -80,8 +105,12 @@ function extractApiKeysFromConfig(config) {
         for (const [key, value] of Object.entries(obj)) {
             const currentPath = [...path, key];
 
+            if (!String(currentPath).startsWith("apis"))
+                continue;
+
             // If the value is "<key>" or contains "api_key" in the key name, it's likely an API key
-            if (value === "<key>" || key.includes('api_key') || key.includes('apiKey')) {
+            // if (value === "<key>" || key.includes('api_key') || key.includes('apiKey')) {
+            if (typeof value !== 'object' && value !== null) {
                 // Create a parent path (everything except the last segment)
                 const parentPath = currentPath.slice(0, -1).join('.');
 
@@ -103,6 +132,7 @@ function extractApiKeysFromConfig(config) {
                 });
             }
             // If it's an object, recursively search it
+            // else if (typeof value === 'object' && value !== null) {
             else if (typeof value === 'object' && value !== null) {
                 findApiKeys(value, currentPath);
             }
@@ -117,34 +147,6 @@ function extractApiKeysFromConfig(config) {
 
 // Format the key name for display
 function formatKeyName(pathArray) {
-    // Special cases for known services
-    // const lastPart = pathArray[pathArray.length - 1];
-    // const parentPart = pathArray.length > 1 ? pathArray[pathArray.length - 2] : '';
-
-    /*
-    if (lastPart === 'api_key' || lastPart === 'apiKey') {
-        if (parentPart === 'openweathermap') {
-            return 'OpenWeatherMap API Key';
-        } else if (parentPart === 'alphavantage') {
-            return 'Alpha Vantage API Key';
-        } else if (parentPart === 'newsapi') {
-            return 'News API Key';
-        } else if (parentPart === 'google') {
-            return 'Google Search API Key';
-        } else if (parentPart === 'tavily') {
-            return 'Tavily Search API Key';
-        } else if (parentPart === 'perplexity') {
-            return 'Perplexity API Key';
-        } else if (parentPart === 'metaphor') {
-            return 'Metaphor Search API Key';
-        } else if (parentPart === 'coinmarketcap') {
-            return 'CoinMarketCap API Key';
-        } else if (parentPart === 'helius') {
-            return 'Helius API Key';
-        }
-    }
-    */
-
     // Default formatting
     return pathArray.map(part => {
         // Convert snake_case or camelCase to Title Case
@@ -223,18 +225,18 @@ function getKeyDescription(pathArray) {
 }
 
 // Function to generate the skills UI
-function generateSkillsUI() {
+async function generateSkillsUI() {
     try {
-        // Load the sample config
-        const samplePath = path.join(__dirname, '..', '..', '..', 'resources', 'ainara.yaml.defaults');
-        let sampleConfig;
+        // Load the sample config from the API instead of the file
+        const response = await fetch(
+            config.get('pybridge.api_url') + '/config/defaults'
+        );
 
-        if (fs.existsSync(samplePath)) {
-            const sampleContents = fs.readFileSync(samplePath, 'utf8');
-            sampleConfig = yaml.load(sampleContents);
-        } else {
-            throw new Error('Sample config file not found');
+        if (!response.ok) {
+            throw new Error('Failed to load default configuration');
         }
+
+        const sampleConfig = await response.json();
 
         // Extract API keys
         const apiKeys = extractApiKeysFromConfig(sampleConfig);
@@ -244,6 +246,11 @@ function generateSkillsUI() {
 
         // Group keys by category
         const categories = new Map();
+
+        // console.log("-------");
+        // console.log("apiKeys:");
+        // console.log(JSON.stringify(apiKeys));
+        // console.log("-------");
 
         // Group by top-level category first
         for (const [parentPath, keyGroup] of Object.entries(apiKeys)) {
@@ -289,7 +296,7 @@ function generateSkillsUI() {
                     }
 
                     if (group.keys[0].description.url) {
-                        html += `<p>Get API key from: <a href="#" class="external-link" data-url="${group.keys[0].description.url}">${new URL(group.keys[0].description.url).hostname}</a></p>`;
+                        html += `<p>Get API key(s) from: <a href="#" class="external-link" data-url="${group.keys[0].description.url}">${new URL(group.keys[0].description.url).hostname}</a></p>`;
                     }
                 }
 
@@ -317,6 +324,11 @@ function generateSkillsUI() {
         if (skillsListContainer) {
             skillsListContainer.innerHTML = html;
         }
+
+        // Add event listeners to all input fields
+        document.querySelectorAll('.skills-list input[data-path]').forEach(input => {
+            input.addEventListener('input', (event) => handleInputChange(event));
+        });
 
         // Load existing values from config
         loadExistingApiKeys();
@@ -374,10 +386,142 @@ function setupEventListeners() {
     // Close button
     document.querySelector('.close-btn').addEventListener('click', () => {
         event.preventDefault(); // Prevent any default behavior
-        if (confirm('Do you really wish to close the setup wizard?')) {
+        if (confirm('Do you really want to close the setup wizard?')) {
             ipcRenderer.send('close-setup-window');
         }
     });
+
+    // Setup shortcut key capture
+    setupShortcutCapture();
+
+    // Add CSS for hardware acceleration info and shortcuts
+    const style = document.createElement('style');
+    style.textContent = `
+        .hardware-info {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #6c757d;
+        }
+
+        .success-message {
+            color: #28a745;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .warning-message {
+            color: #ffc107;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .info-message {
+            color: #17a2b8;
+            font-weight: bold;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .success-message .icon,
+        .warning-message .icon,
+        .info-message .icon {
+            margin-right: 8px;
+            font-size: 1.2em;
+        }
+
+        .hardware-info p {
+            margin: 8px 0;
+        }
+
+        .hardware-info a {
+            color: #007bff;
+            text-decoration: underline;
+        }
+
+        .gpu-details {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .gpu-details ul {
+            margin: 5px 0 0 20px;
+            padding: 0;
+        }
+
+        .gpu-details li {
+            margin-bottom: 5px;
+        }
+
+        /* Shortcuts panel styles */
+        .shortcuts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .shortcut-group {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+
+        .shortcut-group h3 {
+            margin-top: 0;
+            color: #007bff;
+        }
+
+        .shortcut-description {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        .usage-instructions {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+        }
+
+        .usage-instructions h3 {
+            margin-top: 0;
+            color: #28a745;
+        }
+
+        .usage-instructions ol {
+            padding-left: 20px;
+        }
+
+        .usage-instructions li {
+            margin-bottom: 10px;
+        }
+
+        #show-key-display,
+        #hide-key-display,
+        #trigger-key-display {
+            background-color: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: bold;
+        }
+
+        input.capturing {
+            background-color: #ffe8e8;
+            border-color: #dc3545;
+        }
+    `;
+    document.head.appendChild(style);
 
     // Handle external links to open in system browser
     document.addEventListener('click', (event) => {
@@ -705,6 +849,17 @@ async function loadExistingProviders() {
         const selectedProvider = backendConfig?.llm?.selected_provider;
 
         if (existingProviders.length === 0) {
+            // Clear any existing container if there are no providers
+            const existingContainer = document.getElementById('existing-providers');
+            if (existingContainer) {
+                existingContainer.innerHTML = '';
+            }
+
+            // Also remove the entire section if it exists
+            const section = document.querySelector('.existing-providers-section');
+            if (section) {
+                section.remove();
+            }
             return; // No existing providers
         }
 
@@ -938,20 +1093,38 @@ function updateProviderDetailsUI() {
 
     // Add input event listeners for validation
     detailsContainer.querySelectorAll('input, select').forEach(input => {
-        input.addEventListener('input', handleInputChange);
+        input.addEventListener('input', (event) => handleInputChange(event));
     });
 
     validateProviderForm();
 }
 
 // New function to handle input changes
-function handleInputChange() {   // event
+function handleInputChange(event) {
     // Hide test result and disable next button when any input changes
     const testResult = document.getElementById('test-result');
     const nextButton = document.getElementById('llm-next');
 
     testResult.classList.add('hidden');
     nextButton.disabled = true;
+
+    // Track the modified field
+    if (event && event.target) {
+        const field = event.target;
+        const fieldId = field.id;
+
+        // Determine which section this field belongs to
+        if (fieldId.includes('shortcut')) {
+            modifiedFields.shortcuts.add(fieldId);
+        } else if (fieldId.includes('api-key-')) {
+            modifiedFields.skills.add(field.dataset.path);
+        } else if (fieldId.includes('custom-api')) {
+            modifiedFields.stt.add(fieldId);
+        } else {
+            // LLM fields
+            modifiedFields.llm.add(fieldId);
+        }
+    }
 
     // Also validate the form
     validateProviderForm();
@@ -1042,6 +1215,12 @@ async function testLLMConnectionFetch(llmConfig) {
         result = await response.json();
 
         if (response.ok && result.success) {
+            // Mark the provider as modified when test is successful
+            const selectedProviderId = document.querySelector('input[name="llm-provider"]:checked')?.value;
+            if (selectedProviderId) {
+                modifiedFields.llm.add(selectedProviderId);
+            }
+
             let error_msg = await saveLLMConfig();
             if (error_msg) {
                 testResult.textContent = error_msg;
@@ -1116,9 +1295,144 @@ function validateCurrentStep() {
     }
 }
 
+// Add a function to check hardware acceleration status
+async function checkHardwareAcceleration() {
+    try {
+        const response = await fetch(config.get('pybridge.api_url') + '/hardware/acceleration');
+        if (!response.ok) {
+            throw new Error('Failed to check hardware acceleration');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error checking hardware acceleration:', error);
+        return {
+            cuda_available: false,
+            message: 'Unable to check hardware acceleration status'
+        };
+    }
+}
+
 // Add event listeners for STT options
 function setupSTTEventListeners() {
     const sttNextButton = document.getElementById('stt-next');
+    const sttPanel = document.getElementById('stt-panel');
+
+    // Add hardware acceleration info section if it doesn't exist
+    if (!document.getElementById('hardware-acceleration-info')) {
+        const infoHtml = `
+            <div id="hardware-acceleration-info" class="hardware-info">
+                <h3>Hardware Acceleration</h3>
+                <div id="hardware-status">Checking hardware acceleration status...</div>
+            </div>
+        `;
+
+        // Insert before the STT options
+        const sttOptions = sttPanel.querySelector('.stt-options');
+        if (sttOptions) {
+            sttOptions.insertAdjacentHTML('beforebegin', infoHtml);
+        }
+
+        // Check hardware acceleration status
+        checkHardwareAcceleration().then(result => {
+            const statusElement = document.getElementById('hardware-status');
+            if (statusElement) {
+                if (result.cuda_available) {
+                    statusElement.innerHTML = `
+                        <div class="success-message">
+                            <span class="icon">✓</span>
+                            <span>CUDA ${result.cuda_version || ''} is available</span>
+                        </div>
+                        <p>Your system will use GPU acceleration for faster speech recognition.</p>
+                    `;
+
+                    // Show GPU details if available
+                    if (result.gpu_list && result.gpu_list.length > 0) {
+                        let gpuHtml = `<div class="gpu-details"><p>Using GPU(s):</p><ul>`;
+                        result.gpu_list.forEach(gpu => {
+                            gpuHtml += `<li>${gpu.name} ${gpu.memory ? '(' + gpu.memory + ')' : ''}</li>`;
+                        });
+                        gpuHtml += `</ul></div>`;
+                        statusElement.innerHTML += gpuHtml;
+                    }
+                } else if (result.has_nvidia_hardware) {
+                    // NVIDIA hardware detected but CUDA not available
+                    let helpText = '';
+                    if (result.platform === 'win32') {
+                        helpText = `
+                            <p>An NVIDIA GPU was detected, but CUDA drivers are not installed or not working properly.</p>
+                            <p>For faster speech recognition, we recommend installing NVIDIA CUDA drivers:</p>
+                            <p><a href="#" class="external-link" data-url="https://www.nvidia.com/Download/index.aspx">Download NVIDIA Drivers</a></p>
+                            <p><a href="#" class="external-link" data-url="https://developer.nvidia.com/cuda-downloads">Download CUDA Toolkit</a></p>
+                            <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
+                        `;
+                    } else if (result.platform === 'linux') {
+                        helpText = `
+                            <p>An NVIDIA GPU was detected, but CUDA drivers are not installed or not working properly.</p>
+                            <p>For faster speech recognition, install NVIDIA drivers using your distribution's package manager.</p>
+                            <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
+                        `;
+                    }
+
+                    // Show GPU details if available
+                    if (result.gpu_list && result.gpu_list.length > 0) {
+                        helpText += `<div class="gpu-details"><p>Detected GPU(s):</p><ul>`;
+                        result.gpu_list.forEach(gpu => {
+                            helpText += `<li>${gpu.name} ${gpu.driver_version ? '(Driver: ' + gpu.driver_version + ')' : ''}</li>`;
+                        });
+                        helpText += `</ul></div>`;
+                    }
+
+                    statusElement.innerHTML = `
+                        <div class="warning-message">
+                            <span class="icon">⚠</span>
+                            <span>Hardware acceleration not available</span>
+                        </div>
+                        ${helpText}
+                    `;
+                } else if (result.platform === 'darwin') {
+                    // macOS - no NVIDIA hardware
+                    let helpText = `
+                        <p>On macOS, Metal is used for acceleration on Apple Silicon.</p>
+                        <p>CPU will be used on Intel Macs, which may be slower for speech recognition.</p>
+                    `;
+
+                    statusElement.innerHTML = `
+                        <div class="info-message">
+                            <span class="icon">ℹ</span>
+                            <span>Using macOS native acceleration</span>
+                        </div>
+                        ${helpText}
+                    `;
+                } else {
+                    // No NVIDIA hardware detected
+                    let helpText = `
+                        <p>Your system will use CPU for speech recognition, which may be slower.</p>
+                        <p>If you have an NVIDIA GPU, installing CUDA drivers can improve performance.</p>
+                    `;
+
+                    statusElement.innerHTML = `
+                        <div class="info-message">
+                            <span class="icon">ℹ</span>
+                            <span>No NVIDIA GPU detected</span>
+                        </div>
+                        ${helpText}
+                    `;
+                }
+            }
+        }).catch(error => {
+            console.error('Failed to check hardware acceleration:', error);
+            const statusElement = document.getElementById('hardware-status');
+            if (statusElement) {
+                statusElement.innerHTML = `
+                    <div class="warning-message">
+                        <span class="icon">⚠</span>
+                        <span>Unable to check hardware acceleration status</span>
+                    </div>
+                    <p>Speech recognition will work, but may be slower without GPU acceleration.</p>
+                `;
+            }
+        });
+    }
 
     // Show/hide details based on selection
     document.querySelectorAll('input[name="stt-backend"]').forEach(radio => {
@@ -1141,6 +1455,9 @@ function setupSTTEventListeners() {
 
             // Hide any previous validation messages
             document.getElementById('stt-test-result').classList.add('hidden');
+
+            // Track this change
+            modifiedFields.stt.add('stt-backend');
         });
     });
 
@@ -1217,6 +1534,9 @@ async function saveCurrentStepData() {
         case 'skills':
             await saveSkillsConfig();
             break;
+        case 'shortcuts':
+            saveShortcutsConfig();
+            break;
     }
 }
 
@@ -1225,6 +1545,7 @@ async function deleteProvider(index) {
     try {
         // Load current backend config
         const backendConfig = await loadBackendConfig();
+        let changedSelectedProvider = false;
 
         if (!backendConfig.llm || !backendConfig.llm.providers || !backendConfig.llm.providers[index]) {
             throw new Error('Provider not found');
@@ -1245,11 +1566,20 @@ async function deleteProvider(index) {
                 // No providers left, remove the selected key
                 delete backendConfig.llm.selected_provider;
             }
+            changedSelectedProvider = true;
         }
 
         // Save the updated backend config to both servers
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        if (changedSelectedProvider) {
+            await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        }
+
+        // Clear the existing providers container before reloading
+        const existingContainer = document.getElementById('existing-providers');
+        if (existingContainer) {
+            existingContainer.innerHTML = '';
+        }
 
         // Reload the providers list
         loadExistingProviders();
@@ -1321,9 +1651,15 @@ async function saveLLMConfig() {
     const selectedExistingProvider = document.querySelector('input[name="existing-provider"]:checked');
     // llmConfig is the configuration of the selected new provider
     const llmConfig = getLLMConfig();
+    let changedSelectedProvider = false;
     // we don't have a new provider selected, return
     if (!llmConfig) {
         return "No provider defined won't save";
+    }
+
+    // If no LLM fields were modified and we're not selecting an existing provider, skip saving
+    if (modifiedFields.llm.size === 0 && !selectedExistingProvider) {
+        return null; // No error, just nothing to save
     }
     // const notCustomProvider = document.querySelector('input[name="llm-provider"]:checked')?.value !== 'custom';
 
@@ -1352,6 +1688,7 @@ async function saveLLMConfig() {
             if (backendConfig.llm.providers && backendConfig.llm.providers[providerIndex]) {
                 const provider = backendConfig.llm.providers[providerIndex];
                 backendConfig.llm.selected_provider = provider.model;
+                changedSelectedProvider = true;
             }
         }
 
@@ -1377,14 +1714,21 @@ async function saveLLMConfig() {
             backendConfig.llm.providers = [provider];
         }
 
-        // Set this as the selected provider
-        backendConfig.llm.selected_provider = provider.model;
-
-        console.log(backendConfig);
+        // If this is the only provider or there's no selected provider yet, select it
+        if (!backendConfig.llm.selected_provider || backendConfig.llm.providers.length === 1) {
+            backendConfig.llm.selected_provider = provider.model;
+            changedSelectedProvider = true;
+        }
 
         // Save the updated backend config to both servers
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        if (changedSelectedProvider) {
+            await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        }
+
+        // After successful save, clear the modified fields tracking
+        modifiedFields.llm.clear();
+
         await updateUIAfterSave(provider);
     } catch (error) {
         console.error('Error updating LLM config:', error);
@@ -1394,6 +1738,12 @@ async function saveLLMConfig() {
 // Function to save STT config
 async function saveSTTConfig() {
     const selectedBackend = document.querySelector('input[name="stt-backend"]:checked')?.value || 'faster_whisper';
+
+    // If no STT fields were modified and we're using the default, skip saving
+    const usingDefault = selectedBackend === 'faster_whisper';
+    if (modifiedFields.stt.size === 0 && usingDefault) {
+        return;
+    }
 
     // Save to Polaris config
     const sttConfig = {
@@ -1455,13 +1805,21 @@ async function saveSTTConfig() {
 
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        // await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+
+        // After successful save, clear the modified fields tracking
+        modifiedFields.stt.clear();
     } catch (error) {
         console.error('Error updating STT config:', error);
     }
 }
 
 async function saveSkillsConfig() {
+    // If no skill fields were modified, skip saving
+    if (modifiedFields.skills.size === 0) {
+        return;
+    }
+
     try {
         // Load current backend config
         const backendConfig = await loadBackendConfig();
@@ -1482,22 +1840,157 @@ async function saveSkillsConfig() {
             current[parts[parts.length - 1]] = value;
         }
 
-        // Update each API key in the backend config
+        // Only update modified API keys
         document.querySelectorAll('input[data-path]').forEach(input => {
             const path = input.dataset.path;
-            const value = input.value.trim();
-
-            if (value) {
-                setValueAtPath(backendConfig, path, value);
+            if (modifiedFields.skills.has(path)) {
+                const value = input.value.trim();
+                if (value) {
+                    setValueAtPath(backendConfig, path, value);
+                }
             }
         });
+
+        // console.log("======================");
+        // console.log("backendConfig");
+        // console.log(JSON.stringify(backendConfig));
+        // console.log("======================");
 
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+
+        // Clear modified fields after successful save
+        modifiedFields.skills.clear();
     } catch (error) {
         console.error('Error updating skills config:', error);
     }
+}
+
+// Function to save shortcuts configuration
+function saveShortcutsConfig() {
+    // If no shortcut fields were modified, skip saving
+    if (modifiedFields.shortcuts.size === 0) {
+        return true;
+    }
+
+    try {
+        // Get shortcut values
+        const showShortcut = document.getElementById('show-shortcut').value.trim();
+        const hideShortcut = document.getElementById('hide-shortcut').value.trim();
+        const triggerShortcut = document.getElementById('trigger-shortcut').value.trim();
+
+        // Update config
+        if (showShortcut && modifiedFields.shortcuts.has('show-shortcut')) {
+            config.set('shortcuts.show', showShortcut);
+        }
+
+        if (hideShortcut && modifiedFields.shortcuts.has('hide-shortcut')) {
+            config.set('shortcuts.hide', hideShortcut);
+        }
+
+        if (triggerShortcut && modifiedFields.shortcuts.has('trigger-shortcut')) {
+            config.set('shortcuts.trigger', triggerShortcut);
+        }
+
+        // Save to disk
+        config.saveConfig();
+
+        // Clear modified fields after successful save
+        modifiedFields.shortcuts.clear();
+
+        return true;
+    } catch (error) {
+        console.error('Error saving shortcuts config:', error);
+        return false;
+    }
+}
+
+// Function to handle shortcut key capture
+function setupShortcutCapture() {
+    const showInput = document.getElementById('show-shortcut');
+    const hideInput = document.getElementById('hide-shortcut');
+    const triggerInput = document.getElementById('trigger-shortcut');
+    const showDisplay = document.getElementById('show-key-display');
+    const hideDisplay = document.getElementById('hide-key-display');
+    const triggerDisplay = document.getElementById('trigger-key-display');
+
+    // Load current values from config
+    const currentShow = config.get('shortcuts.show', 'F1');
+    const currentHide = config.get('shortcuts.hide', 'Escape');
+    const currentTrigger = config.get('shortcuts.trigger', 'Space');
+
+    // Set initial values
+    showInput.value = currentShow;
+    hideInput.value = currentHide;
+    triggerInput.value = currentTrigger;
+    showDisplay.textContent = currentShow;
+    hideDisplay.textContent = currentHide;
+    triggerDisplay.textContent = currentTrigger;
+
+    // Function to handle key capture
+    function captureKey(input, displayElement) {
+        input.addEventListener('focus', () => {
+            input.value = 'Press a key...';
+            input.classList.add('capturing');
+        });
+
+        input.addEventListener('blur', () => {
+            if (input.value === 'Press a key...') {
+                // Restore previous value if no key was pressed
+                input.value = displayElement.textContent;
+            }
+            input.classList.remove('capturing');
+        });
+
+        input.addEventListener('keydown', (e) => {
+            e.preventDefault();
+
+            // Get the key name
+            let keyName;
+            if (e.key === ' ') {
+                keyName = 'Space';
+            } else if (e.key === 'Escape') {
+                // Cancel and restore previous value
+                keyName = displayElement.textContent;
+            } else {
+                keyName = e.key;
+            }
+
+            // Special handling for modifier keys
+            if (e.ctrlKey && e.key !== 'Control') keyName = 'Ctrl+' + keyName;
+            if (e.altKey && e.key !== 'Alt') keyName = 'Alt+' + keyName;
+            if (e.shiftKey && e.key !== 'Shift') keyName = 'Shift+' + keyName;
+
+            // Update input and display
+            input.value = keyName;
+            displayElement.textContent = keyName;
+
+            // Remove focus to complete capture
+            input.blur();
+        });
+    }
+
+    // Set up key capture for both inputs
+    captureKey(showInput, showDisplay);
+    captureKey(hideInput, hideDisplay);
+    captureKey(triggerInput, triggerDisplay);
+
+    // Update display when input changes directly
+    showInput.addEventListener('input', () => {
+        showDisplay.textContent = showInput.value;
+        modifiedFields.shortcuts.add('show-shortcut');
+    });
+
+    hideInput.addEventListener('input', () => {
+        hideDisplay.textContent = hideInput.value;
+        modifiedFields.shortcuts.add('hide-shortcut');
+    });
+
+    triggerInput.addEventListener('input', () => {
+        triggerDisplay.textContent = triggerInput.value;
+        modifiedFields.shortcuts.add('trigger-shortcut');
+    });
 }
 
 async function finishSetup() {
@@ -1510,4 +2003,3 @@ async function finishSetup() {
     // Notify main process that setup is complete
     ipcRenderer.send('setup-complete');
 }
-

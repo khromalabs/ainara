@@ -1,19 +1,21 @@
-# Ainara - Open Source AI Assistant Framework
-# Copyright (C) 2025 Rubén Gómez http://www.khromalabs.org
-
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation; either version 2
-# of the License, or (at your option) any later version.
-
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
 
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, see
-# <https://www.gnu.org/licenses/>.
 
 import importlib
 import inspect
@@ -33,12 +35,21 @@ class CapabilitiesManager:
         self.logger = logging.getLogger(__name__)
         self.app = flask_app
         self.skills = {}
-        # self.recipes = {}
         self.load_skills()
         self.register_skills_endpoints()
-        # TODO Ignore recipes by now
-        # self.register_recipes_endpoints()
         self.register_capabilities_endpoint()
+
+    def reload_skills(self):
+        """Reload skills without registering new endpoints"""
+        self.logger.info("Reloading skills after configuration update")
+        # Clear existing skills
+        self.skills = {}
+        # Reload skills
+        self.load_skills()
+        for skill in self.skills:
+            self.skills[skill].reload()
+        # Don't call register_skills_endpoints() here again
+        self.logger.info(f"Reloaded {len(self.skills)} skills")
 
     def get_capabilities(self):
         """Get information about all available skills and recipes"""
@@ -211,7 +222,7 @@ class CapabilitiesManager:
                 rel_path = skill_file.relative_to(skills_dir)
                 # Convert path to module path
                 # (e.g., html/url_downloader -> html.url_downloader)
-                module_path = str(rel_path.with_suffix("")).replace("/", ".")
+                module_path = ".".join(rel_path.with_suffix("").parts)
 
                 # Get the parent directory name and file name
                 dir_name = skill_file.parent.name

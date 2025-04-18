@@ -1,3 +1,21 @@
+// Ainara AI Companion Framework Project
+// Copyright (C) 2025 Rubén Gómez - khromalabs.org
+//
+// This file is dual-licensed under:
+// 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+//    (See the included LICENSE_LGPL3.txt file or look into
+//    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+// 2. Commercial license
+//    (Contact: rgomez@khromalabs.org for licensing options)
+//
+// You may use, distribute and modify this code under the terms of either license.
+// This notice must be preserved in all copies or substantial portions of the code.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Lesser General Public License for more details.
+
 const { spawn } = require('child_process');
 const path = require('path');
 const Logger = require('./logger');
@@ -5,6 +23,9 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const os = require('os');
 const { app } = require('electron');
+const ConfigManager = require('../utils/config');
+
+const config = new ConfigManager();
 
 class ServiceManager {
     constructor() {
@@ -22,30 +43,30 @@ class ServiceManager {
         let executablesDir;
         if (isDevMode) {
             // In development, look for executables in a relative path
-            executablesDir = path.join(process.cwd(), 'dist');
+            executablesDir = path.join(process.cwd(), 'dist', 'servers');
         } else {
             // In production, look in the resources directory
-            executablesDir = path.join(process.resourcesPath, 'bin');
+            executablesDir = path.join(process.resourcesPath, 'bin', 'servers');
         }
 
         // Define services with their executables and health endpoints
         this.services = {
             orakle: {
                 process: null,
-                url: 'http://localhost:5000/health',
+                url: config.get('orakle.api_url') + '/health',
                 healthy: false,
                 name: 'Orakle',
                 executable: platform === 'win32' ? 'orakle.exe' : 'orakle',
-                executablePath: path.join(executablesDir, 'orakle', platform === 'win32' ? 'orakle.exe' : 'orakle'),
+                executablePath: path.join(executablesDir, platform === 'win32' ? 'orakle.exe' : 'orakle'),
                 args: []
             },
             pybridge: {
                 process: null,
-                url: 'http://localhost:5001/health',
+                url: config.get('pybridge.api_url') + '/health',
                 healthy: false,
                 name: 'Pybridge',
                 executable: platform === 'win32' ? 'pybridge.exe' : 'pybridge',
-                executablePath: path.join(executablesDir, 'pybridge', platform === 'win32' ? 'pybridge.exe' : 'pybridge'),
+                executablePath: path.join(executablesDir, platform === 'win32' ? 'pybridge.exe' : 'pybridge'),
                 args: []
             }
         };
@@ -66,6 +87,7 @@ class ServiceManager {
 
     async startServices() {
         this.updateProgress('Starting services...', 10);
+        Logger.info("--- starting services");
 
         // Check if executables exist
         for (const [, service] of Object.entries(this.services)) { // id, service
@@ -86,6 +108,7 @@ class ServiceManager {
 
         try {
             await Promise.all(startPromises);
+            Logger.info("--- all services started successfully");
             this.updateProgress('Services started successfully', 50);
 
             // Start health check monitoring
@@ -124,16 +147,16 @@ class ServiceManager {
                 service.process.on('exit', (code) => {
                     if (code !== 0 && code !== null) {
                         Logger.error(`${service.name} exited with code ${code}`);
-                        service.healthy = false;
-
-                        if (this.healthCheckInterval) {
-                            this.updateProgress(`${service.name} service crashed`, 100);
-                        }
+                        // service.healthy = false;
+                        //
+                        // if (this.healthCheckInterval) {
+                        //     this.updateProgress(`${service.name} service crashed`, 100);
+                        // }
                     }
                 });
 
-                // Check if service starts successfully
-                this.waitForHealth(serviceId, 30000)
+                // Check if service starts successfully in a minute top
+                this.waitForHealth(serviceId, 60000)
                     .then(() => resolve())
                     .catch(err => reject(err));
 
@@ -247,13 +270,26 @@ class ServiceManager {
                     });
 
                     // Force kill after timeout if still running
-                    setTimeout(() => {
+                    let forceKillTimeout = setTimeout(() => {
                         if (service.process && !service.process.killed) {
                             Logger.log(`Force killing ${service.name} service with SIGKILL`);
                             service.process.kill('SIGKILL');
-                            // The 'exit' handler above will still resolve the promise
+                            // Give a small grace period for SIGKILL to take effect
+                            setTimeout(() => {
+                                if (service.process && !service.process.killed) {
+                                    Logger.error(`Failed to kill ${service.name} service even with SIGKILL`);
+                                    return false;
+                                }
+                                service.healthy = false;
+                                resolve();
+                            }, 1000);
                         }
                     }, 5000);
+
+                    // Clear the timeout if the process exits normally
+                    service.process.once('exit', () => {
+                        clearTimeout(forceKillTimeout);
+                    });
                 });
 
                 terminationPromises.push(terminationPromise);
@@ -276,6 +312,154 @@ class ServiceManager {
         return Object.values(this.services).every(service => service.healthy);
     }
 
+    async checkResourcesInitialization() {
+        try {
+            // Make sure pybridge is healthy before checking resources
+            if (!this.services.pybridge.healthy) {
+                Logger.error('Cannot check resources: PyBridge service is not healthy');
+                return {
+                    initialized: false,
+                    error: 'PyBridge service is not healthy'
+                };
+            }
+
+            const response = await fetch(this.services.pybridge.url.replace('/health', '/setup/check'));
+
+            if (!response.ok) {
+                Logger.error(`Failed to check resources: ${response.status} ${response.statusText}`);
+                return {
+                    initialized: false,
+                    error: `Failed to check resources: ${response.status} ${response.statusText}`
+                };
+            }
+
+            const result = await response.json();
+            Logger.log('Resource initialization check result:', result);
+            return result;
+        } catch (error) {
+            Logger.error('Error checking resources initialization:', error);
+            return {
+                initialized: false,
+                error: error.message
+            };
+        }
+    }
+
+    async restartServices() {
+        this.updateProgress('Restarting services...', 0);
+
+        try {
+            // First stop all services
+            await this.stopServices();
+
+            // Then start them again
+            const success = await this.startServices();
+
+            if (!success) {
+                throw new Error('Failed to restart services');
+            }
+
+            return true;
+        } catch (error) {
+            Logger.error('Error restarting services:', error);
+            this.updateProgress(`Error: ${error.message}`, 100);
+            return false;
+        }
+    }
+
+    setWindowManager(wm) {
+        this.windowManager = wm;
+    }
+
+    async initializeResources() {
+        try {
+            // Make sure pybridge is healthy before initializing resources
+            if (!this.services.pybridge.healthy) {
+                Logger.error('Cannot initialize resources: PyBridge service is not healthy');
+                return {
+                    success: false,
+                    error: 'PyBridge service is not healthy'
+                };
+            }
+
+            this.updateProgress('Starting resource initialization...', 0);
+
+            // Start the initialization process
+            const response = await fetch(
+                this.services.pybridge.url.replace('/health', '/setup/initialize'),
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                }
+            );
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                Logger.error(`Failed to initialize resources: ${response.status} ${response.statusText} - ${errorText}`);
+                return {
+                    success: false,
+                    error: `Failed to initialize resources: ${response.status} ${response.statusText}`
+                };
+            }
+
+            // Start polling for progress updates
+            this._pollResourceInitProgress();
+
+            const result = await response.json();
+            Logger.log('Resource initialization result:', result);
+            return result;
+        } catch (error) {
+            Logger.error('Error initializing resources:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    async _pollResourceInitProgress() {
+        // Poll for progress updates
+        const pollInterval = setInterval(async () => {
+            try {
+                if (!this.services.pybridge.healthy) {
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                const progressResponse = await fetch(
+                    this.services.pybridge.url.replace('/health', '/setup/progress')
+                );
+
+                if (!progressResponse.ok) {
+                    Logger.error(`Failed to get initialization progress: ${progressResponse.status} ${progressResponse.statusText}`);
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                const progressData = await progressResponse.json();
+
+                // Update progress through the callback
+                this.updateProgress(progressData.message, progressData.progress);
+
+                // If initialization is complete or errored, stop polling
+                if (progressData.status === 'complete' || progressData.status === 'error') {
+                    clearInterval(pollInterval);
+
+                    if (progressData.status === 'error') {
+                        Logger.error(`Resource initialization error: ${progressData.message}`);
+                    } else {
+                        Logger.log('Resource initialization completed successfully');
+                    }
+                }
+            } catch (error) {
+                Logger.error('Error polling initialization progress:', error);
+                clearInterval(pollInterval);
+            }
+        }, 1000);
+    }
 }
 
 module.exports = new ServiceManager();

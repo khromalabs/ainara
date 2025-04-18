@@ -1,3 +1,21 @@
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+
 import logging
 
 import requests
@@ -21,6 +39,11 @@ class TimeWeather(Skill):
         )
         self.logger = logging.getLogger(__name__)
         self.api_key = config.get("apis.weather.openweathermap_api_key")
+
+    # def reload(self):
+    #     super().reload(config)
+    #     self.api_key = config.get("apis.weather.openweathermap_api_key")
+    #     # self.logger.info("TimeWeather RELOAD self.api_key = " + self.api_key)
 
     def get_location_from_ip(self):
         """Get location information from IP address"""
