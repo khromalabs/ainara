@@ -1,19 +1,23 @@
-/**
- * Com-Ring Interface Design
- * Original concept and implementation by Rubén Gómez for Ainara/Polaris Project
- * Copyright (c) 2025 Rubén Gómez - khromalabs.org
+/*
+ * Ainara AI Companion Framework Project
+ * Copyright (C) 2025 Rubén Gómez - khromalabs.org
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2.
+ * This file is dual-licensed under:
+ * 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+ *    (See the included LICENSE_LGPL3.txt file or look into
+ *    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+ * 2. Commercial license
+ *    (Contact: rgomez@khromalabs.org for licensing options)
  *
- * The Com-Ring interface design is additionally licensed under
- * Creative Commons Attribution 4.0 International License.
- * To view a copy of this license, visit http://creativecommons.org/licenses/by/4.0/
+ * You may use, distribute and modify this code under the terms of either license.
+ * This notice must be preserved in all copies or substantial portions of the code.
  *
- * When using or adapting this design, please provide attribution:
- * "Com-Ring Interface Design by Rubén Gómez - Ainara/Polaris Project (ainara.app)"
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Lesser General Public License for more details.
  */
+
 
 body {
     margin: 0;

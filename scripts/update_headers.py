@@ -5,9 +5,8 @@ Batch update source file headers to dual-license notice
 import os
 from datetime import datetime
 
-HEADER_TEMPLATE = """Copyright (C) {year} Rubén Gómez - khromalabs.org
-
-This file is part of the Ainara Companion AI Framework project.
+HEADER_TEMPLATE = """Ainara AI Companion Framework Project
+Copyright (C) {year} Rubén Gómez - khromalabs.org
 
 This file is dual-licensed under:
 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
@@ -22,8 +21,7 @@ This notice must be preserved in all copies or substantial portions of the code.
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-Lesser General Public License for more details.
-"""
+Lesser General Public License for more details."""
 
 
 def format_header(header, ext):
@@ -128,21 +126,21 @@ def update_file(filepath):
     # Check for shebang line
     lines = content.splitlines()
     shebang = lines[0] if lines and lines[0].startswith('#!') else None
-    
+
     # Detect and remove existing comment block (skip shebang if present)
     start_idx = 1 if shebang else 0
     comment_block = detect_comment_block('\n'.join(lines[start_idx:]), ext)
-    
+
     # Rebuild content without old header but preserving shebang
     if comment_block:
         remaining_content = '\n'.join(lines[start_idx + len(comment_block.splitlines()):])
     else:
         remaining_content = '\n'.join(lines[start_idx:])
-    
+
     # Add new header with proper line-by-line commenting
     header = HEADER_TEMPLATE.format(year=datetime.now().year)
     commented_header = format_header(header, ext)
-    
+
     # Reconstruct content with shebang (if any), new header, and remaining content
     if shebang:
         new_content = f"{shebang}\n{commented_header}\n\n{remaining_content}"
