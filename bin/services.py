@@ -46,6 +46,9 @@ TEMPORARILY_DISABLE_OLLAMA = True  # Set to False to re-enable Ollama
 ORAKLE_HEALTH_URL = "http://localhost:5000/health"
 PYBRIDGE_HEALTH_URL = "http://localhost:5001/health"
 
+# Frontend command
+POLARIS_CMD = "npm run start"
+
 # Virtual environment paths to check (in order of preference)
 VENV_PATHS = [
     os.path.expanduser("~/ainara-env"),
@@ -73,19 +76,21 @@ def check_service_health(url, service_name, timeout=2):
         return False
 
 
-def watch_services_health(services_to_watch, check_interval=3):
+def watch_services_health(services_to_watch, check_interval=3, start_polaris=False):
     """
     Watch the health of services and report any issues
 
     Args:
         services_to_watch: Dict of service names to their health URLs
         check_interval: How often to check health in seconds
+        start_polaris: Whether to start the Polaris frontend when services are healthy
     """
     try:
         print("Monitoring...")
         fails = 0
         fails_limit = 4
         was_unhealthy = False
+        polaris_started = False
 
         while True:
             health_status = {}
@@ -119,6 +124,22 @@ def watch_services_health(services_to_watch, check_interval=3):
                 if was_unhealthy:
                     print("Services are healthy now")
                     was_unhealthy = False
+                
+                # Start Polaris if requested and not already started
+                if start_polaris and not polaris_started and not unhealthy_services:
+                    print("All services are healthy. Starting Polaris frontend...")
+                    try:
+                        # Start the frontend in a new process
+                        subprocess.Popen(
+                            POLARIS_CMD.split(),
+                            shell=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
+                        )
+                        polaris_started = True
+                        print("Polaris frontend started")
+                    except Exception as e:
+                        print(f"Error starting Polaris frontend: {e}")
 
     except KeyboardInterrupt:
         print("Exiting...")
@@ -573,6 +594,11 @@ def main():
         type=int,
         default=30,
         help="Interval in seconds between health checks (default: 30)",
+    )
+    parser.add_argument(
+        "--start-polaris",
+        action="store_true",
+        help="Start the Polaris frontend once services are healthy",
     )
     args = parser.parse_args()
     global argsg
