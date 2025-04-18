@@ -99,7 +99,7 @@ echo "What is 2+2?" | ./kommander/kommander
 
 ## License
 
-Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:your@email.com))
+Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:rgomez@khromalabs.org))
 
 ## Contributing
 
