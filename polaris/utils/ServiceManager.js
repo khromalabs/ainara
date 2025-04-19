@@ -245,7 +245,7 @@ class ServiceManager {
         return allHealthy;
     }
 
-    async stopServices() {
+    async stopServices({ force = false } = {}) {
         if (this.healthCheckInterval) {
             clearInterval(this.healthCheckInterval);
             this.healthCheckInterval = null;
@@ -253,50 +253,36 @@ class ServiceManager {
 
         const terminationPromises = [];
 
-        for (const [ , service] of Object.entries(this.services)) { // id,
+        for (const [, service] of Object.entries(this.services)) {
             if (service.process && !service.process.killed) {
-                Logger.log(`Stopping ${service.name} service...`);
-
-                // Create a promise for this service's termination
-                const terminationPromise = new Promise((resolve) => {
-                    // Try graceful shutdown first
-                    service.process.kill('SIGTERM');
-
-                    // Set up event listener for process exit
-                    service.process.once('exit', () => {
-                        Logger.log(`${service.name} service terminated successfully`);
+                terminationPromises.push(new Promise((resolve) => {
+                    if (force) {
+                        Logger.log(`Force killing ${service.name} immediately (SIGKILL)`);
+                        service.process.kill('SIGKILL');
                         service.healthy = false;
-                        resolve();
-                    });
+                        return resolve();
+                    }
 
-                    // Force kill after timeout if still running
-                    let forceKillTimeout = setTimeout(() => {
+                    // Normal graceful shutdown
+                    Logger.log(`Gracefully stopping ${service.name} (SIGTERM)`);
+                    service.process.kill('SIGTERM');
+                    
+                    const forceKillTimeout = setTimeout(() => {
                         if (service.process && !service.process.killed) {
-                            Logger.log(`Force killing ${service.name} service with SIGKILL`);
+                            Logger.log(`${service.name} didn't terminate gracefully, forcing SIGKILL`);
                             service.process.kill('SIGKILL');
-                            // Give a small grace period for SIGKILL to take effect
-                            setTimeout(() => {
-                                if (service.process && !service.process.killed) {
-                                    Logger.error(`Failed to kill ${service.name} service even with SIGKILL`);
-                                    return false;
-                                }
-                                service.healthy = false;
-                                resolve();
-                            }, 1000);
                         }
+                        resolve();
                     }, 5000);
 
-                    // Clear the timeout if the process exits normally
                     service.process.once('exit', () => {
                         clearTimeout(forceKillTimeout);
+                        resolve();
                     });
-                });
-
-                terminationPromises.push(terminationPromise);
+                }));
             }
         }
 
-        // Wait for all services to terminate
         if (terminationPromises.length > 0) {
             Logger.log(`Waiting for ${terminationPromises.length} services to terminate...`);
             await Promise.all(terminationPromises);

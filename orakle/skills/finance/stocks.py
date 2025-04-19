@@ -32,11 +32,9 @@ class FinanceStocks(Skill):
         hiddenCapability = True
 
     matcher_info = (
-        "Valid only for queries in which the user asks about last day's or"
-        " yesterday's stock share value, a general report about a stock share"
-        " whenever the user query has no time or date constrains, or for which"
-        " is the symbol for some stock share. Only use this skill for stock"
-        " queries."
+        "Valid only for queries user about current, present stock share value."
+        " Only use this skill for stock shares queries. This skill is NOT valid"
+        " for valid for historical queries or queries with time constrains."
     )
 
     def __init__(self):

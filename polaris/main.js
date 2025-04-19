@@ -716,6 +716,36 @@ function appHandleCriticalError(error) {
     app.exit(1);
 }
 
+let isForceShutdown = false;
+
+process.on('SIGINT', async () => {
+  if (isForceShutdown) return;
+  
+  isForceShutdown = true;
+  Logger.info('Ctrl+C detected - initiating forced shutdown');
+  
+  try {
+    await ServiceManager.stopServices({ force: true });
+    app.exit(0);
+  } catch (err) {
+    Logger.error('Forced shutdown failed:', err);
+    app.exit(1);
+  }
+});
+
+app.on('before-quit', async (event) => {
+  if (isForceShutdown) {
+    event.preventDefault();
+    return;
+  }
+  
+  try {
+    await ServiceManager.stopServices();
+  } catch (err) {
+    Logger.error('Graceful shutdown failed:', err);
+  }
+});
+
 // Initialize and start the application
 appInitialization().catch(err => {
     Logger.error('Failed to initialize app:', err);
