@@ -1,0 +1,8 @@
+version: 1.1.1
+files:
+  - url: polaris-setup-1.1.1.AppImage
+    sha512: 7d5768d47b6bc27dc4fa7e9732cfa2de506ca262a2749cb108923e5dddffde842bbfee6cb8d692fb43aca0f12946c521cce2633887914ca1f96898478d10ad3f
+    size: 15
+path: polaris-setup-1.1.1.AppImage
+sha512: 7d5768d47b6bc27dc4fa7e9732cfa2de506ca262a2749cb108923e5dddffde842bbfee6cb8d692fb43aca0f12946c521cce2633887914ca1f96898478d10ad3f
+releaseDate: '2025-04-18T12:00:00.000Z'

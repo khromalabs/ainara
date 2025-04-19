@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Downloading Update</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0; /* Or match your app's theme */
+            color: #333;
+            overflow: hidden; /* Prevent scrollbars */
+            -webkit-app-region: drag; /* Allow dragging the frameless window */
+        }
+        #message {
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        #progress-bar-container {
+            width: 80%;
+            height: 20px;
+            background-color: #ddd;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #4CAF50; /* Green progress */
+            transition: width 0.1s linear; /* Smooth transition */
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="message">Downloading update...</div>
+    <div id="progress-bar-container">
+        <div id="progress-bar">0%</div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        ipcRenderer.on('update-download-progress', (event, percent) => {
+            const progressBar = document.getElementById('progress-bar');
+            const roundedPercent = Math.round(percent);
+            progressBar.style.width = `${roundedPercent}%`;
+            progressBar.textContent = `${roundedPercent}%`;
+        });
+    </script>
+</body>
+</html>

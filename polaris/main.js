@@ -17,6 +17,8 @@
 // Lesser General Public License for more details.
 
 const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const semver = require('semver');
 // const yargs = require('yargs/yargs');
 // const { hideBin } = require('yargs/helpers');
 const path = require('path');
@@ -25,6 +27,7 @@ const { WindowManager } = require('./windows/WindowManager');
 const ComRingWindow = require('./windows/ComRingWindow');
 const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const SplashWindow = require('./windows/SplashWindow');
+const UpdateProgressWindow = require('./windows/UpdateProgressWindow');
 const ServiceManager = require('./utils/ServiceManager');
 const ConfigHelper = require('./utils/ConfigHelper');
 const Logger = require('./utils/logger');
@@ -36,6 +39,7 @@ const debugDisableWizard = false;
 
 
 const config = new ConfigManager();
+let updateAvailable = null;
 let windowManager = null;
 let tray = null;
 let shortcutRegistered = false;
@@ -43,6 +47,7 @@ let splashWindow = null;
 let setupWindow = null;
 let wizardActive = false;
 let externallyManagedServices = false;
+let updateProgressWindow = null;
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
 
@@ -269,11 +274,14 @@ async function appInitialization() {
                 Logger.info('All required resources are already initialized');
             }
             await updateProviderSubmenu();
+
             // Check if this is the first run
             !debugDisableWizard && isFirstRun() ?
                 showSetupWizard()
             :
                 showWindows(true);
+
+            initializeAutoUpdater();
             return;
         }
 
@@ -364,10 +372,12 @@ async function appInitialization() {
         } else {
             showWindows(true);
         }
+
         let llmProviders = await ConfigHelper.getLLMProviders();
         if (llmProviders) {
             tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         }
+        initializeAutoUpdater();
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
@@ -419,6 +429,19 @@ async function appCreateTray() {
         {
             label: 'Setup',
             click: () => { windowManager.hideAll(true); showSetupWizard(); }
+        },
+        {
+            label: 'Check for Updates',
+            click: () => checkForUpdates(true)
+        },
+        {
+            label: 'Auto-update',
+            type: 'checkbox',
+            checked: config.get('autoUpdate.enabled', true),
+            click: (menuItem) => {
+                config.set('autoUpdate.enabled', menuItem.checked);
+                autoUpdater.autoInstallOnAppQuit = menuItem.checked;
+            }
         },
         {
             label: 'LLM Models',
@@ -556,6 +579,147 @@ async function updateProviderSubmenu() {
     } catch (error) {
         Logger.error('Error updating provider submenu:', error);
     }
+}
+
+function checkForUpdates(interactive = false) {
+    Logger.info(`checkForUpdates called. Interactive: ${interactive}`);
+    if (!config.get('autoUpdate.enabled', true) && !interactive) {
+        Logger.log("checkForUpdates: Auto-update disabled and not interactive, skipping check.");
+        return;
+    }
+
+    autoUpdater.checkForUpdates().then(result => {
+        Logger.log("checkForUpdates .then() received result:", result);
+        // Log the crucial updateInfo part if it exists
+        if (result && result.updateInfo) {
+            Logger.log("checkForUpdates .then() updateInfo:", result.updateInfo);
+        } else {
+            Logger.log("checkForUpdates .then(): No updateInfo in result.");
+        }
+
+        if (!result?.updateInfo) {
+            if (interactive) {
+                dialog.showMessageBox({
+                    type: 'info',
+                    title: 'No Updates Available',
+                    message: 'You\'re running the latest version of Polaris.'
+                });
+            }
+        }
+    }).catch(error => {
+        Logger.error('Update check failed:', error);
+        Logger.error("checkForUpdates .catch() full error object:", error);
+        if (interactive) {
+            dialog.showMessageBox({
+                type: 'error',
+                title: 'Update Error',
+                message: 'Failed to check for updates. Please check your internet connection.'
+            });
+        }
+    });
+}
+
+function initializeAutoUpdater() {
+    autoUpdater.autoDownload = false;
+    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', false);
+    Logger.log(`AutoUpdater: Initializing. autoDownload=${autoUpdater.autoDownload}, allowPrerelease=${autoUpdater.allowPrerelease}`);
+    Logger.log(`AutoUpdater: Current config - autoUpdate.enabled=${config.get('autoUpdate.enabled', true)}, updates.ignoredVersion=${config.get('updates.ignoredVersion', null)}`);
+
+    autoUpdater.on('update-available', (info) => {
+        Logger.log('AutoUpdater: update-available event handler START', info);
+        const newVersion = info.version;
+        const ignoredVersion = config.get('updates.ignoredVersion', null);
+
+        // Only proceed if the new version is strictly greater than the ignored version
+        if (ignoredVersion && semver.lte(newVersion, ignoredVersion)) {
+            Logger.log(`Update available (${newVersion}) but ignored version (${ignoredVersion}) is same or newer. Skipping notification.`);
+            return;
+        }
+
+        // Clear any previously ignored version since a newer one is available
+        if (ignoredVersion) {
+            config.set('updates.ignoredVersion', null);
+        }
+
+        updateAvailable = info; // Keep track of the available update info
+
+        dialog.showMessageBox({
+            type: 'info',
+            buttons: ['Download Now', 'Ignore This Version', 'Later'],
+            title: 'Update Available',
+            message: `A new version of Polaris is available: ${newVersion}`,
+            detail: `You are currently running version ${app.getVersion()}. Would you like to update?`
+        }).then(({ response }) => {
+            if (response === 0) { // Download Now
+                Logger.log(`User chose to download update ${newVersion}`);
+                // Create and show the progress window BEFORE starting download
+                if (updateProgressWindow && !updateProgressWindow.isDestroyed()) {
+                    updateProgressWindow.close(); // Close any existing instance
+                }
+                updateProgressWindow = new UpdateProgressWindow(config);
+                updateProgressWindow.show();
+                autoUpdater.downloadUpdate();
+            } else if (response === 1) { // Ignore This Version
+                Logger.log(`User chose to ignore update version ${newVersion}`);
+                config.set('updates.ignoredVersion', newVersion);
+                updateAvailable = null; // Clear update info as it's ignored
+                showWindows(true);
+            } else { // Later (or closed dialog)
+                Logger.log(`User chose to postpone update ${newVersion}`);
+                updateAvailable = null; // Clear update info for this session
+                showWindows(true);
+            }
+        }).catch(err => {
+            Logger.error('Error showing update dialog:', err);
+        });
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+        // updateDownloadProgress = progress.percent;
+        // Send progress to the dedicated window
+        if (updateProgressWindow && updateProgressWindow.window && !updateProgressWindow.window.isDestroyed()) {
+            updateProgressWindow.updateProgress(progress.percent);
+        }
+        // windowManager.getWindow('comRing').webContents.send('update-progress', progress);
+    });
+
+    autoUpdater.on('update-downloaded', () => {
+        // Close the progress window first
+        if (updateProgressWindow && updateProgressWindow.window && !updateProgressWindow.window.isDestroyed()) {
+            updateProgressWindow.close();
+            updateProgressWindow = null;
+        }
+
+        dialog.showMessageBox({
+            type: 'info',
+            buttons: ['Restart Now', 'Later'],
+            title: 'Update Ready',
+            message: 'A new version has been downloaded. Restart the application to apply the update.',
+            detail: `Version ${updateAvailable.version} is ready to install.`
+        }).then(({ response }) => {
+            if (response === 0) autoUpdater.quitAndInstall();
+        });
+    });
+
+    autoUpdater.on('error', (error) => {
+        Logger.error('Auto-update error:', error);
+        // Close the progress window on error
+        if (updateProgressWindow && updateProgressWindow.window && !updateProgressWindow.window.isDestroyed()) {
+            updateProgressWindow.close();
+            updateProgressWindow = null;
+        }
+        // Optionally show an error message to the user
+        dialog.showMessageBox({
+            type: 'error',
+            title: 'Update Error',
+            message: 'Failed to download the update. Please try again later.',
+            detail: error.message || String(error)
+        });
+    });
+
+    // Check every 6 hours
+    // setInterval(() => checkForUpdates(), 6 * 60 * 60 * 1000);
+    checkForUpdates();
 }
 
 function appSetupEventHandlers() {
@@ -720,10 +884,10 @@ let isForceShutdown = false;
 
 process.on('SIGINT', async () => {
   if (isForceShutdown) return;
-  
+
   isForceShutdown = true;
   Logger.info('Ctrl+C detected - initiating forced shutdown');
-  
+
   try {
     await ServiceManager.stopServices({ force: true });
     app.exit(0);
@@ -738,7 +902,7 @@ app.on('before-quit', async (event) => {
     event.preventDefault();
     return;
   }
-  
+
   try {
     await ServiceManager.stopServices();
   } catch (err) {

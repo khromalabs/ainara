@@ -66,6 +66,9 @@ module.exports = {
             scale: 1.2
         }
     },
+    updates: {
+        ignoredVersion: null
+    },
     setup: {
         completed: false,
         version: 0,
