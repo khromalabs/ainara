@@ -16,6 +16,4 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
-
-__version__ = "0.1.0"
-__version_info__ = (0, 1, 0)
+from .. import __version__, __version_info__
