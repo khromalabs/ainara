@@ -708,13 +708,15 @@ function initializeAutoUpdater() {
             updateProgressWindow.close();
             updateProgressWindow = null;
         }
-        // Optionally show an error message to the user
-        dialog.showMessageBox({
-            type: 'error',
-            title: 'Update Error',
-            message: 'Failed to download the update. Please try again later.',
-            detail: error.message || String(error)
-        });
+        let error_msg = 'Failed to download the update. Please try again later.';
+        Logger.warning(error_msg);
+        // // Optionally show an error message to the user
+        // dialog.showMessageBox({
+        //     type: 'error',
+        //     title: 'Update Error',
+        //     message: error_msg,
+        //     detail: error.message || String(error)
+        // });
     });
 
     // Check every 6 hours
