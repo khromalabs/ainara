@@ -127,7 +127,7 @@ jobs:
           OS: ${{ matrix.os }}
           Python: 3.12
           SHA: ${{ github.sha }}
-        draft: true
+        draft: false
         prerelease: true
         files: |
           dist/*.exe
