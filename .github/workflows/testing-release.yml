@@ -16,14 +16,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
-      contents: write # Needed to create releases and upload assets
+      contents: write
+      packages: write
+      releases: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
       with:
-        ref: testing  # Explicitly checkout testing branch
+        ref: testing
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Python 3.12
       uses: actions/setup-python@v4
