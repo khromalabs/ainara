@@ -621,7 +621,7 @@ function checkForUpdates(interactive = false) {
 
 function initializeAutoUpdater() {
     autoUpdater.autoDownload = false;
-    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', false);
+    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', true);
     Logger.log(`AutoUpdater: Initializing. autoDownload=${autoUpdater.autoDownload}, allowPrerelease=${autoUpdater.allowPrerelease}`);
     Logger.log(`AutoUpdater: Current config - autoUpdate.enabled=${config.get('autoUpdate.enabled', true)}, updates.ignoredVersion=${config.get('updates.ignoredVersion', null)}`);
 
