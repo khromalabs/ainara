@@ -65,11 +65,9 @@ git clone https://github.com/yourusername/ainara.git
 cd ainara
 ```
 
-2. Install dependencies:
+2. Install dependencies (if you need a python virtual environment we suggest you to create it in the `/venv` subdirectory):
 ```bash
 pip install -r requirements.txt
-# Download required NLTK data
-python setup_nltk.py
 ```
 
 ## Usage
