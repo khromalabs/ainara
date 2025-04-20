@@ -160,8 +160,8 @@ These environment variables are optional and only needed if you want to override
 
 - Python 3.8+
 - Dependencies listed in requirements.txt
-- Local LLM server (compatible with OpenAI API format)
 - Orakle API server running locally or on network
+- Optional local LLM server (compatible with OpenAI API format)
 
 ## License
 
