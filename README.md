@@ -74,27 +74,89 @@ python setup_nltk.py
 
 ## Usage
 
-### Starting Kommander CLI
+### Development Setup
 
-Basic usage:
+Ainara consists of two backend servers (Orakle and PyBridge) plus the Polaris frontend. You can run these components in development mode:
+
 ```bash
-./kommander/kommander
+# Start the backend servers using the services script
+python bin/services.py
+
+# In another terminal, start the Polaris frontend in dev mode
+cd polaris
+npm install  # Only needed first time
+npm run dev
 ```
 
-Options:
-- `-l, --light`: Use colors for light themes
-- `-m, --model MODEL`: Specify LLM model
-- `-s, --strip`: Strip everything except code blocks in non-interactive mode
-- `-h, --help`: Show help message
+The `services.py` script manages both the Orakle and PyBridge servers, handling their startup, health monitoring, and shutdown.
 
-You can also pipe input for non-interactive use:
+### Building for Production
+
+#### Building the Backend Servers
+
+You can build the backend servers using PyInstaller:
+
 ```bash
-echo "What is 2+2?" | ./kommander/kommander
+# From project root
+pyinstaller scripts/pyinstaller/servers.spec
 ```
+
+This creates standalone executables for both Orakle and PyBridge servers.
+
+#### Building the Complete Package
+
+To build the complete Ainara package for your platform:
+
+```bash
+# From the polaris directory
+npm run build:linux   # For Linux
+npm run build:win     # For Windows
+npm run build:mac     # For macOS
+```
+
+This will:
+1. Build the backend servers using PyInstaller
+2. Package the Electron frontend
+3. Create a complete distributable package
+
+### Running Polaris Desktop App
+
+Polaris is the recommended way to interact with Ainara, providing a modern, desktop-integrated experience.
+
+```bash
+# If using a development build
+cd polaris
+npm start
+
+# If using a production build
+# Simply run the installed application
+```
+
+Polaris features:
+- System tray integration for quick access
+- Minimalistic, non-intrusive interface
+- Typing mode for direct text input
+- Real-time skill execution and feedback
+- Seamless integration with Orakle skills
+
+### Configuration
+
+Polaris stores its configuration in platform-specific locations:
+- Windows: `%APPDATA%\ainara\polaris`
+- macOS: `~/Library/Application Support/ainara/polaris`
+- Linux: `~/.config/ainara/polaris`
+
+The configuration file can be edited directly or through the Polaris settings interface.
 
 ### Environment Variables
 
-- `AI_API_MODEL`: Override default LLM model
+Polaris primarily uses its configuration file for settings, including LLM model selection. However, some underlying libraries like LiteLLM may still respect standard environment variables for API keys and model configuration:
+
+- `OPENAI_API_KEY`: For OpenAI services
+- `ANTHROPIC_API_KEY`: For Anthropic services
+- Other provider-specific variables as documented by LiteLLM
+
+These environment variables are optional and only needed if you want to override settings in the configuration file.
 
 ## Requirements
 
