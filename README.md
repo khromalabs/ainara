@@ -10,7 +10,7 @@ Ainara is a (work-in-progress) modular AI assistant framework that combines loca
 
 It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools reside exclusively on the user's system, utilizing the Orakle server approach developed by this project. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
 
-Finally, this project aims to create a truly AI companion experience. Conversations are not strictly session-based; user interactions with the LLM are recorded permanently as a continuous conversation (though users can choose to exclude specific parts).
+Finally, this project aims to create a truly AI companion experience. Conversations are not strictly session-based; user interactions with the LLM will be recorded permanently as a continuous conversation (though users can choose to exclude specific parts). [TODO]
 
 All interaction data remains private on the user's system.
 
@@ -158,7 +158,7 @@ These environment variables are optional and only needed if you want to override
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12
 - Dependencies listed in requirements.txt
 - Orakle API server running locally or on network
 - Optional local LLM server (compatible with OpenAI API format)
