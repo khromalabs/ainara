@@ -175,11 +175,28 @@ with open(os.path.join(SPECPATH, 'runtime_hook.py'), 'w') as f:
 import os
 import sys
 import logging
+import platform
 
 # Set up logging to a file
 # Use a writable location for logs
+# --- Platform-specific log directory ---
 home_dir = os.path.expanduser('~')
-log_dir = os.path.join(home_dir, '.polaris', 'logs')
+app_name = 'ainara'
+log_dir = '' # Initialize log_dir
+
+system = platform.system()
+if system == "Windows":
+    appdata = os.getenv('APPDATA')
+    if appdata:
+        log_dir = os.path.join(appdata, app_name, 'logs')
+    else: # Fallback if APPDATA isn't set (unlikely)
+        log_dir = os.path.join(home_dir, '.' + app_name, 'logs')
+elif system == "Darwin": # macOS
+    log_dir = os.path.join(home_dir, 'Library', 'Application Support', app_name, 'logs')
+else: # Linux and other Unix-like
+    log_dir = os.path.join(home_dir, '.' + app_name, 'logs')
+
+# Ensure the directory exists
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, 'pyinstaller_debug.log')
 
