@@ -22,12 +22,6 @@ An important aspect to highlight in this video: I'm not using any commercial LLM
 
 [![Watch the video](https://img.youtube.com/vi/mBimxZjGlWM/0.jpg)](https://www.youtube.com/watch?v=mBimxZjGlWM)
 
-## $AINARA Token
-
-The Ainara Project now has its own Solana cryptocurrency token, CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump
-
-While the project will always remain open-source and aims to be a universal AI assistant tool, the officially developed _skills_ (allowing AI to interact with the external world through Ainara's Orakle server) will primarily focus on cryptocurrency integrations. The project's official token will serve as the payment method for all related services.
-
 ## Components
 
 ### Orakle
@@ -150,6 +144,12 @@ These environment variables are optional and only needed if you want to override
 ## License
 
 Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:rgomez@khromalabs.org))
+
+## $AINARA Token
+
+The Ainara Project now has its own Solana cryptocurrency token, CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump
+
+While the project will always remain open-source and aims to be a universal AI assistant tool, the officially developed _skills_ (allowing AI to interact with the external world through Ainara's Orakle server) will primarily focus on cryptocurrency integrations. The project's official token will serve as the payment method for all related services.
 
 ## Contributing
 
