@@ -259,7 +259,7 @@ exe_orakle = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=True,
 )
 
 # EXE for PyBridge
@@ -273,7 +273,7 @@ exe_pybridge = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=True,
 )
 
 # COLLECT to create the final bundle with both executables
