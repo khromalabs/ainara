@@ -257,7 +257,7 @@ exe_orakle = EXE(
     name='orakle',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
+    strip=False,
     upx=False,
     console=False,
 )
@@ -271,7 +271,7 @@ exe_pybridge = EXE(
     name='pybridge',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
+    strip=False,
     upx=False,
     console=False,
 )
@@ -286,7 +286,7 @@ coll = COLLECT(
     a_pybridge.binaries,
     a_pybridge.zipfiles,
     a_pybridge.datas,
-    strip=True,
+    strip=False,
     upx=False,
     upx_exclude=[],
     name='servers',
