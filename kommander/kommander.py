@@ -261,7 +261,7 @@ def main():
     chat_manager = ChatManager(
         llm=llm,
         orakle_servers=ORAKLE_SERVERS,
-        backup_file=BACKUP if "BACKUP" in globals() else None,
+        # backup_file=BACKUP if "BACKUP" in globals() else None,
         tts=tts,
     )
 
@@ -277,7 +277,7 @@ def main():
     if not sys.stdin.isatty():
         initial_message = sys.stdin.read().strip()
         if initial_message:
-            chat_manager.backup(f"> {initial_message}")
+            # chat_manager.backup(f"> {initial_message}")
             response = chat_manager.chat_completion(
                 initial_message, stream=False
             )
@@ -309,7 +309,7 @@ def main():
                 question = prompt("> ", style=prompt_style).strip()
             if not question:
                 continue
-            chat_manager.backup(f"> {question}")
+            # chat_manager.backup(f"> {question}")
             response = chat_manager.chat_completion(question, stream=True)
             print()
         except KeyboardInterrupt:

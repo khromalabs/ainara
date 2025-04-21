@@ -38,15 +38,6 @@ A REST API server that provides:
 - News search capabilities
 - Text processing with LLMs
 
-### Kommander
-A CLI chat interface that connects to local/commercial LLM servers and the Orakle API server. Features:
-- Interactive chat with AI models
-- Support for multiple LLM providers
-- Command execution through Orakle API
-- Chat history backup
-- Light/dark theme support
-- Pipe mode for non-interactive use
-
 ### Polaris
 A modern desktop-integrated application that provides:
 - Native integration with system features
@@ -56,6 +47,8 @@ A modern desktop-integrated application that provides:
 - System tray presence for quick access
 - Cross-platform support (Linux, Windows, macOS)
 
+### Kommander
+CLI chat interface for Ainara. Right now is outdated and needs some further work.
 
 ## Installation
 
@@ -74,14 +67,11 @@ pip install -r requirements.txt
 
 ### Development Setup
 
-Ainara consists of two backend servers (Orakle and PyBridge) plus the Polaris frontend. You can run these components in development mode:
-
 ```bash
 # Start the backend servers using the services script
-python bin/services.py
+python bin/services.py  --health-check
 
-# In another terminal, start the Polaris frontend in dev mode
-cd polaris
+# In another terminal, once the backend services are healthy, start the Polaris frontend in dev mode
 npm install  # Only needed first time
 npm run dev
 ```
@@ -121,15 +111,6 @@ This will:
 
 Polaris is the recommended way to interact with Ainara, providing a modern, desktop-integrated experience.
 
-```bash
-# If using a development build
-cd polaris
-npm start
-
-# If using a production build
-# Simply run the installed application
-```
-
 Polaris features:
 - System tray integration for quick access
 - Minimalistic, non-intrusive interface
@@ -139,16 +120,19 @@ Polaris features:
 
 ### Configuration
 
-Polaris stores its configuration in platform-specific locations:
-- Windows: `%APPDATA%\ainara\polaris`
-- macOS: `~/Library/Application Support/ainara/polaris`
-- Linux: `~/.config/ainara/polaris`
+Polaris provides a configuration wizard to easily handle the backend/frontend configurations settings.
 
-The configuration file can be edited directly or through the Polaris settings interface.
+Ainara stores its configuration in platform-specific locations:
+- Windows: `%APPDATA%\ainara\ainara.yaml`
+- macOS: `~/Library/Application Support/ainara/ainara.yaml`
+- Linux: `~/.config/ainara/ainara.yaml`
+
+
+Inside the `polaris` subdirectory there's a specific `polaris.json` file with the specific frontend settings.
 
 ### Environment Variables
 
-Polaris primarily uses its configuration file for settings, including LLM model selection. However, some underlying libraries like LiteLLM may still respect standard environment variables for API keys and model configuration:
+The variables used by LiteLLM can be still used for API keys and model configuration:
 
 - `OPENAI_API_KEY`: For OpenAI services
 - `ANTHROPIC_API_KEY`: For Anthropic services
