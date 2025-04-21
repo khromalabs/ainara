@@ -44,6 +44,18 @@ A modern desktop-integrated application that provides:
 ### Kommander
 CLI chat interface for Ainara. Right now is outdated and needs some further work.
 
+## Available Skills
+
+List of the currently available skills already integrated in the Ainara AI Assistant Framework:
+
+- **Finance Stocks**: Get stock market information.
+- **Search Engines (Google, Metaphor, NewsAPI, Perplexity, Tavily)**: Perform combinated web searches using various search engines.
+- **System Clipboard**: Read and write the system clipboard.
+- **System Finder**: Intelligent file search with LLM-assisted disambiguation and location reveal.
+- **Time Weather**: Get weather information.
+- **Tools Calculator**: Evaluate non-trivial mathematical expressions.
+
+
 ## Installation
 
 1. Clone the repository:
