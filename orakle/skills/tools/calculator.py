@@ -17,11 +17,11 @@
 # Lesser General Public License for more details.
 
 
+import logging
+import re
 from typing import Any, Dict
 
-import re
 import sympy
-import logging
 from sympy.parsing.sympy_parser import (implicit_multiplication_application,
                                         parse_expr, standard_transformations)
 
@@ -33,7 +33,17 @@ class ToolsCalculator(Skill):
 
     matcher_info = (
         "ONLY use this skill when the user provided a complex mathematical"
-        " expression to be solved."
+        " expression to be solved. This skill will be able to solve operations"
+        " like: Addition, Subtraction, Multiplication, Division,"
+        " Exponentiation, Square root, Cube root "
+        " logarithm, Sine, Cosine, Tangent, Inverse sine, Inverse"
+        " cosine, Inverse tangent, Hyperbolic sine, Hyperbolic cosine,"
+        " Hyperbolic tangent, Inverse hyperbolic sine, Inverse hyperbolic"
+        " cosine, Inverse hyperbolic tangent, Factorial, Permutations,"
+        " Combinations, Memory store, Memory recall, Memory clear, Pi, Euler's"
+        " number, Scientific notation, Fraction calculations, Complex number"
+        " operations, Mean, Median, Standard deviation, Base conversions,"
+        " Random number generation"
     )
 
     def __init__(self):
@@ -124,10 +134,10 @@ class ToolsCalculator(Skill):
         for alias, func_name in self.function_aliases.items():
             # Use regex to replace only function names, not variables
             result = re.sub(
-                rf'\b{alias}\s*\(',
-                f'{func_name}(',
+                rf"\b{alias}\s*\(",
+                f"{func_name}(",
                 result,
-                flags=re.IGNORECASE
+                flags=re.IGNORECASE,
             )
         return result
 

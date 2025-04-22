@@ -27,11 +27,10 @@ from ainara.framework.skill import Skill
 
 
 class ToolsReport(Skill):
-    """Generate reports in local files based on the current conversation towards a specific goal."""
+    """Generate reports in local files following a user request"""
 
     matcher_info = (
-        "Generate structured reports based on the current conversation. The"
-        " report will be saved to a file in the configured location."
+        "The report will be saved to a file in the configured location."
     )
 
     def __init__(self):

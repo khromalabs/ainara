@@ -75,7 +75,7 @@ class OrakleMiddleware:
         self.matcher = OrakleMatcherTransformers(model_name=matcher_model)
         # Get threshold and top_k from config or use defaults
         self.matcher_threshold = self.config_manager.get(
-            "orakle.matcher.threshold", 0.5
+            "orakle.matcher.threshold", 0.2
         )
         self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 5)
         logger.info(
@@ -95,7 +95,7 @@ class OrakleMiddleware:
         for skill in self.capabilities["skills"]:
             self.matcher.register_skill(
                 skill["name"],
-                skill["matcher_info"] or skill["description"],
+                skill["description"],
                 metadata={
                     "run_info": skill["run_info"],
                     "matcher_info": skill["matcher_info"],

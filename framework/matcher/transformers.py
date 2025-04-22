@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import re
 import torch
-# import pprint
+import pprint
 from typing import Any
 from transformers import AutoModel, AutoTokenizer
 
@@ -90,13 +90,32 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
 
         # logger.info(f"ENHANCED_DESCRIPTION: {enhanced_description}")
 
+        text_to_embed = f"{domain_context}: {boost_text}{clean_description}"
+
+        # Append matcher_info from metadata if available
+        if metadata and isinstance(metadata.get("matcher_info"), str) and metadata["matcher_info"]:
+            matcher_info_text = metadata["matcher_info"].replace("\n", " ").strip()
+            if matcher_info_text:
+                text_to_embed += " " + matcher_info_text
+
+        # # Append run_info from metadata if available
+        # if metadata and isinstance(metadata.get("run_info"), str) and metadata["run_info"]:
+        #     matcher_info_text = metadata["run_info"].replace("\n", " ").strip()
+        #     if matcher_info_text:
+        #         text_to_embed += " " + matcher_info_text
+
         self.skills_registry[skill_id] = {
             "description": enhanced_description,
             "metadata": metadata or {},
             "boost_keywords": boost_keywords,
-            "embedding": self._get_embedding(enhanced_description),
+            "embedding": self._get_embedding(text_to_embed),
         }
-        logger.debug(f"Registered skill: {skill_id}")
+        loginfo = {
+            "description": enhanced_description,
+            "boost_keywords": boost_keywords,
+            "text_to_embed": text_to_embed
+        }
+        logger.info(f"Registered skill: {skill_id} with data: {loginfo}")
 
     def _get_embedding(self, text: str) -> np.ndarray:
         """
@@ -188,5 +207,5 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             key=lambda x: (x["score"], x["usage_count"]), reverse=True
         )
 
-        # logger.info("MATCH MATCHES: " + pprint.pformat(matches))
+        logger.info("MATCH MATCHES: " + pprint.pformat(matches))
         return matches[:top_k]
