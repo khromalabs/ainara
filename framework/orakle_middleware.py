@@ -21,11 +21,12 @@ import json
 # import pprint
 import logging
 import re
-from typing import Any, Dict, Generator, List, Optional
+from typing import Generator, List, Optional
 
 import requests
 
-from ainara.framework.matcher.llm import OrakleMatcherLLM
+from ainara.framework.config import ConfigManager
+from ainara.framework.matcher.transformers import OrakleMatcherTransformers
 from ainara.framework.template_manager import TemplateManager
 
 # from ainara.framework.utils import format_orakle_command
@@ -48,6 +49,7 @@ class OrakleMiddleware:
         orakle_servers: List[str],
         system_message: str,
         capabilities: Optional[dict] = None,
+        config_manager: Optional[ConfigManager] = None,
     ):
         """
         Initialize the OrakleMiddleware.
@@ -57,25 +59,43 @@ class OrakleMiddleware:
             orakle_servers: List of Orakle server URLs
             system_message: System message for LLM context
             capabilities: Optional pre-loaded capabilities dictionary
+            config_manager: Optional ConfigManager instance
         """
         self.llm = llm
         self.orakle_servers = orakle_servers
         self.system_message = system_message
         self.template_manager = TemplateManager()
-        self.matcher = OrakleMatcherLLM(llm)
+        self.config_manager = config_manager or ConfigManager()
+
+        # --- Matcher Configuration ---
+        # Use transformer matcher
+        matcher_model = self.config_manager.get(
+            "orakle.matcher.model", "sentence-transformers/all-mpnet-base-v2"
+        )
+        self.matcher = OrakleMatcherTransformers(model_name=matcher_model)
+        # Get threshold and top_k from config or use defaults
+        self.matcher_threshold = self.config_manager.get(
+            "orakle.matcher.threshold", 0.5
+        )
+        self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 5)
+        logger.info(
+            "Initialized OrakleMiddleware with Transformer Matcher:"
+            f" model={matcher_model}, threshold={self.matcher_threshold},"
+            f" top_k={self.matcher_top_k}"
+        )
 
         # Initialize capabilities
         if capabilities:
             self.capabilities = capabilities
         else:
-            self.capabilities = {"recipes": [], "skills": []}
+            self.capabilities = {"skills": []}
             self.capabilities = self.get_orakle_capabilities()
 
         # Register skills with the matcher
         for skill in self.capabilities["skills"]:
             self.matcher.register_skill(
                 skill["name"],
-                skill["description"],
+                skill["matcher_info"] or skill["description"],
                 metadata={
                     "run_info": skill["run_info"],
                     "matcher_info": skill["matcher_info"],
@@ -128,7 +148,7 @@ class OrakleMiddleware:
                         command_content = match.group(1).strip()
 
                         # Process the command and yield results
-                        for chunk in self._process_command_content(
+                        for chunk in self._process_orakle_request(
                             command_content, chat_manager
                         ):
                             yield chunk
@@ -190,128 +210,83 @@ class OrakleMiddleware:
         if command_buffer and not in_command:
             yield command_buffer
 
-    def _process_command_buffer(
-        self, command_buffer: str, command_pattern: str, chat_manager=None
+    def _process_orakle_request(
+        self, query: str, chat_manager=None
     ) -> Generator[str, None, None]:
         """
-           Process a command buffer and yield results.
+        Process an Orakle request from the user.
 
-           Args:
-            command_buffer: The buffer containing a potential command
-            command_pattern: Regex pattern to match commands
-            chat_manager: Optional ChatManager instance
-
-        Yields:
-            Processed command results or the original buffer if not a valid command
-        """
-        # Use re.DOTALL to make . match newlines as well
-        match = re.search(command_pattern, command_buffer, re.DOTALL)
-        if match:
-            query = (
-                match.group(1)
-                .strip()
-                .replace('\\"', '"')
-                .replace("\\\\", "\\")
-            )
-            best_command = self._detect_command(query, chat_manager)
-            skill_id = best_command["skill_id"]
-            yield f"\nProcessing {skill_id}...\n\n"
-
-            command_result = self._process_command(
-                query, best_command, chat_manager
-            )
-            result = command_result.get("result", "No result")
-
-            logger.info(f"ORAKLE command_result: {command_result}")
-
-            # Get interpretation as a stream
-            for interpretation_chunk in self.stream_command_interpretation(
-                [result], query
-            ):
-                yield interpretation_chunk
-        else:
-            # Not a valid command, yield as-is
-            yield command_buffer
-
-    def _process_command_content(
-        self, command_content: str, chat_manager=None
-    ) -> Generator[str, None, None]:
-        """
-        Process command content extracted from HEREDOC format.
+        This method:
+        1. Finds matching skills using the transformer matcher
+        2. Uses LLM to select the best skill and extract parameters
+        3. Executes the skill with the extracted parameters
+        4. Interprets the results using LLM
 
         Args:
-            command_content: The command content between delimiters
-            chat_manager: Optional ChatManager instance
-
-        Yields:
-            Processed command results
-        """
-        query = command_content.strip()
-        best_command = self._detect_command(query, chat_manager)
-        skill_id = best_command["skill_id"]
-        yield f"\nProcessing {skill_id}...\n\n"
-
-        command_result = self._process_command(
-            query, best_command, chat_manager
-        )
-        result = command_result.get("result", "No result")
-
-        logger.info(f"ORAKLE command_result: {command_result}")
-
-        # Get interpretation as a stream
-        for interpretation_chunk in self.stream_command_interpretation(
-            [result], query
-        ):
-            yield interpretation_chunk
-
-    def _detect_command(self, query: str, chat_manager=None) -> Dict[str, Any]:
-        """
-        Process an Orakle command query.
-
-        Args:
-            query: The query string from the ORAKLE command
+            query: The natural language query from the user
             chat_manager: Optional ChatManager instance to get chat history
 
-        Returns:
-            Dictionary with command processing results
+        Yields:
+            Processed results as a stream
         """
-        logger.info(f"ORAKLE Looking for matches for query: {query}")
+        logger.info(f"ORAKLE Processing request: {query}")
 
         # Find matching skills using the matcher
-        matches = self.matcher.match(query, threshold=0.05)
-
-        if not matches:
-            return {
-                "skill_id": "error",
-                "command": "none",
-                "result": (
-                    f"Request '{query}' didn't match any available skill."
-                ),
-                "command_type": "SKILL",
-            }
-        # logger.info("pformat:" + pprint.pformat(matches[0]))
-        # Use the best matching skill
-        return matches[0]
-
-    def _process_command(
-        self, query: str, best_match=Dict[str, Any], chat_manager=None
-    ) -> Dict[str, Any]:
-        skill_id = best_match["skill_id"]
-        skill_description = best_match["description"]
-
-        # Yield processing message before executing command
-        # yield f"\nProcessing {skill_id}...\n\n"
-        # logger.info(f"ORAKLE matches: {matches}")
-
-        # Use LLM to convert natural language to structured parameters
-        prompt = self.template_manager.render(
-            "framework.chat_manager.orakle_prompt",
-            {"skill_description": skill_description, "query": query},
+        matches = self.matcher.match(
+            query, threshold=self.matcher_threshold, top_k=self.matcher_top_k
         )
 
-        logger.info(f"ORAKLE skill prompt: {prompt}")
+        if not matches:
+            error_msg = f"Request '{query}' didn't match any available skill."
+            logger.warning(f"ORAKLE: {error_msg}")
+            yield f"\nError: {error_msg}\n\n"
+            return
 
-        json_params = self.llm.chat(
+        # Format candidate skills for the LLM
+        candidate_skills_text = ""
+        for i, match in enumerate(matches, 1):
+            skill_id = match["skill_id"]
+            score = match["score"]
+
+            # Get full skill info including parameters
+            skill_info = self._get_skill_info(skill_id)
+            if not skill_info:
+                logger.warning(
+                    f"Could not find detailed info for skill {skill_id}"
+                )
+                continue
+
+            # Format skill description with parameters
+            skill_desc = (
+                f"## Skill {i}: {skill_id} (match score: {score:.2f})\n\n"
+            )
+            skill_desc += (
+                "Description:"
+                f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n\n"
+            )
+
+            # Add parameters if available
+            if skill_info.get("parameters"):
+                skill_desc += "Parameters:\n"
+                for param in skill_info.get("parameters", []):
+                    param_name = param.get("name", "unknown")
+                    param_type = param.get("type", "any")
+                    param_desc = param.get("description", "No description")
+                    skill_desc += (
+                        f"- {param_name} ({param_type}): {param_desc}\n"
+                    )
+
+            candidate_skills_text += skill_desc + "\n---\n\n"
+
+        # Use LLM to select the best skill and extract parameters
+        prompt = self.template_manager.render(
+            "framework.chat_manager.orakle_select_and_params",
+            {"query": query, "candidate_skills": candidate_skills_text},
+        )
+
+        logger.debug(f"ORAKLE skill selection prompt: {prompt}")
+
+        selection_response = self.llm.chat(
             chat_history=self.llm.prepare_chat(
                 system_message=self.system_message, new_message=prompt
             ),
@@ -319,41 +294,54 @@ class OrakleMiddleware:
         )
 
         try:
-            # Validate it's proper JSON
-            params_dict = json.loads(json_params)
-            # Determine if it's a SKILL or RECIPE from the ID
-            cmd_type = (
-                "SKILL" if not skill_id.startswith("recipe/") else "RECIPE"
+            # Parse the LLM response to get skill_id and parameters
+            selection_data = json.loads(selection_response)
+            selected_skill_id = selection_data.get("skill_id")
+            parameters = selection_data.get("parameters", {})
+
+            if not selected_skill_id:
+                error_msg = "Failed to select a skill from candidates."
+                logger.error(
+                    f"ORAKLE: {error_msg} LLM response: {selection_response}"
+                )
+                yield f"\nError: {error_msg}\n\n"
+                return
+
+            logger.info(
+                f"ORAKLE Selected skill: {selected_skill_id} with parameters:"
+                f" {parameters}"
             )
 
-            # Format the command with the matched skill and LLM params
-            command = f'{cmd_type}("{skill_id}", {json.dumps(params_dict)})'
+            # Yield processing message
+            yield f"\nProcessing {selected_skill_id}...\n\n"
+
+            # Execute the selected skill with parameters
+            result = self.execute_orakle_command(
+                selected_skill_id, parameters, chat_manager
+            )
+
+            # Get interpretation as a stream
+            for interpretation_chunk in self.stream_command_interpretation(
+                [result], query
+            ):
+                yield interpretation_chunk
+
         except json.JSONDecodeError:
-            logger.error(f"LLM generated invalid JSON: {json_params}")
-            # Fallback to simple query parameter
-            cmd_type = (
-                "SKILL" if not skill_id.startswith("recipe/") else "RECIPE"
+            error_msg = "Failed to parse skill selection response."
+            logger.error(
+                f"ORAKLE: {error_msg} LLM response: {selection_response}"
             )
-            command = f'{cmd_type}("{skill_id}", {{"query": "{query}"}})'
-            # logger.error("PROCESS_COMMAND: {command}")
-
-        result = self.execute_orakle_command(command, chat_manager)
-
-        return {
-            "skill_id": skill_id,
-            "command": command,
-            "result": result,
-            "command_type": cmd_type,
-        }
+            yield f"\nError: {error_msg}\n\n"
 
     def execute_orakle_command(
-        self, command_block: str, chat_manager=None
+        self, skill_id: str, params: dict, chat_manager=None
     ) -> str:
         """
         Execute an Orakle command and return the result.
 
         Args:
-            command_block: The formatted command string
+            skill_id: The ID of the skill to execute
+            params: Dictionary of parameters for the skill
             chat_manager: Optional ChatManager instance to get chat history
 
         Returns:
@@ -361,30 +349,22 @@ class OrakleMiddleware:
         """
         for server in self.orakle_servers:
             try:
-                logger.info(f"ORAKLE Will execute command: {command_block}")
-                # Extract command type and parameters
-                match = re.match(
-                    r'(SKILL|RECIPE)\("/?([^"]+)",\s*({.*})', command_block
+                logger.info(
+                    f"ORAKLE Executing skill '{skill_id}' with params:"
+                    f" {params}"
                 )
-                if not match:
-                    # logger.info("ORAKLE BAD COMMAND FORMAT")
-                    return (
-                        'Error: Invalid command format. Expected SKILL("name",'
-                        ' {params}) or RECIPE("name", {params})'
-                    )
-
-                # logger.info("ORAKLE GOOD COMMAND FORMAT")
-
-                cmd_type, cmd_name, params_str = match.groups()
-                try:
-                    params = json.loads(params_str)
-                except json.JSONDecodeError as e:
-                    # logger.info("ORAKLE JSON DECODE ERROR: " + params_str)
-                    return f"Error: Invalid JSON parameters - {str(e)}"
 
                 # Check if skill requires additional data
-                cmd_name = cmd_name.strip("/")
-                skill_info = self._get_skill_info(cmd_name)
+                skill_info = self._get_skill_info(skill_id)
+
+                if not skill_info:
+                    logger.error(
+                        f"Could not find skill info for {skill_id} before"
+                        " execution."
+                    )
+                    return (
+                        f"Error: Skill '{skill_id}' not found or unavailable."
+                    )
 
                 # Add chat history if the skill requires it and chat_manager is provided
                 if chat_manager and any(
@@ -394,15 +374,13 @@ class OrakleMiddleware:
                     params = chat_manager.add_chat_history_to_params(
                         params, skill_info
                     )
-
-                # logger.info(f"ORAKLE SKILL INFO: {skill_info}")
-                # logger.info(f"ORAKLE PARAMS: {params}")
+                    logger.debug(
+                        f"Added chat history to params for skill {skill_id}"
+                    )
 
                 # Make request to Orakle server
-                endpoint_type = f"{cmd_type.lower()}s"
-                endpoint = f"{server.rstrip('/')}/{endpoint_type}/{cmd_name}"
+                endpoint = f"{server.rstrip('/')}/skills/{skill_id}"
 
-                # logger.info("ORAKLE WILL EXECUTE COMMAND IN " + endpoint)
                 response = requests.post(endpoint, json=params, timeout=60)
 
                 if response.status_code == 200:
@@ -499,35 +477,6 @@ class OrakleMiddleware:
             if chunk:
                 yield chunk
 
-    def _process_orakle_recipes(self, raw_capabilities: dict) -> List[dict]:
-        """
-        Process raw recipe capabilities into structured format.
-
-        Args:
-            raw_capabilities: Raw capabilities dictionary from Orakle server
-
-        Returns:
-            List of processed recipe dictionaries
-        """
-        recipes = []
-        if "recipes" in raw_capabilities:
-            for endpoint, recipe in raw_capabilities["recipes"].items():
-                recipe_data = {
-                    "name": endpoint,
-                    "description": recipe.get("description", ""),
-                    "parameters": recipe.get("parameters", []),
-                }
-
-                # Extract return type from flow if available
-                if "flow" in recipe and recipe["flow"]:
-                    last_step = recipe["flow"][-1]
-                    recipe_data["return_type"] = last_step.get(
-                        "output_type", ""
-                    )
-
-                recipes.append(recipe_data)
-        return recipes
-
     def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
         """
         Process raw skill capabilities into structured format.
@@ -541,6 +490,7 @@ class OrakleMiddleware:
         skills = []
         if "skills" in raw_capabilities:
             for skill_name, skill_info in raw_capabilities["skills"].items():
+                skill_name = skill_name.strip("/")
                 skill_data = {
                     "name": skill_name,
                     "description": (
@@ -550,18 +500,26 @@ class OrakleMiddleware:
                         skill_info.get("matcher_info", "").replace("\n", "")
                     ),
                     "run_info": skill_info.get("run", ""),
+                    # Attempt to get full description (e.g., from docstring)
+                    # Adjust the key based on actual capabilities response structure
+                    "full_description": (
+                        skill_info.get("run", {}).get(
+                            "docstring", skill_info.get("description", "")
+                        )
+                    ),
                     "parameters": [],
                 }
 
                 # Process parameters
                 if skill_data["run_info"].get("parameters"):
                     run_info = skill_data["run_info"]
-                    for param_name, param_info in run_info[
-                        "parameters"
-                    ].items():
+                    for param_name, param_info in run_info.get(
+                        "parameters", {}
+                    ).items():
                         param_data = {
                             "name": param_name,
                             "type": param_info.get("type", "any"),
+                            "description": param_info.get("description", ""),
                         }
                         skill_data["parameters"].append(param_data)
 
@@ -575,7 +533,6 @@ class OrakleMiddleware:
         Returns:
             Dictionary with processed capabilities
         """
-        # capabilities = {"recipes": [], "skills": []}
         capabilities = {"skills": []}
 
         for server in self.orakle_servers:
@@ -584,14 +541,21 @@ class OrakleMiddleware:
                 if response.status_code == 200:
                     raw_capabilities = response.json()
 
-                    # Process recipes and skills
-                    # capabilities["recipes"] = self._process_orakle_recipes(raw_capabilities)
+                    # Process skills
                     capabilities["skills"] = self._process_orakle_skills(
                         raw_capabilities
                     )
 
+                    logger.info(
+                        "Successfully loaded"
+                        f" {len(capabilities['skills'])} skills from Orakle"
+                        f" server: {server}"
+                    )
                     return capabilities
-            except requests.RequestException:
+            except requests.RequestException as e:
+                logger.warning(
+                    f"Failed to connect to Orakle server {server}: {str(e)}"
+                )
                 continue
 
         logger.warning(
