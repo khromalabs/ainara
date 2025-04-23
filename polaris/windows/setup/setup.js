@@ -19,6 +19,7 @@
 const { ipcRenderer } = require('electron');
 const ConfigManager = require('../../utils/config');
 const Logger = require('../../utils/logger');
+const ConfigHelper = require('../../utils/ConfigHelper');
 // const fs = require('fs');
 // const path = require('path');
 // const yaml = require('js-yaml');
@@ -461,6 +462,12 @@ function setupEventListeners() {
             margin-bottom: 5px;
         }
 
+        .field-description {
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+
         /* Shortcuts panel styles */
         .shortcuts-container {
             display: flex;
@@ -897,6 +904,7 @@ async function loadExistingProviders() {
                     <label for="${providerId}">
                         <strong>${providerModel}</strong><br>
                         ${provider.api_base ? `API: ${provider.api_base}` : ''}
+                        ${provider.context_window ? `Context: ${provider.context_window / 1024}K` : ''}
                     </label>
                     <button class="delete-provider-btn" data-index="${index}" title="Delete this provider">
                         &times;
@@ -1086,6 +1094,20 @@ function updateProviderDetailsUI() {
         `;
     }
 
+    // Add optional context window override field
+    html += `
+        <div class="form-group">
+            <label for="${selectedProviderId}-context_window">Context Window (Optional):</label>
+            <input
+                type="number"
+                step="2048"
+                min="0"
+                id="${selectedProviderId}-context_window"
+                placeholder="e.g., 4096"
+            >
+            <p class="field-description">Override the default context window size for this model. Leave blank to use the model's default or LiteLLM's detected value.</p>
+        </div>
+    `;
     detailsContainer.innerHTML = html;
 
     // Enable test button
@@ -1273,6 +1295,14 @@ function getLLMConfig() {
         config.model = normalizeModelName(modelSelect.value, selectedProviderId);
     }
 
+    // Add context window if provided
+    const contextWindowInput = document.getElementById(`${selectedProviderId}-context_window`);
+    if (contextWindowInput && contextWindowInput.value.trim()) {
+        const contextWindowValue = parseInt(contextWindowInput.value.trim(), 10);
+        if (!isNaN(contextWindowValue) && contextWindowValue > 0) {
+            config.context_window = contextWindowValue;
+        }
+    }
     return config;
 }
 
@@ -1292,23 +1322,6 @@ function validateCurrentStep() {
             return true; // Skills are optional
         default:
             return true;
-    }
-}
-
-// Add a function to check hardware acceleration status
-async function checkHardwareAcceleration() {
-    try {
-        const response = await fetch(config.get('pybridge.api_url') + '/hardware/acceleration');
-        if (!response.ok) {
-            throw new Error('Failed to check hardware acceleration');
-        }
-        return await response.json();
-    } catch (error) {
-        console.error('Error checking hardware acceleration:', error);
-        return {
-            cuda_available: false,
-            message: 'Unable to check hardware acceleration status'
-        };
     }
 }
 
@@ -1333,7 +1346,7 @@ function setupSTTEventListeners() {
         }
 
         // Check hardware acceleration status
-        checkHardwareAcceleration().then(result => {
+        ConfigHelper.getHardwareAcceleration().then(result => {
             const statusElement = document.getElementById('hardware-status');
             if (statusElement) {
                 if (result.cuda_available) {
@@ -1558,7 +1571,7 @@ async function deleteProvider(index) {
         backendConfig.llm.providers.splice(index, 1);
 
         // If this was the selected provider, update the selection
-        if (backendConfig.llm.selected_provider === deletedProvider.name) {
+        if (backendConfig.llm.selected_provider === deletedProvider.model) {
             // If there are other providers, select the first one
             if (backendConfig.llm.providers.length > 0) {
                 backendConfig.llm.selected_provider = backendConfig.llm.providers[0].model;
@@ -1705,6 +1718,11 @@ async function saveLLMConfig() {
         // Add API base if present
         if (llmConfig.api_base) {
             provider.api_base = llmConfig.api_base;
+        }
+
+        // Add context window if present
+        if (llmConfig.context_window) {
+            provider.context_window = llmConfig.context_window;
         }
 
         // Add as a new provider instead of replacing

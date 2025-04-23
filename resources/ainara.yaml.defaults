@@ -51,11 +51,10 @@ llm:
   selected_backend: "litellm"
   selected_provider: ""
   providers:
-  #  - model: "openai/gpt-3.5-turbo"
-  #    api_base: "http://127.0.0.1:8000/v1"
-  #    api_key: "nokey"
-  model_contexts:
-    "openai/sample_custom_model": 4096
+    # - model: "openai/gpt-3.5-turbo"
+    #   api_base: "http://127.0.0.1:8000/v1"
+    #   api_key: "nokey"
+    #   context_window: 8192 # Optional: Specify context window size
 
 # Ainara configuration
 orakle:

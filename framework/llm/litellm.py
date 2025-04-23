@@ -55,24 +55,16 @@ class LiteLLM(LLMBackend):
             if not model_name:
                 raise ValueError("No model specified")
 
-            # First check if we have a configured context window
-            model_contexts = self.config.get("llm.model_contexts", {})
-            # self.logger.info("AVAILABLE MODEL CONTEXTS")
-            # self.logger.info(pprint.pformat(model_contexts))
-            # self.logger.info(type(model_name))
-            # self.logger.info(model_name)
-            # self.logger.info(list(model_contexts.keys()))
-            # for key in model_contexts:
-            #     self.logger.info(f"Key: '{key}', Type: '{type(key)}'")
-
-            if model_name in model_contexts:
-                # self.logger.info("FOUND")
-                context_size = model_contexts[model_name]
+            # First check if context_window is defined directly in the provider config
+            configured_context = self.provider.get("context_window")
+            if configured_context is not None and isinstance(configured_context, int):
                 self.logger.info(
                     f"Using configured context window for {model_name}:"
-                    f" {context_size} tokens"
+                    f" {configured_context} tokens"
                 )
-                return context_size
+                return configured_context
+            else:
+                self.logger.info(f"No context_window configured for {model_name} in provider settings.")
 
             # Otherwise try to get it from LiteLLM
             max_tokens = get_max_tokens(model_name)

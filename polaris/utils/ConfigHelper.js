@@ -38,35 +38,21 @@ class ConfigHelper {
         }
         return originalPath;
     }
-    
+
     static async fetchBackendConfig() {
         const config1 = new ConfigManager();
         try {
-            const response1 = await fetch(
+            const response = await fetch(
                 config1.get('pybridge.api_url') +
                 '/config?show_sensitive=true'
             );
-            const response2 = await fetch(
-                config1.get('pybridge.api_url') +
-                '/config/models_contexts'
-            );
-            if (!response1.ok || !response2.ok) {
+
+            if (!response.ok) {
                 throw new Error('Failed to load configuration');
             }
-            let response1_json = await response1.json();
-            let response2_json = await response2.json();
-            // Add context_window to models
-            if (response1_json && response2_json) {
-                for (let model1 of response1_json.llm.providers) {
-                    for (const model2 of response2_json.models) {
-                        if (model1.model == model2.model) {
-                            model1.context_window = model2.context_window;
-                            break;
-                        }
-                    }
-                }
-            }
-            return response1_json;
+
+            let configJson = await response.json();
+            return configJson;
 
         } catch (error) {
             Logger.error('Error loading backend config:', error);
@@ -109,6 +95,28 @@ class ConfigHelper {
         } catch (error) {
             Logger.error('Error getting LLM providers:', error);
             return { providers: [], selected_provider: null };
+        }
+    }
+
+    static async getHardwareAcceleration() {
+        try {
+            const config1 = new ConfigManager();
+            const response = await fetch(
+                config1.get('pybridge.api_url') + '/hardware/acceleration'
+            );
+
+            if (!response.ok) {
+                throw new Error('Failed to get hardware acceleration information');
+            }
+
+            return await response.json();
+        } catch (error) {
+            Logger.error('Error getting hardware acceleration info:', error);
+            return {
+                cuda_available: false,
+                error: error.message,
+                recommendations: []
+            };
         }
     }
 

@@ -1026,58 +1026,6 @@ def create_app():
             logger.error(traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
 
-    @app.route("/config/models_contexts", methods=["GET"])
-    def get_llm_models():
-        """Return available LLM models and their context sizes"""
-
-        configured_providers = config.get("llm.providers", {})
-
-        try:
-            providers = llm.get_available_providers()
-            result_models = []
-
-            for configured_model in configured_providers:
-                configured_model_get = configured_model.get("model")
-                # First look in manually configured models contexts
-                manual_model_contexts = config.get("llm.model_contexts")
-                if configured_model_get in manual_model_contexts:
-                    result_models.append(
-                        {
-                            "model": configured_model_get,
-                            "context_window": manual_model_contexts.get(
-                                configured_model_get
-                            ),
-                        }
-                    )
-                    continue
-
-                # Then look in the complete providers list
-                configured_model_provider, configured_model_name = (
-                    configured_model_get.split("/", 1)
-                )
-                if configured_model_provider in providers:
-                    provider = providers[configured_model_provider]
-                    for model in provider["models"]:
-                        model_name = model.get("name")
-                        if (
-                            model_name == configured_model_name
-                            or model_name == configured_model_get
-                        ):
-                            result_models.append(
-                                {
-                                    "model": configured_model.get("model"),
-                                    "context_window": model.get(
-                                        "context_window"
-                                    ),
-                                }
-                            )
-                            break
-
-            return jsonify({"models": result_models})
-
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
     @app.route("/hardware/acceleration", methods=["GET"])
     def check_hardware_acceleration():
         """Check if hardware acceleration is available"""
