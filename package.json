@@ -50,10 +50,6 @@
     "appId": "app.ainara.polaris",
     "publish": [
         {
-            "provider": "generic",
-            "url": "http://localhost:8080/"
-        },
-        {
             "provider": "github",
             "owner": "khromalabs",
             "repo": "ainara"
