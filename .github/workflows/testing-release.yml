@@ -126,13 +126,15 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        Compress-Archive -Path dist\* -DestinationPath ${{ env.ARCHIVE_FILENAME }} -Exclude 'dist/servers'
+        Remove-Item -Path dist/servers -Recurse -Force
+        Compress-Archive -Path dist\* -DestinationPath ${{ env.ARCHIVE_FILENAME }}
 
     - name: Create Archive (macOS/Linux)
       if: runner.os != 'Windows'
       shell: bash
       run: |
-        zip -r ${{ env.ARCHIVE_FILENAME }} dist/ -x "dist/servers/*"
+        rm -rf dist/servers
+        zip -r ${{ env.ARCHIVE_FILENAME }} dist/
 
     - name: Package testing artifacts
       uses: actions/upload-artifact@v4
