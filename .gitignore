@@ -8,4 +8,5 @@ static/
 build/*
 dist/*
 resources/*
+scripts/pyinstaller/runtime_hook.py
 !/resources/ainara.yaml.defaults
