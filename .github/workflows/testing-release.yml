@@ -26,7 +26,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       with:
-        ref: testing
+        ref: ${{ github.ref }} # Checkout the specific tag that triggered the workflow
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Python 3.12
@@ -107,20 +107,46 @@ jobs:
           npm run build:win
         fi
 
+    - name: Determine Archive Name
+      id: archive_name
+      shell: bash
+      run: |
+        # Extract tag name (e.g., testing-v1.0.0)
+        TAG_NAME="${{ github.ref_name }}"
+        # Extract branch part (e.g., testing)
+        BRANCH_PART="${TAG_NAME%-v*}"
+        # Extract version part (e.g., v1.0.0)
+        VERSION_PART="${TAG_NAME#*-}"
+        # Clean the OS name (e.g., macos-latest -> macos)
+        OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//')"
+        # Construct the desired filename
+        echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip" >> $GITHUB_ENV
+
+    - name: Create Archive (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Compress-Archive -Path dist\* -DestinationPath ${{ env.ARCHIVE_FILENAME }} -Exclude 'dist/servers'
+
+    - name: Create Archive (macOS/Linux)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        zip -r ${{ env.ARCHIVE_FILENAME }} dist/ -x "dist/servers/*"
+
     - name: Package testing artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.os }}-testing-servers
-        path: |
-          dist/**
-          !dist/servers
+        name: ${{ env.ARCHIVE_FILENAME }}
+        path: ${{ env.ARCHIVE_FILENAME }}
         if-no-files-found: error
 
     - name: Create testing release
-      if: github.ref == 'refs/heads/testing'
+      # Only run this step if the workflow was triggered by a tag push
+      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: testing-${{ github.sha }}
+        tag_name: ${{ github.ref_name }} # Use the actual tag name (e.g., testing-v1.0)
         name: Testing Release
         body: |
           Automated testing release from testing branch
@@ -128,7 +154,5 @@ jobs:
           Python: 3.12
           SHA: ${{ github.sha }}
         draft: false
-        prerelease: true
-        files: |
-          dist/**
-          !dist/servers
+        prerelease: true # Keep as pre-release since it's from 'testing-*' tags
+        files: ${{ env.ARCHIVE_FILENAME }} # Upload the created zip file
