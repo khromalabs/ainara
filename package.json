@@ -1,6 +1,6 @@
 {
   "name": "polaris",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "main": "polaris/main.js",
   "dependencies": {
     "@ricky0123/vad-web": "^0.0.22",
