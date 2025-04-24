@@ -90,7 +90,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
 
         # logger.info(f"ENHANCED_DESCRIPTION: {enhanced_description}")
 
-        text_to_embed = f"{domain_context}: {boost_text}{clean_description}"
+        text_to_embed = f"{domain_context} {boost_text} {clean_description}"
 
         # Append matcher_info from metadata if available
         if metadata and isinstance(metadata.get("matcher_info"), str) and metadata["matcher_info"]:
