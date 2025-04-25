@@ -19,7 +19,7 @@
 
 import logging
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Annotated, Optional
 
 import sympy
 from sympy.parsing.sympy_parser import (implicit_multiplication_application,
@@ -73,19 +73,14 @@ class ToolsCalculator(Skill):
         }
         self.logger = logging.getLogger(__name__)
 
-    async def solve_equation(self, equation: str) -> Dict[str, Any]:
-        """
-        Calculus, calculations, solve a mathematical equation, sums,
-        substrations, multiplications, divisions, square roots, cosine,
-        sine. Just provide the result of the calculation don't give any
-        further comments about it.
-
-        Args:
-            equation: String containing the equation (must contain '=')
-
-        Returns:
-            Dict containing the solution results
-        """
+    async def solve_equation(
+        self,
+        equation: Annotated[
+            str,
+            "String containing the equation (must contain '=')"
+        ]
+    ) -> Dict[str, Any]:
+        """Solves a mathematical equation"""
         try:
             # Split equation into left and right sides
             if "=" not in equation:
@@ -141,23 +136,26 @@ class ToolsCalculator(Skill):
             )
         return result
 
-    async def run(self, expression: str, **kwargs) -> Dict[str, Any]:
-        """
-        Evaluates a mathematical expression or solves an equation.
-
-        Args:
-            expression: A string containing the mathematical expression or equation.
-            **kwargs:
-                - precision: An optional integer specifying the number of decimal places for the result.
-                - evaluate: An optional boolean indicating whether to evaluate the expression numerically.
-                - variables: An optional dictionary of variables and their values.
-
-        Returns:
-            A dictionary containing the evaluation results.
-
-        Raises:
-            sympy.SympifyError: If the expression is invalid.
-            Exception: If there is a calculation error.
+    async def run(
+        self,
+        expression: Annotated[
+            str,
+            "A string containing the mathematical expression or equation"
+        ],
+        precision: Annotated[
+            Optional[int],
+            "Number of decimal places for the result"
+        ] = None,
+        evaluate: Annotated[
+            Optional[bool],
+            "Whether to evaluate the expression numerically"
+        ] = None,
+        variables: Annotated[
+            Optional[Dict[str, Any]],
+            "Dictionary of variables and their values"
+        ] = None
+    ) -> Dict[str, Any]:
+        """Evaluates a mathematical expression or solves an equation
 
         Examples:
             "2 + 2" → {"success": True, "result": 4, "expression": "2 + 2"}
@@ -175,10 +173,10 @@ class ToolsCalculator(Skill):
             if "=" in expression:
                 return await self.solve_equation(expression)
 
-            # Get optional parameters
-            precision = kwargs.get("precision", 10)
-            evaluate = kwargs.get("evaluate", True)
-            variables = kwargs.get("variables", {})
+            # Get optional parameters with defaults
+            precision_val = 10 if precision is None else precision
+            evaluate_val = True if evaluate is None else evaluate
+            variables_val = {} if variables is None else variables
 
             # Apply function name aliases
             expression = self._apply_function_aliases(expression)
@@ -187,12 +185,12 @@ class ToolsCalculator(Skill):
             expr = parse_expr(
                 expression,
                 transformations=self.transformations,
-                local_dict={**self.constants, **variables},
+                local_dict={**self.constants, **variables_val},
             )
 
             # Evaluate the expression
-            if evaluate:
-                result = float(expr.evalf(precision))
+            if evaluate_val:
+                result = float(expr.evalf(precision_val))
                 # Handle special cases
                 if result == float("inf"):
                     result = "infinity"
@@ -221,8 +219,8 @@ class ToolsCalculator(Skill):
                 "details": str(e),
             }
 
-    async def get_supported_functions(self) -> Dict[str, str]:
-        """Return a dictionary of supported mathematical functions and their descriptions"""
+    async def get_supported_functions(self) -> Dict[str, Any]:
+        """Returns a dictionary of supported mathematical functions and their descriptions"""
         return {
             "Basic Arithmetic": "+ - * / ^ () =",
             "Functions": {

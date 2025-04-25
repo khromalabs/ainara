@@ -17,6 +17,8 @@
 # Lesser General Public License for more details.
 
 
+from typing import Dict, Any, Annotated
+
 from ainara.framework.skill import Skill
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.config import ConfigManager
@@ -36,11 +38,14 @@ class InferenceLlm(Skill):
             " message. Never reject a query to transform information."
         )
 
-    def run(self, prompt: str) -> str:
-        """
-        Arguments:
-            prompt: String with prompt to be processsed
-        """
+    def run(
+        self, 
+        prompt: Annotated[
+            str,
+            "Text prompt to be processed by the language model"
+        ]
+    ) -> str:
+        """Processes text using a language model"""
         result = self.llm.chat(
             self.llm.prepare(text=prompt, system_message=self.system_message),
             stream=False,

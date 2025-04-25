@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 import logging
+from typing import Dict, Any, Optional, Annotated
 
 import requests
 
@@ -155,17 +156,18 @@ class TimeWeather(Skill):
             self.logger.error(f"Error getting weather: {str(e)}")
             return {"error": f"Failed to get weather data: {str(e)}"}
 
-    async def run(self, location: str = None, api_key: str = None):
-        """
-        Gets weather info.
-
-        Args:
-            location: Location name (optional, will use IP-based location
-            if not provided).
-
-        Returns:
-            Dict containing weather information.
-        """
+    async def run(
+        self, 
+        location: Annotated[
+            Optional[str],
+            "Location name (city, country, etc.) - will use IP-based location if not provided"
+        ] = None, 
+        api_key: Annotated[
+            Optional[str],
+            "OpenWeatherMap API key (optional, will use configured key if not provided)"
+        ] = None
+    ) -> Dict[str, Any]:
+        """Gets current weather information for a location"""
         if location:
             return self.get_weather_by_city(location)
         return self.get_weather()

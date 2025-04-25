@@ -20,7 +20,7 @@
 import asyncio
 import datetime
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, Annotated, Optional, Literal
 
 from ainara.framework.config import config
 from ainara.framework.skill import Skill
@@ -32,18 +32,15 @@ logger = logging.getLogger(__name__)
 
 
 class SearchWeb(Skill):
-    """Search the internet for information about any topic or product or news or current events or factual questions."""
+    """Search the internet for information about any topic or product or news or current events or just anything not present in my built-in knowledge."""
 
     if not config.get("apis.search"):
         hiddenCapability = True
 
     matcher_info = (
-        "Perform a web search or research on the Internet using specified or"
-        " best available provider whenever the required information is not"
-        " already completely present in my LLM built-in knowledge. IMPORTANT:"
-        " USE this skill whenever the user explicitely requests in the query"
-        " to do a web search or research, or a expression which resembles"
-        " that."
+        " I will ALWAYS use this skill whenever the user explicitely requests"
+        " in the query to do a web search or research, or a expression which"
+        " resembles that."
     )
 
     def __init__(self):
@@ -181,30 +178,32 @@ class SearchWeb(Skill):
 
     async def run(
         self,
-        query: str,
-        search_type: str = "comprehensive",
-        num_results: int = 20,
-        engine: Union[str, List[str]] = None,
-        recency: str = None,
-        **kwargs,
+        query: Annotated[
+            str,
+            "Search web query string"
+        ],
+        search_type: Annotated[
+            Literal["comprehensive", "academic", "recent", "exploratory", "news"],
+            "Type of search to perform"
+        ] = "comprehensive",
+        num_results: Annotated[
+            int,
+            "Number of results to return"
+        ] = 20,
+        engine: Annotated[
+            Optional[Union[str, List[str]]],
+            "Which search engine(s) to use (single string or list of strings). If None or 'meta', uses all available engines"
+        ] = None,
+        recency: Annotated[
+            Optional[str],
+            "Filter results by recency (e.g., '24h', '7d', '1w', '1m', '1y'). h=hours, d=days, w=weeks, m=months, y=years"
+        ] = None,
+        **kwargs: Annotated[
+            Optional[Dict[str, Any]],
+            "Additional engine-specific parameters"
+        ],
     ) -> Dict[str, Any]:
-        """
-        Perform a web search or research on the Internet.
-
-        Args:
-            query: Search web query string.
-            search_type: Optional, type of search (comprehensive, academic, recent, exploratory, news).
-            num_results: Optional, Number of results to return
-            engine [Optional]: Which search engine(s) to use (single string or list of strings).
-                   If None or "meta", uses all available engines.
-                   Available engines: {engines}
-            recency [Optional]: Filter results by recency (e.g., "24h", "7d", "1w", "1m", "1y").
-                    h=hours, d=days, w=weeks, m=months, y=years
-            **kwargs: Additional engine-specific parameters
-
-        Returns:
-            Dict containing search results
-        """
+        """Perform a web search or research on the Internet"""
         if not query or query.strip() == "":
             return {"status": "error", "message": "Query cannot be empty"}
 
@@ -259,8 +258,7 @@ class SearchWeb(Skill):
 
         # Execute search
         try:
-            # Extract recency parameter if provided
-            recency = kwargs.pop("recency", None)
+            # Recency is already extracted as a parameter
 
             # If we're using multiple engines, perform meta-search
             if len(available_engines) > 1:
@@ -277,8 +275,8 @@ class SearchWeb(Skill):
                 engine_name = available_engines[0]
 
                 # Add recency parameters for single engine
+                engine_kwargs = dict(kwargs)
                 if recency:
-                    engine_kwargs = dict(kwargs)
                     self._add_recency_params(
                         recency,
                         [engine_name],
@@ -288,8 +286,6 @@ class SearchWeb(Skill):
                         engine_kwargs.update(
                             engine_kwargs.pop(f"{engine_name}_params")
                         )
-                else:
-                    engine_kwargs = kwargs
 
                 results = await self.engines[engine_name].search(
                     query=query, num_results=num_results, **engine_kwargs

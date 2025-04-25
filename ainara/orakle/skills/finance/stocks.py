@@ -17,7 +17,7 @@
 # Lesser General Public License for more details.
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Annotated, Literal, Optional
 
 import requests
 
@@ -32,7 +32,7 @@ class FinanceStocks(Skill):
         hiddenCapability = True
 
     matcher_info = (
-        "Valid only for queries user about current, present stock share value."
+        "Valid only for queries user about current, present stock market shares value."
         " Only use this skill for stock shares queries. This skill is NOT valid"
         " for valid for historical queries or queries with time constrains."
     )
@@ -214,22 +214,21 @@ class FinanceStocks(Skill):
             return [{"error": f"Failed to search symbols: {str(e)}"}]
 
     async def run(
-        self, action: str = "quote", symbol: str = None, keywords: str = None
+        self,
+        action: Annotated[
+            Literal["quote", "overview", "search"],
+            "Type of information to retrieve (quote, overview, or search)"
+        ] = "quote",
+        symbol: Annotated[
+            Optional[str], 
+            "Stock symbol (required for quote and overview actions)"
+        ] = None,
+        keywords: Annotated[
+            Optional[str], 
+            "Search terms (required for search action)"
+        ] = None
     ) -> Dict[str, Any]:
-        """
-        Gets stock market information
-
-        Args:
-            action: The type of information to retrieve:
-                   - "quote": Get current stock price and trading info
-                   - "overview": Get company overview
-                   - "search": Search for stock symbols
-            symbol: Stock symbol (required for quote and overview)
-            keywords: Search terms (required for search)
-
-        Returns:
-            Dict containing the requested stock information
-        """
+        """Gets stock market information"""
         if action == "quote":
             if not symbol:
                 return {"error": "Symbol is required for quote action"}

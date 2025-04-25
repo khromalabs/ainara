@@ -19,7 +19,7 @@
 
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Union, Annotated, Optional, Literal
 
 from ainara.framework.skill import Skill
 
@@ -31,26 +31,33 @@ class SystemFileop(Skill):
         super().__init__()
 
     async def run(
-        self, operation: str, path: Union[str, Path], **kwargs
+        self, 
+        operation: Annotated[
+            Literal["read", "list", "exists"],
+            "The operation to perform (read, list, exists)"
+        ],
+        path: Annotated[
+            Union[str, Path],
+            "Path to the file or directory"
+        ],
+        content: Annotated[
+            Optional[str],
+            "Content to write to file (for write operation)"
+        ] = None,
+        recursive: Annotated[
+            Optional[bool],
+            "Whether to operate recursively (for delete/list operations)"
+        ] = None,
+        pattern: Annotated[
+            Optional[str],
+            "File pattern to match (for find operation)"
+        ] = None,
+        case_sensitive: Annotated[
+            Optional[bool],
+            "Whether pattern matching is case sensitive (for find operation)"
+        ] = None
     ) -> Dict[str, Any]:
-        """
-        Perform file system operations.
-
-        Args:
-            operation: The operation to perform. Supported operations are:
-                 - 'read': Read the contents of a file.
-                 - 'list': List the contents of a directory.
-                 - 'exists': Check if a file or directory exists.
-            path: Path to the file or directory
-            **kwargs: Additional arguments specific to each operation
-                     - content: str (for write operation)
-                     - recursive: bool (for delete/list operations)
-                     - pattern: str (for find operation)
-                     - case_sensitive: bool (for find operation)
-
-        Returns:
-            Dict containing operation results
-        """
+        """Perform file system operations"""
         path = Path(path)
 
         operations = {
@@ -65,6 +72,17 @@ class SystemFileop(Skill):
         if operation not in operations:
             raise ValueError(f"Unsupported operation: {operation}")
 
+        # Create kwargs dictionary from explicit parameters
+        kwargs = {}
+        if content is not None:
+            kwargs["content"] = content
+        if recursive is not None:
+            kwargs["recursive"] = recursive
+        if pattern is not None:
+            kwargs["pattern"] = pattern
+        if case_sensitive is not None:
+            kwargs["case_sensitive"] = case_sensitive
+            
         return await operations[operation](path, **kwargs)
 
     async def _read_file(self, path: Path, **kwargs) -> Dict[str, Any]:

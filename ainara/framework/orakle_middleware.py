@@ -264,17 +264,32 @@ class OrakleMiddleware:
                 "Description:"
                 f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n\n"
             )
+            
+            # Add parameters with descriptions
+            skill_desc += "Parameters:\n"
+            for param_name, param_info in skill_info.get("run_info", {}).get("parameters", {}).items():
+                param_type = param_info.get("type", "any")
+                param_desc = param_info.get("description", "No description")
+                param_required = "Required" if param_info.get("required", False) else "Optional"
+                param_default = param_info.get("default", "None")
+                
+                skill_desc += f"- {param_name} ({param_type}, {param_required}): {param_desc}"
+                if not param_info.get("required", False):
+                    skill_desc += f" Default: {param_default}"
+                skill_desc += "\n"
+            
+            skill_desc += "\n"
 
-            # Add parameters if available
-            if skill_info.get("parameters"):
-                skill_desc += "Parameters:\n"
-                for param in skill_info.get("parameters", []):
-                    param_name = param.get("name", "unknown")
-                    param_type = param.get("type", "any")
-                    param_desc = param.get("description", "No description")
-                    skill_desc += (
-                        f"- {param_name} ({param_type}): {param_desc}\n"
-                    )
+            # # Add parameters if available
+            # if skill_info.get("parameters"):
+            #     skill_desc += "Parameters:\n"
+            #     for param in skill_info.get("parameters", []):
+            #         param_name = param.get("name", "unknown")
+            #         param_type = param.get("type", "any")
+            #         param_desc = param.get("description", "No description")
+            #         skill_desc += (
+            #             f"- {param_name} ({param_type}): {param_desc}\n"
+            #         )
 
             candidate_skills_text += skill_desc + "\n---\n\n"
 
@@ -284,7 +299,7 @@ class OrakleMiddleware:
             {"query": query, "candidate_skills": candidate_skills_text},
         )
 
-        logger.debug(f"ORAKLE skill selection prompt: {prompt}")
+        logger.info(f"ORAKLE skill selection prompt: {prompt}")
 
         selection_response = self.llm.chat(
             chat_history=self.llm.prepare_chat(

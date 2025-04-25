@@ -20,6 +20,7 @@
 import requests
 import validators
 from newspaper import Article
+from typing import Dict, Any, Annotated, Literal
 
 from ainara.framework.skill import Skill
 
@@ -61,18 +62,18 @@ class HtmlWebpage(Skill):
         except Exception as e:
             return None, str(e)
 
-    async def run(self, url, format="text"):
-        """
-        Downloads the text of a website or webpage represented by a URL.
-
-        Args:
-            - url: URL of the webpage to download and process.
-            - format: The format of the returned output: html or text.
-        Returns:
-            Tumple containing:
-                - url: URL of the webpage downloader and optionally processed.
-                - output: Downloaded html or processed text.
-        """
+    async def run(
+        self, 
+        url: Annotated[
+            str,
+            "URL of the webpage to download and process"
+        ],
+        format: Annotated[
+            Literal["text", "html"],
+            "The format of the returned output: html or text"
+        ] = "text"
+    ) -> Dict[str, Any]:
+        """Downloads the text of a website or webpage represented by a URL"""
         # Try adding https:// prefix if no protocol specified
         original_url = url
         if not url.startswith(("http://", "https://")):

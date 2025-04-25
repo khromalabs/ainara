@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ainara"
+dynamic = ["version"]
+# Add other metadata like authors, description, dependencies etc.
+# dependencies = [ "flask", "requests", ... ] # List your project deps
+
+[tool.setuptools.packages.find]
+where = ["."] # Tells setuptools to look for packages in the current dir

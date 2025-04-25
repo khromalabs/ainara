@@ -19,7 +19,7 @@
 
 import logging
 import webbrowser
-from typing import Any, Dict
+from typing import Any, Dict, Annotated, Optional, List
 from urllib.parse import urlparse
 
 from ainara.framework.skill import Skill
@@ -104,17 +104,19 @@ class SystemUrlopener(Skill):
 
         return processed_urls
 
-    async def run(self, url: str, **kwargs) -> Dict[str, Any]:
-        """
-        Opens one or more URLs in the system browser or assigned application.
-        A list of URLs can be passed to this skill, splitting them between commas.
-
-        Arguments:
-            url: A single URL or multiple URLs separated by spaces, commas, or pipes.
-
-        Returns:
-            Dict containing the operation results.
-
+    async def run(
+        self, 
+        url: Annotated[
+            str,
+            "A single URL or multiple URLs separated by spaces, commas, or pipes"
+        ],
+        force: Annotated[
+            Optional[bool],
+            "Skip URL validation if set to True"
+        ] = False
+    ) -> Dict[str, Any]:
+        """Opens one or more URLs in the system browser or assigned application
+        
         Examples:
             "https://www.example.com" → Opens example.com in default browser.
             "http://localhost:8080" → Opens local development server.
@@ -123,9 +125,6 @@ class SystemUrlopener(Skill):
             "github.com | stackoverflow.com" → Opens both sites in separate tabs.
         """
         try:
-            # Get optional parameters
-            force = kwargs.get("force", False)
-
             # Parse URLs from input string
             urls = self._parse_urls(url)
 
@@ -197,7 +196,7 @@ class SystemUrlopener(Skill):
             }
 
     async def get_supported_protocols(self) -> Dict[str, str]:
-        """Return a dictionary of supported URL protocols and their descriptions"""
+        """Returns a dictionary of supported URL protocols and their descriptions"""
         return {
             "http": "Standard web protocol for non-secure connections",
             "https": "Secure web protocol (recommended for most websites)",

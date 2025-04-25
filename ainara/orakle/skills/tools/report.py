@@ -20,7 +20,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Annotated, List
 
 from ainara.framework.config import ConfigManager
 from ainara.framework.skill import Skill
@@ -93,25 +93,24 @@ class ToolsReport(Skill):
 
     async def run(
         self,
-        _chat_history: list,
-        goal: Optional[str] = None,
-        title: Optional[str] = None,
-        format: str = "markdown",
+        _chat_history: Annotated[
+            List[Dict[str, Any]],
+            "Chat history provided by the chat manager (internal)"
+        ],
+        goal: Annotated[
+            Optional[str],
+            "The purpose or intention of the report"
+        ] = None,
+        title: Annotated[
+            Optional[str],
+            "Title for the report"
+        ] = None,
+        format: Annotated[
+            str,
+            "Output format (markdown, text, html)"
+        ] = "markdown",
     ) -> Dict[str, Any]:
-        """
-        Generate a report based on the conversation and specified goal.
-
-        Requires:
-            _chat_history: Chat history provided by the chat manager (internal).
-
-        Args:
-            goal: The purpose or intention of the report (optional).
-            title: Optional title for the report (optional).
-            format: Output format (markdown, text, html) (optional).
-
-        Returns:
-            Dict containing the report path and a preview
-        """
+        """Generate a report based on the conversation and specified goal"""
         # Use provided conversation text or build from chat history
         if not _chat_history:
             return {

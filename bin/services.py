@@ -358,11 +358,11 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
 
                     # print("CURRENT DIR: " + os.getcwd())
                     # print(f"WILL LAUNCH: {temp_batch}")
-                    os.chdir(os.path.dirname(cwd))
+                    # No longer need to change directory
                     subprocess.Popen(
                         temp_batch, stdout=log, stderr=log, shell=True
                     )
-                    os.chdir(cwd)
+                    # No longer need to restore directory
                 else:
                     # Linux/macOS
                     activate_script = os.path.join(
@@ -380,7 +380,7 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
                     )
                     # print("CURRENT DIR: " + os.getcwd())
                     # print(f"WILL LAUNCH: {full_cmd}")
-                    os.chdir(os.path.dirname(cwd))
+                    # No longer need to change directory
                     subprocess.Popen(
                         full_cmd,
                         stdout=log,
@@ -388,16 +388,16 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
                         shell=True,
                         executable=shell,
                     )
-                    os.chdir(cwd)
+                    # No longer need to restore directory
             else:
                 if not check_command(cmd.split()[0]):
                     return {
                         "status": "error",
                         "message": f"Command not found: {cmd.split()[0]}",
                     }
-                os.chdir(os.path.dirname(cwd))
+                # No longer need to change directory
                 subprocess.Popen([cmd] + args, stdout=log, stderr=log)
-                os.chdir(cwd)
+                # No longer need to restore directory
 
         # Give it a moment to start
         time.sleep(1)

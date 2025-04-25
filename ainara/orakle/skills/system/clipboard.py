@@ -19,7 +19,7 @@
 """Skill for interacting with the system clipboard"""
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Annotated, Literal
 import pyperclip
 from ainara.framework.skill import Skill
 
@@ -98,19 +98,17 @@ class SystemClipboard(Skill):
         return await self.write_clipboard("")
 
     async def run(
-        self, action: str, text: Optional[str] = None, **kwargs
+        self, 
+        action: Annotated[
+            Literal["read", "write", "clear"],
+            "Operation to perform (read, write, or clear)"
+        ],
+        text: Annotated[
+            Optional[str],
+            "Text to write (required for 'write' action)"
+        ] = None
     ) -> Dict[str, Any]:
-        """
-        Reads and Writes to the system clipboard.
-
-        Args:
-            action: Operation to perform ('read', 'write', or 'clear').
-            text: Text to write (required for 'write' action).
-            **kwargs: Additional arguments (unused).
-
-        Returns:
-            Dict containing operation results.
-        """
+        """Reads and writes to the system clipboard"""
         action = action.lower()
 
         if action not in ("read", "write", "clear"):

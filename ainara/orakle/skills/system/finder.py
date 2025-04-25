@@ -22,7 +22,7 @@ import logging
 import platform
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Annotated, Optional
 
 from ainara.framework.config import config
 from ainara.framework.llm import create_llm_backend
@@ -252,29 +252,21 @@ Output JSON in this format:
 
     async def run(
         self,
-        query: str,
-        limit: int = 10,
-        **kwargs,
+        query: Annotated[
+            str,
+            "Natural language description of files to find"
+        ],
+        limit: Annotated[
+            int,
+            "Maximum number of results to return"
+        ] = 10,
+        show_location: Annotated[
+            Optional[bool],
+            "Whether to show file location in file explorer"
+        ] = True
     ) -> Dict[str, Any]:
-        """
-        Find files using natural language description and show their location.
-        If the file is located just confirm success in the operation, don't
-        give any further comments.
- 
-        Args:
-            query: Natural language description of files to find
-            limit: Maximum number of results to return (default: 10)
-            **kwargs: Additional keyword arguments
-
-        Returns:
-            Dict containing:
-                - status: "success" or "error"
-                - query: Original query string  
-                - interpreted_as: Parsed search parameters
-                - analysis: LLM analysis of results
-                - backend: Name of search backend used
-                - matches: List of matching files
-
+        """Find files using natural language description and show their location
+        
         Examples:
             "powerpoint about marketing from last week"
             "large PDF files in Downloads folder"
@@ -289,9 +281,11 @@ Output JSON in this format:
             results = await self.backend.search(params, limit=limit)
 
             if results:
-                # Show location of best match
+                # Show location of best match if requested
                 result = results[0]
-                show_result = await self.show_in_explorer(str(result.path))
+                show_result = {"status": "success", "message": "File found"}
+                if show_location:
+                    show_result = await self.show_in_explorer(str(result.path))
 
                 return {
                     "status": show_result["status"],

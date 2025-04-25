@@ -7,6 +7,7 @@ fireworks_ai/
 static/
 build/*
 dist/*
-resources/*
+ainara/resources/*
 scripts/pyinstaller/runtime_hook.py
 !/resources/ainara.yaml.defaults
+ainara.egg-info/*
