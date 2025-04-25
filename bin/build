@@ -76,7 +76,7 @@ fi
 if [ "$SKIP_GIT_TAG" = false ]; then
     # Extract version from orakle/__init__.py
 	PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-    VERSION=$(cd $PROJECT_ROOT && cd .. && python -c "import ainara; print(ainara.__version__)")
+    VERSION=$(cd $PROJECT_ROOT && python -c "import ainara; print(ainara.__version__)")
     # Dynamically get the current Git branch
     BRANCH=$(git rev-parse --abbrev-ref HEAD)
     TAG="${BRANCH}-v${VERSION}"
