@@ -68,6 +68,17 @@ jobs:
           pip install -r requirements.txt
         fi
 
+    - name: Install project in editable mode
+      shell: bash
+      run: |
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          source venv/scripts/activate
+          venv/Scripts/python.exe -m pip install -e .
+        else
+          source venv/bin/activate
+          pip install -e .
+        fi
+
     - name: Show location and files
       shell: bash
       run: |

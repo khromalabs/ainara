@@ -4,8 +4,12 @@ import sys
 import importlib
 import platform
 
-# Get the project root directory (1 levels up from this spec file)
-project_root = os.path.abspath(os.path.join(os.path.dirname(SPECPATH), '..'))
+# Get the project root directory (use current working directory as project root)
+project_root = os.path.abspath(os.getcwd())
+
+# Sanity check to ensure project_root is correct
+if not os.path.exists(os.path.join(project_root, 'ainara')):
+    raise ValueError(f"Calculated project_root {project_root} does not contain 'ainara' directory. Ensure the build is run from the project root.")
 
 block_cipher = None
 
