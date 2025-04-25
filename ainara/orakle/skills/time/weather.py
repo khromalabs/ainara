@@ -17,7 +17,7 @@
 # Lesser General Public License for more details.
 
 import logging
-from typing import Dict, Any, Optional, Annotated
+from typing import Annotated, Any, Dict, Optional
 
 import requests
 
@@ -35,8 +35,14 @@ class TimeWeather(Skill):
         super().__init__()
         self.name = "weather"
         self.matcher_info = (
-            "Assistant doesn't need to ask for location, this skill will"
-            " retrive the location using the IP"
+            "Use this skill when the user wants to get current weather"
+            " information for their location or a specific location. This"
+            " skill can determine the user's location using IP-based"
+            " geolocation if no location is provided. Examples include: 'what"
+            " is the weather like today', 'tell me the forecast for London',"
+            " 'how hot is it in New York', 'current temperature in Paris'."
+            " \n\nKeywords: weather, forecast, temperature, current, today,"
+            " location, city, country, climate, rain, sun, wind, humidity."
         )
         self.logger = logging.getLogger(__name__)
         self.api_key = config.get("apis.weather.openweathermap_api_key")
@@ -157,15 +163,17 @@ class TimeWeather(Skill):
             return {"error": f"Failed to get weather data: {str(e)}"}
 
     async def run(
-        self, 
+        self,
         location: Annotated[
             Optional[str],
-            "Location name (city, country, etc.) - will use IP-based location if not provided"
-        ] = None, 
+            "Location name (city, country, etc.) - will use IP-based location"
+            " if not provided",
+        ] = None,
         api_key: Annotated[
             Optional[str],
-            "OpenWeatherMap API key (optional, will use configured key if not provided)"
-        ] = None
+            "OpenWeatherMap API key (optional, will use configured key if not"
+            " provided)",
+        ] = None,
     ) -> Dict[str, Any]:
         """Gets current weather information for a location"""
         if location:

@@ -231,7 +231,7 @@ class OrakleMiddleware:
         """
         logger.info(f"ORAKLE Processing request: {query}")
 
-        # Find matching skills using the matcher
+        # Pre-filter matching skills using the embeddings matcher
         matches = self.matcher.match(
             query, threshold=self.matcher_threshold, top_k=self.matcher_top_k
         )
@@ -262,9 +262,13 @@ class OrakleMiddleware:
             )
             skill_desc += (
                 "Description:"
-                f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n\n"
+                f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n"
             )
-            
+            skill_desc += (
+                # Add only the first paragraph
+                f" {skill_info.get('matcher_info', '').split('\n\n')[0]}\n\n"
+            )
+
             # Add parameters with descriptions
             skill_desc += "Parameters:\n"
             for param_name, param_info in skill_info.get("run_info", {}).get("parameters", {}).items():
@@ -272,12 +276,12 @@ class OrakleMiddleware:
                 param_desc = param_info.get("description", "No description")
                 param_required = "Required" if param_info.get("required", False) else "Optional"
                 param_default = param_info.get("default", "None")
-                
+
                 skill_desc += f"- {param_name} ({param_type}, {param_required}): {param_desc}"
                 if not param_info.get("required", False):
                     skill_desc += f" Default: {param_default}"
                 skill_desc += "\n"
-            
+
             skill_desc += "\n"
 
             # # Add parameters if available

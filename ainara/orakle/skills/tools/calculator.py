@@ -19,7 +19,7 @@
 
 import logging
 import re
-from typing import Any, Dict, Annotated, Optional
+from typing import Annotated, Any, Dict, Optional
 
 import sympy
 from sympy.parsing.sympy_parser import (implicit_multiplication_application,
@@ -32,18 +32,17 @@ class ToolsCalculator(Skill):
     """Evaluation of non-trivial mathematical expressions"""
 
     matcher_info = (
-        "ONLY use this skill when the user provided a complex mathematical"
-        " expression to be solved. This skill will be able to solve operations"
-        " like: Addition, Subtraction, Multiplication, Division,"
-        " Exponentiation, Square root, Cube root "
-        " logarithm, Sine, Cosine, Tangent, Inverse sine, Inverse"
-        " cosine, Inverse tangent, Hyperbolic sine, Hyperbolic cosine,"
-        " Hyperbolic tangent, Inverse hyperbolic sine, Inverse hyperbolic"
-        " cosine, Inverse hyperbolic tangent, Factorial, Permutations,"
-        " Combinations, Memory store, Memory recall, Memory clear, Pi, Euler's"
-        " number, Scientific notation, Fraction calculations, Complex number"
-        " operations, Mean, Median, Standard deviation, Base conversions,"
-        " Random number generation"
+        "Use this skill ONLY when the user provides a complex mathematical"
+        " expression or equation to be solved. This skill can handle"
+        " arithmetic operations, trigonometric functions, logarithms,"
+        " equations, and more. Examples include: 'calculate 2 + 2', 'solve x^2"
+        " - 4 = 0', 'what is sin(pi/2)', 'evaluate 5 factorial'.\n\nKeywords:"
+        " calculate, solve, evaluate, math, mathematics, equation, expression,"
+        " addition, subtraction, multiplication, division, exponent, square"
+        " root, cube root, logarithm, sine, cosine, tangent, inverse,"
+        " hyperbolic, factorial, permutation, combination, pi, euler,"
+        " scientific notation, fraction, complex number, mean, median,"
+        " standard deviation, base conversion, random number."
     )
 
     def __init__(self):
@@ -76,9 +75,8 @@ class ToolsCalculator(Skill):
     async def solve_equation(
         self,
         equation: Annotated[
-            str,
-            "String containing the equation (must contain '=')"
-        ]
+            str, "String containing the equation (must contain '=')"
+        ],
     ) -> Dict[str, Any]:
         """Solves a mathematical equation"""
         try:
@@ -139,21 +137,18 @@ class ToolsCalculator(Skill):
     async def run(
         self,
         expression: Annotated[
-            str,
-            "A string containing the mathematical expression or equation"
+            str, "A string containing the mathematical expression or equation"
         ],
         precision: Annotated[
-            Optional[int],
-            "Number of decimal places for the result"
+            Optional[int], "Number of decimal places for the result"
         ] = None,
         evaluate: Annotated[
-            Optional[bool],
-            "Whether to evaluate the expression numerically"
+            Optional[bool], "Whether to evaluate the expression numerically"
         ] = None,
         variables: Annotated[
             Optional[Dict[str, Any]],
-            "Dictionary of variables and their values"
-        ] = None
+            "Dictionary of variables and their values",
+        ] = None,
     ) -> Dict[str, Any]:
         """Evaluates a mathematical expression or solves an equation
 

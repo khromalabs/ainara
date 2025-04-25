@@ -22,7 +22,7 @@ import logging
 import platform
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Annotated, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from ainara.framework.config import config
 from ainara.framework.llm import create_llm_backend
@@ -40,11 +40,16 @@ class SystemFinder(Skill):
     """Intelligent file search with LLM-assisted disambiguation and location reveal"""
 
     matcher_info = (
-        "Use this skill when the user wants to find or search for files, documents, or folders on their system. "
-        "This skill can handle queries related to locating files by name, type, content, date, size, or location. "
-        "Examples include: 'find PDF files from last week', 'search for marketing presentation', "
-        "'locate budget spreadsheet in Downloads', 'show me photos from yesterday'. "
-        "Keywords: find, search, locate, file, document, folder, PDF, image, presentation, spreadsheet, recent, old, large, small, Downloads, Desktop."
+        "Use this skill when the user wants to find or search for files,"
+        " documents, or folders on their system. This skill can handle queries"
+        " related to locating files by name, type, content, date, size, or"
+        " location. Examples include: 'find PDF files from last week', 'search"
+        " for marketing presentation', 'locate budget spreadsheet in"
+        " Downloads', 'show me photos from yesterday'."
+        "\n\n"
+        "Keywords: find, search,"
+        " locate, file, document, folder, PDF, image, presentation,"
+        " spreadsheet, recent, old, large, small, Downloads, Desktop."
     )
 
     def __init__(self):
@@ -254,27 +259,20 @@ Output JSON in this format:
             }
         except Exception as e:
             return {
-                "status": "error", 
+                "status": "error",
                 "message": f"Failed to show file location: {str(e)}",
             }
 
     async def run(
         self,
-        query: Annotated[
-            str,
-            "Natural language description of files to find"
-        ],
-        limit: Annotated[
-            int,
-            "Maximum number of results to return"
-        ] = 10,
+        query: Annotated[str, "Natural language description of files to find"],
+        limit: Annotated[int, "Maximum number of results to return"] = 10,
         show_location: Annotated[
-            Optional[bool],
-            "Whether to show file location in file explorer"
-        ] = True
+            Optional[bool], "Whether to show file location in file explorer"
+        ] = True,
     ) -> Dict[str, Any]:
         """Find files using natural language description and show their location
-        
+
         Examples:
             "powerpoint about marketing from last week"
             "large PDF files in Downloads folder"

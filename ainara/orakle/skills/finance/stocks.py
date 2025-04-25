@@ -17,7 +17,7 @@
 # Lesser General Public License for more details.
 
 import logging
-from typing import Any, Dict, List, Annotated, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 import requests
 
@@ -32,11 +32,16 @@ class FinanceStocks(Skill):
         hiddenCapability = True
 
     matcher_info = (
-        "Use this skill when the user wants to get current stock market information, including stock quotes, company overviews, or search for stock symbols. "
-        "This skill is valid only for present data and NOT for historical queries or time-constrained data. "
-        "Examples include: 'what is the current price of AAPL', 'give me an overview of Microsoft stock', "
-        "'search for tech company stocks', 'get quote for TSLA'. "
-        "Keywords: stock, shares, market, price, quote, current, present, company, overview, search, symbol, finance, investment."
+        "Use this skill when the user wants to get current stock market"
+        " information, including stock quotes, company overviews, or search"
+        " for stock symbols. This skill is valid only for present data and NOT"
+        " for historical queries or time-constrained data."
+        "\n\n"
+        " Examples include:"
+        " 'what is the current price of AAPL', 'give me an overview of"
+        " Microsoft stock', 'search for tech company stocks', 'get quote for"
+        " TSLA'. Keywords: stock, shares, market, price, quote, current,"
+        " present, company, overview, search, symbol, finance, investment."
     )
 
     def __init__(self):
@@ -219,16 +224,15 @@ class FinanceStocks(Skill):
         self,
         action: Annotated[
             Literal["quote", "overview", "search"],
-            "Type of information to retrieve (quote, overview, or search)"
+            "Type of information to retrieve (quote, overview, or search)",
         ] = "quote",
         symbol: Annotated[
-            Optional[str], 
-            "Stock symbol (required for quote and overview actions)"
+            Optional[str],
+            "Stock symbol (required for quote and overview actions)",
         ] = None,
         keywords: Annotated[
-            Optional[str], 
-            "Search terms (required for search action)"
-        ] = None
+            Optional[str], "Search terms (required for search action)"
+        ] = None,
     ) -> Dict[str, Any]:
         """Gets stock market information"""
         if action == "quote":

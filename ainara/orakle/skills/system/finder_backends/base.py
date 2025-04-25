@@ -40,17 +40,17 @@ class SearchResult:
 
 class SearchBackend(ABC):
     """Abstract base class for search backends"""
-    
+
     @abstractmethod
     def initialize(self) -> bool:
         """Initialize the search backend"""
         pass
-    
+
     @abstractmethod
     def is_available(self) -> bool:
         """Check if this backend is available on the current system"""
         pass
-    
+
     @abstractmethod
     async def search(
         self,

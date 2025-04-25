@@ -19,7 +19,7 @@
 
 import logging
 import webbrowser
-from typing import Any, Dict, Annotated, Optional, List
+from typing import Annotated, Any, Dict, Optional
 from urllib.parse import urlparse
 
 from ainara.framework.skill import Skill
@@ -31,11 +31,14 @@ class SystemUrlopener(Skill):
     """Open or launch one URL or several URLs addresses in the system browser"""
 
     matcher_info = (
-        "Use this skill when the user wants to open or launch a URL or multiple URLs in the system browser. "
-        "This skill can handle web addresses, local file paths, and other supported protocols like FTP. "
-        "Examples include: 'open example.com', 'launch github.com and stackoverflow.com', "
-        "'open file:///home/user/doc.pdf', 'go to google.com'. "
-        "Keywords: open, launch, go to, browse, URL, web, website, link, address, browser, file, local, http, https, ftp."
+        "Use this skill when the user wants to open or launch a URL or"
+        " multiple URLs in the system browser. This skill can handle web"
+        " addresses, local file paths, and other supported protocols like FTP."
+        "\n\n"
+        " Examples include: 'open example.com', 'launch github.com and"
+        " stackoverflow.com', 'open file:///home/user/doc.pdf', 'go to"
+        " google.com'. Keywords: open, launch, go to, browse, URL, web,"
+        " website, link, address, browser, file, local, http, https, ftp."
     )
 
     def __init__(self):
@@ -91,9 +94,11 @@ class SystemUrlopener(Skill):
 
         # Split by common separators (comma, space, pipe)
         urls = []
-        for separator in [',', ' ', '|']:
+        for separator in [",", " ", "|"]:
             if separator in url_string:
-                urls = [u.strip() for u in url_string.split(separator) if u.strip()]
+                urls = [
+                    u.strip() for u in url_string.split(separator) if u.strip()
+                ]
                 if urls:
                     break
 
@@ -104,27 +109,27 @@ class SystemUrlopener(Skill):
         # Add http:// prefix to URLs that don't have a scheme
         processed_urls = []
         for url in urls:
-            if '://' not in url and url.strip():
+            if "://" not in url and url.strip():
                 # If URL starts with www. or contains a dot, assume it's a web URL
-                if url.startswith('www.') or '.' in url:
-                    url = 'http://' + url
+                if url.startswith("www.") or "." in url:
+                    url = "http://" + url
             processed_urls.append(url)
 
         return processed_urls
 
     async def run(
-        self, 
+        self,
         url: Annotated[
             str,
-            "A single URL or multiple URLs separated by spaces, commas, or pipes"
+            "A single URL or multiple URLs separated by spaces, commas, or"
+            " pipes",
         ],
         force: Annotated[
-            Optional[bool],
-            "Skip URL validation if set to True"
-        ] = False
+            Optional[bool], "Skip URL validation if set to True"
+        ] = False,
     ) -> Dict[str, Any]:
         """Opens one or more URLs in the system browser or assigned application
-        
+
         Examples:
             "https://www.example.com" → Opens example.com in default browser.
             "http://localhost:8080" → Opens local development server.
@@ -140,7 +145,7 @@ class SystemUrlopener(Skill):
                 return {
                     "success": False,
                     "error": "No valid URLs provided",
-                    "details": "Please provide at least one URL"
+                    "details": "Please provide at least one URL",
                 }
 
             results = []
@@ -150,49 +155,57 @@ class SystemUrlopener(Skill):
             for single_url in urls:
                 # Validate URL unless force is True
                 if not force and not self._validate_url(single_url):
-                    results.append({
-                        "url": single_url,
-                        "success": False,
-                        "error": "Invalid URL format or unsupported protocol"
-                    })
+                    results.append(
+                        {
+                            "url": single_url,
+                            "success": False,
+                            "error": (
+                                "Invalid URL format or unsupported protocol"
+                            ),
+                        }
+                    )
                     continue
 
                 # Open the URL in the default browser
                 browser_opened = webbrowser.open(single_url)
 
                 if browser_opened:
-                    results.append({
-                        "url": single_url,
-                        "success": True
-                    })
+                    results.append({"url": single_url, "success": True})
                     success_count += 1
                 else:
-                    results.append({
-                        "url": single_url,
-                        "success": False,
-                        "error": "Failed to open URL"
-                    })
+                    results.append(
+                        {
+                            "url": single_url,
+                            "success": False,
+                            "error": "Failed to open URL",
+                        }
+                    )
 
             # Prepare the overall result
             if success_count == len(urls):
                 return {
                     "success": True,
-                    "message": f"Successfully opened {success_count} URL(s) in default browser",
+                    "message": (
+                        f"Successfully opened {success_count} URL(s) in"
+                        " default browser"
+                    ),
                     "urls": urls,
-                    "details": results
+                    "details": results,
                 }
             elif success_count > 0:
                 return {
                     "success": True,
-                    "message": f"Opened {success_count} out of {len(urls)} URLs",
+                    "message": (
+                        f"Opened {success_count} out of {len(urls)} URLs"
+                    ),
                     "urls": urls,
-                    "details": results
+                    "details": results,
                 }
             else:
                 return {
                     "success": False,
                     "error": "Failed to open any URLs",
-                    "details": results
+                    "details": results,
                 }
 
         except Exception as e:

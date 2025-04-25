@@ -20,7 +20,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Annotated, List
+from typing import Annotated, Any, Dict, List, Optional
 
 from ainara.framework.config import ConfigManager
 from ainara.framework.skill import Skill
@@ -30,7 +30,14 @@ class ToolsReport(Skill):
     """Generate reports in local files following a user request"""
 
     matcher_info = (
-        "The report will be saved to a file in the configured location."
+        "Use this skill when the user wants to generate a report based on a"
+        " conversation or specific content. This skill can create"
+        " well-structured reports in various formats like markdown, text, or"
+        " HTML, and save them to a file. Examples include: 'generate a report"
+        " from this chat', 'create a summary report in markdown', 'make a"
+        " report about our discussion', 'save a report of this conversation as"
+        " HTML'.\n\nKeywords: report, generate, create, summary, document, save,"
+        " file, markdown, text, HTML, conversation, chat, content."
     )
 
     def __init__(self):
@@ -95,19 +102,14 @@ class ToolsReport(Skill):
         self,
         _chat_history: Annotated[
             List[Dict[str, Any]],
-            "Chat history provided by the chat manager (internal)"
+            "Chat history provided by the chat manager (internal)",
         ],
         goal: Annotated[
-            Optional[str],
-            "The purpose or intention of the report"
+            Optional[str], "The purpose or intention of the report"
         ] = None,
-        title: Annotated[
-            Optional[str],
-            "Title for the report"
-        ] = None,
+        title: Annotated[Optional[str], "Title for the report"] = None,
         format: Annotated[
-            str,
-            "Output format (markdown, text, html)"
+            str, "Output format (markdown, text, html)"
         ] = "markdown",
     ) -> Dict[str, Any]:
         """Generate a report based on the conversation and specified goal"""

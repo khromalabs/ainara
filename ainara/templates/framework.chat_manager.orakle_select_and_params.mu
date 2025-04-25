@@ -14,8 +14,8 @@ Based on the user's request and the detailed skill descriptions provided above:
 
 1.  **Choose the single BEST skill** from the candidates that most accurately fulfills the user's request.
 2.  **Extract the necessary parameters** for the chosen skill from the user's request ("{{query}}"), following the parameter specifications listed in that skill's description.
-3.  If a parameter isn't explicitly mentioned in the request but is required or can be reasonably inferred (e.g., default values mentioned in the description), include it.
-4.  For parameters not mentioned and not inferable, omit them from the JSON unless they are explicitly marked as required with no default.
+3.  NEVER add a parameter which is not present in the parameter specifications. If a potentially required parameter to fulfill the user's request is not present, simply discard that skill as a possible candidate. All the possible paramers will always be present in the parameter specifications.
+4.  Only add parameters masked as optional if are actually required to fulfill the user's request.
 5.  Format the output STRICTLY as a JSON object containing ONLY the chosen `skill_id` (string) and the extracted `parameters` (object).
 
 Example Output Format:
@@ -35,4 +35,4 @@ Another Example:
   }
 }
 
-Ensure the output contains ONLY the JSON object, with no explanations, comments, backticks, or any other text before or after it. Use double quotes for all keys and string values within the JSON. For empty or null values, use `null`.
+Ensure the output contains ONLY the JSON object, with no explanations, comments, backticks, or any other text before or after it. Use double quotes for all keys and string values within the JSON. For empty or null values, just use `null`.

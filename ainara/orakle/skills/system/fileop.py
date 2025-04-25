@@ -19,7 +19,7 @@
 
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Union, Annotated, Optional, Literal
+from typing import Annotated, Any, Dict, Literal, Optional, Union
 
 from ainara.framework.skill import Skill
 
@@ -27,35 +27,41 @@ from ainara.framework.skill import Skill
 class SystemFileop(Skill):
     """Perform file operations in the local system as file read, list or exists"""
 
+    matcher_info = (
+        "Use this skill when the user wants to perform file operations on the"
+        " local system, such as reading file contents, listing directory"
+        " contents, or checking if a file or directory exists. This skill can"
+        " handle basic file system interactions but not complex searches or"
+        " modifications. Examples include: 'read the content of notes.txt',"
+        " 'list files in Documents folder', 'does config.json exist', 'show"
+        " directory contents of Downloads'.\n\nKeywords: file, read, list,"
+        " exists, check, directory, folder, content, system, local, path."
+    )
+
     def __init__(self):
         super().__init__()
 
     async def run(
-        self, 
+        self,
         operation: Annotated[
             Literal["read", "list", "exists"],
-            "The operation to perform (read, list, exists)"
+            "The operation to perform (read, list, exists)",
         ],
-        path: Annotated[
-            Union[str, Path],
-            "Path to the file or directory"
-        ],
+        path: Annotated[Union[str, Path], "Path to the file or directory"],
         content: Annotated[
-            Optional[str],
-            "Content to write to file (for write operation)"
+            Optional[str], "Content to write to file (for write operation)"
         ] = None,
         recursive: Annotated[
             Optional[bool],
-            "Whether to operate recursively (for delete/list operations)"
+            "Whether to operate recursively (for delete/list operations)",
         ] = None,
         pattern: Annotated[
-            Optional[str],
-            "File pattern to match (for find operation)"
+            Optional[str], "File pattern to match (for find operation)"
         ] = None,
         case_sensitive: Annotated[
             Optional[bool],
-            "Whether pattern matching is case sensitive (for find operation)"
-        ] = None
+            "Whether pattern matching is case sensitive (for find operation)",
+        ] = None,
     ) -> Dict[str, Any]:
         """Perform file system operations"""
         path = Path(path)
@@ -65,9 +71,9 @@ class SystemFileop(Skill):
             "list": self._list_directory,
             "exists": self._check_exists,
         }
-#            "write": self._write_file,
-#            "delete": self._delete_file,
-#            "find": self._find_files,
+        #            "write": self._write_file,
+        #            "delete": self._delete_file,
+        #            "find": self._find_files,
 
         if operation not in operations:
             raise ValueError(f"Unsupported operation: {operation}")
@@ -82,7 +88,7 @@ class SystemFileop(Skill):
             kwargs["pattern"] = pattern
         if case_sensitive is not None:
             kwargs["case_sensitive"] = case_sensitive
-            
+
         return await operations[operation](path, **kwargs)
 
     async def _read_file(self, path: Path, **kwargs) -> Dict[str, Any]:

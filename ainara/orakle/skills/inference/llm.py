@@ -17,11 +17,11 @@
 # Lesser General Public License for more details.
 
 
-from typing import Dict, Any, Annotated
+from typing import Annotated
 
-from ainara.framework.skill import Skill
-from ainara.framework.llm import create_llm_backend
 from ainara.framework.config import ConfigManager
+from ainara.framework.llm import create_llm_backend
+from ainara.framework.skill import Skill
 
 
 class InferenceLlm(Skill):
@@ -39,11 +39,10 @@ class InferenceLlm(Skill):
         )
 
     def run(
-        self, 
+        self,
         prompt: Annotated[
-            str,
-            "Text prompt to be processed by the language model"
-        ]
+            str, "Text prompt to be processed by the language model"
+        ],
     ) -> str:
         """Processes text using a language model"""
         result = self.llm.chat(

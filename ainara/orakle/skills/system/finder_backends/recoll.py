@@ -36,6 +36,7 @@ class RecollBackend(SearchBackend):
         try:
             logging.debug("Attempting to import recoll._recoll...")
             import recoll._recoll as recoll
+
             logging.debug("Successfully imported recoll._recoll")
 
             logging.debug("Attempting to connect to Recoll DB...")
@@ -44,7 +45,9 @@ class RecollBackend(SearchBackend):
             return True
         except Exception as e:
             logging.error(f"Failed to initialize Recoll: {e}")
-            logging.debug(f"Recoll initialization error details:", exc_info=True)
+            logging.debug(
+                "Recoll initialization error details:", exc_info=True
+            )
             return False
 
     def is_available(self) -> bool:
@@ -87,9 +90,11 @@ class RecollBackend(SearchBackend):
                     query_parts.append(content_string)
 
             # Combine all parts with AND
-            query_string = " AND ".join(f"{part}" for part in query_parts if part)
-            
-            logging.debug(f"Query construction:")
+            query_string = " AND ".join(
+                f"{part}" for part in query_parts if part
+            )
+
+            logging.debug("Query construction:")
             logging.debug(f"  File types: {file_types}")
             logging.debug(f"  Time frame: {time_frame}")
             logging.debug(f"  Content: {content}")
@@ -108,32 +113,55 @@ class RecollBackend(SearchBackend):
             for i in range(result_count):
                 doc = query.fetchone()
                 logging.debug(f"Result {i+1}: {doc.url}")
-                logging.debug(f"Document attributes:")
+                logging.debug("Document attributes:")
                 logging.debug(f"  URL: {doc.url}")
                 logging.debug(f"  Filename: {doc.filename}")
                 logging.debug(f"  Type: {doc.mtype}")
                 logging.debug(f"  Size: {type(doc.dbytes)} - {doc.dbytes}")
                 logging.debug(f"  Created: {type(doc.fmtime)} - {doc.fmtime}")
                 logging.debug(f"  Modified: {type(doc.dmtime)} - {doc.dmtime}")
-                logging.debug(f"  Rating: {type(doc.relevancyrating)} - {doc.relevancyrating}")
-                
+                logging.debug(
+                    f"  Rating: {type(doc.relevancyrating)} -"
+                    f" {doc.relevancyrating}"
+                )
+
                 try:
                     results.append(
                         SearchResult(
                             path=str(Path(doc.url)),
                             name=doc.filename,
                             type=doc.mtype,
-                            size=int(doc.dbytes) if doc.dbytes and isinstance(doc.dbytes, str) else (doc.dbytes or 0),
-                            created=datetime.fromtimestamp(int(doc.fmtime) if doc.fmtime and isinstance(doc.fmtime, str) else (doc.fmtime or 0)),
-                            modified=datetime.fromtimestamp(int(doc.dmtime) if doc.dmtime and isinstance(doc.dmtime, str) else (doc.dmtime or 0)),
+                            size=(
+                                int(doc.dbytes)
+                                if doc.dbytes and isinstance(doc.dbytes, str)
+                                else (doc.dbytes or 0)
+                            ),
+                            created=datetime.fromtimestamp(
+                                int(doc.fmtime)
+                                if doc.fmtime and isinstance(doc.fmtime, str)
+                                else (doc.fmtime or 0)
+                            ),
+                            modified=datetime.fromtimestamp(
+                                int(doc.dmtime)
+                                if doc.dmtime and isinstance(doc.dmtime, str)
+                                else (doc.dmtime or 0)
+                            ),
                             snippet=doc.snippet,
                             metadata={
                                 "author": doc.author,
                                 "title": doc.title,
                                 "abstract": doc.abstract,
                             },
-                            score=float(doc.relevancyrating.rstrip('%'))/100.0 if isinstance(doc.relevancyrating, str) and '%' in doc.relevancyrating 
-                                  else (float(doc.relevancyrating) if doc.relevancyrating else 0.0),
+                            score=(
+                                float(doc.relevancyrating.rstrip("%")) / 100.0
+                                if isinstance(doc.relevancyrating, str)
+                                and "%" in doc.relevancyrating
+                                else (
+                                    float(doc.relevancyrating)
+                                    if doc.relevancyrating
+                                    else 0.0
+                                )
+                            ),
                         )
                     )
                 except Exception as e:
@@ -183,7 +211,7 @@ class RecollBackend(SearchBackend):
         else:
             # Handle exact date range
             value = str(time_frame["value"])
-            
+
             # If it's just a year
             if value.isdigit() and len(value) == 4:
                 # Use broader date range to catch more potential matches
@@ -192,6 +220,6 @@ class RecollBackend(SearchBackend):
                 start_year = year - 1
                 end_year = year + 1
                 return f"date:{start_year}-06-01/{end_year}-06-30"
-            
+
             # For other date formats
             return f"date:{value}"
