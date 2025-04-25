@@ -14,5 +14,5 @@ escaped_old_version=$(echo "$old_version" | sed 's/\./\\./g')
 
 # Find files containing the old version and update them
 for file in $(bin/agrep "$escaped_old_version" | awk -F: '{print $1}'); do
-    echo replace "$old_version" "$new_version" -- "$file"
+    replace "$old_version" "$new_version" -- "$file"
 done
