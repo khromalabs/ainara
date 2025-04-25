@@ -38,10 +38,10 @@ class TimeWeather(Skill):
             "Use this skill when the user wants to get current weather"
             " information for their location or a specific location. This"
             " skill can determine the user's location using IP-based"
-            " geolocation if no location is provided. Examples include: 'what"
+            " geolocation if no location is provided.\n\nExamples include: 'what"
             " is the weather like today', 'tell me the forecast for London',"
             " 'how hot is it in New York', 'current temperature in Paris'."
-            " \n\nKeywords: weather, forecast, temperature, current, today,"
+            " Keywords: weather, forecast, temperature, current, today,"
             " location, city, country, climate, rain, sun, wind, humidity."
         )
         self.logger = logging.getLogger(__name__)

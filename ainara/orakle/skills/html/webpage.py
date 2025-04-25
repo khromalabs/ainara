@@ -17,10 +17,11 @@
 # Lesser General Public License for more details.
 
 
+from typing import Annotated, Any, Dict, Literal
+
 import requests
 import validators
 from newspaper import Article
-from typing import Dict, Any, Annotated, Literal
 
 from ainara.framework.skill import Skill
 
@@ -29,13 +30,13 @@ class HtmlWebpage(Skill):
     """Download the text of a website or webpage represented by a URL."""
 
     matcher_info = (
-        "Use ONLY when the user explicitly asks to download, fetch, get, retrieve,"
-        " summarize, or analyze the CONTENT of a specific webpage or URL."
+        "Use ONLY when the user explicitly asks to download, fetch, get,"
+        " retrieve, summarize, or analyze the CONTENT of a specific webpage or"
+        " URL. DO NOT use this skill if the user only asks FOR the URL itself"
+        " (e.g., 'What is the website for X?'). Use ONLY if a specific URL is"
+        " provided or clearly implied in the request for its content.\n\n"
         " Keywords: download webpage, get website text, fetch URL content,"
         " extract text from page, summarize website, analyze page content."
-        " DO NOT use if the user only asks FOR the URL itself (e.g., 'What is"
-        " the website for X?'). Use ONLY if a specific URL is provided or"
-        " clearly implied in the request for its content."
     )
 
     def __init__(self):
@@ -63,15 +64,12 @@ class HtmlWebpage(Skill):
             return None, str(e)
 
     async def run(
-        self, 
-        url: Annotated[
-            str,
-            "URL of the webpage to download and process"
-        ],
+        self,
+        url: Annotated[str, "URL of the webpage to download and process"],
         format: Annotated[
             Literal["text", "html"],
-            "The format of the returned output: html or text"
-        ] = "text"
+            "The format of the returned output: html or text",
+        ] = "text",
     ) -> Dict[str, Any]:
         """Downloads the text of a website or webpage represented by a URL"""
         # Try adding https:// prefix if no protocol specified

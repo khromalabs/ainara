@@ -34,14 +34,13 @@ class FinanceStocks(Skill):
     matcher_info = (
         "Use this skill when the user wants to get current stock market"
         " information, including stock quotes, company overviews, or search"
-        " for stock symbols. This skill is valid only for present data and NOT"
-        " for historical queries or time-constrained data."
-        "\n\n"
-        " Examples include:"
-        " 'what is the current price of AAPL', 'give me an overview of"
-        " Microsoft stock', 'search for tech company stocks', 'get quote for"
-        " TSLA'. Keywords: stock, shares, market, price, quote, current,"
-        " present, company, overview, search, symbol, finance, investment."
+        " for stock symbols. This skill is valid ONLY for queries about"
+        " PRESENT data and NOT for historical requests or time-constrained"
+        " data.\n\n Examples include: 'what is the current price of AAPL',"
+        " 'give me an overview of Microsoft stock', 'search for tech company"
+        " stocks', 'get quote for TSLA'. Keywords: stock, shares, market,"
+        " price, quote, current, present, company, overview, search, symbol,"
+        " finance, investment."
     )
 
     def __init__(self):

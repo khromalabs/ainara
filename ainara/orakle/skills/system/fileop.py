@@ -32,9 +32,9 @@ class SystemFileop(Skill):
         " local system, such as reading file contents, listing directory"
         " contents, or checking if a file or directory exists. This skill can"
         " handle basic file system interactions but not complex searches or"
-        " modifications. Examples include: 'read the content of notes.txt',"
+        " modifications.\n\nExamples include: 'read the content of notes.txt',"
         " 'list files in Documents folder', 'does config.json exist', 'show"
-        " directory contents of Downloads'.\n\nKeywords: file, read, list,"
+        " directory contents of Downloads'. Keywords: file, read, list,"
         " exists, check, directory, folder, content, system, local, path."
     )
 

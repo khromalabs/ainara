@@ -33,9 +33,9 @@ class SystemClipboard(Skill):
         "Use this skill when the user wants to interact with the system"
         " clipboard, including reading, writing, or clearing clipboard"
         " contents. This skill can handle operations related to copying text"
-        " or data to and from the clipboard. Examples include: 'read clipboard"
+        " or data to and from the clipboard.\n\nExamples include: 'read clipboard"
         " content', 'copy this text to clipboard', 'clear my clipboard', 'what"
-        " is in my clipboard'. \n\nKeywords: clipboard, copy, paste, read,"
+        " is in my clipboard'. Keywords: clipboard, copy, paste, read,"
         " write, clear, content, text, data."
     )
 

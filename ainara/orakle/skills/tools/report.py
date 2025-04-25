@@ -33,10 +33,10 @@ class ToolsReport(Skill):
         "Use this skill when the user wants to generate a report based on a"
         " conversation or specific content. This skill can create"
         " well-structured reports in various formats like markdown, text, or"
-        " HTML, and save them to a file. Examples include: 'generate a report"
+        " HTML, and save them to a file.\n\nExamples include: 'generate a report"
         " from this chat', 'create a summary report in markdown', 'make a"
         " report about our discussion', 'save a report of this conversation as"
-        " HTML'.\n\nKeywords: report, generate, create, summary, document, save,"
+        " HTML'. Keywords: report, generate, create, summary, document, save,"
         " file, markdown, text, HTML, conversation, chat, content."
     )
 
