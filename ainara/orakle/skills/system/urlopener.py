@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 class SystemUrlopener(Skill):
     """Open or launch one URL or several URLs addresses in the system browser"""
 
+    matcher_info = (
+        "Use this skill when the user wants to open or launch a URL or multiple URLs in the system browser. "
+        "This skill can handle web addresses, local file paths, and other supported protocols like FTP. "
+        "Examples include: 'open example.com', 'launch github.com and stackoverflow.com', "
+        "'open file:///home/user/doc.pdf', 'go to google.com'. "
+        "Keywords: open, launch, go to, browse, URL, web, website, link, address, browser, file, local, http, https, ftp."
+    )
+
     def __init__(self):
         super().__init__()
         self.supported_protocols = ["http", "https", "ftp", "file"]

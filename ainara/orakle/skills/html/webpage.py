@@ -29,13 +29,13 @@ class HtmlWebpage(Skill):
     """Download the text of a website or webpage represented by a URL."""
 
     matcher_info = (
-        "Download a webpage and extract its text content. Don't use this skill"
-        " if the user is not explicitely asking for the download of the"
-        " content of the website, eg query `Which is the website of company"
-        " ACME` this skill DOESN'T APPLY, in that case we must return just the"
-        " website URL. For a query `Download the website of company ACME` or"
-        " `Download this page in this URL www.acme.com` this skill IT DOES"
-        " APPLY, the user is requesting a website download."
+        "Use ONLY when the user explicitly asks to download, fetch, get, retrieve,"
+        " summarize, or analyze the CONTENT of a specific webpage or URL."
+        " Keywords: download webpage, get website text, fetch URL content,"
+        " extract text from page, summarize website, analyze page content."
+        " DO NOT use if the user only asks FOR the URL itself (e.g., 'What is"
+        " the website for X?'). Use ONLY if a specific URL is provided or"
+        " clearly implied in the request for its content."
     )
 
     def __init__(self):

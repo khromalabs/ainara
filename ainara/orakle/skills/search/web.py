@@ -20,7 +20,7 @@
 import asyncio
 import datetime
 import logging
-from typing import Any, Dict, List, Union, Annotated, Optional, Literal
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from ainara.framework.config import config
 from ainara.framework.skill import Skill
@@ -38,9 +38,13 @@ class SearchWeb(Skill):
         hiddenCapability = True
 
     matcher_info = (
-        " I will ALWAYS use this skill whenever the user explicitely requests"
-        " in the query to do a web search or research, or a expression which"
-        " resembles that."
+        "Primarily use when the user explicitly requests a web search,"
+        " internet lookup, or research. Also consider for queries seeking"
+        " information beyond built-in knowledge, such as: current events,"
+        " breaking news, specific facts, product details or reviews, company"
+        " information, recent developments, public opinions, diverse"
+        " perspectives, real-time data, or general knowledge questions"
+        " requiring external lookup."
     )
 
     def __init__(self):
@@ -178,29 +182,26 @@ class SearchWeb(Skill):
 
     async def run(
         self,
-        query: Annotated[
-            str,
-            "Search web query string"
-        ],
+        query: Annotated[str, "Search web query string"],
         search_type: Annotated[
-            Literal["comprehensive", "academic", "recent", "exploratory", "news"],
-            "Type of search to perform"
+            Literal[
+                "comprehensive", "academic", "recent", "exploratory", "news"
+            ],
+            "Type of search to perform",
         ] = "comprehensive",
-        num_results: Annotated[
-            int,
-            "Number of results to return"
-        ] = 20,
+        num_results: Annotated[int, "Number of results to return"] = 20,
         engine: Annotated[
             Optional[Union[str, List[str]]],
-            "Which search engine(s) to use (single string or list of strings). If None or 'meta', uses all available engines"
+            "Which search engine(s) to use (single string or list of strings)."
+            " If None or 'meta', uses all available engines",
         ] = None,
         recency: Annotated[
             Optional[str],
-            "Filter results by recency (e.g., '24h', '7d', '1w', '1m', '1y'). h=hours, d=days, w=weeks, m=months, y=years"
+            "Filter results by recency (e.g., '24h', '7d', '1w', '1m', '1y')."
+            " h=hours, d=days, w=weeks, m=months, y=years",
         ] = None,
         **kwargs: Annotated[
-            Optional[Dict[str, Any]],
-            "Additional engine-specific parameters"
+            Optional[Dict[str, Any]], "Additional engine-specific parameters"
         ],
     ) -> Dict[str, Any]:
         """Perform a web search or research on the Internet"""

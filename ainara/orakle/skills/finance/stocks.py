@@ -32,9 +32,11 @@ class FinanceStocks(Skill):
         hiddenCapability = True
 
     matcher_info = (
-        "Valid only for queries user about current, present stock market shares value."
-        " Only use this skill for stock shares queries. This skill is NOT valid"
-        " for valid for historical queries or queries with time constrains."
+        "Use this skill when the user wants to get current stock market information, including stock quotes, company overviews, or search for stock symbols. "
+        "This skill is valid only for present data and NOT for historical queries or time-constrained data. "
+        "Examples include: 'what is the current price of AAPL', 'give me an overview of Microsoft stock', "
+        "'search for tech company stocks', 'get quote for TSLA'. "
+        "Keywords: stock, shares, market, price, quote, current, present, company, overview, search, symbol, finance, investment."
     )
 
     def __init__(self):

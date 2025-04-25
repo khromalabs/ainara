@@ -39,6 +39,14 @@ logger = logging_manager.logger
 class SystemFinder(Skill):
     """Intelligent file search with LLM-assisted disambiguation and location reveal"""
 
+    matcher_info = (
+        "Use this skill when the user wants to find or search for files, documents, or folders on their system. "
+        "This skill can handle queries related to locating files by name, type, content, date, size, or location. "
+        "Examples include: 'find PDF files from last week', 'search for marketing presentation', "
+        "'locate budget spreadsheet in Downloads', 'show me photos from yesterday'. "
+        "Keywords: find, search, locate, file, document, folder, PDF, image, presentation, spreadsheet, recent, old, large, small, Downloads, Desktop."
+    )
+
     def __init__(self):
         super().__init__()
         self.backend = self._initialize_backend()
