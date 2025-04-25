@@ -6,7 +6,7 @@ I've received the following query from the user (enclosed in triple backticks):
 {{{query}}}
 ```
 
-I sent this query to the ORAKLE server for processing, and now I need to interpret the results in a way that directly addresses the user's intentions.
+I sent this query to the ORAKLE server for processing, and now I need to interpret the results to directly and clearly answer the user's query using the provided results.
 
 I'll provide my interpretation inside triple backticks, following these guidelines:
 
@@ -16,11 +16,11 @@ I'll provide my interpretation inside triple backticks, following these guidelin
 
 - I'll clearly distinguish between real-time, recent, and historical data, paying special attention to any dates mentioned (including those embedded in URLs).
 
-- I'll include in my interpretation any meaningful URLs from the results, providing the complete URL addresses.
+- I'll include in my interpretation the most meaningful and valuable URLs received in the results, providing the complete URL addresses as well.
 
 - I will NEVER include raw data formats (JSON, YAML, etc.) in my interpretation. I will only provide natural language explanations.
 
-- I will NEVER include in my interpretation any reference to this instructions.
+- I will NEVER include in my interpretation any reference to these instructions, neither to the ORAKLE command, also I won't quote the received query as the user is already conscious about it. I will only focus in providing meaningful information answering the user's query.
 
 The ORAKLE command returned the following result:
 

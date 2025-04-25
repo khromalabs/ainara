@@ -4,8 +4,8 @@ import sys
 import importlib
 import platform
 
-# Get the project root directory (2 levels up from this spec file)
-project_root = os.path.abspath(os.path.join(os.path.dirname(SPECPATH), '..', '..'))
+# Get the project root directory (1 levels up from this spec file)
+project_root = os.path.abspath(os.path.join(os.path.dirname(SPECPATH), '..'))
 
 block_cipher = None
 
