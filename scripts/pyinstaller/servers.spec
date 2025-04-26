@@ -55,16 +55,35 @@ if os.path.exists(tts_models_dir):
 
 # Add platform-specific binaries
 system = platform.system()
+arch = platform.machine().lower()
+
 if system == "Windows":
     # Add Windows-specific binaries
     piper_bin_dir = os.path.join(project_root, 'resources/bin/windows')
     if os.path.exists(piper_bin_dir):
         binaries.append((piper_bin_dir, 'resources/bin/windows'))
 elif system == "Darwin":  # macOS
-    # Add macOS-specific binaries
-    piper_bin_dir = os.path.join(project_root, 'resources/bin/macos')
-    if os.path.exists(piper_bin_dir):
-        binaries.append((piper_bin_dir, 'resources/bin/macos'))
+    # Add macOS-specific binaries with architecture awareness
+    if arch == "arm64":
+        # ARM64 (Apple Silicon) binaries
+        piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/aarch64')
+        if os.path.exists(piper_bin_dir):
+            binaries.append((piper_bin_dir, 'resources/bin/macos/aarch64'))
+        else:
+            # Fallback to generic macOS binaries if architecture-specific ones don't exist
+            piper_bin_dir = os.path.join(project_root, 'resources/bin/macos')
+            if os.path.exists(piper_bin_dir):
+                binaries.append((piper_bin_dir, 'resources/bin/macos'))
+    else:
+        # Intel binaries
+        piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/x64')
+        if os.path.exists(piper_bin_dir):
+            binaries.append((piper_bin_dir, 'resources/bin/macos/x64'))
+        else:
+            # Fallback to generic macOS binaries
+            piper_bin_dir = os.path.join(project_root, 'resources/bin/macos')
+            if os.path.exists(piper_bin_dir):
+                binaries.append((piper_bin_dir, 'resources/bin/macos'))
 else:  # Linux
     # Add Linux-specific binaries
     piper_bin_dir = os.path.join(project_root, 'resources/bin/linux')

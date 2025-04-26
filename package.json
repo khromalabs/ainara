@@ -1,6 +1,6 @@
 {
   "name": "polaris",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "main": "polaris/main.js",
   "dependencies": {
     "@ricky0123/vad-web": "^0.0.22",
@@ -64,6 +64,27 @@
       "polaris/**/*",
       "package.json"
     ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "polaris/assets/tray-icon-active-light.png",
+      "category": "public.app-category.productivity",
+      "extraResources": [
+        {
+          "from": "dist/servers",
+          "to": "bin/servers",
+          "filter": [
+            "**/*",
+            "!**/_internal/resources/bin/windows/**",
+            "!**/_internal/resources/bin/linux/**"
+          ]
+        }
+      ]
+    },
     "win": {
       "target": "nsis",
       "icon": "polaris/assets/tray-icon-active-light.png",
@@ -74,22 +95,6 @@
           "filter": [
             "**/*",
             "!**/_internal/resources/bin/macos/**",
-            "!**/_internal/resources/bin/linux/**"
-          ]
-        }
-      ]
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "polaris/assets/tray-icon-active-light.png",
-      "category": "public.app-category.productivity",
-      "extraResources": [
-        {
-          "from": "dist/servers",
-          "to": "bin/servers",
-          "filter": [
-            "**/*",
-            "!**/_internal/resources/bin/windows/**",
             "!**/_internal/resources/bin/linux/**"
           ]
         }

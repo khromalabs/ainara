@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         # os: [ubuntu-latest, macos-latest, windows-latest]
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, macos-latest-arm64, windows-latest]
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
@@ -128,10 +128,18 @@ jobs:
         BRANCH_PART="${TAG_NAME%-v*}"
         # Extract version part (e.g., v1.0.0)
         VERSION_PART="${TAG_NAME#*-}"
-        # Clean the OS name (e.g., macos-latest -> macos)
-        OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//')"
+        # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
+        OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
+
+        # Determine architecture suffix
+        ARCH_SUFFIX=""
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          ARCH_SUFFIX="-${{ runner.arch }}"
+        fi
+
         # Construct the desired filename
-        echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip" >> $GITHUB_ENV
+        echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip" >> $GITHUB_ENV
+        echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip"
 
     - name: Create Archive (Windows)
       if: runner.os == 'Windows'
