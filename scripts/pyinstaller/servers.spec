@@ -70,20 +70,14 @@ elif system == "Darwin":  # macOS
         if os.path.exists(piper_bin_dir):
             binaries.append((piper_bin_dir, 'resources/bin/macos/aarch64'))
         else:
-            # Fallback to generic macOS binaries if architecture-specific ones don't exist
-            piper_bin_dir = os.path.join(project_root, 'resources/bin/macos')
-            if os.path.exists(piper_bin_dir):
-                binaries.append((piper_bin_dir, 'resources/bin/macos'))
+            raise ValueError(f"Expected Piper bin dir {piper_bin_dir} not found")
     else:
         # Intel binaries
         piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/x64')
         if os.path.exists(piper_bin_dir):
             binaries.append((piper_bin_dir, 'resources/bin/macos/x64'))
         else:
-            # Fallback to generic macOS binaries
-            piper_bin_dir = os.path.join(project_root, 'resources/bin/macos')
-            if os.path.exists(piper_bin_dir):
-                binaries.append((piper_bin_dir, 'resources/bin/macos'))
+            raise ValueError(f"Expected Piper bin dir {piper_bin_dir} not found")
 else:  # Linux
     # Add Linux-specific binaries
     piper_bin_dir = os.path.join(project_root, 'resources/bin/linux')

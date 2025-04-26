@@ -1064,7 +1064,7 @@ def create_app():
                 # Running in PyInstaller bundle
                 # Use the bundled resource path
                 default_config_path = os.path.join(
-                    sys._MEIPASS, "ainara", "resources", "ainara.yaml.defaults"
+                    sys._MEIPASS, "resources", "ainara.yaml.defaults"
                 )
                 logger.info(
                     "Running from PyInstaller bundle, looking for config at:"
