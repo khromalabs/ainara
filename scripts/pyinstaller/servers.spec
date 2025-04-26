@@ -76,7 +76,7 @@ common_datas = [
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
-    (os.path.join(project_root, 'ainara/resources'), 'ainara/resources'),
+    (os.path.join(project_root, 'resources'), 'resources'),
     *datas,
     *package_datas
 ]
