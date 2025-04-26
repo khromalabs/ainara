@@ -27,6 +27,7 @@ const ConfigManager = require('../utils/config');
 
 const config = new ConfigManager();
 
+
 class ServiceManager {
     constructor() {
         // Singleton pattern
@@ -38,6 +39,7 @@ class ServiceManager {
         // Determine executable paths based on platform
         const platform = os.platform();
         const isDevMode = !app.isPackaged;
+        this.startProgress = 30
 
         // Base directory for executables
         let executablesDir;
@@ -104,12 +106,12 @@ class ServiceManager {
             this.startService('pybridge')
         ];
 
-        this.updateProgress('Waiting for services to initialize...', 30);
+        this.updateProgress('Initializing Orakle server...', this.startProgress);
 
         try {
             await Promise.all(startPromises);
             Logger.info("--- all services started successfully");
-            this.updateProgress('Services started successfully', 50);
+            this.updateProgress('Services started successfully', 70);
 
             // Start health check monitoring
             this.startHealthCheck();
@@ -184,8 +186,11 @@ class ServiceManager {
                 // Ignore errors during startup
             }
 
+            this.startProgress++;
+            this.updateProgress('Initializing Orakle server...', this.startProgress);
+
             // Wait before next attempt
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         throw new Error(`Timeout waiting for ${service.name} to become healthy`);
@@ -266,7 +271,7 @@ class ServiceManager {
                     // Normal graceful shutdown
                     Logger.log(`Gracefully stopping ${service.name} (SIGTERM)`);
                     service.process.kill('SIGTERM');
-                    
+
                     const forceKillTimeout = setTimeout(() => {
                         if (service.process && !service.process.killed) {
                             Logger.log(`${service.name} didn't terminate gracefully, forcing SIGKILL`);

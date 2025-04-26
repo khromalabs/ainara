@@ -60,6 +60,12 @@ function isFirstRun() {
 function showSetupWizard() {
     Logger.info('First run detected, showing setup wizard');
 
+   // Disable tray icon
+    if (tray) {
+        tray.setContextMenu(null);
+        tray.removeAllListeners('click');
+    }
+
     // Get the appropriate icon based on theme
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
@@ -106,6 +112,12 @@ function showSetupWizard() {
         wizardActive = false;
         appSetupShortcuts();
         updateProviderSubmenu();
+        // Re-enable tray icon
+        if (tray) {
+            tray.destroy();
+            await appCreateTray();
+        }
+
         await restartWithSplash();
     }
 
@@ -417,6 +429,11 @@ function appSetupShortcuts() {
 async function appCreateTray() {
     const iconPath = path.join(__dirname, 'assets');
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+
+     if (wizardActive) {
+        Logger.info('Can\'t create the tray while the wizard is active');
+        return;
+     }
 
     // Set initial tray icon based on service health
     const iconStatus =  'inactive';
