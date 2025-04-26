@@ -101,7 +101,13 @@ class PiperTTS(TTSBackend):
         """Initialize piper backend"""
         self._current_process: Optional[subprocess.Popen] = None
 
-        # Initialize pygame mixer for audio playback
+        # # Initialize pygame mixer for audio playback with platform-specific settings
+        # if platform.system() == 'Darwin':
+        #     mixer.pre_init(
+        #         frequency=22050,
+        #         buffer=4096,
+        #         allowedchanges=0
+        #     )
         mixer.init(frequency=22050)
 
         # Create temp directory for audio files
@@ -141,38 +147,46 @@ class PiperTTS(TTSBackend):
 
         # Check bundled binary first
         system = platform.system()
+        # machine = platform.machine().lower()
         # Get the base directory of the application
         base_dir = Path(__file__).parent.parent.parent
 
         if system == "Windows":
             bundled_path = base_dir / "resources/bin/windows/piper/piper.exe"
         elif system == "Darwin":  # macOS
-            bundled_path = base_dir / "resources/bin/macos/piper/piper"
+            mac_arch = self._get_macos_architecture()
+            bundled_path = (
+                base_dir / "resources/bin/macos/{mac_arch}/piper/piper"
+            )
         else:  # Linux
             bundled_path = base_dir / "resources/bin/linux/piper/piper"
 
-        if 'bundled_path' in locals() and bundled_path.exists():
+        if "bundled_path" in locals() and bundled_path.exists():
             self.logger.info(f"Using bundled Piper binary: {bundled_path}")
             return str(bundled_path)
-        # Common locations to check
-        common_locations = [
-            "/usr/bin/piper-tts",
-            "/usr/bin/piper",
-            "/usr/local/bin/piper-tts",
-            "/usr/local/bin/piper",
-            "/opt/piper/piper",
-            os.path.expanduser("~/.local/bin/piper-tts"),
-            os.path.expanduser("~/.local/bin/piper"),
-        ]
 
-        # Add platform-specific locations
+        # Common locations to check
         if system == "Windows":
-            common_locations.extend(
-                [
-                    r"C:\Program Files\Piper\piper.exe",
-                    r"C:\Program Files (x86)\Piper\piper.exe",
-                ]
-            )
+            common_locations = [
+                r"C:\Program Files\Piper\piper.exe",
+                r"C:\Program Files (x86)\Piper\piper.exe",
+            ]
+        else:
+            common_locations = [
+                "/usr/bin/piper-tts",
+                "/usr/bin/piper",
+                "/usr/local/bin/piper-tts",
+                "/usr/local/bin/piper",
+                "/opt/piper/piper",
+                os.path.expanduser("~/.local/bin/piper-tts"),
+                os.path.expanduser("~/.local/bin/piper"),
+            ]
+            if system == "Darwin":
+                common_locations.extend(
+                    [
+                        "/opt/homebrew/bin/piper",
+                    ]
+                )
 
         # Check if piper is in PATH
         piper_in_path = shutil.which("piper-tts") or shutil.which("piper")
@@ -207,7 +221,9 @@ class PiperTTS(TTSBackend):
 
         # Check for bundled models
         base_dir = Path(__file__).parent.parent.parent
-        bundled_model_dir = base_dir / "resources/tts/models"
+        bundled_model_dir = os.path.join(
+            base_dir, "resources", "tts", "models"
+        )
 
         if bundled_model_dir.exists():
             self.logger.info(
@@ -215,7 +231,7 @@ class PiperTTS(TTSBackend):
             )
             return str(bundled_model_dir)
 
-        # Use standard XDG data directory
+        # Use standard XDG data directory for other platforms
         user_data_dir = config.get("data.directory")
         model_dir = os.path.join(user_data_dir, "tts", "models")
         os.makedirs(model_dir, exist_ok=True)
@@ -412,15 +428,8 @@ class PiperTTS(TTSBackend):
                     )
                     return False
             elif system == "Darwin":  # macOS
-                if "arm64" in machine:
-                    filename = "piper_macos_aarch64.zip"
-                elif "amd64" in machine or "x86_64" in machine:
-                    filename = "piper_macos_x64.zip"
-                else:
-                    self.logger.error(
-                        f"Unsupported macOS architecture: {machine}"
-                    )
-                    return False
+                mac_arch = self._get_macos_architecture()
+                filename = f"piper_macos_{mac_arch}.zip"
             elif system == "Linux":
                 if "amd64" in machine or "x86_64" in machine:
                     filename = "piper_linux_x86_64.tar.gz"
@@ -476,12 +485,14 @@ class PiperTTS(TTSBackend):
             print("\nDownload complete!")
 
             # Extract the archive based on file extension
-            if filename.endswith('.tar.gz'):
+            if filename.endswith(".tar.gz"):
                 import tarfile
+
                 with tarfile.open(temp_path, "r:gz") as tar:
                     tar.extractall(bin_dir)
             else:  # Assume zip file
                 import zipfile
+
                 with zipfile.ZipFile(temp_path, "r") as zip_ref:
                     zip_ref.extractall(bin_dir)
 
@@ -490,6 +501,14 @@ class PiperTTS(TTSBackend):
                 piper_binary = bin_dir / "piper.exe"
             else:
                 piper_binary = bin_dir / "piper"
+                # Set executable permission on macOS/Linux
+                try:
+                    os.chmod(piper_binary, 0o755)
+                except Exception as e:
+                    self.logger.error(
+                        f"Could not set executable permissions: {e}"
+                    )
+                    return False
 
             # Create license file
             with open(bin_dir / "LICENSE-PIPER.txt", "w") as f:
@@ -507,6 +526,16 @@ class PiperTTS(TTSBackend):
 
             self.logger.error(traceback.format_exc())
             return False
+
+    def _get_macos_architecture(self) -> str:
+        """Get macOS architecture and return appropriate string"""
+        process = subprocess.run(
+            ["uname", "-m"], capture_output=True, text=True
+        )
+        arch = process.stdout.strip().lower()
+        if arch == "arm64":
+            return "aarch64"
+        return "x64"
 
     def _check_dependencies(self) -> None:
         """Check if required commands are available"""
