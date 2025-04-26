@@ -95,7 +95,7 @@ common_datas = [
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
-    (os.path.join(project_root, 'resources'), 'ainara/resources'),
+    (os.path.join(project_root, 'resources'), 'resources'),
     *datas,
     *package_datas
 ]
@@ -249,7 +249,7 @@ a_orakle = Analysis(
     binaries=binaries,
     datas=[*common_datas, *orakle_datas],
     hiddenimports=[*common_imports, *orakle_imports],
-    hookspath=[os.path.join(project_root, 'ainara/scripts', 'pyinstaller', 'hooks')],
+    hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
     excludes=[],
@@ -266,7 +266,7 @@ a_pybridge = Analysis(
     binaries=binaries,
     datas=[*common_datas, *pybridge_datas],
     hiddenimports=[*common_imports, *pybridge_imports],
-    hookspath=[os.path.join(project_root, 'ainara/scripts', 'pyinstaller', 'hooks')],
+    hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
     excludes=[],

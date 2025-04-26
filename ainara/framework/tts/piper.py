@@ -138,27 +138,32 @@ class PiperTTS(TTSBackend):
         self.logger.debug(f"Model directory: {self.model_dir}")
         self.logger.debug(f"Options: {self.options}")
 
+    def _get_resource_base_dir(self) -> Path:
+        """Determine the base directory for resources (project root or MEIPASS)."""
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Running as a bundled app (PyInstaller)
+            return Path(sys._MEIPASS)
+        else:
+            # Running from source
+            # __file__ -> tts -> framework -> ainara -> project_root
+            return Path(__file__).parent.parent.parent.parent
+
     def _find_piper_binary(self) -> str:
         """Find piper binary in bundled resources or common locations"""
-        # First check if explicitly configured
         configured_binary = config.get("tts.modules.piper.binary", "auto")
         if configured_binary != "auto" and os.path.exists(configured_binary):
             return configured_binary
 
-        # Check bundled binary first
+        resource_base_dir = self._get_resource_base_dir()
         system = platform.system()
-        # Get the base directory of the application
-        base_dir = Path(__file__).parent.parent.parent
 
         if system == "Windows":
-            bundled_path = base_dir / "resources/bin/windows/piper/piper.exe"
+            bundled_path = resource_base_dir / "resources/bin/windows/piper/piper.exe"
         elif system == "Darwin":  # macOS
             mac_arch = self._get_macos_architecture()
-            bundled_path = (
-                base_dir / "resources/bin/macos/{mac_arch}/piper/piper"
-            )
+            bundled_path = resource_base_dir / f"resources/bin/macos/{mac_arch}/piper/piper"
         else:  # Linux
-            bundled_path = base_dir / "resources/bin/linux/piper/piper"
+            bundled_path = resource_base_dir / "resources/bin/linux/piper/piper"
 
         if "bundled_path" in locals() and bundled_path.exists():
             self.logger.info(f"Using bundled Piper binary: {bundled_path}")
@@ -171,20 +176,17 @@ class PiperTTS(TTSBackend):
 
     def _get_model_directory(self) -> str:
         """Get the directory for storing TTS models"""
-        # First check if explicitly configured
         configured_dir = config.get("tts.modules.piper.model_dir", "auto")
         if configured_dir != "auto":
             model_dir = os.path.expanduser(configured_dir)
             os.makedirs(model_dir, exist_ok=True)
             return model_dir
 
-        # Check for bundled models
-        base_dir = Path(__file__).parent.parent.parent
-        bundled_model_dir = os.path.join(
-            base_dir, "resources", "tts", "models"
-        )
+        # Check for bundled models relative to resource base dir
+        resource_base_dir = self._get_resource_base_dir()
+        bundled_model_dir = resource_base_dir / "resources" / "tts" / "models"
 
-        if bundled_model_dir.exists():
+        if bundled_model_dir.is_dir():
             self.logger.info(
                 f"Using bundled model directory: {bundled_model_dir}"
             )
