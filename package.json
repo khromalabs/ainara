@@ -73,8 +73,8 @@
           "to": "bin/servers",
           "filter": [
             "**/*",
-            "!**/_internal/ainara/resources/bin/macos/**",
-            "!**/_internal/ainara/resources/bin/linux/**"
+            "!**/_internal/resources/bin/macos/**",
+            "!**/_internal/resources/bin/linux/**"
           ]
         }
       ]
@@ -89,8 +89,8 @@
           "to": "bin/servers",
           "filter": [
             "**/*",
-            "!**/_internal/ainara/resources/bin/windows/**",
-            "!**/_internal/ainara/resources/bin/linux/**"
+            "!**/_internal/resources/bin/windows/**",
+            "!**/_internal/resources/bin/linux/**"
           ]
         }
       ]
@@ -105,8 +105,8 @@
           "to": "bin/servers",
           "filter": [
             "**/*",
-            "!**/_internal/ainara/resources/bin/windows/**",
-            "!**/_internal/ainara/resources/bin/macos/**"
+            "!**/_internal/resources/bin/windows/**",
+            "!**/_internal/resources/bin/macos/**"
           ]
         }
       ]
