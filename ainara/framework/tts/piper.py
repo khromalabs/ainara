@@ -147,7 +147,6 @@ class PiperTTS(TTSBackend):
 
         # Check bundled binary first
         system = platform.system()
-        # machine = platform.machine().lower()
         # Get the base directory of the application
         base_dir = Path(__file__).parent.parent.parent
 
@@ -165,50 +164,10 @@ class PiperTTS(TTSBackend):
             self.logger.info(f"Using bundled Piper binary: {bundled_path}")
             return str(bundled_path)
 
-        # Common locations to check
-        if system == "Windows":
-            common_locations = [
-                r"C:\Program Files\Piper\piper.exe",
-                r"C:\Program Files (x86)\Piper\piper.exe",
-            ]
-        else:
-            common_locations = [
-                "/usr/bin/piper-tts",
-                "/usr/bin/piper",
-                "/usr/local/bin/piper-tts",
-                "/usr/local/bin/piper",
-                "/opt/piper/piper",
-                os.path.expanduser("~/.local/bin/piper-tts"),
-                os.path.expanduser("~/.local/bin/piper"),
-            ]
-            if system == "Darwin":
-                common_locations.extend(
-                    [
-                        "/opt/homebrew/bin/piper",
-                    ]
-                )
-
-        # Check if piper is in PATH
-        piper_in_path = shutil.which("piper-tts") or shutil.which("piper")
-        if piper_in_path:
-            self.logger.info(f"Found Piper in PATH: {piper_in_path}")
-            return piper_in_path
-
-        # Check common locations
-        for location in common_locations:
-            if os.path.exists(location):
-                self.logger.info(f"Found Piper at: {location}")
-                return location
-
         # If we get here, we couldn't find piper
-        self.logger.error(
-            "Could not find piper binary. Please install piper or specify the"
-            " path in config."
-        )
-        raise RuntimeError(
-            "Piper binary not found. Please install piper or specify the path"
-            " in config."
-        )
+        msg_error = "Could not find piper binary. Please install piper or specify the path in config."
+        self.logger.error(msg_error)
+        raise RuntimeError(msg_error)
 
     def _get_model_directory(self) -> str:
         """Get the directory for storing TTS models"""
@@ -400,128 +359,6 @@ class PiperTTS(TTSBackend):
 
         except Exception as e:
             self.logger.error(f"Unexpected error during Piper setup: {e}")
-            import traceback
-
-            self.logger.error(traceback.format_exc())
-            return False
-
-    def _download_piper_binary(self) -> bool:
-        """
-        Download the Piper binary for the current platform.
-
-        Returns:
-            bool: True if download was successful, False otherwise
-        """
-        try:
-            system = platform.system()
-            machine = platform.machine().lower()
-
-            # Determine the correct download URL based on platform
-            base_url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/"
-
-            if system == "Windows":
-                if "amd64" in machine or "x86_64" in machine:
-                    filename = "piper_windows_amd64.zip"
-                else:
-                    self.logger.error(
-                        f"Unsupported Windows architecture: {machine}"
-                    )
-                    return False
-            elif system == "Darwin":  # macOS
-                mac_arch = self._get_macos_architecture()
-                filename = f"piper_macos_{mac_arch}.zip"
-            elif system == "Linux":
-                if "amd64" in machine or "x86_64" in machine:
-                    filename = "piper_linux_x86_64.tar.gz"
-                elif "arm64" in machine:
-                    filename = "piper_linux_aarch64.zip"
-                elif "armv7" in machine:
-                    filename = "piper_linux_armv7l.zip"
-                else:
-                    self.logger.error(
-                        f"Unsupported Linux architecture: {machine}"
-                    )
-                    return False
-            else:
-                self.logger.error(f"Unsupported operating system: {system}")
-                return False
-
-            download_url = f"{base_url}/{filename}"
-
-            # Create directory for the binary
-            base_dir = Path(__file__).parent.parent.parent
-            if system == "Windows":
-                bin_dir = base_dir / "resources/bin/windows"
-            elif system == "Darwin":  # macOS
-                bin_dir = base_dir / "resources/bin/macos"
-            else:  # Linux
-                bin_dir = base_dir / "resources/bin/linux"
-
-            os.makedirs(bin_dir, exist_ok=True)
-
-            # Download the zip file
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(
-                suffix=".zip", delete=False
-            ) as temp_file:
-                temp_path = temp_file.name
-
-            self.logger.info(f"Downloading Piper binary from {download_url}")
-            print("Downloading Piper binary... This may take a few minutes.")
-
-            # Download with progress reporting
-            def report_progress(block_num, block_size, total_size):
-                downloaded = block_num * block_size
-                percent = min(100, int(downloaded * 100 / total_size))
-                sys.stdout.write(
-                    f"\rDownloading: {percent}% [{downloaded} / {total_size}]"
-                )
-                sys.stdout.flush()
-
-            urllib.request.urlretrieve(
-                download_url, temp_path, reporthook=report_progress
-            )
-            print("\nDownload complete!")
-
-            # Extract the archive based on file extension
-            if filename.endswith(".tar.gz"):
-                import tarfile
-
-                with tarfile.open(temp_path, "r:gz") as tar:
-                    tar.extractall(bin_dir)
-            else:  # Assume zip file
-                import zipfile
-
-                with zipfile.ZipFile(temp_path, "r") as zip_ref:
-                    zip_ref.extractall(bin_dir)
-
-            # Find the piper binary in the extracted files
-            if system == "Windows":
-                piper_binary = bin_dir / "piper.exe"
-            else:
-                piper_binary = bin_dir / "piper"
-                # Set executable permission on macOS/Linux
-                try:
-                    os.chmod(piper_binary, 0o755)
-                except Exception as e:
-                    self.logger.error(
-                        f"Could not set executable permissions: {e}"
-                    )
-                    return False
-
-            # Create license file
-            with open(bin_dir / "LICENSE-PIPER.txt", "w") as f:
-                f.write("MIT License - Copyright (c) 2022 Michael Hansen")
-
-            # Clean up
-            os.unlink(temp_path)
-
-            self.logger.info(f"Piper binary installed at: {piper_binary}")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error downloading Piper binary: {e}")
             import traceback
 
             self.logger.error(traceback.format_exc())
