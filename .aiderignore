@@ -1,0 +1,5 @@
+resources/*
+static/*
+venv/*
+node_modules/*
+dist/*
