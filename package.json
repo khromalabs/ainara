@@ -1,7 +1,16 @@
 {
   "name": "polaris",
   "version": "0.2.1",
+  "description": "Ainara Polaris - Electron frontend for the Ainara AI Companion Framework",
   "main": "polaris/main.js",
+  "author": {
+    "name": "Rubén Gómez",
+    "email": "rgomez@khromalabs.org",
+    "url": "https://khromalabs.org"
+  },
+  "license": "LGPL-3.0-or-later",
+  "repository": "github:khromalabs/ainara",
+  "bugs": "https://github.com/khromalabs/ainara/issues",
   "dependencies": {
     "@ricky0123/vad-web": "^0.0.22",
     "electron-updater": "^6.1.7",
