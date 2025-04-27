@@ -261,6 +261,8 @@ async function appInitialization() {
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
 
+        initializeAutoUpdater();
+
         // Create splash window
         splashWindow = new SplashWindow(config, null, null, __dirname);
         splashWindow.show();
@@ -269,6 +271,7 @@ async function appInitialization() {
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
             splashWindow.close();
+            initializeAutoUpdater();
             // Alternate application start for dev purposes
             externallyManagedServices = true;
             const resourceCheck = await ServiceManager.checkResourcesInitialization();
@@ -299,7 +302,6 @@ async function appInitialization() {
             :
                 showWindows(true);
 
-            initializeAutoUpdater();
             return;
         }
 
@@ -396,7 +398,6 @@ async function appInitialization() {
         if (llmProviders) {
             tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         }
-        initializeAutoUpdater();
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
@@ -608,17 +609,19 @@ async function updateProviderSubmenu() {
 function checkForUpdates(interactive = false) {
     Logger.info(`checkForUpdates called. Interactive: ${interactive}`);
     if (!config.get('autoUpdate.enabled', true) && !interactive) {
-        Logger.log("checkForUpdates: Auto-update disabled and not interactive, skipping check.");
+        Logger.info("checkForUpdates: Auto-update disabled and not interactive, skipping check.");
         return;
     }
 
+    Logger.info(`Checking for updates from: ${autoUpdater.getFeedURL()}`);
+
     autoUpdater.checkForUpdates().then(result => {
-        Logger.log("checkForUpdates .then() received result:", result);
+        Logger.info("checkForUpdates .then() received result:", JSON.stringify(result));
         // Log the crucial updateInfo part if it exists
         if (result && result.updateInfo) {
-            Logger.log("checkForUpdates .then() updateInfo:", result.updateInfo);
+            Logger.info("checkForUpdates .then() updateInfo:", JSON.stringify(result.updateInfo));
         } else {
-            Logger.log("checkForUpdates .then(): No updateInfo in result.");
+            Logger.info("checkForUpdates .then(): No updateInfo in result.");
         }
 
         if (!result?.updateInfo) {
@@ -646,17 +649,20 @@ function checkForUpdates(interactive = false) {
 function initializeAutoUpdater() {
     autoUpdater.autoDownload = false;
     autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', true);
-    Logger.log(`AutoUpdater: Initializing. autoDownload=${autoUpdater.autoDownload}, allowPrerelease=${autoUpdater.allowPrerelease}`);
-    Logger.log(`AutoUpdater: Current config - autoUpdate.enabled=${config.get('autoUpdate.enabled', true)}, updates.ignoredVersion=${config.get('updates.ignoredVersion', null)}`);
+    autoUpdater.logger = Logger;
+
+    Logger.info(`AutoUpdater: Initializing with version ${app.getVersion()}`);
+    Logger.info(`AutoUpdater: autoDownload=${autoUpdater.autoDownload}, allowPrerelease=${autoUpdater.allowPrerelease}`);
+    Logger.info(`AutoUpdater: Current config - autoUpdate.enabled=${config.get('autoUpdate.enabled', true)}, updates.ignoredVersion=${config.get('updates.ignoredVersion', null)}`);
 
     autoUpdater.on('update-available', (info) => {
-        Logger.log('AutoUpdater: update-available event handler START', info);
+        Logger.info('AutoUpdater: update-available event handler START', JSON.stringify(info));
         const newVersion = info.version;
         const ignoredVersion = config.get('updates.ignoredVersion', null);
 
         // Only proceed if the new version is strictly greater than the ignored version
         if (ignoredVersion && semver.lte(newVersion, ignoredVersion)) {
-            Logger.log(`Update available (${newVersion}) but ignored version (${ignoredVersion}) is same or newer. Skipping notification.`);
+            Logger.info(`Update available (${newVersion}) but ignored version (${ignoredVersion}) is same or newer. Skipping notification.`);
             return;
         }
 
@@ -675,7 +681,7 @@ function initializeAutoUpdater() {
             detail: `You are currently running version ${app.getVersion()}. Would you like to update?`
         }).then(({ response }) => {
             if (response === 0) { // Download Now
-                Logger.log(`User chose to download update ${newVersion}`);
+                Logger.info(`User chose to download update ${newVersion}`);
                 // Create and show the progress window BEFORE starting download
                 if (updateProgressWindow && !updateProgressWindow.isDestroyed()) {
                     updateProgressWindow.close(); // Close any existing instance
@@ -684,12 +690,12 @@ function initializeAutoUpdater() {
                 updateProgressWindow.show();
                 autoUpdater.downloadUpdate();
             } else if (response === 1) { // Ignore This Version
-                Logger.log(`User chose to ignore update version ${newVersion}`);
+                Logger.info(`User chose to ignore update version ${newVersion}`);
                 config.set('updates.ignoredVersion', newVersion);
                 updateAvailable = null; // Clear update info as it's ignored
                 showWindows(true);
             } else { // Later (or closed dialog)
-                Logger.log(`User chose to postpone update ${newVersion}`);
+                Logger.info(`User chose to postpone update ${newVersion}`);
                 updateAvailable = null; // Clear update info for this session
                 showWindows(true);
             }
@@ -707,7 +713,8 @@ function initializeAutoUpdater() {
         // windowManager.getWindow('comRing').webContents.send('update-progress', progress);
     });
 
-    autoUpdater.on('update-downloaded', () => {
+    autoUpdater.on('update-downloaded', (info) => {
+        Logger.info(`Update downloaded: ${JSON.stringify(info)}`);
         // Close the progress window first
         if (updateProgressWindow && updateProgressWindow.window && !updateProgressWindow.window.isDestroyed()) {
             updateProgressWindow.close();
