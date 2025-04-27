@@ -40,6 +40,7 @@ class ServiceManager {
         const platform = os.platform();
         const isDevMode = !app.isPackaged;
         this.startProgress = 30
+        this.initializeMsg = "Initializing services..."
 
         // Base directory for executables
         let executablesDir;
@@ -106,7 +107,7 @@ class ServiceManager {
             this.startService('pybridge')
         ];
 
-        this.updateProgress('Initializing Orakle server...', this.startProgress);
+        this.updateProgress(this.initializeMsg, this.startProgress);
 
         try {
             await Promise.all(startPromises);
@@ -187,10 +188,10 @@ class ServiceManager {
             }
 
             this.startProgress++;
-            this.updateProgress('Initializing Orakle server...', this.startProgress);
+            this.updateProgress(this.initializeMsg, this.startProgress);
 
             // Wait before next attempt
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         throw new Error(`Timeout waiting for ${service.name} to become healthy`);

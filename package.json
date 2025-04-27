@@ -1,6 +1,6 @@
 {
   "name": "polaris",
-  "version": "0.3.1",
+  "version": "0.2.1",
   "main": "polaris/main.js",
   "dependencies": {
     "@ricky0123/vad-web": "^0.0.22",
@@ -11,7 +11,7 @@
     "js-yaml": "^4.1.0",
     "node-fetch": "^2.7.0",
     "semver": "^7.6.0",
-    "web-audio-api": "^0.2.2",
+    "web-audio-api": "^0.2.1",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
@@ -40,11 +40,11 @@
     ]
   },
   "scripts": {
-    "start": "electron polaris/main.js",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux"
+    "start": "electron .",
+    "build": "electron-builder build",
+    "build:win": "electron-builder build --win --publish onTag",
+    "build:mac": "electron-builder build --mac --publish onTag",
+    "build:linux": "electron-builder build --linux --publish onTag"
   },
   "build": {
     "appId": "app.ainara.polaris",

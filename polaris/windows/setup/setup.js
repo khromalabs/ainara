@@ -2014,7 +2014,7 @@ function setupShortcutCapture() {
 async function finishSetup() {
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.3.1');
+    config.set('setup.version', '0.2.1');
     config.set('setup.timestamp', new Date().toISOString());
     config.saveConfig();
 
