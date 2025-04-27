@@ -119,6 +119,84 @@ jobs:
           npm run build:win
         fi
 
-    # electron-builder --publish onTag will handle release creation/update and asset upload
-    # Ensure GH_TOKEN is available in the environment for the npm run build:* step
-    # The 'env: GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}' at the job level should cover this.
+    - name: Determine Archive Name
+      id: archive_name
+      shell: bash
+      run: |
+        # Extract tag name (e.g., testing-v1.0.0)
+        TAG_NAME="${{ github.ref_name }}"
+        # Extract branch part (e.g., testing)
+        BRANCH_PART="${TAG_NAME%-v*}"
+        # Extract version part (e.g., v1.0.0)
+        VERSION_PART="${TAG_NAME#*-}"
+        # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
+        OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
+
+        # Determine architecture suffix
+        ARCH_SUFFIX=""
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          ARCH_SUFFIX="-${{ runner.arch }}"
+        fi
+
+        # Construct the desired filename
+        echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip" >> $GITHUB_ENV
+        echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip"
+
+    - name: Create Archive (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Remove-Item -Path dist/servers -Recurse -Force
+        # Include both dist contents and the YAML file
+        $yamlFile = "latest.yml"
+        if (Test-Path $yamlFile) {
+            Copy-Item $yamlFile -Destination dist\
+        }
+        Compress-Archive -Path dist\* -DestinationPath ${{ env.ARCHIVE_FILENAME }}
+
+    - name: Create Archive (macOS/Linux)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        rm -rf dist/servers
+        # Include the appropriate YAML file
+        if [[ "${{ matrix.os }}" == "macos*" ]]; then
+          cp latest-mac.yml dist/
+        else
+          cp latest.yml dist/
+        fi
+        zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
+
+    - name: Package testing artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARCHIVE_FILENAME }}
+        path: ${{ env.ARCHIVE_FILENAME }}
+        if-no-files-found: error
+
+    - name: Upload YAML metadata
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "macos*" ]]; then
+          cp latest-mac.yml ${{ env.ARCHIVE_FILENAME }}.yml
+        else
+          cp latest.yml ${{ env.ARCHIVE_FILENAME }}.yml
+        fi
+
+    - name: Create testing release
+      # Only run this step if the workflow was triggered by a tag push
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Testing Release
+        body: |
+          Automated testing release from testing branch
+          OS: ${{ matrix.os }}
+          Python: 3.12
+          SHA: ${{ github.sha }}
+        draft: false
+        prerelease: true
+        files: |
+          ${{ env.ARCHIVE_FILENAME }}
+          ${{ env.ARCHIVE_FILENAME }}.yml
