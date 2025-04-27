@@ -84,7 +84,7 @@
           ]
         }
       ],
-      "icon": "polaris/assets/tray-icon-active-light.png",
+      "icon": "polaris/assets/icon.png",
       "category": "public.app-category.productivity",
       "extraResources": [
         {
@@ -100,7 +100,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "polaris/assets/tray-icon-active-light.png",
+      "icon": "polaris/assets/icon.png",
       "extraResources": [
         {
           "from": "dist/servers",
@@ -115,7 +115,7 @@
     },
     "linux": {
       "target": "AppImage",
-      "icon": "polaris/assets/tray-icon-active-light.png",
+      "icon": "polaris/assets/icon.png",
       "category": "Utility",
       "extraResources": [
         {

@@ -137,7 +137,6 @@ function showSetupWizard() {
         splashWindow.show();
         if (! await ServiceManager.stopServices() ) {
             splashWindow.close();
-            splashWindow.destroy();
             dialog.showErrorBox(
                 'Service Error',
                 'Failed to stop required services. Please check the logs for details.'
@@ -176,7 +175,6 @@ function showSetupWizard() {
         }
         if (!servicesHealthy) {
             splashWindow?.close();
-            splashWindow?.destroy();
             dialog.showErrorBox(
                 'Service Error',
                 'Services did not become healthy within the timeout period. Please check the logs for details.'
@@ -368,7 +366,6 @@ async function appInitialization() {
                 Logger.info('Resource initialization successful (normal start):', initResult.message);
             } catch (errorResult) {
                 splashWindow.close();
-                splashWindow.destroy();
                 Logger.error('Failed to initialize resources (normal start):', errorResult.error || 'Unknown error');
                 dialog.showErrorBox(
                     'Initialization Error',
@@ -897,7 +894,6 @@ function appHandleCriticalError(error) {
 
     // Show error dialog to user
     splashWindow?.close();
-    splashWindow?.destroy();
     dialog.showErrorBox(
         'Critical Error',
         `Polaris encountered a critical error and needs to close.\n\nError: ${error.message}`

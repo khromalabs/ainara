@@ -18,7 +18,7 @@
 
 const BaseWindow = require('./BaseWindow');
 // const path = require('path');
-// const Logger = require('../utils/logger');
+const Logger = require('../utils/logger');
 
 class SplashWindow extends BaseWindow {
     constructor(config, screen, windowManager, basePath) {
@@ -53,6 +53,20 @@ class SplashWindow extends BaseWindow {
     updateProgress(status, progress) {
         if (this.window && !this.window.isDestroyed()) {
             this.send('update-progress', { status, progress });
+        }
+    }
+
+    // Override the close method to ensure forceful destruction
+    close() {
+        if (this.window && !this.window.isDestroyed()) {
+            try {
+                Logger.log(`Force destroying SplashWindow (${this.name})`);
+                this.window.destroy(); // Directly call destroy
+            } catch (err) {
+                Logger.error(`Error destroying SplashWindow (${this.name}):`, err);
+                // Attempt destroy again just in case, though unlikely to help if first failed
+                if (this.window && !this.window.isDestroyed()) this.window.destroy();
+            }
         }
     }
 
