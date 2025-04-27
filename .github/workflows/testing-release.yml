@@ -184,16 +184,16 @@ jobs:
         zip_path="${{ env.ARCHIVE_FILENAME }}"
         zip_size=$(stat -f %z "$zip_path")
         sha512=$(shasum -a 512 "$zip_path" | awk '{print $1}')
-        cat << 'EOF' > "latest-mac.yml"
-version: 0.3.0
-files:
-  - url: ${ARCHIVE_FILENAME}
-    sha512: $sha512
-    size: $zip_size
-path: ${ARCHIVE_FILENAME}
-sha512: $sha512
-releaseDate: $(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
-EOF
+        ARCHIVE_FILENAME="${{ env.ARCHIVE_FILENAME }}"
+        RELEASE_DATE=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
+        echo "version: 0.3.0" > "latest-mac.yml"
+        echo "files:" >> "latest-mac.yml"
+        echo "  - url: $ARCHIVE_FILENAME" >> "latest-mac.yml"
+        echo "    sha512: $sha512" >> "latest-mac.yml"
+        echo "    size: $zip_size" >> "latest-mac.yml"
+        echo "path: $ARCHIVE_FILENAME" >> "latest-mac.yml"
+        echo "sha512: $sha512" >> "latest-mac.yml"
+        echo "releaseDate: $RELEASE_DATE" >> "latest-mac.yml"
         cp "latest-mac.yml" "${{ env.ARCHIVE_FILENAME }}.yml"
 
     - name: Package testing artifacts
