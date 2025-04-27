@@ -52,7 +52,7 @@
     "start": "electron .",
     "build": "electron-builder build",
     "build:win": "electron-builder build --win --publish onTag",
-    "build:mac": "electron-builder build --mac ---x64 --publish onTag",
+    "build:mac": "electron-builder build --mac --publish onTag",
     "build:linux": "electron-builder build --linux --publish onTag"
   },
   "build": {

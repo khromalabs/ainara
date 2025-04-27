@@ -12,7 +12,8 @@ jobs:
     strategy:
       matrix:
         # os: [ubuntu-latest, macos-latest, windows-latest]
-        os: [macos-latest, macos-latest-arm64, windows-latest]
+        # os: [macos-latest, macos-latest-arm64, windows-latest]
+        os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
