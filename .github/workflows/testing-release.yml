@@ -153,6 +153,17 @@ jobs:
         }
         Compress-Archive -Path dist\* -DestinationPath ${{ env.ARCHIVE_FILENAME }}
 
+    - name: Create YAML Metadata for ZIP (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $zipPath = "${{ env.ARCHIVE_FILENAME }}"
+        $zipSize = (Get-Item $zipPath).Length
+        $sha512 = (Get-FileHash -Path $zipPath -Algorithm SHA512).Hash
+        $yamlContent = "version: 0.3.0`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $zipSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
+        Set-Content -Path "latest.yml" -Value $yamlContent
+        Copy-Item "latest.yml" -Destination "${{ env.ARCHIVE_FILENAME }}.yml"
+
     - name: Create Archive (macOS/Linux)
       if: runner.os != 'Windows'
       shell: bash
@@ -165,6 +176,24 @@ jobs:
           [ -f "latest-linux.yml" ] && cp latest-linux.yml dist/
         fi
         zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
+        
+    - name: Create YAML Metadata for ZIP (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        zip_path="${{ env.ARCHIVE_FILENAME }}"
+        zip_size=$(stat -f %z "$zip_path")
+        sha512=$(shasum -a 512 "$zip_path" | awk '{print $1}')
+        yaml_content="version: 0.3.0
+files:
+  - url: ${{ env.ARCHIVE_FILENAME }}
+    sha512: $sha512
+    size: $zip_size
+path: ${{ env.ARCHIVE_FILENAME }}
+sha512: $sha512
+releaseDate: $(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')"
+        echo "$yaml_content" > "latest-mac.yml"
+        cp "latest-mac.yml" "${{ env.ARCHIVE_FILENAME }}.yml"
 
     - name: Package testing artifacts
       uses: actions/upload-artifact@v4
@@ -173,18 +202,6 @@ jobs:
         path: ${{ env.ARCHIVE_FILENAME }}
         if-no-files-found: error
 
-    - name: Upload YAML metadata
-      shell: bash
-      run: |
-        if [[ "${{ matrix.os }}" == "macos-latest" ]] && [ -f "latest-mac.yml" ]; then
-          cp latest-mac.yml ${{ env.ARCHIVE_FILENAME }}.yml
-        elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]] && [ -f "latest-linux.yml" ]; then
-          cp latest-linux.yml ${{ env.ARCHIVE_FILENAME }}.yml
-        elif [ -f "latest.yml" ]; then
-          cp latest.yml ${{ env.ARCHIVE_FILENAME }}.yml
-        else
-          echo "No matching YAML file found for upload"
-        fi
 
     - name: Create testing release
       # Only run this step if the workflow was triggered by a tag push
