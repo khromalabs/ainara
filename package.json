@@ -45,8 +45,7 @@
       "linux"
     ],
     "arches": [
-      "x64",
-      "arm64"
+      "x64"
     ]
   },
   "scripts": {
