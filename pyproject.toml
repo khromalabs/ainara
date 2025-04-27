@@ -8,5 +8,8 @@ dynamic = ["version"]
 # Add other metadata like authors, description, dependencies etc.
 # dependencies = [ "flask", "requests", ... ] # List your project deps
 
+[tool.setuptools.dynamic]
+version = {attr = "ainara.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["."] # Tells setuptools to look for packages in the current dir

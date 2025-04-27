@@ -21,7 +21,7 @@
     "js-yaml": "^4.1.0",
     "node-fetch": "^2.7.0",
     "semver": "^7.6.0",
-    "web-audio-api": "^0.3.0",
+    "web-audio-api": "^0.2.2",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
