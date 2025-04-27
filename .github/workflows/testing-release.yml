@@ -176,7 +176,7 @@ jobs:
           [ -f "latest-linux.yml" ] && cp latest-linux.yml dist/
         fi
         zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
-        
+
     - name: Create YAML Metadata for ZIP (macOS)
       if: runner.os == 'macOS'
       shell: bash
@@ -184,15 +184,16 @@ jobs:
         zip_path="${{ env.ARCHIVE_FILENAME }}"
         zip_size=$(stat -f %z "$zip_path")
         sha512=$(shasum -a 512 "$zip_path" | awk '{print $1}')
-        yaml_content="version: 0.3.0
+        cat << EOF > "latest-mac.yml"
+version: 0.3.0
 files:
   - url: ${{ env.ARCHIVE_FILENAME }}
     sha512: $sha512
     size: $zip_size
 path: ${{ env.ARCHIVE_FILENAME }}
 sha512: $sha512
-releaseDate: $(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')"
-        echo "$yaml_content" > "latest-mac.yml"
+releaseDate: $(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
+EOF
         cp "latest-mac.yml" "${{ env.ARCHIVE_FILENAME }}.yml"
 
     - name: Package testing artifacts
