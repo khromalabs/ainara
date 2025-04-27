@@ -1,6 +1,6 @@
 {
   "name": "polaris",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Ainara Polaris - Ainara AI Companion Framework Desktop Integration",
   "main": "polaris/main.js",
   "author": {
@@ -21,7 +21,7 @@
     "js-yaml": "^4.1.0",
     "node-fetch": "^2.7.0",
     "semver": "^7.6.0",
-    "web-audio-api": "^0.2.1",
+    "web-audio-api": "^0.3.0",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
@@ -46,7 +46,7 @@
     ],
     "arches": [
       "x64",
-      "ia32"
+      "arm64"
     ]
   },
   "scripts": {
