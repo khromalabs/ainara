@@ -204,6 +204,27 @@ jobs:
         if-no-files-found: error
 
 
+    # Prepare platform-specific update YAML file name
+    - name: Set update YAML filename
+      id: set_yaml_filename
+      shell: bash
+      run: |
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          echo "UPDATE_YAML=latest.yml" >> $GITHUB_ENV
+        elif [ "${{ runner.os }}" == "macOS" ]; then
+          echo "UPDATE_YAML=latest-mac.yml" >> $GITHUB_ENV
+        elif [ "${{ runner.os }}" == "Linux" ]; then
+          echo "UPDATE_YAML=latest-linux.yml" >> $GITHUB_ENV
+        fi
+
+    # Rename the YAML file to the platform-specific name
+    - name: Prepare update YAML file
+      shell: bash
+      run: |
+        if [ -f "${{ env.ARCHIVE_FILENAME }}.yml" ]; then
+          cp "${{ env.ARCHIVE_FILENAME }}.yml" "${{ env.UPDATE_YAML }}"
+        fi
+
     - name: Create testing release
       # Only run this step if the workflow was triggered by a tag push
       if: startsWith(github.ref, 'refs/tags/')
@@ -221,3 +242,4 @@ jobs:
         files: |
           ${{ env.ARCHIVE_FILENAME }}
           ${{ env.ARCHIVE_FILENAME }}.yml
+          ${{ env.UPDATE_YAML }}
