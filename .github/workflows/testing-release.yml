@@ -184,13 +184,13 @@ jobs:
         zip_path="${{ env.ARCHIVE_FILENAME }}"
         zip_size=$(stat -f %z "$zip_path")
         sha512=$(shasum -a 512 "$zip_path" | awk '{print $1}')
-        cat << EOF > "latest-mac.yml"
+        cat << 'EOF' > "latest-mac.yml"
 version: 0.3.0
 files:
-  - url: ${{ env.ARCHIVE_FILENAME }}
+  - url: ${ARCHIVE_FILENAME}
     sha512: $sha512
     size: $zip_size
-path: ${{ env.ARCHIVE_FILENAME }}
+path: ${ARCHIVE_FILENAME}
 sha512: $sha512
 releaseDate: $(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
 EOF
