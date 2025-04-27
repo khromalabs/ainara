@@ -22,10 +22,9 @@
 import argparse
 import atexit
 import logging
-import os
+import os, json
 import pprint
 import shutil
-import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -43,14 +42,8 @@ from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils.dependency_checker import DependencyChecker
 
-# Add global variable for setup progress tracking
-setup_progress = {
-    "status": "idle",
-    "progress": 0,
-    "message": "Setup not started",
-    "details": {},
-}
 
+# --- Global instances ---
 config = ConfigManager()
 config.load_config()
 llm = create_llm_backend(config.get("llm", {}))
@@ -374,102 +367,84 @@ def create_app():
                 500,
             )
 
-    @app.route("/setup/initialize", methods=["POST"])
+    # --- SSE Event Formatting Helper ---
+    def format_sse(data: dict) -> str:
+        """Formats data as a Server-Sent Event string."""
+        json_data = json.dumps(data)
+        return f"data: {json_data}\n\n"
+
+    @app.route("/setup/initialize", methods=["GET"]) # Changed method to GET
     def initialize_resources():
-        """Initialize required resources"""
-        global setup_progress
-        setup_progress = {
-            "status": "running",
-            "progress": 0,
-            "message": "Starting initialization...",
-            "details": {},
-        }
+        """
+        Initialize required resources and stream progress using SSE.
+        """
+        def generate():
+            try:
+                yield format_sse({"status": "running", "progress": 0, "message": "Starting initialization..."})
 
-        try:
-            # First check what needs to be initialized
-            check_result = check_resources().json
-            resources_to_init = []
+                # --- Check what needs to be initialized ---
+                # Note: Calling check_resources() directly might be problematic if it relies on Flask context.
+                # Re-checking basic conditions is safer within the generator.
+                resources_to_init = []
+                nltk_check = check_nltk_data() # Assume safe to call
+                if not nltk_check.get("initialized"):
+                    resources_to_init.append("nltk")
+                whisper_check = check_whisper_models() # Assume safe to call
+                if not whisper_check.get("initialized"):
+                    resources_to_init.append("whisper")
 
-            for resource, status in check_result.get("details", {}).items():
-                if not status.get("initialized", False):
-                    resources_to_init.append(resource)
+                total_resources = len(resources_to_init)
+                if total_resources == 0:
+                    yield format_sse({"status": "complete", "progress": 100, "message": "All resources already initialized"})
+                    logger.info("SSE Initialization: Resources already present.")
+                    return # End stream
 
-            results = {"status": "success", "details": {}}
+                completed_resources = 0
+                progress_per_resource = 100 / total_resources
 
-            total_resources = len(resources_to_init)
-            if total_resources == 0:
-                setup_progress["status"] = "complete"
-                setup_progress["progress"] = 100
-                setup_progress["message"] = "All resources already initialized"
-                return jsonify(results)
+                # --- Initialize NLTK if needed ---
+                if "nltk" in resources_to_init:
+                    current_progress = int(completed_resources * progress_per_resource)
+                    yield format_sse({"status": "running", "progress": current_progress, "message": "Setting up NLTK data..."})
+                    logger.info("SSE Initialization: Setting up NLTK...")
+                    nltk_result = setup_nltk() # Blocking call
+                    if not nltk_result:
+                         # Yield error and stop
+                         yield format_sse({"status": "error", "progress": current_progress, "message": "NLTK setup failed"})
+                         return
+                    completed_resources += 1
+                    yield format_sse({"status": "running", "progress": int(completed_resources * progress_per_resource), "message": "NLTK setup complete."})
 
-            completed_resources = 0
+                # --- Initialize Whisper models if needed ---
+                if "whisper" in resources_to_init:
+                    current_progress = int(completed_resources * progress_per_resource)
+                    yield format_sse({"status": "running", "progress": current_progress, "message": "Setting up Whisper models..."})
+                    logger.info("SSE Initialization: Setting up Whisper models...")
+                    whisper_result = setup_whisper_models() # Blocking call
+                    if not whisper_result["success"]:
+                        # Yield error and stop
+                        yield format_sse({"status": "error", "progress": current_progress, "message": f"Whisper setup failed: {whisper_result['message']}"})
+                        return
+                    completed_resources += 1
+                    yield format_sse({"status": "running", "progress": int(completed_resources * progress_per_resource), "message": "Whisper setup complete."})
 
-            # Initialize NLTK if needed
-            if "nltk" in resources_to_init:
-                setup_progress["progress"] = int(
-                    completed_resources / total_resources * 100
-                )
-                setup_progress["message"] = "Setting up NLTK data..."
+                # --- Final success message ---
+                yield format_sse({"status": "complete", "progress": 100, "message": "Initialization completed successfully"})
+                logger.info("SSE Initialization: Completed successfully.")
 
-                nltk_result = setup_nltk()
-                results["details"]["nltk"] = {
-                    "success": nltk_result,
-                    "message": (
-                        "NLTK setup completed successfully"
-                        if nltk_result
-                        else "NLTK setup failed"
-                    ),
-                }
-                setup_progress["details"]["nltk"] = results["details"]["nltk"]
+            except Exception as e:
+                logger.error(f"Error during SSE initialization stream: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # Yield a final error message
+                try:
+                    yield format_sse({"status": "error", "progress": 0, "message": f"Initialization error: {str(e)}"})
+                except Exception:
+                    # If yielding fails (e.g., client disconnected), just log
+                    logger.error("Failed to yield final error message to client.")
 
-                completed_resources += 1
-                setup_progress["progress"] = int(
-                    completed_resources / total_resources * 100
-                )
-
-            # Initialize Whisper models if needed
-            if "whisper" in resources_to_init:
-                setup_progress["message"] = "Setting up Whisper models..."
-
-                whisper_result = setup_whisper_models()
-                results["details"]["whisper"] = {
-                    "success": whisper_result["success"],
-                    "message": whisper_result["message"],
-                }
-                setup_progress["details"]["whisper"] = results["details"][
-                    "whisper"
-                ]
-
-                completed_resources += 1
-                setup_progress["progress"] = int(
-                    completed_resources / total_resources * 100
-                )
-
-            # Complete the setup
-            setup_progress["status"] = "complete"
-            setup_progress["progress"] = 100
-            setup_progress["message"] = "Initialization completed successfully"
-
-            return jsonify(results)
-        except Exception as e:
-            logger.error(f"Error initializing resources: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
-
-            # Update progress with error
-            setup_progress["status"] = "error"
-            setup_progress["message"] = (
-                f"Error during initialization: {str(e)}"
-            )
-
-            return jsonify({"status": "error", "message": str(e)}), 500
-
-    @app.route("/setup/progress", methods=["GET"])
-    def get_setup_progress():
-        """Get the current setup progress"""
-        return jsonify(setup_progress)
+        # Return the generator function wrapped in a Response object
+        return Response(generate(), mimetype='text/event-stream')
 
     @app.route("/static/audio/<filename>")
     def serve_audio(filename):
@@ -1115,16 +1090,5 @@ if __name__ == "__main__":
     logging_manager.setup(log_level=args.log_level, log_name="pybridge.log")
     # logging_manager.addFilter(["pybridge", "chat_completion"])
     app = create_app()
-
-    # Add signal handler for graceful shutdown
-    def signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}, shutting down...")
-        # Run cleanup functions
-        atexit._run_exitfuncs()
-        sys.exit(0)
-
-    # Register signal handlers
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
 
     app.run(port=args.port)

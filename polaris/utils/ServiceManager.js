@@ -18,15 +18,17 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
-const Logger = require('./logger');
 const fetch = require('node-fetch');
 const fs = require('fs');
 const os = require('os');
 const { app } = require('electron');
+const { createEventSource } = require('eventsource-client');
+
 const ConfigManager = require('../utils/config');
+const Logger = require('./logger');
+
 
 const config = new ConfigManager();
-
 
 class ServiceManager {
     constructor() {
@@ -191,7 +193,7 @@ class ServiceManager {
             this.updateProgress(this.initializeMsg, this.startProgress);
 
             // Wait before next attempt
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         throw new Error(`Timeout waiting for ${service.name} to become healthy`);
@@ -364,93 +366,113 @@ class ServiceManager {
     }
 
     async initializeResources() {
-        try {
-            // Make sure pybridge is healthy before initializing resources
-            if (!this.services.pybridge.healthy) {
-                Logger.error('Cannot initialize resources: PyBridge service is not healthy');
-                return {
-                    success: false,
-                    error: 'PyBridge service is not healthy'
-                };
-            }
-
-            this.updateProgress('Starting resource initialization...', 0);
-
-            // Start the initialization process
-            const response = await fetch(
-                this.services.pybridge.url.replace('/health', '/setup/initialize'),
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({})
+        // Return a Promise that resolves/rejects based on SSE events
+        return new Promise((resolve, reject) => {
+            let es = null; // Event source instance
+            // --- Variables for fake progress ---
+            let progressIntervalId = null;
+            let lastActualProgress = 0;
+            let visualProgress = 0;
+            let lastActualMessage = '';
+            const maxFakeProgress = 98; // Cap for fake progress
+            // --- Helper to clear interval ---
+            const clearProgressInterval = () => {
+                if (progressIntervalId) {
+                    clearInterval(progressIntervalId);
+                    progressIntervalId = null;
+                    // console.log("Cleared fake progress interval");
                 }
-            );
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                Logger.error(`Failed to initialize resources: ${response.status} ${response.statusText} - ${errorText}`);
-                return {
-                    success: false,
-                    error: `Failed to initialize resources: ${response.status} ${response.statusText}`
-                };
-            }
-
-            // Start polling for progress updates
-            this._pollResourceInitProgress();
-
-            const result = await response.json();
-            Logger.log('Resource initialization result:', result);
-            return result;
-        } catch (error) {
-            Logger.error('Error initializing resources:', error);
-            return {
-                success: false,
-                error: error.message
             };
-        }
-    }
 
-    async _pollResourceInitProgress() {
-        // Poll for progress updates
-        const pollInterval = setInterval(async () => {
             try {
                 if (!this.services.pybridge.healthy) {
-                    clearInterval(pollInterval);
-                    return;
+                    Logger.error('Cannot initialize resources: PyBridge service is not healthy');
+                    return {
+                        success: false,
+                        error: 'PyBridge service is not healthy'
+                    };
                 }
 
-                const progressResponse = await fetch(
-                    this.services.pybridge.url.replace('/health', '/setup/progress')
-                );
+                // --- Initial UI update ---
+                lastActualMessage = 'Connecting to initialization service...';
+                this.updateProgress('Downloading resources...', 0);
+                Logger.log('Connecting to SSE endpoint for resource initialization...');
 
-                if (!progressResponse.ok) {
-                    Logger.error(`Failed to get initialization progress: ${progressResponse.status} ${progressResponse.statusText}`);
-                    clearInterval(pollInterval);
-                    return;
-                }
+                const sseUrl = config.get('pybridge.api_url') + '/setup/initialize';
 
-                const progressData = await progressResponse.json();
+                const messageHandler = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        Logger.log('SSE Progress:', data);
 
-                // Update progress through the callback
-                this.updateProgress(progressData.message, progressData.progress);
+                        // Store actual progress and message
+                        lastActualProgress = data.progress;
+                        lastActualMessage = data.message;
+                        visualProgress = lastActualProgress; // Reset visual progress to actual
 
-                // If initialization is complete or errored, stop polling
-                if (progressData.status === 'complete' || progressData.status === 'error') {
-                    clearInterval(pollInterval);
+                        // Clear any existing fake progress timer
+                        clearProgressInterval();
 
-                    if (progressData.status === 'error') {
-                        Logger.error(`Resource initialization error: ${progressData.message}`);
-                    } else {
-                        Logger.log('Resource initialization completed successfully');
+                        // Update progress through the callback
+                        this.updateProgress(lastActualMessage, visualProgress);
+
+                        // Check for terminal states
+                        if (data.status === 'complete') {
+                            Logger.log('Resource initialization completed successfully via SSE.');
+                            if (es) es.close(); // Close the connection
+                            resolve({ success: true, message: lastActualMessage });
+                        } else if (data.status === 'error') {
+                            Logger.error(`Resource initialization error via SSE: ${lastActualMessage}`);
+                            if (es) es.close(); // Close the connection
+                            reject({ success: false, error: lastActualMessage });
+                        } else if (data.status === 'running' && es && es.readyState === 'open') {
+                            // Start the fake progress timer if still running
+                            progressIntervalId = setInterval(() => {
+                                if (visualProgress < maxFakeProgress) {
+                                    visualProgress = Math.min(visualProgress + 1, maxFakeProgress);
+                                    // Update UI with fake progress but last real message
+                                    this.updateProgress(lastActualMessage, visualProgress);
+                                    // console.log(`Fake progress incremented to ${visualProgress}%`);
+                                } else {
+                                    // Stop incrementing if cap is reached, but keep interval running
+                                    // in case a real update resets it later.
+                                    // console.log("Fake progress reached cap.");
+                                }
+                            }, 3000); // Increment every 3 seconds
+                            // console.log("Started fake progress interval");
+                        }
+
+                    } catch (parseError) {
+                        Logger.error('Error parsing SSE message data:', parseError, event.data);
+                        // Don't close connection here, might be a transient issue
                     }
-                }
+                };
+
+                const errorHandler = (error) => {
+                    Logger.error('EventSource failed:', error);
+                    // Ensure UI shows an error if connection drops unexpectedly
+                    clearProgressInterval(); // Stop fake progress
+                    this.updateProgress('Connection error during initialization', 100);
+                    if (es) es.close(); // Close the connection
+                    reject({ success: false, error: 'EventSource connection error' });
+                };
+
+                // Create the event source using the new library's function
+                es = createEventSource({
+                    url: sseUrl,
+                    onMessage: messageHandler,
+                    onError: errorHandler
+                });
+
             } catch (error) {
-                Logger.error('Error polling initialization progress:', error);
-                clearInterval(pollInterval);
+                clearProgressInterval(); // Ensure cleanup on initial error
+                Logger.error('Error setting up EventSource or initial check:', error);
+                if (es) {
+                    es.close();
+                }
+                reject({ success: false, error: error.message });
             }
-        }, 1000);
+        }); // End of Promise constructor
     }
 }
 

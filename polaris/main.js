@@ -106,6 +106,7 @@ function showSetupWizard() {
         Logger.info('Setup completed, starting application');
         try {
             setupWindow?.close();
+            setupWindow?.destroy();
         } catch (error) {
             Logger.error('Error closing setupWindow:' + error);
         }
@@ -136,6 +137,7 @@ function showSetupWizard() {
         splashWindow.show();
         if (! await ServiceManager.stopServices() ) {
             splashWindow.close();
+            splashWindow.destroy();
             dialog.showErrorBox(
                 'Service Error',
                 'Failed to stop required services. Please check the logs for details.'
@@ -190,15 +192,18 @@ function showSetupWizard() {
         // If resources are not initialized, initialize them
         if (resourceCheck && !resourceCheck.initialized) {
             Logger.info('Some resources need initialization, starting download process...');
-            splashWindow.updateProgress('Downloading required resources...', 87);
             // Start the initialization process
-            const initResult = await ServiceManager.initializeResources();
-            if (!('status' in initResult) || initResult.status != "success" ) {
+            try {
+                Logger.info('Starting resource initialization via SSE (restartWithSplash)...');
+                // Progress updates are handled internally by ServiceManager via callback
+                const initResult = await ServiceManager.initializeResources();
+                Logger.info('Resource initialization successful (restartWithSplash):', initResult.message);
+            } catch (errorResult) {
                 splashWindow.close();
-                Logger.error('Failed to initialize resources:', initResult.error);
+                Logger.error('Failed to initialize resources (restartWithSplash):', errorResult.error || 'Unknown error');
                 dialog.showErrorBox(
-                    'Service Error',
-                    'Failed to download required resources.'
+                    'Initialization Error',
+                    `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                 );
                 app.exit(1);
             }
@@ -272,13 +277,16 @@ async function appInitialization() {
             // If resources are not initialized, initialize them
             if (resourceCheck && !resourceCheck.initialized) {
                 Logger.info('Some resources need initialization, starting download process...');
-                // Start the initialization process
-                const initResult = await ServiceManager.initializeResources();
-                if (!('status' in initResult) || initResult.status != "success" ) {
-                    Logger.error('Failed to initialize resources:', initResult.error);
+                try {
+                    Logger.info('Starting resource initialization via SSE (external services)...');
+                    // Progress updates are handled internally by ServiceManager via callback
+                    const initResult = await ServiceManager.initializeResources();
+                    Logger.info('Resource initialization successful (external services):', initResult.message);
+                } catch (errorResult) {
+                    Logger.error('Failed to initialize resources (external services):', errorResult.error || 'Unknown error');
                     dialog.showErrorBox(
-                        'Service Error',
-                        'Failed to download required resources.'
+                        'Initialization Error',
+                        `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                     );
                     app.exit(1);
                 }
@@ -352,17 +360,19 @@ async function appInitialization() {
         // If resources are not initialized, initialize them
         if (resourceCheck && !resourceCheck.initialized) {
             Logger.info('Some resources need initialization, starting download process...');
-            splashWindow.updateProgress('Downloading required resources...', 87);
-
             // Start the initialization process
-            const initResult = await ServiceManager.initializeResources();
-
-            if (!('status' in initResult) || initResult.status != "success" ) {
+            try {
+                Logger.info('Starting resource initialization via SSE (normal start)...');
+                // Progress updates are handled internally by ServiceManager via callback
+                const initResult = await ServiceManager.initializeResources();
+                Logger.info('Resource initialization successful (normal start):', initResult.message);
+            } catch (errorResult) {
                 splashWindow.close();
-                Logger.error('Failed to initialize resources:', initResult.error);
+                splashWindow.destroy();
+                Logger.error('Failed to initialize resources (normal start):', errorResult.error || 'Unknown error');
                 dialog.showErrorBox(
-                    'Service Error',
-                    'Failed to download required resources.'
+                    'Initialization Error',
+                    `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                 );
                 app.exit(1);
             }
@@ -887,6 +897,7 @@ function appHandleCriticalError(error) {
 
     // Show error dialog to user
     splashWindow?.close();
+    splashWindow?.destroy();
     dialog.showErrorBox(
         'Critical Error',
         `Polaris encountered a critical error and needs to close.\n\nError: ${error.message}`
