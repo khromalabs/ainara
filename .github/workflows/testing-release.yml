@@ -144,6 +144,7 @@ jobs:
           echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe"
         else
           echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip" >> $GITHUB_ENV
+          echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
           echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip"
         fi
 
@@ -173,7 +174,7 @@ jobs:
         $exePath = "${{ env.ARCHIVE_FILENAME }}"
         $exeSize = (Get-Item $exePath).Length
         $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash.ToUpper()
-        $yamlContent = "version: 0.3.0`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
+        $yamlContent = "version: ${{ env.VERSION_PART }}`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
         Set-Content -Path "latest.yml" -Value $yamlContent
         Copy-Item "latest.yml" -Destination "${{ env.ARCHIVE_FILENAME }}.yml"
 
@@ -199,7 +200,7 @@ jobs:
         sha512=$(shasum -a 512 "$zip_path" | awk '{print toupper($1)}')
         ARCHIVE_FILENAME="${{ env.ARCHIVE_FILENAME }}"
         RELEASE_DATE=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
-        echo "version: 0.3.0" > "latest-mac.yml"
+        echo "version: $VERSION_PART" > "latest-mac.yml"
         echo "files:" >> "latest-mac.yml"
         echo "  - url: $ARCHIVE_FILENAME" >> "latest-mac.yml"
         echo "    sha512: $sha512" >> "latest-mac.yml"
