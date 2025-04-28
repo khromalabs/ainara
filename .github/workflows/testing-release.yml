@@ -172,7 +172,7 @@ jobs:
       run: |
         $exePath = "${{ env.ARCHIVE_FILENAME }}"
         $exeSize = (Get-Item $exePath).Length
-        $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash
+        $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash.ToUpper()
         $yamlContent = "version: 0.3.0`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
         Set-Content -Path "latest.yml" -Value $yamlContent
         Copy-Item "latest.yml" -Destination "${{ env.ARCHIVE_FILENAME }}.yml"
