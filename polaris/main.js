@@ -261,8 +261,6 @@ async function appInitialization() {
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
 
-        initializeAutoUpdater();
-
         // Create splash window
         splashWindow = new SplashWindow(config, null, null, __dirname);
         splashWindow.show();
@@ -271,7 +269,6 @@ async function appInitialization() {
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
             splashWindow.close();
-            initializeAutoUpdater();
             // Alternate application start for dev purposes
             externallyManagedServices = true;
             const resourceCheck = await ServiceManager.checkResourcesInitialization();
@@ -295,6 +292,7 @@ async function appInitialization() {
                 Logger.info('All required resources are already initialized');
             }
             await updateProviderSubmenu();
+            initializeAutoUpdater();
 
             // Check if this is the first run
             !debugDisableWizard && isFirstRun() ?
@@ -398,6 +396,8 @@ async function appInitialization() {
         if (llmProviders) {
             tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         }
+
+        initializeAutoUpdater();
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
