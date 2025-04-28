@@ -141,12 +141,23 @@ jobs:
         # Construct the desired filename, use .exe for Windows
         if [ "${{ runner.os }}" == "Windows" ]; then
           echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe" >> $GITHUB_ENV
+          echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
           echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe"
         else
           echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip" >> $GITHUB_ENV
           echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
           echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip"
         fi
+        
+        # Output version part for use in other steps
+        echo "version-part=${VERSION_PART}" >> $GITHUB_OUTPUT
+
+    - name: Debug VERSION_PART
+      shell: bash
+      run: |
+        echo "VERSION_PART is: ${{ steps.archive_name.outputs.version-part }}"
+        echo "All env vars:"
+        env | grep VERSION
 
     - name: Create Archive (Windows)
       if: runner.os == 'Windows'
@@ -174,7 +185,7 @@ jobs:
         $exePath = "${{ env.ARCHIVE_FILENAME }}"
         $exeSize = (Get-Item $exePath).Length
         $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash.ToUpper()
-        $yamlContent = "version: ${{ env.VERSION_PART }}`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
+        $yamlContent = "version: ${{ steps.archive_name.outputs.version-part }}`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
         Set-Content -Path "latest.yml" -Value $yamlContent
         Copy-Item "latest.yml" -Destination "${{ env.ARCHIVE_FILENAME }}.yml"
 
@@ -200,7 +211,7 @@ jobs:
         sha512=$(shasum -a 512 "$zip_path" | awk '{print toupper($1)}')
         ARCHIVE_FILENAME="${{ env.ARCHIVE_FILENAME }}"
         RELEASE_DATE=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
-        echo "version: $VERSION_PART" > "latest-mac.yml"
+        echo "version: ${{ steps.archive_name.outputs.version-part }}" > "latest-mac.yml"
         echo "files:" >> "latest-mac.yml"
         echo "  - url: $ARCHIVE_FILENAME" >> "latest-mac.yml"
         echo "    sha512: $sha512" >> "latest-mac.yml"
