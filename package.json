@@ -80,7 +80,10 @@
           "arch": "universal"
         }
       ],
-      "icon": "polaris/assets/icon.png",
+      "universal": {
+        "x64ArchFiles": "Contents/Resources/bin/servers/_internal/**/*.dylib"
+      },
+      "icon": "build/icon.icns",
       "category": "public.app-category.productivity",
       "extraResources": [
         {
@@ -96,7 +99,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "polaris/assets/icon.png",
+      "icon": "build/icon.ico",
       "extraResources": [
         {
           "from": "dist/servers",
