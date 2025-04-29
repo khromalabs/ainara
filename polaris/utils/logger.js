@@ -52,6 +52,13 @@ class Logger {
         process.stdout.write(`[${timestamp}][${this.className}][${caller}] INFO: ${message}\n`);
     }
 
+    static warn(...args) {
+        const timestamp = new Date().toISOString();
+        const message = util.format(...args);
+        const caller = this.getCallerInfo();
+        process.stdout.write(`[${timestamp}][${this.className}][${caller}] WARNING: ${message}\n`);
+    }
+
     static error(...args) {
         const timestamp = new Date().toISOString();
         const message = util.format(...args);
