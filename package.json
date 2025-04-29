@@ -77,9 +77,7 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64"
-          ]
+          "arch": "universal"
         }
       ],
       "icon": "polaris/assets/icon.png",

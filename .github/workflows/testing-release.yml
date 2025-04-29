@@ -132,23 +132,22 @@ jobs:
         # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
         OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
 
-        # Determine architecture suffix
-        ARCH_SUFFIX=""
-        if [[ "${{ runner.os }}" == "macOS" ]]; then
-          ARCH_SUFFIX="-${{ runner.arch }}"
-        fi
-
         # Construct the desired filename, use .exe for Windows
         if [ "${{ runner.os }}" == "Windows" ]; then
           echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe" >> $GITHUB_ENV
           echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
           echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe"
-        else
-          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip" >> $GITHUB_ENV
+        elif [[ "${{ runner.os }}" == "macOS" ]]; then
+          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-universal.dmg" >> $GITHUB_ENV
           echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
-          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}${ARCH_SUFFIX}.zip"
+          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-universal.dmg"
+        else
+          # Assuming Linux still uses zip for now
+          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip" >> $GITHUB_ENV
+          echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
+          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip"
         fi
-        
+
         # Output version part for use in other steps
         echo "version-part=${VERSION_PART}" >> $GITHUB_OUTPUT
 
@@ -184,7 +183,7 @@ jobs:
       run: |
         $exePath = "${{ env.ARCHIVE_FILENAME }}"
         $exeSize = (Get-Item $exePath).Length
-        $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash.ToUpper()
+        $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash.ToLower()
         $yamlContent = "version: ${{ steps.archive_name.outputs.version-part }}`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
         Set-Content -Path "latest.yml" -Value $yamlContent
         Copy-Item "latest.yml" -Destination "${{ env.ARCHIVE_FILENAME }}.yml"
@@ -193,29 +192,41 @@ jobs:
       if: runner.os != 'Windows'
       shell: bash
       run: |
-        rm -rf dist/servers
-        # macOS uses latest-mac.yml, Linux uses latest-linux.yml
         if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          # Find the generated DMG file (electron-builder names it like 'ProductName-Version.dmg')
+          DMG_PATH=$(find dist -maxdepth 1 -name "Ainara Polaris*.dmg" -print -quit)
+          if [ -z "$DMG_PATH" ]; then
+            echo "Error: DMG file not found in dist directory."
+            ls -R dist # List contents for debugging
+            exit 1
+          fi
+          echo "Found DMG: $DMG_PATH"
+          # Rename the DMG to the desired archive filename
+          mv "$DMG_PATH" "${{ env.ARCHIVE_FILENAME }}"
+          echo "Renamed DMG to ${{ env.ARCHIVE_FILENAME }}"
+          # Copy latest-mac.yml if it exists (though it's generated later)
           [ -f "latest-mac.yml" ] && cp latest-mac.yml dist/
         else
+          # Keep existing Linux logic (assuming zip for now)
+          rm -rf dist/servers
           [ -f "latest-linux.yml" ] && cp latest-linux.yml dist/
+          zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
         fi
-        zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
 
-    - name: Create YAML Metadata for ZIP (macOS)
+    - name: Create YAML Metadata for DMG (macOS)
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        zip_path="${{ env.ARCHIVE_FILENAME }}"
-        zip_size=$(stat -f %z "$zip_path")
-        sha512=$(shasum -a 512 "$zip_path" | awk '{print toupper($1)}')
+        dmg_path="${{ env.ARCHIVE_FILENAME }}"
+        dmg_size=$(stat -f %z "$dmg_path")
+        sha512=$(shasum -a 512 "$dmg_path" | awk '{print tolower($1)}')
         ARCHIVE_FILENAME="${{ env.ARCHIVE_FILENAME }}"
         RELEASE_DATE=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
         echo "version: ${{ steps.archive_name.outputs.version-part }}" > "latest-mac.yml"
         echo "files:" >> "latest-mac.yml"
         echo "  - url: $ARCHIVE_FILENAME" >> "latest-mac.yml"
         echo "    sha512: $sha512" >> "latest-mac.yml"
-        echo "    size: $zip_size" >> "latest-mac.yml"
+        echo "    size: $dmg_size" >> "latest-mac.yml"
         echo "path: $ARCHIVE_FILENAME" >> "latest-mac.yml"
         echo "sha512: $sha512" >> "latest-mac.yml"
         echo "releaseDate: $RELEASE_DATE" >> "latest-mac.yml"
