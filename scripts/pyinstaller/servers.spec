@@ -108,7 +108,7 @@ common_imports = [
     'json',
     'numpy',
     'pyperclip',
-    'newsapi_python',
+    'newsapi-python',
 
     # LangChain related
     'langchain',
