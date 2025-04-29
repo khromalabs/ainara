@@ -205,7 +205,7 @@ jobs:
           mv "$DMG_PATH" "${{ env.ARCHIVE_FILENAME }}"
           echo "Renamed DMG to ${{ env.ARCHIVE_FILENAME }}"
           # Copy latest-mac.yml if it exists (though it's generated later)
-          [ -f "latest-mac.yml" ] && cp latest-mac.yml dist/
+          # [ -f "latest-mac.yml" ] && cp latest-mac.yml dist/
         else
           # Keep existing Linux logic (assuming zip for now)
           rm -rf dist/servers
