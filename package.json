@@ -77,12 +77,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": "universal"
+          "arch": [ "x64", "arm64" ]
         }
       ],
-      "universal": {
-        "x64ArchFiles": "Contents/Resources/bin/servers/_internal/**/*.dylib"
-      },
+      "x64ArchFiles": "Contents/Resources/bin/servers/_internal/**/*.dylib",
       "icon": "build/icon.icns",
       "category": "public.app-category.productivity",
       "extraResources": [
