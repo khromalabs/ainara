@@ -465,19 +465,16 @@ async function appCreateTray() {
             label: 'Setup',
             click: () => { windowManager.hideAll(true); showSetupWizard(); }
         },
-        {
-            label: 'Check for Updates',
-            click: () => checkForUpdates(true)
-        },
-        {
-            label: 'Auto-update',
-            type: 'checkbox',
-            checked: config.get('autoUpdate.enabled', true),
-            click: (menuItem) => {
-                config.set('autoUpdate.enabled', menuItem.checked);
-                autoUpdater.autoInstallOnAppQuit = menuItem.checked;
-            }
-        },
+        { type: 'separator' },
+        // {
+        //     label: 'Auto-update',
+        //     type: 'checkbox',
+        //     checked: config.get('autoUpdate.enabled', true),
+        //     click: (menuItem) => {
+        //         config.set('autoUpdate.enabled', menuItem.checked);
+        //         autoUpdater.autoInstallOnAppQuit = menuItem.checked;
+        //     }
+        // },
         {
             label: 'LLM Models',
             submenu: [
@@ -500,6 +497,11 @@ async function appCreateTray() {
         {
             label: 'Hide',
             click: () => windowManager.hideAll(true)
+        },
+        { type: 'separator' },
+        {
+            label: 'Check for Updates',
+            click: () => checkForUpdates(true)
         },
         { type: 'separator' },
         {
@@ -578,6 +580,7 @@ async function updateProviderSubmenu() {
                 label: 'Setup',
                 click: () => showSetupWizard()
             },
+            { type: 'separator' },
             {
                 label: 'LLM Models',
                 submenu: [
@@ -597,6 +600,11 @@ async function updateProviderSubmenu() {
             {
                 label: 'Hide',
                 click: () => windowManager.hideAll(true)
+            },
+            { type: 'separator' },
+            {
+                label: 'Check for Updates',
+                click: () => checkForUpdates(true)
             },
             { type: 'separator' },
             {
@@ -782,6 +790,13 @@ function appSetupEventHandlers() {
     app.on('activate', () => {
         if (windowManager.isEmpty()) {
             appInitialization();
+        } else {
+            // Update tray icon to active when app is activated via taskbar/dock click
+            windowManager.updateTrayIcon('active');
+            // Ensure windows are shown if they were hidden or minimized
+            if (!windowManager.isAnyVisible()) {
+                windowManager.showAll();
+            }
         }
     });
 

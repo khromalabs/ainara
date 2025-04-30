@@ -163,6 +163,19 @@ class WindowManager {
                     window.handlers.onFocus(window, this);
                 }
             });
+
+            // Add restore event listener to update tray icon if any window is restored
+            window.window.on('restore', () => {
+                Logger.log(`${window.prefix} restored - checking if any window is visible`);
+                setTimeout(() => {
+                    const anyVisible = Array.from(this.windows.values()).some(w => w.isVisible());
+                    if (anyVisible) {
+                        Logger.log('At least one window is visible after restore - updating tray icon to active');
+                        this.updateTrayIcon('active');
+                    }
+                }, 100); // Small delay to ensure state is updated
+            });
+
         });
     }
 
