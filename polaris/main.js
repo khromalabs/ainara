@@ -87,7 +87,7 @@ function showSetupWizard() {
         center: true,
         resizable: false,
         frame: false,
-        skipTaskbar: true,
+        skipTaskbar: false, // Show taskbar icon for setup window
         transparent: true,
         iconPath: iconPath
     });
@@ -214,6 +214,10 @@ function showSetupWizard() {
         splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 500));
         splashWindow.close();
+
+        // Set shortcut just before showing windows
+        appSetupShortcuts();
+
         // Check if this is the first run
         if (isFirstRun()) {
             showSetupWizard();
@@ -257,7 +261,6 @@ async function appInitialization() {
         windowManager = new WindowManager(config);
         windowManager.initialize([ComRingWindow, ChatDisplayWindow], __dirname);
         appSetupEventHandlers();
-        appSetupShortcuts();
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
 
@@ -293,6 +296,9 @@ async function appInitialization() {
             }
             await updateProviderSubmenu();
             initializeAutoUpdater();
+
+            // Set shortcut just before showing windows
+            appSetupShortcuts();
 
             // Check if this is the first run
             !debugDisableWizard && isFirstRun() ?
@@ -384,6 +390,10 @@ async function appInitialization() {
         splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 500));
         splashWindow.close();
+
+        // Set shortcut just before showing windows
+        appSetupShortcuts();
+
         // Check if this is the first run
         if (isFirstRun()) {
             showSetupWizard();
@@ -818,24 +828,14 @@ function appSetupEventHandlers() {
     nativeTheme.on('updated', () => {
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
         Logger.info('System theme changed:', theme);
-        const iconPath = path.join(__dirname, 'assets', `tray-icon-active-${theme}.png`);
+        const iconStatus = windowManager && windowManager.currentState ? windowManager.currentState : 'inactive';
+        const iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
 
-        // Update application icon
-        if (process.platform === 'darwin' && !app.dock.isHidden()) {
-            app.dock.setIcon(path.join(__dirname, 'assets', `tray-icon-active-${theme}.png`));
+        // Update tray icon
+        if (tray && !tray.isDestroyed()) {
+            tray.setImage(iconPath);
         }
 
-        // Update all windows' icons
-        if (windowManager) {
-            windowManager.windows.forEach(window => {
-                if (window.window && !window.window.isDestroyed()) {
-                    window.window.setIcon(
-                        path.join(__dirname, 'assets', `tray-icon-active-${theme}.png`)
-                    );
-                }
-            });
-            windowManager.updateTheme();
-        }
         // Update setup window icon if it exists
         if (setupWindow && !setupWindow.isDestroyed()) {
             setupWindow.setIcon(iconPath);

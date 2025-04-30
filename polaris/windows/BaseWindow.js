@@ -37,7 +37,8 @@ class BaseWindow {
             icon: path.join(
                 this.basePath, 
                 'assets', 
-                `tray-icon-active-${nativeTheme.shouldUseDarkColors ? 'dark' : 'light'}.png`
+                // `tray-icon-active-${nativeTheme.shouldUseDarkColors ? 'dark' : 'light'}.png`
+                'icon.png'
             ),
             show: false,
             frame: config.get(`${prefix}.frame`, false),

@@ -78,6 +78,7 @@ class ChatDisplayWindow extends BaseWindow {
             y: windowY,
             type: 'toolbar',
             focusable: true,
+            skipTaskbar: true, // Explicitly hide taskbar icon for ChatDisplayWindow
             frame: false,
             transparent: true,
             backgroundColor: 'rgba(0,0,0,0)', // Explicit transparent background

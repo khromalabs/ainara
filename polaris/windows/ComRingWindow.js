@@ -59,6 +59,7 @@ class ComRingWindow extends BaseWindow {
             height: windowHeight,
             x: config.get('comRing.x', (screenWidth / 2) - (windowWidth / 2)),
             y: config.get('comRing.y', (screenHeight / 2) - (windowHeight / 2)),
+            skipTaskbar: false, // Show taskbar icon for ComRingWindow
             type: 'normal',  // Override to normal for keyboard focus
             focusable: true  // Explicitly set focusable
         };
