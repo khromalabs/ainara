@@ -23,6 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const { app } = require('electron');
 const { createEventSource } = require('eventsource-client');
+const net = require('net');
 
 const ConfigManager = require('../utils/config');
 const Logger = require('./logger');
@@ -78,6 +79,68 @@ class ServiceManager {
 
         this.onProgressUpdate = null;
         this.healthCheckInterval = null;
+    }
+
+    /**
+     * Checks if a specific TCP port is already in use on localhost.
+     * @param {number} port The port number to check.
+     * @returns {Promise<boolean>} A promise that resolves to true if the port is in use, false otherwise.
+     * @private Internal helper method.
+     */
+    _checkPortInUse(port) {
+        return new Promise((resolve, reject) => {
+            const server = net.createServer();
+            server.once('error', (err) => {
+                if (err.code === 'EADDRINUSE') {
+                    server.close();
+                    resolve(true); // Port is in use
+                } else {
+                    reject(err); // Other error
+                }
+            });
+            server.once('listening', () => {
+                server.close(() => {
+                    resolve(false); // Port is free
+                });
+            });
+            // Listen on 127.0.0.1 which should detect conflicts even if service binds to 0.0.0.0
+            server.listen(port, '127.0.0.1');
+        });
+    }
+
+    /**
+     * Checks if the configured ports for all managed services are available.
+     * @returns {Promise<{available: boolean, port?: number, serviceName?: string}>}
+     *          Resolves to {available: true} if all ports are free.
+     *          Resolves to {available: false, port: number, serviceName: string} if a port is in use.
+     */
+    async checkPortsAvailability() {
+        Logger.info('Checking availability of required network ports...');
+        for (const [serviceId, service] of Object.entries(this.services)) {
+            try {
+                const url = new URL(service.url.replace('/health', '')); // Use base URL
+                const port = parseInt(url.port, 10);
+
+                if (isNaN(port) || port <= 0 || port > 65535) {
+                    Logger.warn(`Could not parse a valid port from URL for service ${service.name}: ${service.url}. Skipping check for this service.`);
+                    continue; // Skip this service if port is invalid
+                }
+
+                Logger.info(`Checking port ${port} for ${service.name}...`);
+                const isUsed = await this._checkPortInUse(port);
+                if (isUsed) {
+                    Logger.error(`Port ${port} for ${service.name} is already in use.`);
+                    return { available: false, port: port, serviceName: service.name };
+                }
+                Logger.info(`Port ${port} for ${service.name} is available.`);
+            } catch (error) {
+                Logger.error(`Error checking port for service ${service.name} (URL: ${service.url}):`, error);
+                // Treat errors during check as potentially fatal, return unavailable
+                return { available: false, port: -1, serviceName: `${service.name} (Error during check: ${error.message})` };
+            }
+        }
+        Logger.info('All required network ports appear to be available.');
+        return { available: true };
     }
 
     setProgressCallback(callback) {

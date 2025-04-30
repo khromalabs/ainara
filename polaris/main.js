@@ -263,10 +263,23 @@ async function appInitialization() {
         appSetupEventHandlers();
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
+        
+        // --- Port Availability Check (Packaged App Only) ---
+        if (app.isPackaged) {
+            const portCheckResult = await ServiceManager.checkPortsAvailability();
+            if (!portCheckResult.available) {
+                // Port is in use or an error occurred during check
+                handlePortConflictError(portCheckResult.port, portCheckResult.serviceName);
+                return; // Stop initialization
+            }
+            // If we reach here, ports are available.
+        }
+        // --- End Port Availability Check ---
 
         // Create splash window
         splashWindow = new SplashWindow(config, null, null, __dirname);
         splashWindow.show();
+
 
         // If services are being managed externally alternate start without splash
         await ServiceManager.checkServicesHealth();
@@ -412,6 +425,31 @@ async function appInitialization() {
     } catch (error) {
         appHandleCriticalError(error);
     }
+}
+
+/**
+ * Handles the situation where a required port is already in use.
+ * Shows an error dialog and quits the application.
+ * @param {number} port The port number that is in use.
+ * @param {string} serviceName The name of the service requiring the port.
+ */
+function handlePortConflictError(port, serviceName) {
+    const message = port > 0
+        ? `Port ${port} required by the ${serviceName} service is already in use.`
+        : `Could not check port for ${serviceName}.`; // Handle error case from check
+    const detail = port > 0
+        ? `Polaris cannot start because another application is using port ${port}. Please close the conflicting application or configure the service to use a different port if possible, then restart Polaris.`
+        : `An error occurred while checking port availability for ${serviceName}. Please check the logs.`;
+    Logger.error(`${message} ${detail}`);
+    // Ensure splash screen is closed if it exists
+    if (splashWindow && splashWindow.window && !splashWindow.window.isDestroyed()) {
+        splashWindow.close();
+    }
+    dialog.showErrorBox(
+        'Application Startup Error',
+        message + '\n\n' + detail
+    );
+    app.exit(1);
 }
 
 function showWindows(force=false) {
