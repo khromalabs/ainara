@@ -263,7 +263,7 @@ class ServiceManager {
 
         for (const [, service] of Object.entries(this.services)) {
             if (service.process && !service.process.killed) {
-                terminationPromises.push(new Promise((resolve) => {
+                terminationPromises.push(new Promise((resolve, reject) => {
                     if (force) {
                         Logger.log(`Force killing ${service.name} immediately (SIGKILL)`);
                         service.process.kill('SIGKILL');
@@ -272,20 +272,62 @@ class ServiceManager {
                     }
 
                     // Normal graceful shutdown
-                    Logger.log(`Gracefully stopping ${service.name} (SIGTERM)`);
-                    service.process.kill('SIGTERM');
+                    Logger.log(`Gracefully stopping ${service.name} (SIGINT)`);
+                    service.process.kill('SIGINT'); // Use SIGINT instead of SIGTERM
 
-                    const forceKillTimeout = setTimeout(() => {
-                        if (service.process && !service.process.killed) {
-                            Logger.log(`${service.name} didn't terminate gracefully, forcing SIGKILL`);
-                            service.process.kill('SIGKILL');
+                    let pollingInterval = null;
+                    const maxWaitTime = 10000; // 10 seconds total wait time
+                    const pollIntervalTime = 1000; // Check every 1 second
+                    const startTime = Date.now();
+
+                    // Function to clean up polling interval
+                    const cleanupPolling = () => {
+                        if (pollingInterval) {
+                            clearInterval(pollingInterval);
+                            pollingInterval = null;
                         }
-                        resolve();
-                    }, 5000);
+                    };
 
-                    service.process.once('exit', () => {
-                        clearTimeout(forceKillTimeout);
+                    // Start polling
+                    pollingInterval = setInterval(() => {
+                        try {
+                            // Check if process exists using signal 0
+                            Logger.warn(`Forcing ${service.name} to stop (SIGKILL)`);
+                            process.kill(service.process.pid, 0);
+                            // If no error, process still exists. Check for timeout.
+                            if (Date.now() - startTime >= maxWaitTime) {
+                                cleanupPolling();
+                                Logger.error(`Timeout: ${service.name} (PID: ${service.process.pid}) did not terminate within ${maxWaitTime / 1000} seconds after SIGINT.`);
+                                reject(new Error(`${service.name} failed to terminate gracefully`));
+                            }
+                            // Else: Still alive, continue polling
+                        } catch (e) {
+                            if (e.code === 'ESRCH') {
+                                // Process is gone! Success.
+                                cleanupPolling();
+                                Logger.log(`${service.name} (PID: ${service.process.pid}) confirmed terminated after SIGINT.`);
+                                resolve();
+                            } else {
+                                // Unexpected error during polling
+                                cleanupPolling();
+                                Logger.error(`Polling error for ${service.name} (PID: ${service.process.pid}): ${e.message}`);
+                                reject(new Error(`Polling error: ${e.message}`));
+                            }
+                        }
+                    }, pollIntervalTime);
+
+                    // Also listen for the 'exit' event for immediate confirmation
+                    service.process.once('exit', (code, signal) => {
+                        cleanupPolling(); // Stop polling if it exited
+                        Logger.log(`${service.name} exited gracefully with code ${code} signal ${signal}`);
                         resolve();
+                    });
+
+                    // Handle potential errors during spawn or initial setup
+                    service.process.once('error', (err) => {
+                        cleanupPolling(); // Stop polling on error
+                        Logger.error(`Error on ${service.name} process: ${err.message}`);
+                        reject(err); // Reject if the process errors out
                     });
                 }));
             }
@@ -293,13 +335,25 @@ class ServiceManager {
 
         if (terminationPromises.length > 0) {
             Logger.log(`Waiting for ${terminationPromises.length} services to terminate...`);
-            await Promise.all(terminationPromises);
-            Logger.log('All services stopped successfully');
+            try {
+                await Promise.all(terminationPromises);
+                Logger.log('All services stopped successfully');
+                return true;
+            } catch (error) {
+                Logger.error(`Error stopping services: ${error.message}`);
+                // If we're in force mode, we should have already killed everything
+                if (force) {
+                    return true;
+                }
+                
+                // If graceful shutdown failed, try force kill as a last resort
+                Logger.log('Attempting force kill of remaining services...');
+                return await this.stopServices({ force: true });
+            }
         } else {
             Logger.log('No active services to stop');
+            return true;
         }
-
-        return true;
     }
 
     isAllHealthy() {
