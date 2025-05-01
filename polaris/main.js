@@ -75,9 +75,9 @@ function showSetupWizard() {
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        // width: 950,
-        width: 1350,
-        height: 650,
+        width: 950,
+        // width: 1350,
+        height: 750,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
@@ -91,7 +91,7 @@ function showSetupWizard() {
         transparent: true,
         iconPath: iconPath
     });
-    setupWindow.webContents.openDevTools();
+    // setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
 
