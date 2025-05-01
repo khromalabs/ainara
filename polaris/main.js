@@ -219,15 +219,13 @@ function showSetupWizard() {
         // Set shortcut just before showing windows
         appSetupShortcuts();
 
-        // Read the start minimized setting
-        const startMinimized = config.get('startup.startMinimized', false);
-
         // Check if this is the first run
         if (isFirstRun()) {
             showSetupWizard();
             return;
         } else {
-            if (!startMinimized) {
+            // Read the start minimized setting
+            if (!config.get('startup.startMinimized', false)) {
                 Logger.info('Starting with windows visible.');
                 showWindows(true);
             } else Logger.info('Starting minimized as per configuration.');
@@ -270,7 +268,7 @@ async function appInitialization() {
         appSetupEventHandlers();
         await appCreateTray();
         await waitForWindowsAndComponentsReady();
-        
+
         // --- Port Availability Check (Packaged App Only) ---
         if (app.isPackaged) {
             const portCheckResult = await ServiceManager.checkPortsAvailability();
@@ -426,7 +424,11 @@ async function appInitialization() {
             showSetupWizard();
             return;
         } else {
-            showWindows(true);
+            // Read the start minimized setting
+            if (!config.get('startup.startMinimized', false)) {
+                Logger.info('Starting with windows visible.');
+                showWindows(true);
+            } else Logger.info('Starting minimized as per configuration.');
         }
 
         let llmProviders = await ConfigHelper.getLLMProviders();
@@ -759,15 +761,22 @@ function initializeAutoUpdater() {
                 updateProgressWindow = new UpdateProgressWindow(config);
                 updateProgressWindow.show();
                 autoUpdater.downloadUpdate();
-            } else if (response === 1) { // Ignore This Version
-                Logger.info(`User chose to ignore update version ${newVersion}`);
-                config.set('updates.ignoredVersion', newVersion);
-                updateAvailable = null; // Clear update info as it's ignored
-                showWindows(true);
-            } else { // Later (or closed dialog)
-                Logger.info(`User chose to postpone update ${newVersion}`);
-                updateAvailable = null; // Clear update info for this session
-                showWindows(true);
+            } else {
+                if (response === 1) { // Ignore This Version
+                    Logger.info(`User chose to ignore update version ${newVersion}`);
+                    config.set('updates.ignoredVersion', newVersion);
+                    updateAvailable = null; // Clear update info as it's ignored
+                } else { // Later (or closed dialog)
+                    Logger.info(`User chose to postpone update ${newVersion}`);
+                    updateAvailable = null; // Clear update info for this session
+                }
+                // Read the start minimized setting
+                if (!config.get('startup.startMinimized', false)) {
+                    Logger.info('Starting with windows visible.');
+                    showWindows(true);
+                } else {
+                    Logger.info('Starting minimized as per configuration.');
+                }
             }
         }).catch(err => {
             Logger.error('Error showing update dialog:', err);
