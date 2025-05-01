@@ -75,8 +75,8 @@ function showSetupWizard() {
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        width: 950,
-        // width: 1350,
+        // width: 950,
+        width: 1350,
         height: 650,
         webPreferences: {
             nodeIntegration: true,
@@ -91,6 +91,7 @@ function showSetupWizard() {
         transparent: true,
         iconPath: iconPath
     });
+    setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
 
@@ -101,7 +102,7 @@ function showSetupWizard() {
         setupWindow.show();
     });
 
-    // setupWindow.webContents.openDevTools();
+
     async function setupComplete() {
         Logger.info('Setup completed, starting application');
         try {
@@ -218,12 +219,18 @@ function showSetupWizard() {
         // Set shortcut just before showing windows
         appSetupShortcuts();
 
+        // Read the start minimized setting
+        const startMinimized = config.get('startup.startMinimized', false);
+
         // Check if this is the first run
         if (isFirstRun()) {
             showSetupWizard();
             return;
         } else {
-            showWindows(true);
+            if (!startMinimized) {
+                Logger.info('Starting with windows visible.');
+                showWindows(true);
+            } else Logger.info('Starting minimized as per configuration.');
         }
     }
 
@@ -313,11 +320,18 @@ async function appInitialization() {
             // Set shortcut just before showing windows
             appSetupShortcuts();
 
+            // Read the start minimized setting
+            const startMinimized = config.get('startup.startMinimized', false);
+
             // Check if this is the first run
-            !debugDisableWizard && isFirstRun() ?
-                showSetupWizard()
-            :
-                showWindows(true);
+            if (!debugDisableWizard && isFirstRun()) {
+                showSetupWizard();
+            } else {
+                if (!startMinimized) {
+                    Logger.info('Starting with windows visible.');
+                    showWindows(true);
+                } else Logger.info('Starting minimized as per configuration.');
+            }
 
             return;
         }

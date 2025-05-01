@@ -21,8 +21,9 @@
 
 import argparse
 import atexit
+import json
 import logging
-import os, json
+import os
 import pprint
 import shutil
 import sys
@@ -41,7 +42,6 @@ from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils.dependency_checker import DependencyChecker
-
 
 # --- Global instances ---
 config = ConfigManager()
@@ -141,17 +141,27 @@ def create_app():
         DependencyChecker.print_stt_dependency_report()
 
         # Log more detailed information about hardware acceleration
-        cuda_available, cuda_version, missing_libs, cuda_details = DependencyChecker.check_cuda_availability()
+        cuda_available, cuda_version, missing_libs, cuda_details = (
+            DependencyChecker.check_cuda_availability()
+        )
         if cuda_available:
-            logger.info(f"CUDA {cuda_version} is available for hardware acceleration")
+            logger.info(
+                f"CUDA {cuda_version} is available for hardware acceleration"
+            )
             if cuda_details.get("device_name"):
                 logger.info(f"Using GPU: {cuda_details['device_name']}")
         elif cuda_details["has_nvidia_hardware"]:
             logger.warning("NVIDIA GPU detected but CUDA is not available")
             logger.warning("Speech recognition will use CPU mode (slower)")
-            if sys.platform == 'win32':
-                logger.warning("On Windows, you may need to install NVIDIA CUDA drivers manually")
-                logger.warning("Visit https://www.nvidia.com/Download/index.aspx to download drivers")
+            if sys.platform == "win32":
+                logger.warning(
+                    "On Windows, you may need to install NVIDIA CUDA drivers"
+                    " manually"
+                )
+                logger.warning(
+                    "Visit https://www.nvidia.com/Download/index.aspx to"
+                    " download drivers"
+                )
     except ImportError:
         logger.info(
             "Dependency checker not available, skipping dependency check"
@@ -373,78 +383,157 @@ def create_app():
         json_data = json.dumps(data)
         return f"data: {json_data}\n\n"
 
-    @app.route("/setup/initialize", methods=["GET"]) # Changed method to GET
+    @app.route("/setup/initialize", methods=["GET"])  # Changed method to GET
     def initialize_resources():
         """
         Initialize required resources and stream progress using SSE.
         """
+
         def generate():
             try:
-                yield format_sse({"status": "running", "progress": 0, "message": "Starting initialization..."})
+                yield format_sse(
+                    {
+                        "status": "running",
+                        "progress": 0,
+                        "message": "Starting initialization...",
+                    }
+                )
 
                 # --- Check what needs to be initialized ---
                 # Note: Calling check_resources() directly might be problematic if it relies on Flask context.
                 # Re-checking basic conditions is safer within the generator.
                 resources_to_init = []
-                nltk_check = check_nltk_data() # Assume safe to call
+                nltk_check = check_nltk_data()  # Assume safe to call
                 if not nltk_check.get("initialized"):
                     resources_to_init.append("nltk")
-                whisper_check = check_whisper_models() # Assume safe to call
+                whisper_check = check_whisper_models()  # Assume safe to call
                 if not whisper_check.get("initialized"):
                     resources_to_init.append("whisper")
 
                 total_resources = len(resources_to_init)
                 if total_resources == 0:
-                    yield format_sse({"status": "complete", "progress": 100, "message": "All resources already initialized"})
-                    logger.info("SSE Initialization: Resources already present.")
-                    return # End stream
+                    yield format_sse(
+                        {
+                            "status": "complete",
+                            "progress": 100,
+                            "message": "All resources already initialized",
+                        }
+                    )
+                    logger.info(
+                        "SSE Initialization: Resources already present."
+                    )
+                    return  # End stream
 
                 completed_resources = 0
                 progress_per_resource = 100 / total_resources
 
                 # --- Initialize NLTK if needed ---
                 if "nltk" in resources_to_init:
-                    current_progress = int(completed_resources * progress_per_resource)
-                    yield format_sse({"status": "running", "progress": current_progress, "message": "Setting up NLTK data..."})
+                    current_progress = int(
+                        completed_resources * progress_per_resource
+                    )
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": current_progress,
+                            "message": "Setting up NLTK data...",
+                        }
+                    )
                     logger.info("SSE Initialization: Setting up NLTK...")
-                    nltk_result = setup_nltk() # Blocking call
+                    nltk_result = setup_nltk()  # Blocking call
                     if not nltk_result:
-                         # Yield error and stop
-                         yield format_sse({"status": "error", "progress": current_progress, "message": "NLTK setup failed"})
-                         return
+                        # Yield error and stop
+                        yield format_sse(
+                            {
+                                "status": "error",
+                                "progress": current_progress,
+                                "message": "NLTK setup failed",
+                            }
+                        )
+                        return
                     completed_resources += 1
-                    yield format_sse({"status": "running", "progress": int(completed_resources * progress_per_resource), "message": "NLTK setup complete."})
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": int(
+                                completed_resources * progress_per_resource
+                            ),
+                            "message": "NLTK setup complete.",
+                        }
+                    )
 
                 # --- Initialize Whisper models if needed ---
                 if "whisper" in resources_to_init:
-                    current_progress = int(completed_resources * progress_per_resource)
-                    yield format_sse({"status": "running", "progress": current_progress, "message": "Setting up Whisper models..."})
-                    logger.info("SSE Initialization: Setting up Whisper models...")
-                    whisper_result = setup_whisper_models() # Blocking call
+                    current_progress = int(
+                        completed_resources * progress_per_resource
+                    )
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": current_progress,
+                            "message": "Setting up Whisper models...",
+                        }
+                    )
+                    logger.info(
+                        "SSE Initialization: Setting up Whisper models..."
+                    )
+                    whisper_result = setup_whisper_models()  # Blocking call
                     if not whisper_result["success"]:
                         # Yield error and stop
-                        yield format_sse({"status": "error", "progress": current_progress, "message": f"Whisper setup failed: {whisper_result['message']}"})
+                        yield format_sse(
+                            {
+                                "status": "error",
+                                "progress": current_progress,
+                                "message": (
+                                    "Whisper setup failed:"
+                                    f" {whisper_result['message']}"
+                                ),
+                            }
+                        )
                         return
                     completed_resources += 1
-                    yield format_sse({"status": "running", "progress": int(completed_resources * progress_per_resource), "message": "Whisper setup complete."})
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": int(
+                                completed_resources * progress_per_resource
+                            ),
+                            "message": "Whisper setup complete.",
+                        }
+                    )
 
                 # --- Final success message ---
-                yield format_sse({"status": "complete", "progress": 100, "message": "Initialization completed successfully"})
+                yield format_sse(
+                    {
+                        "status": "complete",
+                        "progress": 100,
+                        "message": "Initialization completed successfully",
+                    }
+                )
                 logger.info("SSE Initialization: Completed successfully.")
 
             except Exception as e:
                 logger.error(f"Error during SSE initialization stream: {e}")
                 import traceback
+
                 logger.error(traceback.format_exc())
                 # Yield a final error message
                 try:
-                    yield format_sse({"status": "error", "progress": 0, "message": f"Initialization error: {str(e)}"})
+                    yield format_sse(
+                        {
+                            "status": "error",
+                            "progress": 0,
+                            "message": f"Initialization error: {str(e)}",
+                        }
+                    )
                 except Exception:
                     # If yielding fails (e.g., client disconnected), just log
-                    logger.error("Failed to yield final error message to client.")
+                    logger.error(
+                        "Failed to yield final error message to client."
+                    )
 
         # Return the generator function wrapped in a Response object
-        return Response(generate(), mimetype='text/event-stream')
+        return Response(generate(), mimetype="text/event-stream")
 
     @app.route("/static/audio/<filename>")
     def serve_audio(filename):
@@ -1006,22 +1095,29 @@ def create_app():
         """Check if hardware acceleration is available"""
         try:
             # Get detailed acceleration information and recommendations
-            cuda_available, cuda_version, missing_libs, details = DependencyChecker.check_cuda_availability()
-            recommendations = DependencyChecker.get_acceleration_recommendation()
+            cuda_available, cuda_version, missing_libs, details = (
+                DependencyChecker.check_cuda_availability()
+            )
+            recommendations = (
+                DependencyChecker.get_acceleration_recommendation()
+            )
 
-            return jsonify({
-                "cuda_available": cuda_available,
-                "cuda_version": cuda_version,
-                "has_nvidia_hardware": details["has_nvidia_hardware"],
-                "platform": sys.platform,
-                "gpu_list": details["gpu_list"],
-                "missing_libs": missing_libs,
-                "details": details,
-                "recommendations": recommendations
-            })
+            return jsonify(
+                {
+                    "cuda_available": cuda_available,
+                    "cuda_version": cuda_version,
+                    "has_nvidia_hardware": details["has_nvidia_hardware"],
+                    "platform": sys.platform,
+                    "gpu_list": details["gpu_list"],
+                    "missing_libs": missing_libs,
+                    "details": details,
+                    "recommendations": recommendations,
+                }
+            )
         except Exception as e:
             logger.error(f"Error checking hardware acceleration: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return jsonify({"error": str(e)}), 500
 
@@ -1051,6 +1147,7 @@ def create_app():
                     os.path.dirname(
                         os.path.dirname(os.path.abspath(__file__))
                     ),
+                    "..",
                     "resources",
                     "ainara.yaml.defaults",
                 )

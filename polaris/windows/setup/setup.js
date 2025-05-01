@@ -36,7 +36,8 @@ const modifiedFields = {
     llm: new Set(),
     stt: new Set(),
     skills: new Set(),
-    shortcuts: new Set()
+    shortcuts: new Set(),
+    finish: new Set()
 };
 
 // Initialize the UI
@@ -244,6 +245,25 @@ async function generateSkillsUI() {
 
         // Generate HTML for each API key
         let html = '';
+
+        // Add event to load capabilities when navigating to finish step
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    const finishPanel = document.getElementById('finish-panel');
+                    if (finishPanel && finishPanel.classList.contains('active')) {
+                        loadAndDisplayCapabilities().catch(err => {
+                            console.error('Error loading capabilities:', err);
+                        });
+                    }
+                }
+            });
+        });
+
+        const finishPanel = document.getElementById('finish-panel');
+        if (finishPanel) {
+            observer.observe(finishPanel, { attributes: true });
+        }
 
         // Group keys by category
         const categories = new Map();
@@ -604,6 +624,13 @@ function setupEventListeners() {
             document.getElementById('apply-filter-btn').addEventListener('click', () => {
                 loadProviders();
             });
+
+            // Add event listener for the start minimized checkbox
+            const startMinimizedCheckbox = document.getElementById('start-minimized-checkbox');
+            if (startMinimizedCheckbox) {
+                startMinimizedCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                startMinimizedCheckbox.checked = config.get('startup.startMinimized');
+            }
 
             // Add enter key support for filter input
             document.getElementById('model-filter').addEventListener('keypress', (e) => {
@@ -1142,6 +1169,8 @@ function handleInputChange(event) {
             modifiedFields.skills.add(field.dataset.path);
         } else if (fieldId.includes('custom-api')) {
             modifiedFields.stt.add(fieldId);
+        } else if (fieldId === 'start-minimized-checkbox') {
+            modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
             modifiedFields.llm.add(fieldId);
@@ -1150,6 +1179,37 @@ function handleInputChange(event) {
 
     // Also validate the form
     validateProviderForm();
+}
+
+// Function to load and display capabilities
+async function loadAndDisplayCapabilities() {
+    const listElement = document.getElementById('capabilities-list');
+    if (!listElement) return;
+
+    listElement.innerHTML = '<li class="loading">Loading capabilities...</li>'; // Show loading state
+
+    try {
+        // Use pybridge URL as the base for capabilities endpoint
+        const response = await fetch(config.get('orakle.api_url') + '/capabilities');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch capabilities: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+        if (data && data instanceof Object && Object.keys(data.skills).length > 0) {
+            listElement.innerHTML = ''; // Clear loading state
+            Object.keys(data.skills).forEach(skillId => {
+                let skill = data.skills[skillId];
+                const li = document.createElement('li');
+                li.textContent = skill.description;
+                listElement.appendChild(li);
+            });
+        } else {
+            listElement.innerHTML = '<li class="info">No specific capabilities listed by the backend.</li>';
+        }
+    } catch (error) {
+        console.error('Error loading capabilities:', error);
+        listElement.innerHTML = `<li class="error">Failed to load capabilities: ${error.message}</li>`;
+    }
 }
 
 function validateProviderForm() {
@@ -1550,6 +1610,11 @@ async function saveCurrentStepData() {
         case 'shortcuts':
             saveShortcutsConfig();
             break;
+        // Note: Finish step data is saved only when the 'Finish' button is clicked,
+        // not during step navigation. See finishSetup().
+        // case 'finish':
+        //     await saveFinishStepConfig();
+        //     break;
     }
 }
 
@@ -1885,6 +1950,28 @@ async function saveSkillsConfig() {
     }
 }
 
+// Function to save finish step configuration
+function saveFinishStepConfig() {
+    // If no finish step fields were modified, skip saving
+    if (modifiedFields.finish.size === 0) {
+        return true;
+    }
+
+    try {
+        if (modifiedFields.finish.has('start-minimized-checkbox')) {
+            const isChecked = document.getElementById('start-minimized-checkbox').checked;
+            config.set('startup.startMinimized', isChecked);
+        }
+
+        config.saveConfig();
+        modifiedFields.finish.clear();
+        return true;
+    } catch (error) {
+        console.error('Error saving finish step config:', error);
+        return false;
+    }
+}
+
 // Function to save shortcuts configuration
 function saveShortcutsConfig() {
     // If no shortcut fields were modified, skip saving
@@ -2012,10 +2099,16 @@ function setupShortcutCapture() {
 }
 
 async function finishSetup() {
+    // Save any pending changes from the last configurable steps
+    saveShortcutsConfig(); // Save shortcuts if modified
+    saveFinishStepConfig(); // Save finish step settings (like start minimized)
+
     // Mark setup as completed
     config.set('setup.completed', true);
     config.set('setup.version', '0.3.1B');
     config.set('setup.timestamp', new Date().toISOString());
+
+    // Save the final config state including setup completion flags
     config.saveConfig();
 
     // Notify main process that setup is complete

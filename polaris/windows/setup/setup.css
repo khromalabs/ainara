@@ -443,3 +443,38 @@ input:disabled, button:disabled {
     opacity: 1;
     background-color: #f5c6cb;
 }
+
+/* Styles for Finish Step Enhancements */
+.capabilities-section {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #17a2b8; /* Info color */
+    max-height: 150px; /* Limit height */
+    overflow-y: auto; /* Add scroll if needed */
+}
+
+.capabilities-section h3 {
+    margin-top: 0;
+    color: #17a2b8;
+    margin-bottom: 10px;
+}
+
+#capabilities-list {
+    padding-left: 20px;
+    margin-bottom: 0;
+}
+
+#capabilities-list li {
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+/* Style for loading/error states */
+#capabilities-list .loading,
+#capabilities-list .error,
+#capabilities-list .info {
+    font-style: italic;
+    color: #6c757d;
+}
