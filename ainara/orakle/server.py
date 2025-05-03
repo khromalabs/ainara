@@ -25,12 +25,10 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from ainara.framework.capabilities_manager import CapabilitiesManager
-from ainara.framework.config import ConfigManager
+from ainara.framework.config import config  # Use the global config instance
 from ainara.framework.logging_setup import logging_manager
+from ainara.framework.mcp_client_manager import MCP_AVAILABLE  # Check MCP availability
 from ainara.orakle import __version__
-
-config = ConfigManager()
-config.load_config()
 
 
 def parse_args():
@@ -75,7 +73,8 @@ def health_check():
             "logging": logging_manager is not None,
         },
         "dependencies": {
-            "dummy": True
+            "dummy": True,
+            "mcp_sdk_available": MCP_AVAILABLE
         },
     }
 
@@ -101,8 +100,8 @@ def health_check():
 
 def create_app():
     """Create and configure the Flask application"""
-    # Store reference to capabilities manager
-    app.capabilities_manager = CapabilitiesManager(app)
+    # Store reference to capabilities manager, passing the global config
+    app.capabilities_manager = CapabilitiesManager(app, config)
 
     @app.route("/config", methods=["PUT"])
     def update_config():
@@ -143,6 +142,28 @@ def create_app():
             logger.error(traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
 
+    # Add a route to execute a capability (native or MCP)
+    @app.route("/execute", methods=["POST"])
+    def execute_capability_route():
+        if not hasattr(app, 'capabilities_manager'):
+             return jsonify({"error": "CapabilitiesManager not initialized"}), 500
+        data = request.get_json()
+        if not data or "name" not in data or "arguments" not in data:
+            return jsonify({"error": "Missing 'name' or 'arguments' in request"}), 400
+
+        capability_name = data["name"]
+        arguments = data["arguments"]
+
+        try:
+            result = app.capabilities_manager.execute_capability(capability_name, arguments)
+            return jsonify({"success": True, "result": result})
+        except (ValueError, TypeError, RuntimeError) as e:
+             logger.error(f"Error executing capability '{capability_name}': {e}", exc_info=True)
+             return jsonify({"success": False, "error": str(e)}), 400
+        except Exception as e:
+            logger.error(f"Unexpected error executing capability '{capability_name}': {e}", exc_info=True)
+            return jsonify({"success": False, "error": "An unexpected server error occurred"}), 500
+
     return app
 
 
@@ -152,6 +173,7 @@ if __name__ == "__main__":
     # Get logger after setup
     logger = logging_manager.logger
     logger.info(f"Starting Orakle development server on port {args.port}")
+    logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
 
     app = create_app()
     app.run(port=args.port)
