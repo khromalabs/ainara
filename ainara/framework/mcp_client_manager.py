@@ -70,15 +70,59 @@ class MCPTool:
         )
 
     def format_for_llm(self) -> str:
-        """Format tool information for LLM (similar to example)."""
+        """Format tool information for LLM to closely mimic native skills with Annotated metadata."""
         args_desc = []
         if "properties" in self.input_schema:
-            for param_name, param_info in self.input_schema.get(
-                "properties", {}
-            ).items():
+            for param_name, param_info in self.input_schema.get("properties", {}).items():
+                # Map JSON schema type to Python type
+                param_type = param_info.get('type', 'string')
+                type_mapping = {
+                    'string': 'str',
+                    'number': 'float',
+                    'integer': 'int',
+                    'boolean': 'bool',
+                    'object': 'dict',
+                    'array': 'list'
+                }
+                python_type = type_mapping.get(param_type, param_type)
+                
+                # Handle array items type if specified
+                if param_type == 'array' and 'items' in param_info:
+                    item_type = param_info['items'].get('type', 'any')
+                    python_item_type = type_mapping.get(item_type, item_type)
+                    python_type = f"List[{python_item_type}]"
+                
+                # Handle enum or literal types
+                if 'enum' in param_info and isinstance(param_info['enum'], list):
+                    python_type = f"Literal[{', '.join([repr(opt) for opt in param_info['enum']])}]"
+                
+                # Build constraints description
+                constraints = []
+                if param_type == 'string':
+                    if 'minLength' in param_info:
+                        constraints.append(f"min length: {param_info['minLength']}")
+                    if 'maxLength' in param_info:
+                        constraints.append(f"max length: {param_info['maxLength']}")
+                    if 'pattern' in param_info:
+                        constraints.append(f"pattern: {param_info['pattern']}")
+                elif param_type in ('number', 'integer'):
+                    if 'minimum' in param_info:
+                        constraints.append(f"minimum: {param_info['minimum']}")
+                    if 'maximum' in param_info:
+                        constraints.append(f"maximum: {param_info['maximum']}")
+                
+                constraints_str = f", constraints: {'; '.join(constraints)}" if constraints else ""
+                
+                # Extract description and default value
+                param_desc = param_info.get('description', 'No description provided')
+                param_default = param_info.get('default', None)
+                default_str = f", default: {repr(param_default)}" if param_default is not None else ""
+                
+                # Build the description line similar to Annotated style
                 arg_desc = (
                     f"- {param_name}:"
-                    f" {param_info.get('description', 'No description')}"
+                    f" {param_desc}"
+                    f" (type: {python_type}{default_str}{constraints_str})"
                 )
                 if param_name in self.input_schema.get("required", []):
                     arg_desc += " (required)"
@@ -88,7 +132,7 @@ class MCPTool:
 Tool: {self.prefixed_name}
 Description: {self.description}
 Arguments:
-{chr(10).join(args_desc)}
+{chr(10).join(args_desc) if args_desc else "None"}
 """
 
 
