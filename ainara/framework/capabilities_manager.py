@@ -704,7 +704,7 @@ class CapabilitiesManager:
         # Decide if you want direct HTTP access to MCP tools.
         # This might bypass central logic/logging you implement elsewhere.
         # If enabled, it mirrors the native skill endpoints.
-        ENABLE_DIRECT_MCP_ENDPOINTS = False  # Set to True to enable
+        ENABLE_DIRECT_MCP_ENDPOINTS = True  # Set to True to enable
 
         if not ENABLE_DIRECT_MCP_ENDPOINTS:
             logger.info("Direct MCP tool endpoint registration is disabled.")
@@ -724,7 +724,7 @@ class CapabilitiesManager:
             tool
         ) in self.mcp_client_manager.get_discovered_tools():  # Use getter
             route_path = (  # Separate namespace
-                f"/mcp_tools/{tool.prefixed_name}"
+                f"/skills/{tool.prefixed_name}"
             )
 
             if route_path in registered_routes:

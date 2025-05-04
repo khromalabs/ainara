@@ -120,7 +120,7 @@ class ChatManager:
         if capabilities:
             self.capabilities = capabilities
         else:
-            self.capabilities = {"recipes": [], "skills": []}
+            self.capabilities = []
 
         self.orakle_middleware = OrakleMiddleware(
             llm=llm,
@@ -134,7 +134,7 @@ class ChatManager:
 
         # Update system message with skills descriptions
         skills_description_list = ""
-        for skill in self.capabilities["skills"]:
+        for skill in self.capabilities:
             skills_description_list += "\n - " + skill["description"]
 
         # Update system message with skills descriptions

@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
+
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -73,51 +74,71 @@ class MCPTool:
         """Format tool information for LLM to closely mimic native skills with Annotated metadata."""
         args_desc = []
         if "properties" in self.input_schema:
-            for param_name, param_info in self.input_schema.get("properties", {}).items():
+            for param_name, param_info in self.input_schema.get(
+                "properties", {}
+            ).items():
                 # Map JSON schema type to Python type
-                param_type = param_info.get('type', 'string')
+                param_type = param_info.get("type", "string")
                 type_mapping = {
-                    'string': 'str',
-                    'number': 'float',
-                    'integer': 'int',
-                    'boolean': 'bool',
-                    'object': 'dict',
-                    'array': 'list'
+                    "string": "str",
+                    "number": "float",
+                    "integer": "int",
+                    "boolean": "bool",
+                    "object": "dict",
+                    "array": "list",
                 }
                 python_type = type_mapping.get(param_type, param_type)
-                
+
                 # Handle array items type if specified
-                if param_type == 'array' and 'items' in param_info:
-                    item_type = param_info['items'].get('type', 'any')
+                if param_type == "array" and "items" in param_info:
+                    item_type = param_info["items"].get("type", "any")
                     python_item_type = type_mapping.get(item_type, item_type)
                     python_type = f"List[{python_item_type}]"
-                
+
                 # Handle enum or literal types
-                if 'enum' in param_info and isinstance(param_info['enum'], list):
-                    python_type = f"Literal[{', '.join([repr(opt) for opt in param_info['enum']])}]"
-                
+                if "enum" in param_info and isinstance(
+                    param_info["enum"], list
+                ):
+                    python_type = (
+                        f"Literal[{', '.join([repr(opt) for opt in param_info['enum']])}]"
+                    )
+
                 # Build constraints description
                 constraints = []
-                if param_type == 'string':
-                    if 'minLength' in param_info:
-                        constraints.append(f"min length: {param_info['minLength']}")
-                    if 'maxLength' in param_info:
-                        constraints.append(f"max length: {param_info['maxLength']}")
-                    if 'pattern' in param_info:
+                if param_type == "string":
+                    if "minLength" in param_info:
+                        constraints.append(
+                            f"min length: {param_info['minLength']}"
+                        )
+                    if "maxLength" in param_info:
+                        constraints.append(
+                            f"max length: {param_info['maxLength']}"
+                        )
+                    if "pattern" in param_info:
                         constraints.append(f"pattern: {param_info['pattern']}")
-                elif param_type in ('number', 'integer'):
-                    if 'minimum' in param_info:
+                elif param_type in ("number", "integer"):
+                    if "minimum" in param_info:
                         constraints.append(f"minimum: {param_info['minimum']}")
-                    if 'maximum' in param_info:
+                    if "maximum" in param_info:
                         constraints.append(f"maximum: {param_info['maximum']}")
-                
-                constraints_str = f", constraints: {'; '.join(constraints)}" if constraints else ""
-                
+
+                constraints_str = (
+                    f", constraints: {'; '.join(constraints)}"
+                    if constraints
+                    else ""
+                )
+
                 # Extract description and default value
-                param_desc = param_info.get('description', 'No description provided')
-                param_default = param_info.get('default', None)
-                default_str = f", default: {repr(param_default)}" if param_default is not None else ""
-                
+                param_desc = param_info.get(
+                    "description", "No description provided"
+                )
+                param_default = param_info.get("default", None)
+                default_str = (
+                    f", default: {repr(param_default)}"
+                    if param_default is not None
+                    else ""
+                )
+
                 # Build the description line similar to Annotated style
                 arg_desc = (
                     f"- {param_name}:"
@@ -277,14 +298,16 @@ class MCPClientManager:
         # Split command into base command and arguments for StdioServerParameters
         if isinstance(resolved_command, list) and len(resolved_command) > 0:
             base_command = resolved_command[0]
-            command_args = resolved_command[1:] if len(resolved_command) > 1 else []
+            command_args = (
+                resolved_command[1:] if len(resolved_command) > 1 else []
+            )
         else:
             base_command = resolved_command
             command_args = []
 
         server_params = StdioServerParameters(
             command=base_command,  # Base command (e.g., /usr/bin/npx)
-            args=command_args,    # Arguments (e.g., @modelcontextprotocol/server-google-maps)
+            args=command_args,  # Arguments (e.g., @modelcontextprotocol/server-google-maps)
             env={**os.environ, **stdio_params.get("env", {})},
         )
 
@@ -304,38 +327,66 @@ class MCPClientManager:
             # Discover tools
             tools_response = await session.list_tools()
             discovered_tools = []
-            logger.debug(f"Tools response from server {name}: {tools_response}")
+            logger.debug(
+                f"Tools response from server {name}: {tools_response}"
+            )
 
             # Handle different possible response formats dynamically
             if isinstance(tools_response, list):
                 tools_list = tools_response
-            elif isinstance(tools_response, tuple) and len(tools_response) > 1 and tools_response[0] == "tools":
-                tools_list = tools_response[1] if isinstance(tools_response[1], list) else []
-            elif hasattr(tools_response, 'tools') and isinstance(tools_response.tools, list):
+            elif (
+                isinstance(tools_response, tuple)
+                and len(tools_response) > 1
+                and tools_response[0] == "tools"
+            ):
+                tools_list = (
+                    tools_response[1]
+                    if isinstance(tools_response[1], list)
+                    else []
+                )
+            elif hasattr(tools_response, "tools") and isinstance(
+                tools_response.tools, list
+            ):
                 tools_list = tools_response.tools
             else:
-                logger.warning(f"Unexpected tools response format from server {name}: {type(tools_response)}")
+                logger.warning(
+                    f"Unexpected tools response format from server {name}:"
+                    f" {type(tools_response)}"
+                )
                 tools_list = []
 
             for tool_info in tools_list:
                 try:
                     # Assume tool_info is an object with attributes like name, description, inputSchema
                     # Adjust based on actual response structure if needed
-                    if hasattr(tool_info, 'name') and hasattr(tool_info, 'description') and hasattr(tool_info, 'inputSchema'):
+                    if (
+                        hasattr(tool_info, "name")
+                        and hasattr(tool_info, "description")
+                        and hasattr(tool_info, "inputSchema")
+                    ):
                         prefixed_name = f"{prefix}{tool_info.name}"
                         mcp_tool = MCPTool(
                             server_name=name,
                             name=tool_info.name,
                             description=tool_info.description,
                             input_schema=tool_info.inputSchema,
-                            prefixed_name=prefixed_name
+                            prefixed_name=prefixed_name,
                         )
                         discovered_tools.append(mcp_tool)
-                        logger.debug(f"Discovered MCP tool: {prefixed_name} from server {name}")
+                        logger.debug(
+                            f"Discovered MCP tool: {prefixed_name} from server"
+                            f" {name}"
+                        )
                     else:
-                        logger.warning(f"Tool info missing expected attributes from server {name}: {tool_info}")
+                        logger.warning(
+                            "Tool info missing expected attributes from"
+                            f" server {name}: {tool_info}"
+                        )
                 except Exception as e:
-                    logger.error(f"Error processing tool info from server {name}: {e}", exc_info=True)
+                    logger.error(
+                        f"Error processing tool info from server {name}: {e}",
+                        exc_info=True,
+                    )
 
             return session, discovered_tools
 
