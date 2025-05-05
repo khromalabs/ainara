@@ -25,7 +25,7 @@ import logging
 # import sys
 import re
 from pathlib import Path
-from typing import (Annotated, Any, Dict, List, Optional, get_args, get_origin,
+from typing import (Annotated, Any, Dict, Optional, get_args, get_origin,
                     get_type_hints)
 
 from flask import jsonify, request
@@ -40,12 +40,13 @@ class CapabilitiesManager:
     # Modified __init__ to accept config and initialize MCP manager
     def __init__(self, flask_app, config):
         self.app = flask_app
-        self.config = config  # Store config
-        self.skills = {}  # Your existing skills dictionary for native skills
-        self.mcp_tools: List[MCPTool] = []  # Store discovered MCP tools
-
-        # Initialize MCP Client Manager
+        self.config = config
+        self.capabilities: Dict[str, Dict[str, Any]] = (
+            {}
+        )  # Unified capabilities store
         self.mcp_client_manager = None
+
+        # Initialize MCP Client Manager (if available and configured)
         if MCP_AVAILABLE:
             mcp_config_section = self.config.get("mcp_clients")
             if mcp_config_section:
@@ -65,41 +66,37 @@ class CapabilitiesManager:
                 " 'pip install mcp-sdk'"
             )
 
-        # Load native skills and discover MCP tools
+        # Load all capabilities
         self.load_capabilities()
 
-        # Register endpoints after loading/discovering capabilities
-        self.register_skills_endpoints()  # For native skills
-        self.register_mcp_tool_endpoints()  # For MCP tools (optional, direct access)
-        self.register_capabilities_endpoint()  # Combined capabilities endpoint
+        # Register API endpoints for capabilities
+        self.register_capability_endpoints()
 
     def load_capabilities(self):
-        """Load native skills and discover MCP tools."""
-        # 1. Load native skills (using your existing logic)
-        self._load_native_skills()
-        logger.info(f"Loaded {len(self.skills)} native skills.")
+        """Load native skills and discover MCP tools, populating self.capabilities."""
+        logger.info("Loading capabilities...")
+        self.capabilities = {}  # Clear existing capabilities
 
-        # 2. Discover MCP tools if manager is available
-        if self.mcp_client_manager:
-            logger.info("Discovering MCP tools...")
-            try:
-                # This blocks until discovery is done (or times out)
-                self.mcp_tools = self.mcp_client_manager.connect_and_discover()
-                logger.info(f"Discovered {len(self.mcp_tools)} MCP tools.")
-            except Exception as e:
-                logger.error(
-                    f"Failed during MCP tool discovery: {e}", exc_info=True
-                )
-                self.mcp_tools = []  # Ensure it's an empty list on failure
+        # 1. Load native skills
+        self._load_native_skills()
+
+        # 2. Discover MCP tools
+        self._discover_mcp_tools()
+
+        logger.info(
+            f"Loaded {len(self.capabilities)} capabilities in total."
+            f" ({len([c for c in self.capabilities.values() if c['type'] == 'skill'])} native"
+            " skills,"
+            f" {len([c for c in self.capabilities.values() if c['type'] == 'mcp'])} MCP"
+            " tools)"
+        )
 
     def _load_native_skills(self):
-        """Load all available native skills from the skills directory"""
-        # This is your existing load_skills logic, renamed for clarity
+        """Load native skills and add them to the capabilities dictionary."""
         skills_dir = Path(__file__).parent.parent / "orakle" / "skills"
-        logger.debug(f"Loading native skills from: {skills_dir}")
-        self.skills = {}  # Clear existing native skills before loading
+        logger.debug(f"Scanning for native skills in: {skills_dir}")
+        loaded_count = 0
 
-        # Get all Python files in the skills directory and subdirectories
         for skill_file in skills_dir.rglob("*.py"):
 
             # Skip files in nested directories (assuming skills are category/skill.py)
@@ -145,11 +142,40 @@ class CapabilitiesManager:
                 if hasattr(module, class_name):
                     skill_class = getattr(module, class_name)
 
-                    # Instantiate the skill and add it to the skills dictionary
-                    # Ensure it's actually a class and callable
                     if inspect.isclass(skill_class):
-                        self.skills[class_name] = skill_class()
-                        logger.info(f"Loaded native skill: {class_name}")
+                        try:
+                            instance = skill_class()
+                            snake_name = self.camel_to_snake(class_name)
+                            capability_info = {
+                                "instance": instance,
+                                "type": "skill",
+                                "origin": "local",
+                                "description": (
+                                    getattr(instance.__class__, "__doc__", "")
+                                    or ""
+                                ),
+                                "matcher_info": getattr(
+                                    instance, "matcher_info", ""
+                                ),
+                                "hidden": getattr(
+                                    instance, "hiddenCapability", False
+                                ),
+                                "run_info": self._get_method_details(
+                                    instance, "run", snake_name
+                                ),
+                            }
+                            self.capabilities[snake_name] = capability_info
+                            loaded_count += 1
+                            logger.info(
+                                f"Loaded native skill: {class_name} as"
+                                f" {snake_name}"
+                            )
+                        except Exception as inst_e:
+                            logger.error(
+                                "Failed to instantiate skill"
+                                f" {class_name} from {skill_file}: {inst_e}",
+                                exc_info=True,
+                            )
                     else:
                         logger.warning(
                             f"Found {class_name} in {full_module_path}, but"
@@ -174,671 +200,484 @@ class CapabilitiesManager:
                     f" {str(e)}",
                     exc_info=True,
                 )
+        logger.info(f"Loaded {loaded_count} native skills.")
 
-    def reload_skills(self):
-        """Reload native skills and re-discover MCP tools."""
-        logger.info(
-            "Reloading all capabilities (native skills and MCP tools)..."
-        )
-        # 1. Reload native skills
-        self._load_native_skills()
-        logger.info(f"Reloaded {len(self.skills)} native skills.")
-        # You might need to re-register native skill endpoints if routes are dynamic
+    def _discover_mcp_tools(self):
+        """Discover MCP tools and add them to the capabilities dictionary."""
+        if not self.mcp_client_manager:
+            logger.info(
+                "MCP Client Manager not available, skipping MCP tool"
+                " discovery."
+            )
+            return
 
-        # 2. Re-discover MCP tools
-        if self.mcp_client_manager:
-            logger.info("Re-discovering MCP tools...")
-            # Shutdown existing connections first
-            self.mcp_client_manager.shutdown()
-            # Re-initialize (optional, depends if config changed) or just reconnect
-            # Assuming config hasn't changed fundamentally, just reconnect
-            try:
-                self.mcp_tools = self.mcp_client_manager.connect_and_discover()
-                logger.info(f"Re-discovered {len(self.mcp_tools)} MCP tools.")
-            except Exception as e:
-                logger.error(
-                    f"Failed during MCP tool re-discovery: {e}", exc_info=True
-                )
-                self.mcp_tools = []
-            # You might need to re-register MCP tool endpoints
-
-        logger.info("Capabilities reload complete.")
-
-    def get_capabilities(self):
-        """Get information about all available NATIVE skills and MCP tools"""
-        # logger.critical(f"CRITICAL: Running CapabilitiesManager with Python version: {sys.version}")
-        # logger.critical(f"CRITICAL: Python executable: {sys.executable}")
-
-        capabilities = {"skills": {}, "mcp_tools": {}}  # Separate sections
-
-        # --- Native Skills ---
-        for skill_name, skill_instance in self.skills.items():
-            # logging.info(f"Processing native skill: {skill_name}")
-            if getattr(skill_instance, "hiddenCapability", False):
-                # logging.info(f"Skipping hidden native skill: {skill_name}")
-                continue
-
-            skill_info = {
-                "description": (
-                    getattr(skill_instance.__class__, "__doc__", "") or ""
-                ),
-                "matcher_info": getattr(skill_instance, "matcher_info", ""),
-                "type": "native",  # Indicate type
-            }
-
-            if not skill_info["description"]:
-                logger.warning(
-                    f"No description found for native skill '{skill_name}'."
-                )
-                # Decide if you want to skip or allow skills without descriptions
-                # continue
-
-            # Get information about the primary execution method (assuming 'run')
-            run_method = getattr(skill_instance, "run", None)
-            if run_method and callable(run_method):
-                method_info = {
-                    "description": run_method.__doc__ or "",
-                    "parameters": {},
-                    "return_type": "unknown",
-                }
-
-                try:
-                    sig = inspect.signature(run_method)
-                    # Use include_extras=True for Annotated
-                    type_hints = get_type_hints(
-                        run_method, include_extras=True
-                    )
-
-                    if "return" in type_hints:
-                        method_info["return_type"] = str(type_hints["return"])
-
-                    for param_name, param in sig.parameters.items():
-                        if param_name == "self":
-                            continue  # Skip self
-
-                        param_type_hint = type_hints.get(param_name, Any)
-                        param_desc = (  # Default description
-                            f"Parameter '{param_name}'"
-                        )
-
-                        # Check if Annotated is used
-                        origin = get_origin(param_type_hint)
-                        args = get_args(param_type_hint)
-
-                        actual_type = param_type_hint
-                        if origin is Annotated and len(args) >= 2:
-                            actual_type = args[0]
-                            # Assume the second arg is the description string
-                            if isinstance(args[1], str):
-                                param_desc = args[1]
-                            else:
-                                logger.warning(
-                                    f"Annotated metadata for '{param_name}' in"
-                                    f" skill '{skill_name}' is not a string."
-                                )
-                        # else: # Optional: Warn if Annotated is not used
-                        #     logger.warning(f"Parameter '{param_name}' in skill '{skill_name}' does not use Annotated for description.")
-
-                        param_info = {
-                            "type": str(actual_type),
-                            "default": (
-                                "None"
-                                if param.default is param.empty
-                                else repr(param.default)
-                            ),
-                            "required": param.default is param.empty,
-                            "description": param_desc,
-                        }
-                        method_info["parameters"][param_name] = param_info
-
-                    skill_info["run"] = method_info
-
-                except (
-                    Exception
-                ) as e:  # Catch potential errors during inspection
-                    logger.error(
-                        "Error inspecting 'run' method for skill"
-                        f" '{skill_name}': {e}",
-                        exc_info=True,
-                    )
-                    skill_info["run"] = {
-                        "error": f"Failed to inspect method: {e}"
-                    }
-            else:
-                skill_info["run"] = {
-                    "error": "No callable 'run' method found."
-                }
-
-            capabilities["skills"][
-                self.camel_to_snake(skill_name)
-            ] = skill_info
-
-        # --- MCP Tools ---
-        if self.mcp_client_manager:
-            for tool in self.mcp_tools:
-                tool_info = {
+        logger.info("Discovering MCP tools...")
+        discovered_count = 0
+        try:
+            # This blocks until discovery is done (or times out)
+            mcp_tools = self.mcp_client_manager.connect_and_discover()
+            for tool in mcp_tools:
+                capability_info = {
+                    "instance": tool,
+                    "type": "mcp",
+                    "origin": "remote",
                     "description": tool.description,
                     "server": tool.server_name,
-                    "type": "mcp",  # Indicate type
-                    "run": {  # Mimic skill structure for consistency
-                        "description": (
-                            f"Executes the MCP tool '{tool.name}' on server"
-                            f" '{tool.server_name}'."
-                        ),
-                        "parameters": {},
-                        "return_type": (  # MCP doesn't define return type in list_tools
-                            "any"
-                        ),
-                    },
+                    "hidden": (
+                        False
+                    ),  # Assuming MCP tools are not hidden by default
+                    "run_info": self._get_mcp_tool_details(tool),
                 }
-                # Parse MCP input schema into parameter info
-                if "properties" in tool.input_schema:
-                    required_params = tool.input_schema.get("required", [])
-                    for param_name, param_schema in tool.input_schema[
-                        "properties"
-                    ].items():
-                        param_info = {
-                            "type": param_schema.get("type", "any"),
-                            "default": (
-                                "None"
-                            ),  # MCP schema doesn't specify defaults here
-                            "required": param_name in required_params,
-                            "description": param_schema.get(
-                                "description", "No description provided."
-                            ),
-                        }
-                        tool_info["run"]["parameters"][param_name] = param_info
+                self.capabilities[tool.prefixed_name] = capability_info
+                discovered_count += 1
+                logger.info(
+                    f"Discovered MCP tool: {tool.prefixed_name} from"
+                    f" {tool.server_name}"
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed during MCP tool discovery: {e}", exc_info=True
+            )
 
-                capabilities["mcp_tools"][tool.prefixed_name] = tool_info
+        logger.info(f"Discovered {discovered_count} MCP tools.")
 
-        return capabilities
+    def _get_method_details(
+        self, instance: Any, method_name: str, capability_name: str
+    ) -> Dict[str, Any]:
+        """Inspect a method (like 'run') and return its details."""
+        method = getattr(instance, method_name, None)
+        details = {
+            "description": f"Executes the '{capability_name}' capability.",
+            "parameters": {},
+            "return_type": "unknown",
+            "error": None,
+        }
+
+        if not (method and callable(method)):
+            details["error"] = f"No callable '{method_name}' method found."
+            return details
+
+        details["description"] = method.__doc__ or details["description"]
+
+        try:
+            sig = inspect.signature(method)
+            type_hints = get_type_hints(method, include_extras=True)
+
+            if "return" in type_hints:
+                details["return_type"] = str(type_hints["return"])
+
+            for param_name, param in sig.parameters.items():
+                if param_name == "self":
+                    continue
+
+                param_type_hint = type_hints.get(param_name, Any)
+                param_desc = f"Parameter '{param_name}'"
+                origin = get_origin(param_type_hint)
+                args = get_args(param_type_hint)
+                actual_type = param_type_hint
+
+                if origin is Annotated and len(args) >= 2:
+                    actual_type = args[0]
+                    if isinstance(args[1], str):
+                        param_desc = args[1]
+                    else:
+                        logger.warning(
+                            f"Annotated metadata for '{param_name}' in"
+                            f" capability '{capability_name}' is not a string."
+                        )
+
+                details["parameters"][param_name] = {
+                    "type": str(actual_type),
+                    "default": (
+                        "None"
+                        if param.default is param.empty
+                        else repr(param.default)
+                    ),
+                    "required": param.default is param.empty,
+                    "description": param_desc,
+                }
+        except Exception as e:
+            logger.error(
+                f"Error inspecting '{method_name}' method for capability"
+                f" '{capability_name}': {e}",
+                exc_info=True,
+            )
+            details["error"] = f"Failed to inspect method: {e}"
+
+        return details
+
+    def _get_mcp_tool_details(self, tool: MCPTool) -> Dict[str, Any]:
+        """Format MCP tool details similar to native skill run_info."""
+        details = {
+            "description": (
+                f"Executes the MCP tool '{tool.name}' on server"
+                f" '{tool.server_name}'."
+            ),
+            "parameters": {},
+            "return_type": (
+                "any"
+            ),  # MCP doesn't define return type in discovery
+            "error": None,
+        }
+        try:
+            if "properties" in tool.input_schema:
+                required_params = tool.input_schema.get("required", [])
+                for param_name, param_schema in tool.input_schema[
+                    "properties"
+                ].items():
+                    details["parameters"][param_name] = {
+                        "type": param_schema.get("type", "any"),
+                        "default": "None",  # Not specified in MCP schema
+                        "required": param_name in required_params,
+                        "description": param_schema.get(
+                            "description", "No description provided."
+                        ),
+                    }
+        except Exception as e:
+            logger.error(
+                "Error parsing input schema for MCP tool"
+                f" '{tool.prefixed_name}': {e}",
+                exc_info=True,
+            )
+            details["error"] = f"Failed to parse input schema: {e}"
+        return details
+
+    def reload_capabilities(self):
+        """Reload all capabilities (native skills and MCP tools)."""
+        logger.info("Reloading all capabilities...")
+        # Simply re-run the loading process
+        self.load_capabilities()
+        # Note: Endpoint re-registration might be needed if Flask doesn't handle
+        # updates to route handlers gracefully, but typically it does for changes
+        # within the handler logic itself. If routes were dynamically added/removed,
+        # more complex handling would be required here.
+        logger.info("Capabilities reload complete.")
+
+    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """Get information about all available capabilities (skills and tools)."""
+        output_capabilities = {}
+        for name, cap_data in self.capabilities.items():
+            if cap_data.get("hidden", False):
+                continue
+
+            # Prepare output structure, excluding the instance itself
+            info = {
+                "type": cap_data["type"],
+                "origin": cap_data["origin"],
+                "description": cap_data["description"],
+                "run_info": cap_data["run_info"],
+            }
+            # Add type-specific fields
+            if cap_data["type"] == "skill":
+                info["matcher_info"] = cap_data.get("matcher_info", "")
+            elif cap_data["type"] == "mcp":
+                info["server"] = cap_data.get("server", "unknown")
+
+            output_capabilities[name] = info
+
+        return output_capabilities
 
     def get_all_capabilities_description(self) -> str:
-        """Generate a combined description of native skills and MCP tools for an LLM."""
-        description = "You have access to the following capabilities:\n\n"
-        description += "=== Native Skills ===\n"
-        native_skills_found = False
-        for skill_name, skill_instance in self.skills.items():
-            if getattr(skill_instance, "hiddenCapability", False):
+        """Generate a combined description of all capabilities for an LLM."""
+        description = "You have access to the following capabilities:\n"
+        native_skills_desc = "\n=== Native Skills ===\n"
+        mcp_tools_desc = "\n=== MCP Tools ===\n"
+        native_found = False
+        mcp_found = False
+
+        for name, cap_data in self.capabilities.items():
+            if cap_data.get("hidden", False):
                 continue
-            native_skills_found = True
-            snake_name = self.camel_to_snake(skill_name)
-            description += f"Skill: {snake_name}\n"
-            description += (
-                "Description:"
-                f" {getattr(skill_instance.__class__, '__doc__', 'No description')}\n"
-            )
-            # Add parameters from run method if available
-            run_method = getattr(skill_instance, "run", None)
-            if run_method and callable(run_method):
-                try:
-                    sig = inspect.signature(run_method)
-                    type_hints = get_type_hints(
-                        run_method, include_extras=True
-                    )
-                    params_desc = []
-                    for param_name, param in sig.parameters.items():
-                        if param_name == "self":
-                            continue
-                        param_type_hint = type_hints.get(param_name, Any)
-                        param_desc_str = f"- {param_name}"
-                        origin = get_origin(param_type_hint)
-                        args = get_args(param_type_hint)
-                        actual_type = (
-                            args[0]
-                            if origin is Annotated and args
-                            else param_type_hint
-                        )
-                        param_desc_str += f" (type: {str(actual_type)})"
-                        if param.default is param.empty:
-                            param_desc_str += " (required)"
-                        # Add description from Annotated if present
-                        if (
-                            origin is Annotated
-                            and len(args) >= 2
-                            and isinstance(args[1], str)
-                        ):
-                            param_desc_str += f": {args[1]}"
-                        params_desc.append(param_desc_str)
-                    if params_desc:
-                        description += (
-                            "Arguments:\n" + "\n".join(params_desc) + "\n"
-                        )
-                except Exception as e:
-                    description += f"Arguments: (Error inspecting: {e})\n"
-            description += "---\n"
 
-        if not native_skills_found:
-            description += "(No native skills available)\n"
+            cap_type = cap_data["type"]
+            instance = cap_data["instance"]
+            run_info = cap_data.get("run_info", {})
+            params = run_info.get("parameters", {})
 
-        if self.mcp_tools:
-            description += "\n=== MCP Tools ===\n"
-            for tool in self.mcp_tools:
-                description += (
-                    tool.format_for_llm()
-                )  # Use the detailed format from MCPTool
-                description += "---\n"
-        else:
-            description += (
-                "\n=== MCP Tools ===\n(No MCP tools available or connected)\n"
-            )
+            current_desc = ""
+            if cap_type == "skill":
+                native_found = True
+                current_desc += f"Skill: {name}\n"
+                current_desc += f"Description: {cap_data['description']}\n"
+                if params:
+                    current_desc += "Arguments:\n"
+                    for p_name, p_info in params.items():
+                        current_desc += f"- {p_name} (type: {p_info['type']})"
+                        if p_info["required"]:
+                            current_desc += " (required)"
+                        current_desc += f": {p_info['description']}\n"
+                native_skills_desc += current_desc + "---\n"
+            elif cap_type == "mcp":
+                mcp_found = True
+                # Use the MCPTool's dedicated formatter if available and suitable
+                if hasattr(instance, "format_for_llm"):
+                    mcp_tools_desc += instance.format_for_llm() + "---\n"
+                else:
+                    # Fallback formatting
+                    current_desc += f"Tool: {name}\n"
+                    current_desc += f"Description: {cap_data['description']}\n"
+                    current_desc += f"Server: {cap_data['server']}\n"
+                    if params:
+                        current_desc += "Arguments:\n"
+                        for p_name, p_info in params.items():
+                            current_desc += (
+                                f"- {p_name} (type: {p_info['type']})"
+                            )
+                            if p_info["required"]:
+                                current_desc += " (required)"
+                            current_desc += f": {p_info['description']}\n"
+                    mcp_tools_desc += current_desc + "---\n"
 
-        return description
+        if not native_found:
+            native_skills_desc += "(No native skills available)\n"
+        if not mcp_found:
+            mcp_tools_desc += "(No MCP tools available or connected)\n"
+
+        return description + native_skills_desc + mcp_tools_desc
 
     def get_capability(self, name: str) -> Optional[Any]:
-        """Get a native skill instance or MCPTool object by name."""
-        # Check native skills (using snake_case name)
-        for skill_class_name, skill_instance in self.skills.items():
-            if self.camel_to_snake(skill_class_name) == name:
-                return skill_instance  # Return the instance
-
-        # Check MCP tools by prefixed name
-        if self.mcp_client_manager:
-            # Access tools safely - assuming MCPClientManager handles internal locking
-            for (
-                tool
-            ) in self.mcp_client_manager.get_discovered_tools():  # Use getter
-                if tool.prefixed_name == name:
-                    return tool  # Return the MCPTool object
+        """Get the instance (skill object or MCPTool) of a capability by name."""
+        capability_data = self.capabilities.get(name)
+        if capability_data:
+            return capability_data.get("instance")
         return None
 
     def execute_capability(self, name: str, arguments: Dict[str, Any]) -> Any:
-        """Execute a native skill or an MCP tool by its registered name."""
-        capability = self.get_capability(name)
+        """Execute a capability (native skill or MCP tool) by its name."""
+        capability_data = self.capabilities.get(name)
 
-        if capability is None:
+        if capability_data is None:
             raise ValueError(f"Capability '{name}' not found.")
 
-        # Check if it's an MCP tool
-        if isinstance(capability, MCPTool):
+        instance = capability_data["instance"]
+        cap_type = capability_data["type"]
+
+        if cap_type == "mcp":
             if not self.mcp_client_manager:
                 raise RuntimeError(
                     "MCP Client Manager not available for execution."
                 )
             logger.info(f"Executing MCP tool: {name} with args: {arguments}")
-            # The execute_tool method handles the async call in the background thread
             try:
+                # MCPClientManager.execute_tool expects the prefixed name
                 return self.mcp_client_manager.execute_tool(name, arguments)
             except Exception as e:
                 logger.error(
                     f"Error executing MCP tool '{name}': {e}", exc_info=True
                 )
-                # Re-raise or return an error structure
                 raise RuntimeError(
                     f"Failed to execute MCP tool '{name}': {e}"
                 ) from e
 
-        # Else, assume it's a native skill instance
-        elif hasattr(capability, "run") and callable(capability.run):
+        elif cap_type == "skill":
+            run_method = getattr(instance, "run", None)
+            if not (run_method and callable(run_method)):
+                raise TypeError(
+                    f"Native skill '{name}' has no callable 'run' method."
+                )
+
             logger.info(
                 f"Executing native skill: {name} with args: {arguments}"
             )
             try:
-                # Handle both sync and async run methods
-                if inspect.iscoroutinefunction(capability.run):
-                    # If called from a sync context (like Flask route),
-                    # need to run the coroutine.
-                    # This requires an event loop. If MCP manager is running,
-                    # we can try using its loop, otherwise, need another solution.
-                    if (
-                        self.mcp_client_manager
-                        and self.mcp_client_manager._loop
-                    ):
-                        logger.debug(
-                            f"Executing async native skill '{name}' using MCP"
+                if inspect.iscoroutinefunction(run_method):
+                    # Handle async execution
+                    loop = None
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:  # No running loop
+                        pass
+
+                    if loop and loop.is_running():
+                        # If called within an existing running loop (e.g. from async code)
+                        # We might need special handling depending on context,
+                        # but often just awaiting works if the caller is async.
+                        # For simplicity here, assume we need run_coroutine_threadsafe
+                        # if called from Flask (sync context) targeting an async skill.
+                        # Let's check if MCP loop exists first.
+                        if (
+                            self.mcp_client_manager
+                            and self.mcp_client_manager._loop
+                        ):
+                            logger.debug(
+                                f"Executing async native skill '{name}' using"
+                                " MCP event loop."
+                            )
+                            future = asyncio.run_coroutine_threadsafe(
+                                run_method(**arguments),
+                                self.mcp_client_manager._loop,
+                            )
+                            # Consider adding a timeout from config
+                            return future.result(
+                                timeout=self.config.get(
+                                    "framework.async_skill_timeout", 120
+                                )
+                            )
+                        else:
+                            # If no MCP loop, run in a new loop (less ideal but works)
+                            logger.warning(
+                                f"Executing async native skill '{name}' in a"
+                                " temporary event loop."
+                            )
+                            # This blocks the Flask thread until the async skill completes.
+                            return asyncio.run(run_method(**arguments))
+                    else:
+                        # No running loop, likely called from sync context without MCP loop
+                        logger.warning(
+                            f"Executing async native skill '{name}' in a new"
                             " event loop."
                         )
-                        future = asyncio.run_coroutine_threadsafe(
-                            capability.run(**arguments),
-                            self.mcp_client_manager._loop,
-                        )
-                        return future.result(timeout=120)  # Add timeout
-                    else:
-                        # Fallback: Run in a new temporary event loop (less efficient)
-                        logger.warning(
-                            f"Executing async native skill '{name}' in a"
-                            " temporary event loop."
-                        )
-                        return asyncio.run(capability.run(**arguments))
+                        return asyncio.run(run_method(**arguments))
                 else:
                     # Synchronous execution
-                    return capability.run(**arguments)
+                    return run_method(**arguments)
             except Exception as e:
                 logger.error(
                     f"Error executing native skill '{name}': {e}",
                     exc_info=True,
                 )
-                # Re-raise or return an error structure
                 raise RuntimeError(
                     f"Failed to execute native skill '{name}': {e}"
                 ) from e
         else:
-            # Should not happen if get_capability worked, but good failsafe
+            # Should not happen due to initial check
             raise TypeError(
-                f"Capability '{name}' found but is not an MCPTool and has no"
-                " callable 'run' method."
+                f"Unknown capability type '{cap_type}' for '{name}'."
             )
 
-    def register_capabilities_endpoint(self):
-        """Register the /capabilities endpoint to list all capabilities."""
+    def register_capability_endpoints(self):
+        """Register Flask endpoints for listing and executing capabilities."""
+        logger.info("Registering capability API endpoints...")
 
-        @self.app.route("/capabilities", methods=["GET"])
-        def get_capabilities_endpoint():  # Renamed function to avoid conflict
+        # 1. Endpoint to list all available capabilities
+        self.register_list_capabilities_endpoint()
+
+        # 2. Endpoint to execute a specific capability
+        self.register_execute_capability_endpoint()
+
+    def register_list_capabilities_endpoint(self):
+        """Register the /capabilities endpoint to list all capabilities."""
+        endpoint_name = "list_capabilities"
+        route_path = "/capabilities"
+
+        @self.app.route(route_path, methods=["GET"], endpoint=endpoint_name)
+        def get_capabilities_list():
             try:
                 return jsonify(self.get_capabilities())
             except Exception as e:
                 logger.error(
-                    f"Error generating capabilities list: {e}", exc_info=True
+                    "Error generating capabilities list for endpoint"
+                    f" {route_path}: {e}",
+                    exc_info=True,
                 )
                 return (
-                    jsonify({"error": "Failed to retrieve capabilities"}),
+                    jsonify({"error": "Failed to retrieve capabilities list"}),
                     500,
                 )
 
-    def register_skills_endpoints(self):
-        """Register direct endpoints ONLY for NATIVE skills."""
-        logger.info("Registering native skill endpoints...")
-        # Use a set to track registered routes to prevent duplicates if reload is called improperly
-        registered_routes = set()
+        logger.info(
+            f"Registered capability list endpoint: GET {route_path} ->"
+            f" {endpoint_name}"
+        )
 
-        for skill_name, skill_instance in self.skills.items():
-            snake_name = self.camel_to_snake(skill_name)
-            route_path = f"/skills/{snake_name}"  # Endpoint for native skills
+    def register_execute_capability_endpoint(self):
+        """Register the /run/{capability_name} endpoint."""
+        # endpoint_name_prefix = "execute_capability_"
+        route_path_base = "/run"
 
-            # Check if route already exists for this path (simple check)
-            # A more robust check might involve inspecting app.url_map
-            if route_path in registered_routes:
-                logger.warning(
-                    f"Route {route_path} already registered. Skipping."
-                )
-                continue
-
-            endpoint_name = (  # Unique endpoint name
-                f"native_skill_{snake_name}"
+        # We need a single route that handles any capability name
+        @self.app.route(
+            f"{route_path_base}/<capability_name>", methods=["POST"]
+        )
+        def handle_execute_capability(capability_name):
+            logger.debug(
+                f"Received execution request for capability: {capability_name}"
             )
 
-            # Ensure the skill instance has a callable 'run' method
-            if not (
-                hasattr(skill_instance, "run") and callable(skill_instance.run)
-            ):
-                logger.warning(
-                    f"Native skill '{skill_name}' has no callable 'run'"
-                    " method. Skipping endpoint registration for"
-                    f" {route_path}."
-                )
-                continue
-
-            # --- Create handler using a closure ---
-            def create_skill_handler(
-                skill_name_closure, skill_instance_closure, snake_name_closure
-            ):
-                # Assign a unique name based on the skill
-                handler_name = f"handle_native_{snake_name_closure}"
-
-                def handler():
-                    logger.debug(
-                        "Handling request for native skill:"
-                        f" {skill_name_closure}"
+            if not request.is_json:
+                # Allow empty body for simple POST triggers if needed, but usually expect args
+                if not request.data:
+                    logger.warning(
+                        f"Request for {capability_name} has no JSON data."
+                        " Assuming empty args."
                     )
-                    if not request.is_json:
-                        # Allow empty body for GET requests if needed, but POST usually expects JSON
-                        if request.method == "POST" and not request.data:
-                            logger.error(
-                                f"Request for {skill_name_closure} is not JSON"
-                                " or has no data."
-                            )
-                            return (
-                                jsonify(
-                                    {"error": "Request must contain JSON data"}
-                                ),
-                                400,
-                            )
-                        # If GET or other methods allowed, handle appropriately
-                        data = {}  # Assume empty dict if no JSON body
-                    else:
-                        try:
-                            data = request.get_json()
-                            if not isinstance(data, dict):
-                                logger.error(
-                                    f"Request data for {skill_name_closure} is"
-                                    " not a JSON object."
-                                )
-                                return (
-                                    jsonify(
-                                        {
-                                            "error": (
-                                                "Request data must be a JSON"
-                                                " object"
-                                            )
-                                        }
-                                    ),
-                                    400,
-                                )
-                        except Exception as e:
-                            logger.error(
-                                "Failed to parse JSON for"
-                                f" {skill_name_closure}: {e}"
-                            )
-                            return (
-                                jsonify({"error": f"Invalid JSON data: {e}"}),
-                                400,
-                            )
-
-                    try:
-                        # Use the execute_capability method for consistency
-                        result = self.execute_capability(
-                            snake_name_closure, data
-                        )
-
-                        # Handle different result types (dict, string, etc.)
-                        if isinstance(result, (dict, list)):
-                            return jsonify(result)
-                        elif isinstance(result, str):
-                            # Return as plain text or JSON string
-                            return jsonify(
-                                {"result": result}
-                            )  # Or return Response(result, mimetype='text/plain')
-                        elif result is None:
-                            return (
-                                jsonify({"result": None}),
-                                200,
-                            )  # Or 204 No Content
-                        else:
-                            # Try to convert to string or return as is if Flask handles it
-                            return jsonify({"result": str(result)})
-
-                    except (ValueError, TypeError, RuntimeError) as e:
-                        # Errors during execution (e.g., capability not found, execution failed)
+                    data = {}
+                else:
+                    logger.error(f"Request for {capability_name} is not JSON.")
+                    return (
+                        jsonify({"error": "Request must contain JSON data"}),
+                        400,
+                    )
+            else:
+                try:
+                    data = request.get_json()
+                    if not isinstance(data, dict):
                         logger.error(
-                            "Execution error for native skill"
-                            f" '{skill_name_closure}': {e}",
-                            exc_info=True,
+                            f"Request data for {capability_name} is not a JSON"
+                            " object."
                         )
                         return (
-                            jsonify({"error": str(e)}),
+                            jsonify(
+                                {"error": "Request data must be a JSON object"}
+                            ),
                             400,
-                        )  # Or 500 for server errors
-                    except Exception as e:
-                        # Catch unexpected errors during execution
-                        logger.error(
-                            "Unexpected error executing native skill"
-                            f" '{skill_name_closure}': {e}",
-                            exc_info=True,
                         )
-                        return (
-                            jsonify(
-                                {"error": "An internal server error occurred"}
-                            ),
-                            500,
-                        )
-
-                # Set the unique name to the function object
-                handler.__name__ = handler_name
-                return handler
-
-            # --- End of closure ---
-
-            try:
-                # Create the handler for this specific skill
-                skill_handler = create_skill_handler(
-                    skill_name, skill_instance, snake_name
-                )
-                # Register the route
-                self.app.route(
-                    route_path, methods=["POST"], endpoint=endpoint_name
-                )(skill_handler)
-                registered_routes.add(route_path)
-                logger.info(
-                    f"Registered native skill endpoint: POST {route_path} ->"
-                    f" {endpoint_name}"
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to register route for native skill"
-                    f" {skill_name} at {route_path}: {e}",
-                    exc_info=True,
-                )
-
-    def register_mcp_tool_endpoints(self):
-        """Register direct endpoints for discovered MCP tools (Optional)."""
-        # Decide if you want direct HTTP access to MCP tools.
-        # This might bypass central logic/logging you implement elsewhere.
-        # If enabled, it mirrors the native skill endpoints.
-        ENABLE_DIRECT_MCP_ENDPOINTS = True  # Set to True to enable
-
-        if not ENABLE_DIRECT_MCP_ENDPOINTS:
-            logger.info("Direct MCP tool endpoint registration is disabled.")
-            return
-
-        if not self.mcp_client_manager:
-            logger.info(
-                "MCP Client Manager not available, skipping MCP endpoint"
-                " registration."
-            )
-            return
-
-        logger.info("Registering MCP tool endpoints...")
-        registered_routes = set()  # Track routes within this function
-
-        for (
-            tool
-        ) in self.mcp_client_manager.get_discovered_tools():  # Use getter
-            route_path = (  # Separate namespace
-                f"/skills/{tool.prefixed_name}"
-            )
-
-            if route_path in registered_routes:
-                logger.warning(
-                    f"Route {route_path} already registered for MCP tool."
-                    " Skipping."
-                )
-                continue
-
-            endpoint_name = (  # Unique endpoint name
-                f"mcp_tool_{tool.prefixed_name}"
-            )
-
-            # --- Create handler using a closure ---
-            def create_mcp_handler(tool_closure):
-                handler_name = f"handle_mcp_{tool_closure.prefixed_name}"
-
-                def handler():
-                    logger.debug(
-                        "Handling request for MCP tool:"
-                        f" {tool_closure.prefixed_name}"
+                except Exception as e:
+                    logger.error(
+                        f"Failed to parse JSON for {capability_name}: {e}"
                     )
-                    if not request.is_json:
-                        if request.method == "POST" and not request.data:
-                            logger.error(
-                                "Request for MCP tool"
-                                f" {tool_closure.prefixed_name} is not JSON or"
-                                " has no data."
-                            )
-                            return (
-                                jsonify(
-                                    {"error": "Request must contain JSON data"}
-                                ),
-                                400,
-                            )
-                        data = {}
-                    else:
-                        try:
-                            data = request.get_json()
-                            if not isinstance(data, dict):
-                                logger.error(
-                                    "Request data for MCP tool"
-                                    f" {tool_closure.prefixed_name} is not a"
-                                    " JSON object."
-                                )
-                                return (
-                                    jsonify(
-                                        {
-                                            "error": (
-                                                "Request data must be a JSON"
-                                                " object"
-                                            )
-                                        }
-                                    ),
-                                    400,
-                                )
-                        except Exception as e:
-                            logger.error(
-                                "Failed to parse JSON for MCP tool"
-                                f" {tool_closure.prefixed_name}: {e}"
-                            )
-                            return (
-                                jsonify({"error": f"Invalid JSON data: {e}"}),
-                                400,
-                            )
-
-                    try:
-                        # Use the execute_capability method
-                        result = self.execute_capability(
-                            tool_closure.prefixed_name, data
-                        )
-                        # MCP results can be varied, try to return as JSON
-                        return jsonify({"result": result})
-                    except (ValueError, TypeError, RuntimeError) as e:
-                        logger.error(
-                            "Execution error for MCP tool"
-                            f" '{tool_closure.prefixed_name}': {e}",
-                            exc_info=True,
-                        )
-                        return jsonify({"error": str(e)}), 400  # Or 500
-                    except Exception as e:
-                        logger.error(
-                            "Unexpected error executing MCP tool"
-                            f" '{tool_closure.prefixed_name}': {e}",
-                            exc_info=True,
-                        )
-                        return (
-                            jsonify(
-                                {"error": "An internal server error occurred"}
-                            ),
-                            500,
-                        )
-
-                handler.__name__ = handler_name
-                return handler
-
-            # --- End of closure ---
+                    return jsonify({"error": f"Invalid JSON data: {e}"}), 400
 
             try:
-                mcp_handler = create_mcp_handler(tool)
-                self.app.route(
-                    route_path, methods=["POST"], endpoint=endpoint_name
-                )(mcp_handler)
-                registered_routes.add(route_path)
-                logger.info(
-                    f"Registered MCP tool endpoint: POST {route_path} ->"
-                    f" {endpoint_name}"
-                )
-            except Exception as e:
+                # Use the unified execute_capability method
+                result = self.execute_capability(capability_name, data)
+
+                # Handle different result types consistently
+                if (
+                    isinstance(result, (dict, list, str, int, float, bool))
+                    or result is None
+                ):
+                    # Directly jsonify common serializable types
+                    return jsonify({"result": result})
+                else:
+                    # Attempt to convert other types to string
+                    logger.warning(
+                        f"Result for {capability_name} is of non-standard type"
+                        f" {type(result)}. Converting to string."
+                    )
+                    return jsonify({"result": str(result)})
+
+            except ValueError as e:  # Capability not found
                 logger.error(
-                    "Failed to register route for MCP tool"
-                    f" {tool.prefixed_name} at {route_path}: {e}",
+                    f"Execution error for '{capability_name}': {e}",
+                    exc_info=False,
+                )  # Log less verbosely for not found
+                return jsonify({"error": str(e)}), 404  # Not Found
+            except (
+                TypeError,
+                RuntimeError,
+            ) as e:  # Execution errors (bad args, internal skill/tool error)
+                logger.error(
+                    f"Execution error for '{capability_name}': {e}",
                     exc_info=True,
                 )
+                # Distinguish between client error (TypeError?) and server error (RuntimeError?)
+                status_code = 400 if isinstance(e, TypeError) else 500
+                return jsonify({"error": str(e)}), status_code
+            except Exception as e:  # Catch any other unexpected errors
+                logger.error(
+                    f"Unexpected error executing '{capability_name}': {e}",
+                    exc_info=True,
+                )
+                return (
+                    jsonify({"error": "An internal server error occurred"}),
+                    500,
+                )
+
+        logger.info(
+            "Registered capability execution endpoint: POST"
+            f" {route_path_base}/<capability_name>"
+        )
 
     def shutdown_mcp(self):
         """Shutdown the MCP client manager if it exists."""
@@ -857,12 +696,3 @@ class CapabilitiesManager:
         name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
         name = re.sub("([a-z0-9])([A-Z])", r"\1_\2", name)
         return name.lower()
-
-    def preview_dict(self, input_params, step_name=""):
-        self.logger.debug(f"=== Parameter Preview for step: {step_name} ===")
-        self.logger.debug("Input parameters:")
-        for key, value in input_params.items():
-            self.logger.debug(f"Key: {key}")
-            self.logger.debug(f"Value type: {type(value)}")
-            self.logger.debug(f"Value: {value}")
-            self.logger.debug("-" * 50)

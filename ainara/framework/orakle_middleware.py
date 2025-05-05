@@ -88,11 +88,11 @@ class OrakleMiddleware:
         if capabilities:
             self.capabilities = capabilities
         else:
-            self.capabilities = {"skills": []}
+            self.capabilities = []
             self.capabilities = self.get_orakle_capabilities()
 
         # Register skills with the matcher
-        for skill in self.capabilities["skills"]:
+        for skill in self.capabilities:
             self.matcher.register_skill(
                 skill["name"],
                 skill["description"],
@@ -271,13 +271,22 @@ class OrakleMiddleware:
 
             # Add parameters with descriptions
             skill_desc += "Parameters:\n"
-            for param_name, param_info in skill_info.get("run_info", {}).get("parameters", {}).items():
+            for param_name, param_info in (
+                skill_info.get("run_info", {}).get("parameters", {}).items()
+            ):
                 param_type = param_info.get("type", "any")
                 param_desc = param_info.get("description", "No description")
-                param_required = "Required" if param_info.get("required", False) else "Optional"
+                param_required = (
+                    "Required"
+                    if param_info.get("required", False)
+                    else "Optional"
+                )
                 param_default = param_info.get("default", "None")
 
-                skill_desc += f"- {param_name} ({param_type}, {param_required}): {param_desc}"
+                skill_desc += (
+                    f"- {param_name} ({param_type}, {param_required}):"
+                    f" {param_desc}"
+                )
                 if not param_info.get("required", False):
                     skill_desc += f" Default: {param_default}"
                 skill_desc += "\n"
@@ -398,7 +407,7 @@ class OrakleMiddleware:
                     )
 
                 # Make request to Orakle server
-                endpoint = f"{server.rstrip('/')}/skills/{skill_id}"
+                endpoint = f"{server.rstrip('/')}/run/{skill_id}"
 
                 response = requests.post(endpoint, json=params, timeout=60)
 
@@ -446,7 +455,7 @@ class OrakleMiddleware:
             Dictionary with skill information
         """
         # Look for the skill in our capabilities
-        for skill in self.capabilities.get("skills", []):
+        for skill in self.capabilities:
             if skill["name"] == skill_id:
                 return skill
         return {}
@@ -507,42 +516,42 @@ class OrakleMiddleware:
             List of processed skill dictionaries
         """
         skills = []
-        if "skills" in raw_capabilities:
-            for skill_name, skill_info in raw_capabilities["skills"].items():
-                skill_name = skill_name.strip("/")
-                skill_data = {
-                    "name": skill_name,
-                    "description": (
-                        skill_info.get("description", "").replace("\n", "")
-                    ),
-                    "matcher_info": (
-                        skill_info.get("matcher_info", "").replace("\n", "")
-                    ),
-                    "run_info": skill_info.get("run", ""),
-                    # Attempt to get full description (e.g., from docstring)
-                    # Adjust the key based on actual capabilities response structure
-                    "full_description": (
-                        skill_info.get("run", {}).get(
-                            "docstring", skill_info.get("description", "")
-                        )
-                    ),
-                    "parameters": [],
-                }
+        for skill_name, skill_info in raw_capabilities.items():
+            # logger.info(f"skill_info: {pprint.pformat(skill_info)}")
+            skill_name = skill_name.strip("/")
+            skill_data = {
+                "name": skill_name,
+                "description": (
+                    skill_info.get("description", "").replace("\n", "")
+                ),
+                "matcher_info": (
+                    skill_info.get("matcher_info", "").replace("\n", "")
+                ),
+                "run_info": skill_info.get("run_info", ""),
+                # Attempt to get full description (e.g., from docstring)
+                # Adjust the key based on actual capabilities response structure
+                "full_description": (
+                    skill_info.get("run", {}).get(
+                        "docstring", skill_info.get("description", "")
+                    )
+                ),
+                "parameters": [],
+            }
 
-                # Process parameters
-                if skill_data["run_info"].get("parameters"):
-                    run_info = skill_data["run_info"]
-                    for param_name, param_info in run_info.get(
-                        "parameters", {}
-                    ).items():
-                        param_data = {
-                            "name": param_name,
-                            "type": param_info.get("type", "any"),
-                            "description": param_info.get("description", ""),
-                        }
-                        skill_data["parameters"].append(param_data)
+            # Process parameters
+            if skill_data["run_info"].get("parameters"):
+                run_info = skill_data["run_info"]
+                for param_name, param_info in run_info.get(
+                    "parameters", {}
+                ).items():
+                    param_data = {
+                        "name": param_name,
+                        "type": param_info.get("type", "any"),
+                        "description": param_info.get("description", ""),
+                    }
+                    skill_data["parameters"].append(param_data)
 
-                skills.append(skill_data)
+            skills.append(skill_data)
         return skills
 
     def get_orakle_capabilities(self) -> dict:
@@ -552,7 +561,7 @@ class OrakleMiddleware:
         Returns:
             Dictionary with processed capabilities
         """
-        capabilities = {"skills": []}
+        capabilities = []
 
         for server in self.orakle_servers:
             try:
@@ -561,13 +570,13 @@ class OrakleMiddleware:
                     raw_capabilities = response.json()
 
                     # Process skills
-                    capabilities["skills"] = self._process_orakle_skills(
+                    capabilities = self._process_orakle_skills(
                         raw_capabilities
                     )
 
                     logger.info(
                         "Successfully loaded"
-                        f" {len(capabilities['skills'])} skills from Orakle"
+                        f" {len(capabilities)} skills from Orakle"
                         f" server: {server}"
                     )
                     return capabilities

@@ -34,13 +34,14 @@ class FinanceStocks(Skill):
     matcher_info = (
         "Use this skill when the user wants to get current stock market"
         " information, including stock quotes, company overviews, or search"
-        " for stock symbols. This skill is valid ONLY for queries about"
-        " PRESENT data and NOT for historical requests or time-constrained"
-        " data.\n\n Examples include: 'what is the current price of AAPL',"
-        " 'give me an overview of Microsoft stock', 'search for tech company"
-        " stocks', 'get quote for TSLA'. Keywords: stock, shares, market,"
-        " price, quote, current, present, company, overview, search, symbol,"
-        " finance, investment."
+        " for stock symbols. NOT valid for crypto or cryptocurrencies queries."
+        " This skill is valid ONLY for queries about PRESENT data and NOT for"
+        " historical requests or time-constrained data, neither is valid for"
+        " cryptocurrencies related queries.\n\nExamples include: 'what is the"
+        " current price of AAPL', 'give me an overview of Microsoft stock',"
+        " 'search for tech company stocks', 'get quote for TSLA'. Keywords:"
+        " stock, shares, market, price, quote, current, present, company,"
+        " overview, search, symbol, finance, investment."
     )
 
     def __init__(self):
@@ -112,7 +113,7 @@ class FinanceStocks(Skill):
 
     async def get_company_overview(self, symbol: str) -> Dict[str, Any]:
         """Get company overview information"""
-        api_key = self.get_api_key()
+        api_key = self.api_key
         if not api_key:
             return {"error": "Alpha Vantage API key not configured"}
 
@@ -166,7 +167,7 @@ class FinanceStocks(Skill):
 
     async def search_symbol(self, keywords: str) -> List[Dict[str, str]]:
         """Search for stock symbols based on keywords"""
-        api_key = self.get_api_key()
+        api_key = self.api_key
         if not api_key:
             return [{"error": "Alpha Vantage API key not configured"}]
 

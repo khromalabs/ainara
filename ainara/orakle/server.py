@@ -27,7 +27,8 @@ from flask_cors import CORS
 from ainara.framework.capabilities_manager import CapabilitiesManager
 from ainara.framework.config import config  # Use the global config instance
 from ainara.framework.logging_setup import logging_manager
-from ainara.framework.mcp_client_manager import MCP_AVAILABLE  # Check MCP availability
+from ainara.framework.mcp_client_manager import \
+    MCP_AVAILABLE  # Check MCP availability
 from ainara.orakle import __version__
 
 
@@ -72,10 +73,7 @@ def health_check():
             "config": config is not None,
             "logging": logging_manager is not None,
         },
-        "dependencies": {
-            "dummy": True,
-            "mcp_sdk_available": MCP_AVAILABLE
-        },
+        "dependencies": {"dummy": True, "mcp_sdk_available": MCP_AVAILABLE},
     }
 
     # Only include storage check if memory is enabled
@@ -143,26 +141,49 @@ def create_app():
             return jsonify({"success": False, "error": str(e)}), 500
 
     # Add a route to execute a capability (native or MCP)
-    @app.route("/execute", methods=["POST"])
+    @app.route("/run", methods=["POST"])
     def execute_capability_route():
-        if not hasattr(app, 'capabilities_manager'):
-             return jsonify({"error": "CapabilitiesManager not initialized"}), 500
+        if not hasattr(app, "capabilities_manager"):
+            return (
+                jsonify({"error": "CapabilitiesManager not initialized"}),
+                500,
+            )
         data = request.get_json()
         if not data or "name" not in data or "arguments" not in data:
-            return jsonify({"error": "Missing 'name' or 'arguments' in request"}), 400
+            return (
+                jsonify({"error": "Missing 'name' or 'arguments' in request"}),
+                400,
+            )
 
         capability_name = data["name"]
         arguments = data["arguments"]
 
         try:
-            result = app.capabilities_manager.execute_capability(capability_name, arguments)
+            result = app.capabilities_manager.execute_capability(
+                capability_name, arguments
+            )
             return jsonify({"success": True, "result": result})
         except (ValueError, TypeError, RuntimeError) as e:
-             logger.error(f"Error executing capability '{capability_name}': {e}", exc_info=True)
-             return jsonify({"success": False, "error": str(e)}), 400
+            logger.error(
+                f"Error executing capability '{capability_name}': {e}",
+                exc_info=True,
+            )
+            return jsonify({"success": False, "error": str(e)}), 400
         except Exception as e:
-            logger.error(f"Unexpected error executing capability '{capability_name}': {e}", exc_info=True)
-            return jsonify({"success": False, "error": "An unexpected server error occurred"}), 500
+            logger.error(
+                "Unexpected error executing capability"
+                f" '{capability_name}': {e}",
+                exc_info=True,
+            )
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "An unexpected server error occurred",
+                    }
+                ),
+                500,
+            )
 
     return app
 
