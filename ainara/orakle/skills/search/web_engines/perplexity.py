@@ -68,9 +68,9 @@ class Web_EnginesPerplexity(SearchEngineBase):
     def get_default_weight(self, search_type: str = "comprehensive") -> float:
         """Perplexity weights by search type"""
         weights = {
-            "comprehensive": 0.35,
-            "academic": 0.4,
-            "recent": 0.5,
+            "comprehensive": 0.8,
+            "academic": 0.8,
+            "recent": 0.6,
             "exploratory": 0.3,
             "news": 0.5
         }

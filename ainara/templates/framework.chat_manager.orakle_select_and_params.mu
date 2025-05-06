@@ -12,7 +12,7 @@ Here are the potentially relevant skills identified by a preliminary search, alo
 
 Based on the user's request and the detailed skill descriptions provided above:
 
-1.  **Choose the single BEST skill** from the candidates that most accurately fulfills the user's request.
+1.  **Choose the single BEST skill** from the candidates that most accurately fulfills the user's request. PAY CLOSE ATTENTION to the skill description and carefully select the most appropiate skill for the user request.
 2.  **Extract the necessary parameters** for the chosen skill from the user's request ("{{query}}"), following the parameter specifications listed in that skill's description.
 3.  NEVER add a parameter which is not present in the parameter specifications. If a potentially required parameter to fulfill the user's request is not present, simply discard that skill as a possible candidate. All the possible paramers will always be present in the parameter specifications.
 4.  Only add parameters masked as optional if are actually required to fulfill the user's request.

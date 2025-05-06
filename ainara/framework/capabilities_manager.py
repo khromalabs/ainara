@@ -146,6 +146,24 @@ class CapabilitiesManager:
                         try:
                             instance = skill_class()
                             snake_name = self.camel_to_snake(class_name)
+                            # Get boostFactor from the skill instance, default to 1.0
+                            boost_factor = 1.0
+                            if hasattr(instance, "boostFactor"):
+                                try:
+                                    bf = float(getattr(instance, "boostFactor"))
+                                    if bf >= 0: # Allow 0, but not negative
+                                        boost_factor = bf
+                                    else:
+                                        logger.warning(
+                                            f"Negative boostFactor {bf} for skill "
+                                            f"{class_name} is invalid. Using 1.0."
+                                        )
+                                except ValueError:
+                                    logger.warning(
+                                        f"Invalid boostFactor '{getattr(instance, 'boostFactor')}' "
+                                        f"for skill {class_name}. Must be a number. Using 1.0."
+                                    )
+                            
                             capability_info = {
                                 "instance": instance,
                                 "type": "skill",
@@ -160,6 +178,7 @@ class CapabilitiesManager:
                                 "hidden": getattr(
                                     instance, "hiddenCapability", False
                                 ),
+                                "boostFactor": boost_factor, # Store the boost factor
                                 "run_info": self._get_method_details(
                                     instance, "run", snake_name
                                 ),
@@ -168,7 +187,7 @@ class CapabilitiesManager:
                             loaded_count += 1
                             logger.info(
                                 f"Loaded native skill: {class_name} as"
-                                f" {snake_name}"
+                                f" {snake_name} with boostFactor: {boost_factor}"
                             )
                         except Exception as inst_e:
                             logger.error(
@@ -370,6 +389,10 @@ class CapabilitiesManager:
             # Add type-specific fields
             if cap_data["type"] == "skill":
                 info["matcher_info"] = cap_data.get("matcher_info", "")
+                # Expose boostFactor if it's not the default 1.0
+                boost_factor = cap_data.get("boostFactor", 1.0)
+                if boost_factor != 1.0: 
+                    info["boostFactor"] = boost_factor
             elif cap_data["type"] == "mcp":
                 info["server"] = cap_data.get("server", "unknown")
 

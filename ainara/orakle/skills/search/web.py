@@ -37,6 +37,8 @@ class SearchWeb(Skill):
     if not config.get("apis.search"):
         hiddenCapability = True
 
+    boostFactor = 2
+
     matcher_info = (
         "Primarily use when the user explicitly requests a web search,"
         " internet lookup, or research. Also consider for queries seeking"

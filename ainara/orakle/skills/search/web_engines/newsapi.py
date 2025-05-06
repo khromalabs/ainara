@@ -49,9 +49,9 @@ class Web_EnginesNewsapi(SearchEngineBase):
         weights = {
             "news": 0.9,  # Highest weight for news searches
             "recent": 0.7,  # Good for recent content
-            "comprehensive": 0.3,
-            "academic": 0.1,
-            "exploratory": 0.2,
+            "comprehensive": 0.1,
+            "academic": 0.01,
+            "exploratory": 0.1,
         }
         return weights.get(search_type, 0.3)
 

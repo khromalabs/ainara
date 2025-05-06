@@ -76,7 +76,7 @@ def check_service_health(url, service_name, timeout=2):
         return False
 
 
-def watch_services_health(services_to_watch, check_interval=3, start_polaris=False):
+def watch_services_health(services_to_watch, check_interval=5, start_polaris=False):
     """
     Watch the health of services and report any issues
 

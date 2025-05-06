@@ -197,8 +197,8 @@ class MCPClientManager:
             return
         for name, config in self.mcp_config.items():
             if (
-                config.get("enabled", False)
-                and config.get("connection_type") == "stdio_mcp_lib"
+                config.get("enabled", True)
+                and config.get("connection_type", "stdio_mcp_lib") == "stdio_mcp_lib"
             ):
                 if (
                     "stdio_params" in config
