@@ -68,11 +68,14 @@ body {
     margin: 0;
     padding: 0;
     position: relative;
-    animation: pulse 2s infinite;
     /* Enhance the base glow */
     box-shadow: 0 0 25px rgba(255, 255, 255, 0.6),
                 inset 0 0 25px rgba(255, 255, 255, 0.6);
     transition: box-shadow 0.1s ease-out;
+}
+
+.ring-circle.recording {
+    animation: pulse 2s infinite;
 }
 
 .ring-circle.tts-active {
@@ -84,6 +87,7 @@ body {
                 inset 0 0 25px rgba(255, 255, 255, 0.5),
                 inset 0 0 30px rgba(255, 255, 255, 0.4);
     border: 8px solid rgba(255, 255, 255, 1);
+    animation: pulse 2s infinite;
 }
 
 .inner-circle {
@@ -165,7 +169,7 @@ body {
     }
     50% {
         opacity: 0.8;
-        transform: scale(1.03);
+        transform: scale(1.05);
     }
     100% {
         opacity: 1;
