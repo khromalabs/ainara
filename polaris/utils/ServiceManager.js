@@ -434,7 +434,7 @@ class ServiceManager {
                 };
             }
 
-            const response = await fetch(this.services.pybridge.url.replace('/health', '/setup/check'));
+            const response = await fetch(config.get('pybridge.api_url') + '/setup/check');
 
             if (!response.ok) {
                 Logger.error(`Failed to check resources: ${response.status} ${response.statusText}`);

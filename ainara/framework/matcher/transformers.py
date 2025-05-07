@@ -17,16 +17,34 @@
 # Lesser General Public License for more details.
 
 import logging
-from typing import Dict, List, Optional
+import pprint
+import re
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-import re
+# Import spaCy
+import spacy
 import torch
-import pprint
-from typing import Any
 from transformers import AutoModel, AutoTokenizer
 
 from .base import OrakleMatcherBase
+
+from ainara.framework.config import ConfigManager
+
+# Removed NLTK imports:
+# import nltk
+# from nltk.corpus import stopwords
+# from nltk.tokenize import word_tokenize
+
+
+# Removed NLTK data download block:
+# try:
+#     nltk.data.find('corpora/stopwords')
+#     nltk.data.find('tokenizers/punkt')
+# except LookupError:
+#     nltk.download('stopwords')
+#     nltk.download('punkt')
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +55,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
     understanding and intelligent skill matching.
     """
 
-    def __init__(
-        self, model_name: str = "BAAI/bge-base-en-v1.5"
-    ):
+    def __init__(self, model_name: str = "BAAI/bge-base-en-v1.5"):
         """
         Initialize the matcher with a specified transformer model.
 
@@ -63,6 +79,15 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             logger.error(f"Failed to load model {model_name}: {e}")
             raise
 
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+            logger.info("Initialized spaCy")
+        except OSError:
+            logger.warning("spaCy model 'en_core_web_sm' not found.")
+            raise
+
+        self.config = ConfigManager()
+
     def register_skill(
         self, skill_id: str, description: str, metadata: Optional[Dict] = None
     ):
@@ -75,26 +100,36 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             metadata: Additional skill metadata
         """
         # Extract domain context from module path
-        domain_parts = skill_id.replace('/', ' ').replace('_', ' ').split()
+        domain_parts = skill_id.replace("/", " ").replace("_", " ").split()
         domain_context = (" ".join(domain_parts) + " ") * 2
         # Extract boost keywords if present using **keyword** markup (bold in markdown)
-        boost_pattern = r'\*\*(.*?)\*\*'
+        boost_pattern = r"\*\*(.*?)\*\*"
         boost_keywords = re.findall(boost_pattern, description)
         boost_text = ""
         if boost_keywords:
-            boost_text = " ".join((" " + kw) * 6 for kw in boost_keywords) + " "
+            boost_text = (
+                " ".join((" " + kw) * 6 for kw in boost_keywords) + " "
+            )
         # Clean description by removing ** markers
-        clean_description = re.sub(boost_pattern, r'\1', description)
+        clean_description = re.sub(boost_pattern, r"\1", description)
         # Combine domain context with description for better semantic matching
-        enhanced_description = f"{domain_context}: {boost_text}{clean_description}"
+        enhanced_description = (
+            f"{domain_context}: {boost_text}{clean_description}"
+        )
 
         # logger.info(f"ENHANCED_DESCRIPTION: {enhanced_description}")
 
         text_to_embed = f"{domain_context} {boost_text} {clean_description}"
 
         # Append matcher_info from metadata if available
-        if metadata and isinstance(metadata.get("matcher_info"), str) and metadata["matcher_info"]:
-            matcher_info_text = metadata["matcher_info"].replace("\n", " ").strip()
+        if (
+            metadata
+            and isinstance(metadata.get("matcher_info"), str)
+            and metadata["matcher_info"]
+        ):
+            matcher_info_text = (
+                metadata["matcher_info"].replace("\n", " ").strip()
+            )
             if matcher_info_text:
                 text_to_embed += " " + matcher_info_text
 
@@ -167,8 +202,43 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             )
         )
 
+    def _clean_query(self, query: str) -> str:
+        """
+        Clean the query using spaCy to identify and handle non-semantic content
+        like URLs, emails, stopwords, and punctuation. It also lemmatizes tokens.
+
+        Args:
+            query: The raw user query
+
+        Returns:
+            The cleaned and normalized query
+        """
+        if not self.nlp:
+            logger.warning(
+                "spaCy model not loaded. Returning original query for"
+                " cleaning."
+            )
+            return query  # Fallback if spaCy failed to load
+
+        doc = self.nlp(query)
+        cleaned_tokens = []
+
+        for token in doc:
+            if token.like_url:
+                cleaned_tokens.append("[URL]")
+            elif token.like_email:
+                cleaned_tokens.append("[EMAIL]")
+            elif token.is_stop or token.is_punct:
+                # Skip stopwords and punctuation
+                continue
+            else:
+                # Use the lemma for normalization and convert to lowercase
+                cleaned_tokens.append(token.lemma_.lower())
+
+        return " ".join(cleaned_tokens)
+
     def match(
-        self, query: str, threshold: float = 0.1, top_k: int = 5
+        self, query: str, threshold: float = 0.15, top_k: int = 5
     ) -> List[Dict[str, Any]]:
         """
         Find the best matching skills for a given query.
@@ -181,19 +251,31 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         Returns:
             List of matching skills with scores
         """
-        query_embedding = self._get_embedding(query)
+
+        # Clean the query to remove noise like URLs and stopwords
+        cleaned_query = self._clean_query(query)
+        logger.info(f"Original query: {query}")
+        logger.info(f"Cleaned query: {cleaned_query}")
+
+        query_embedding = self._get_embedding(cleaned_query)
         matches = []
 
-        logger.info("MATCH query:" + query)
-        logger.info("MATCH threshold:" + str(threshold))
-        logger.info("MATCH top_k:" + str(top_k))
+        logger.info("MATCH query: " + query)  # Original query for context
+        logger.info("MATCH (cleaned) query for embedding: " + cleaned_query)
+        logger.info("MATCH threshold: " + str(threshold))
+        logger.info("MATCH top_k: " + str(top_k))
 
         for skill_id, skill_data in self.skills_registry.items():
-            embeddings_boost_factor = skill_data.get("metadata", {}).get("embeddings_boost_factor", 1.0)
+            embeddings_boost_factor = skill_data.get("metadata", {}).get(
+                "embeddings_boost_factor", 1.0
+            )
             # logger.info(f"MATCH embeddings_boost_factor: {embeddings_boost_factor}")
-            similarity = self._calculate_similarity(
-                query_embedding, skill_data["embedding"]
-            ) * embeddings_boost_factor
+            similarity = (
+                self._calculate_similarity(
+                    query_embedding, skill_data["embedding"]
+                )
+                * embeddings_boost_factor
+            )
 
             if similarity >= threshold:
                 matches.append(
@@ -201,7 +283,9 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
                         "skill_id": skill_id,
                         "score": similarity,
                         "usage_count": self.usage_stats[skill_id],
-                        "description": skill_data["description"],
+                        "description": skill_data[
+                            "description"
+                        ],  # Original enhanced description
                     }
                 )
 

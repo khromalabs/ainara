@@ -75,7 +75,7 @@ class OrakleMiddleware:
         self.matcher = OrakleMatcherTransformers(model_name=matcher_model)
         # Get threshold and top_k from config or use defaults
         self.matcher_threshold = self.config_manager.get(
-            "orakle.matcher.threshold", 0.1
+            "orakle.matcher.threshold", 0.15
         )
         self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 5)
         logger.info(
