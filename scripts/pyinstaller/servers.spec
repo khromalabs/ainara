@@ -22,6 +22,7 @@ package_data_entries = [
         'litellm_core_utils/tokenizers',
         'model_prices_and_context_window_backup.json'
     ]),
+    ('en_core_web_sm', ['.']),
 ]
 
 # Generate datas array from package data directories

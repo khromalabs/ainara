@@ -22,7 +22,6 @@ import re
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-# Import spaCy
 import spacy
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -30,21 +29,6 @@ from transformers import AutoModel, AutoTokenizer
 from .base import OrakleMatcherBase
 
 from ainara.framework.config import ConfigManager
-
-# Removed NLTK imports:
-# import nltk
-# from nltk.corpus import stopwords
-# from nltk.tokenize import word_tokenize
-
-
-# Removed NLTK data download block:
-# try:
-#     nltk.data.find('corpora/stopwords')
-#     nltk.data.find('tokenizers/punkt')
-# except LookupError:
-#     nltk.download('stopwords')
-#     nltk.download('punkt')
-
 
 logger = logging.getLogger(__name__)
 
