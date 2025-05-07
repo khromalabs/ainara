@@ -99,8 +99,12 @@ class OrakleMiddleware:
                 metadata={
                     "run_info": skill["run_info"],
                     "matcher_info": skill["matcher_info"],
+                    "embeddings_boost_factor": skill.get("embeddings_boost_factor", 1.0),
                 },
             )
+
+        # logger.info("-----------------")
+        # logger.info(pprint.pformat(skill))
 
     def process_stream(
         self, token_stream: Generator[str, None, None], chat_manager=None
@@ -535,6 +539,7 @@ class OrakleMiddleware:
                         "docstring", skill_info.get("description", "")
                     )
                 ),
+                "embeddings_boost_factor": skill_info.get("embeddings_boost_factor", 1.0),
                 "parameters": [],
             }
 

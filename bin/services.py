@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+# import pprint
 from pathlib import Path
 
 import psutil
@@ -63,8 +64,13 @@ VENV_PATHS = [
 def check_service_health(url, service_name, timeout=2):
     """Check if a service is healthy by calling its health endpoint"""
     try:
+        # print("-----------")
+        # print(service_name)
         response = requests.get(url, timeout=timeout)
+        # print(pprint.pformat(response))
         response_json = json.loads(response.text)
+        # print(pprint.pformat(response_json))
+        # print("-----------")
         if (
             response.status_code == 200
             and response_json["status"].strip().lower() == "ok"
@@ -88,7 +94,7 @@ def watch_services_health(services_to_watch, check_interval=5, start_polaris=Fal
     try:
         print("Monitoring...")
         fails = 0
-        fails_limit = 4
+        fails_limit = 6
         was_unhealthy = False
         polaris_started = False
 
@@ -124,7 +130,7 @@ def watch_services_health(services_to_watch, check_interval=5, start_polaris=Fal
                 if was_unhealthy:
                     print("Services are healthy now")
                     was_unhealthy = False
-                
+
                 # Start Polaris if requested and not already started
                 if start_polaris and not polaris_started and not unhealthy_services:
                     print("All services are healthy. Starting Polaris frontend...")
@@ -335,7 +341,7 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
         with open(log_file, "w") as log:
             # If we're using a venv and this is a Python service, use the venv python
             # move one directory up
-            cwd = os.getcwd()
+            # cwd = os.getcwd()
             if venv_active and service in ["orakle", "pybridge"]:
                 # Get the module part from the command
                 module = cmd.split(" -m ")[1]
@@ -663,6 +669,7 @@ def main():
     service_failed = False
 
     # Start Orakle
+    print("Starting Orakle...")
     service_failed = check_and_start_service(
         "orakle", args, results, venv_active, venv_path
     )
@@ -672,9 +679,10 @@ def main():
         return 1
 
     # Wait a bit before starting Pybridge
-    time.sleep(3)
+    time.sleep(5)
 
     # Start Pybridge
+    print("Starting Pybridge...")
     service_failed = check_and_start_service(
         "pybridge", args, results, venv_active, venv_path
     )

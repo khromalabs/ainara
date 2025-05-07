@@ -37,7 +37,7 @@ class SearchWeb(Skill):
     if not config.get("apis.search"):
         hiddenCapability = True
 
-    boostFactor = 2
+    embeddings_boost_factor = 2
 
     matcher_info = (
         "Primarily use when the user explicitly requests a web search,"

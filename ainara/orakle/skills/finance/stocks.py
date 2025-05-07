@@ -33,15 +33,16 @@ class FinanceStocks(Skill):
 
     matcher_info = (
         "DO NOT Use this skill if the user wants information about"
-        " cryptocurrencies. ONLY use this skill when the user wants to get"
-        " information about the current value of stock market shares including"
+        " cryptocurrencies. DO NOT use this skill for requests implying ranges"
+        " of time. ONLY use this skill when the user wants to get information"
+        " about strictly the current value of stock market shares including"
         " stock quotes, company overviews, or search for stock symbols. DO NOT"
         " use this skill to look for the value of cryptocurrency coins.  This"
-        " skill is valid ONLY for queries about PRESENT data and NOT for"
-        " historical requests or time-constrained data.\n\nExamples include:"
-        " 'what is the current price of AAPL', 'give me an overview of"
-        " Microsoft stock', 'search for tech company stocks', 'get quote for"
-        " TSLA'. Keywords: stock, shares, market, price, quote, current,"
+        " skill is valid ONLY for queries about CURRENT, REAL TIME data and"
+        " NOT for historical requests or time-constrained data.\n\nExamples"
+        " include: 'what is the current price of AAPL', 'give me an overview"
+        " of Microsoft stock', 'search for tech company stocks', 'get quote"
+        " for TSLA'. Keywords: stock, shares, market, price, quote, current,"
         " present, company, overview, search, symbol, finance, investment."
     )
 

@@ -107,13 +107,14 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         self.skills_registry[skill_id] = {
             "description": enhanced_description,
             "metadata": metadata or {},
-            "boost_keywords": boost_keywords,
+            # "boost_keywords": boost_keywords,
             "embedding": self._get_embedding(text_to_embed),
         }
         loginfo = {
             "description": enhanced_description,
             "boost_keywords": boost_keywords,
-            "text_to_embed": text_to_embed
+            "text_to_embed": text_to_embed,
+            "metadata": metadata or {},
         }
         logger.info(f"Registered skill: {skill_id} with data: {loginfo}")
 
@@ -188,9 +189,11 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         logger.info("MATCH top_k:" + str(top_k))
 
         for skill_id, skill_data in self.skills_registry.items():
+            embeddings_boost_factor = skill_data.get("metadata", {}).get("embeddings_boost_factor", 1.0)
+            # logger.info(f"MATCH embeddings_boost_factor: {embeddings_boost_factor}")
             similarity = self._calculate_similarity(
                 query_embedding, skill_data["embedding"]
-            )
+            ) * embeddings_boost_factor
 
             if similarity >= threshold:
                 matches.append(

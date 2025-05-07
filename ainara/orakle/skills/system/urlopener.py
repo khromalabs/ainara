@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 class SystemUrlopener(Skill):
     """Open or launch one URL or several URLs addresses in the system browser"""
 
-    boostFactor = 2
+    embeddings_boost_factor = 2
 
     matcher_info = (
         "Use this skill when the user wants to open or launch a URL or"
