@@ -152,6 +152,8 @@ common_imports = [
     'textblob',
     'emoji',
     'normalise',
+    'spacy',
+    'en_core_web_sm'
 
     # Framework modules
     'ainara.framework',

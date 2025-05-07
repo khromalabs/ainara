@@ -39,3 +39,5 @@ textblob==0.19.0
 torch==2.6.0
 tweepy==4.15.0
 validators==0.34.0
+spacy==3.8.5
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
