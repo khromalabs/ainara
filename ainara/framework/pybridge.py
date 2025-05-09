@@ -41,7 +41,7 @@ from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
-from ainara.framework.utils.dependency_checker import DependencyChecker
+from ainara.framework.dependency_checker import DependencyChecker
 
 # --- Global instances ---
 config = ConfigManager()

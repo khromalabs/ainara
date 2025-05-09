@@ -16,9 +16,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import json
 import logging
+import os
 import pprint
 import re
+import sys
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -26,9 +29,9 @@ import spacy
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from .base import OrakleMatcherBase
-
 from ainara.framework.config import ConfigManager
+
+from .base import OrakleMatcherBase
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +67,35 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             raise
 
         try:
-            self.nlp = spacy.load("en_core_web_sm")
+            spacy_model = "en_core_web_sm"
+            model_version = "<not in bundle>"
+            if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                spacy_path = os.path.join(sys._MEIPASS, spacy_model)
+                meta_file = os.path.join(spacy_path, "meta.json")
+                if os.path.exists(meta_file):
+                    try:
+                        with open(meta_file, "r") as f:
+                            meta_data = json.load(f)
+                            model_version = meta_data.get("version")
+                            spacy_model = os.path.join(
+                                spacy_path, f"{spacy_model}-{model_version}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Could not read version from meta.json: {e}"
+                        )
+                        raise
+                else:
+                    logger.error("Could not read meta.json file")
+                    raise
+            logger.info(f"Loading spaCy model '{spacy_model}'")
+            self.nlp = spacy.load(spacy_model)
             logger.info("Initialized spaCy")
-        except OSError:
-            logger.warning("spaCy model 'en_core_web_sm' not found.")
+        except Exception as e:
+            logger.warning(
+                f"Failed to load spaCy model '{spacy_model}': '{e}'."
+            )
+            logger.warning(f"spacy_path: '{spacy_path}'")
             raise
 
         self.config = ConfigManager()
@@ -133,7 +161,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             "description": enhanced_description,
             "boost_keywords": boost_keywords,
             "text_to_embed": text_to_embed,
-            "metadata": metadata or {},
+            # "metadata": metadata or {},
         }
         logger.info(f"Registered skill: {skill_id} with data: {loginfo}")
 
