@@ -28,13 +28,14 @@ const ConfigHelper = require('../../utils/ConfigHelper');
 const config = new ConfigManager();
 
 // Step navigation
-const steps = ['welcome', 'llm', 'stt', 'skills', 'shortcuts', 'finish'];
+const steps = ['welcome', 'llm', 'stt', 'skills', 'mcp', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 let providersData = null;
 // Track modified fields
 const modifiedFields = {
     llm: new Set(),
     stt: new Set(),
+    mcp: new Set(),
     skills: new Set(),
     shortcuts: new Set(),
     finish: new Set()
@@ -600,6 +601,35 @@ function setupEventListeners() {
         observer.observe(skillsPanel, { attributes: true });
     }
 
+    // Generate MCP UI when navigating to the MCP step
+    const mcpObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                const mcpPanel = document.getElementById('mcp-panel');
+                if (mcpPanel && mcpPanel.classList.contains('active')) {
+                    generateMcpUI().catch(err => console.error('Error generating MCP UI:', err));
+                }
+            }
+        });
+    });
+    const mcpPanel = document.getElementById('mcp-panel');
+    if (mcpPanel) {
+        mcpObserver.observe(mcpPanel, { attributes: true });
+    }
+
+    // Add MCP Server button listener
+    const addMcpServerButton = document.getElementById('add-mcp-server-btn');
+    if (addMcpServerButton) {
+        addMcpServerButton.addEventListener('click', () => {
+            const mcpPanel = document.getElementById('mcp-panel');
+            if (mcpPanel) {
+                const container = mcpPanel.querySelector('.mcp-configurations');
+                if (container) {
+                    addMcpServerForm(null, container); // Pass the container to add the new form into
+                }
+            }
+        });
+    }
     // Add filter input and button
     const llmPanel = document.getElementById('llm-panel');
     if (llmPanel) {
@@ -1169,6 +1199,8 @@ function handleInputChange(event) {
             modifiedFields.skills.add(field.dataset.path);
         } else if (fieldId.includes('custom-api')) {
             modifiedFields.stt.add(fieldId);
+        } else if (fieldId.startsWith('mcp-')) {
+            modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
         } else if (fieldId === 'start-minimized-checkbox') {
             modifiedFields.finish.add(fieldId);
         } else {
@@ -1236,6 +1268,116 @@ function validateProviderForm() {
     });
 
     testButton.disabled = !isValid;
+}
+
+// Function to generate MCP UI
+async function generateMcpUI() {
+    const mcpPanel = document.getElementById('mcp-panel');
+    if (!mcpPanel) return;
+
+    let container = mcpPanel.querySelector('.mcp-configurations');
+    if (!container) {
+        mcpPanel.innerHTML = `<h2>MCP Server Configuration</h2>
+                              <p>Configure connections to Model-Context-Protocol (MCP) compatible servers.</p>
+                              <div class="mcp-configurations"></div>
+                              <button id="add-mcp-server-btn" class="btn">Add MCP Server</button>`;
+        container = mcpPanel.querySelector('.mcp-configurations');
+        // The button listener is now handled in setupEventListeners
+    }
+    container.innerHTML = '<p>Loading MCP configurations...</p>'; // Clear previous content, show loading
+
+    try {
+        const backendConfig = await loadBackendConfig();
+        const mcpClients = backendConfig.mcp_clients || {};
+        container.innerHTML = ''; // Clear loading message
+
+        if (Object.keys(mcpClients).length === 0) {
+            container.innerHTML = '<p>No MCP servers configured yet. Click "Add MCP Server" to begin.</p>';
+        } else {
+            for (const serverName in mcpClients) {
+                addMcpServerForm(serverName, container, mcpClients[serverName]);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading MCP configurations:', error);
+        container.innerHTML = `<p class="error">Error loading MCP configurations: ${error.message}</p>`;
+    }
+}
+
+function addMcpServerForm(serverName, container, serverConfig = {}) {
+    const serverId = serverName || `new-mcp-${Date.now()}`;
+    const formHtml = `
+        <div class="mcp-server-form" data-server-id="${serverId}">
+            <h4>${serverName ? `Edit Server: ${serverName}` : 'New MCP Server'}</h4>
+            <div class="form-group">
+                <label for="mcp-name-${serverId}">Server Name:</label>
+                <input type="text" id="mcp-name-${serverId}" class="mcp-server-name" value="${serverName || ''}" ${serverName ? 'disabled' : ''} placeholder="e.g., my_home_server" required>
+                ${serverName ? '' : '<p class="field-description">Unique identifier for this server. Cannot be changed after creation.</p>'}
+            </div>
+            <div class="form-group">
+                <label for="mcp-prefix-${serverId}">Prefix (Optional):</label>
+                <input type="text" id="mcp-prefix-${serverId}" class="mcp-prefix" value="${serverConfig.prefix || ''}" placeholder="e.g., home.">
+            </div>
+            <div class="form-group">
+                <label for="mcp-command-${serverId}">Command (and arguments, one per line):</label>
+                <textarea id="mcp-command-${serverId}" class="mcp-command" rows="3" placeholder="my_command\n--arg1\nvalue1">${(serverConfig.stdio_params && serverConfig.stdio_params.command ? serverConfig.stdio_params.command.join('\n') : '')}</textarea>
+            </div>
+            <h5>Environment Variables:</h5>
+            <div class="mcp-env-vars" id="mcp-env-vars-${serverId}">
+                ${serverConfig.stdio_params && serverConfig.stdio_params.env ? Object.entries(serverConfig.stdio_params.env).map(([key, value]) => addMcpEnvVarForm(key, value, serverId, false)).join('') : ''}
+            </div>
+            <button class="btn btn-sm add-mcp-env-btn" data-server-id="${serverId}">Add Environment Variable</button>
+            <button class="btn btn-sm btn-danger remove-mcp-server-btn" data-server-id="${serverId}" style="margin-left: 10px;">Remove Server</button>
+            <hr>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', formHtml);
+
+    const serverForm = container.querySelector(`.mcp-server-form[data-server-id="${serverId}"]`);
+
+    serverForm.querySelector('.add-mcp-env-btn').addEventListener('click', (e) => {
+        const currentServerId = e.target.dataset.serverId;
+        const envVarsContainer = serverForm.querySelector(`#mcp-env-vars-${currentServerId}`);
+        addMcpEnvVarForm(null, null, currentServerId, true, envVarsContainer);
+        modifiedFields.mcp.add(currentServerId); // Mark server as modified
+    });
+
+    serverForm.querySelector('.remove-mcp-server-btn').addEventListener('click', (e) => {
+        if (confirm('Are you sure you want to remove this MCP server configuration?')) {
+            const currentServerId = e.target.dataset.serverId;
+            serverForm.remove();
+            modifiedFields.mcp.add(currentServerId); // Mark for deletion or track change
+        }
+    });
+
+    serverForm.querySelectorAll('input, textarea').forEach(input => {
+        input.addEventListener('input', () => modifiedFields.mcp.add(serverId));
+    });
+}
+
+function addMcpEnvVarForm(key, value, serverId, appendToDom = true, container = null) {
+    const envVarId = `env-${serverId}-${Date.now()}`;
+    const envVarHtml = `
+        <div class="mcp-env-var-item" data-env-id="${envVarId}">
+            <input type="text" class="mcp-env-key" placeholder="KEY" value="${key || ''}">
+            <span>=</span>
+            <input type="text" class="mcp-env-value" placeholder="VALUE" value="${value || ''}">
+            <button class="btn btn-xs btn-danger remove-mcp-env-btn" data-env-id="${envVarId}">&times;</button>
+        </div>
+    `;
+
+    if (appendToDom && container) {
+        container.insertAdjacentHTML('beforeend', envVarHtml);
+        const newItem = container.querySelector(`.mcp-env-var-item[data-env-id="${envVarId}"]`);
+        newItem.querySelector('.remove-mcp-env-btn').addEventListener('click', () => {
+            newItem.remove();
+            modifiedFields.mcp.add(serverId); // Mark server as modified
+        });
+        newItem.querySelectorAll('input').forEach(input => {
+            input.addEventListener('input', () => modifiedFields.mcp.add(serverId));
+        });
+    }
+    return envVarHtml;
 }
 
 async function testLLMConnection() {
@@ -1375,6 +1517,9 @@ function validateCurrentStep() {
         case 'llm':
             // LLM step is valid if the next button is enabled (after successful test)
             return !document.getElementById('llm-next').disabled;
+        case 'mcp':
+            // Basic validation: ensure server names are unique if multiple servers
+            return validateMcpStep();
         case 'stt':
             // STT step is valid if the next button is enabled
             return !document.getElementById('stt-next').disabled;
@@ -1383,6 +1528,23 @@ function validateCurrentStep() {
         default:
             return true;
     }
+}
+
+function validateMcpStep() {
+    const serverForms = document.querySelectorAll('#mcp-panel .mcp-server-form');
+    const serverNames = new Set();
+    for (const form of serverForms) {
+        const nameInput = form.querySelector('.mcp-server-name');
+        const serverName = nameInput.value.trim();
+        if (!serverName && serverForms.length > 0) { // Allow empty if no servers defined
+            // alert('MCP Server Name cannot be empty.'); nameInput.focus(); return false;
+        }
+        if (serverName && serverNames.has(serverName)) {
+            alert(`Duplicate MCP Server Name: ${serverName}. Names must be unique.`); nameInput.focus(); return false;
+        }
+        if (serverName) serverNames.add(serverName);
+    }
+    return true;
 }
 
 // Add event listeners for STT options
@@ -1601,6 +1763,9 @@ async function saveCurrentStepData() {
         case 'llm':
             await saveLLMConfig();
             break;
+        case 'mcp':
+            await saveMcpConfig();
+            break;
         case 'stt':
             await saveSTTConfig();
             break;
@@ -1815,6 +1980,60 @@ async function saveLLMConfig() {
         await updateUIAfterSave(provider);
     } catch (error) {
         console.error('Error updating LLM config:', error);
+    }
+}
+
+async function saveMcpConfig() {
+    if (modifiedFields.mcp.size === 0) {
+        return; // Nothing to save
+    }
+
+    try {
+        const backendConfig = await loadBackendConfig();
+        const newMcpClients = {};
+        const serverForms = document.querySelectorAll('#mcp-panel .mcp-server-form');
+
+        for (const form of serverForms) {
+            const serverNameInput = form.querySelector('.mcp-server-name');
+            const serverName = serverNameInput.value.trim();
+
+            if (!serverName) {
+                // If a form was added but name is empty, skip it, unless it was a pre-existing one being cleared.
+                // For simplicity, we'll rely on the user to remove unwanted empty forms.
+                // Or, if it's an existing server whose name was cleared, it implies deletion.
+                // The current logic rebuilds mcp_clients, so empty names are effectively ignored.
+                continue;
+            }
+
+            const prefix = form.querySelector('.mcp-prefix').value.trim();
+            const commandText = form.querySelector('.mcp-command').value.trim();
+            const command = commandText ? commandText.split('\n').map(cmd => cmd.trim()).filter(cmd => cmd) : [];
+
+            const env = {};
+            form.querySelectorAll('.mcp-env-var-item').forEach(item => {
+                const key = item.querySelector('.mcp-env-key').value.trim();
+                const value = item.querySelector('.mcp-env-value').value.trim();
+                if (key) {
+                    env[key] = value;
+                }
+            });
+
+            newMcpClients[serverName] = {
+                ...(prefix && { prefix }), // Add prefix only if it exists
+                stdio_params: {
+                    command,
+                    env,
+                },
+            };
+        }
+        backendConfig.mcp_clients = newMcpClients;
+        await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+        // Orakle might also need mcp_clients if it acts as one or manages them.
+        // await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+        modifiedFields.mcp.clear();
+    } catch (error) {
+        console.error('Error saving MCP config:', error);
+        alert(`Error saving MCP configuration: ${error.message}`);
     }
 }
 

@@ -106,6 +106,17 @@ apis:
   weather:
     openweathermap_api_key: ""
 
+#mcp_clients:
+#  <server>:
+#    prefix: "" # optional
+#    stdio_params:
+#      command:
+#      - <command>
+#      - <arg1>
+#      - '<arg2>'
+#      env:
+#        <key>: <value>
+
 # Logging configuration (uncomment to customize)
 # logging:
 #   # Enable or disable file logging (console logging is always enabled)

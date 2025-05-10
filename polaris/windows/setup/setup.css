@@ -384,6 +384,131 @@ input:disabled, button:disabled {
     cursor: not-allowed;
 }
 
+/* MCP Configuration Styles */
+.mcp-configurations {
+    margin-bottom: 20px; /* Space below all server forms */
+}
+
+.mcp-server-form {
+    background-color: #f9f9f9; /* Light background for each server block */
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 25px; /* Space between server forms */
+    border: 1px solid #e0e0e0; /* Subtle border */
+}
+
+.mcp-server-form h4 {
+    margin-top: 0;
+    color: #333; /* Darker heading color */
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 10px;
+    margin-bottom: 20px; /* Space below heading */
+}
+
+.mcp-server-form h5 {
+    margin-top: 25px; /* Space above "Environment Variables" */
+    margin-bottom: 10px;
+    color: #555;
+    font-size: 1.05em; /* Slightly smaller than h4 */
+}
+
+.mcp-server-form textarea.mcp-command {
+    width: 100%; /* Take full width of form-group */
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    min-height: 70px; /* Enough for ~3 lines */
+    font-family: monospace; /* Good for commands */
+    box-sizing: border-box; /* Include padding and border in the element's total width and height */
+}
+
+.mcp-env-vars {
+    margin-bottom: 15px; /* Space below the list of env vars, before the "Add" button */
+}
+
+.mcp-env-var-item {
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Space between key, '=', value, and remove button */
+    margin-bottom: 10px; /* Space between env var lines */
+}
+
+.mcp-env-var-item input[type="text"].mcp-env-key,
+.mcp-env-var-item input[type="text"].mcp-env-value {
+    flex: 1; /* Allow key and value inputs to grow */
+    padding: 8px; /* Match general form-group inputs */
+    border: 1px solid #ddd; /* Match general form-group inputs */
+    border-radius: 4px; /* Match general form-group inputs */
+    box-sizing: border-box;
+}
+
+.mcp-env-var-item input[type="text"].mcp-env-key {
+    min-width: 150px; /* Minimum width for the key input */
+    flex-grow: 0.8; /* Key might not need to grow as much as value */
+}
+
+.mcp-env-var-item span {
+    font-weight: bold;
+    padding: 0 5px; /* Some spacing around the equals sign */
+}
+
+/* Button Sizing Utilities (if not already globally defined) */
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 0.875rem; /* 14px if base is 16px */
+    line-height: 1.5;
+    border-radius: .2rem; /* 3.2px */
+}
+
+.btn-xs {
+    padding: 1px 5px;
+    font-size: 0.75rem; /* 12px if base is 16px */
+    line-height: 1.5;
+    border-radius: .2rem;
+}
+
+/* Specific Button Styling for MCP section */
+#add-mcp-server-btn {
+    /* This button uses class="btn" from JS */
+    background-color: #28a745; /* Green for "Add" */
+    color: white;
+    border: 1px solid transparent; /* Override default border if any */
+    margin-bottom: 10px; /* Space below the main add button */
+}
+#add-mcp-server-btn:hover {
+    background-color: #218838; /* Darker green on hover */
+}
+
+.add-mcp-env-btn {
+    /* This button uses class="btn btn-sm" from JS */
+    background-color: #007bff; /* Blue for "Add Environment Variable" */
+    color: white;
+    border: 1px solid transparent;
+    margin-right: 10px; /* Space between add env and remove server buttons */
+}
+.add-mcp-env-btn:hover {
+    background-color: #0056b3; /* Darker blue on hover */
+}
+
+/* Styling for remove buttons (using .btn-danger) */
+.btn-danger {
+    background-color: #dc3545;
+    color: white;
+    border-color: #dc3545;
+}
+.btn-danger:hover {
+    background-color: #c82333;
+    border-color: #bd2130;
+}
+
+/* The remove-mcp-server-btn uses .btn .btn-sm .btn-danger */
+/* The remove-mcp-env-btn uses .btn .btn-xs .btn-danger */
+
+.remove-mcp-env-btn {
+    /* Specific adjustments for the tiny remove button next to env vars if needed */
+    align-self: center; /* Helps vertical alignment with inputs */
+}
+
 .existing-providers-section {
     margin-bottom: 20px;
     border: 1px solid #ddd;
