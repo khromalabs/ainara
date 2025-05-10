@@ -1342,11 +1342,38 @@ function addMcpServerForm(serverName, container, serverConfig = {}) {
         modifiedFields.mcp.add(currentServerId); // Mark server as modified
     });
 
-    serverForm.querySelector('.remove-mcp-server-btn').addEventListener('click', (e) => {
+    serverForm.querySelector('.remove-mcp-server-btn').addEventListener('click', async (e) => { // Make async
         if (confirm('Are you sure you want to remove this MCP server configuration?')) {
             const currentServerId = e.target.dataset.serverId;
+            const removeButton = e.target;
+            const originalButtonText = removeButton.textContent;
+
+            // Remove from UI first
             serverForm.remove();
-            modifiedFields.mcp.add(currentServerId); // Mark for deletion or track change
+
+            // Mark that a change occurred for MCP.
+            // saveMcpConfig will use this and then clear it.
+            modifiedFields.mcp.add(currentServerId);
+
+            removeButton.textContent = 'Removing...';
+            removeButton.disabled = true;
+
+            try {
+                // Immediately save the MCP configuration
+                await saveMcpConfig();
+            } catch (error) {
+                console.error("Failed to save MCP config after removal:", error);
+                alert("Error removing server. The server configuration might not have been saved correctly. The server might reappear if you refresh or navigate. Please check the console for details.");
+                // If save fails, the UI is out of sync. Regenerating MCP UI from backend might be an option,
+                // but could lose other unsaved changes. Alerting is the simplest first step.
+            } finally {
+                // Button is part of the removed form, so it won't be visible if successful.
+                // This is more for if the removal/save failed and the button somehow remains.
+                if (document.body.contains(removeButton)) {
+                    removeButton.textContent = originalButtonText;
+                    removeButton.disabled = false;
+                }
+            }
         }
     });
 

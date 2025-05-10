@@ -217,15 +217,21 @@ class ConfigManager:
 
         # Recursively update the configuration
         def update_dict(target, source):
+            # Update existing keys and add new ones from source
             for key, value in source.items():
                 if (
                     isinstance(value, dict)
                     and key in target
                     and isinstance(target[key], dict)
                 ):
-                    update_dict(target[key], value)
+                    update_dict(target[key], value)  # Recurse for nested dicts
                 else:
-                    target[key] = value
+                    target[key] = value  # Add new key or update existing one
+
+            # Remove keys from target that are not in source
+            keys_to_remove = [key for key in target if key not in source]
+            for key in keys_to_remove:
+                del target[key]
 
         update_dict(self.config, new_config)
         if save:
