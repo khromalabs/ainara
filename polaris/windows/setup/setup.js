@@ -166,6 +166,10 @@ function getKeyDescription(pathArray) {
     const parentPart = pathArray.length > 1 ? pathArray[pathArray.length - 2] : '';
 
     const descriptions = {
+        'coinmarketcap': {
+            url: 'https://coinmarketcap.com/api/',
+            description: 'Used for cryptocurrency market data'
+        },
         'weather': {
             url: 'https://openweathermap.org/api',
             description: 'Used for weather forecasts and current conditions'
