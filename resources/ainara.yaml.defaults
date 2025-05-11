@@ -76,8 +76,8 @@ memory:
 
 # APIs
 apis:
-  # crypto:
-  #   coinmarketcap_api_key: ""
+  crypto:
+    coinmarketcap_api_key: ""
   finance:
     alphavantage_api_key: ""
   # helius:

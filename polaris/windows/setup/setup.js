@@ -1231,12 +1231,17 @@ async function loadAndDisplayCapabilities() {
             throw new Error(`Failed to fetch capabilities: ${response.status} ${response.statusText}`);
         }
         const data = await response.json();
-        if (data && data instanceof Object && Object.keys(data.skills).length > 0) {
+        if (data && data instanceof Object && Object.keys(data).length > 0) {
             listElement.innerHTML = ''; // Clear loading state
-            Object.keys(data.skills).forEach(skillId => {
-                let skill = data.skills[skillId];
+            Object.keys(data).forEach(skillId => {
+                let skill = data[skillId];
                 const li = document.createElement('li');
                 li.textContent = skill.description;
+                if (skill.type == "mcp") {
+                    li.textContent += " (" + skill.type + ":" + skill.server + ")"
+                } else {
+                    li.textContent += " (native skill)"
+                }
                 listElement.appendChild(li);
             });
         } else {
