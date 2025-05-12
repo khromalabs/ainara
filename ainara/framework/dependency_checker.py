@@ -21,7 +21,8 @@ import logging
 import platform
 import subprocess
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
+import os # Add os import for path checks
 
 logger = logging.getLogger(__name__)
 
@@ -30,155 +31,193 @@ class DependencyChecker:
     """Utility class to check for system and Python dependencies"""
 
     @staticmethod
-    def detect_nvidia_gpus() -> Tuple[bool, List[Dict[str, str]]]:
+    def _parse_memory_to_gb(mem_str: Optional[str], source: str) -> Optional[float]:
+        """Helper to parse memory string (Bytes or MiB) to GB."""
+        if not mem_str:
+            return None
+        try:
+            mem_str = mem_str.strip().upper()
+            if 'MIB' in mem_str:
+                return round(float(mem_str.replace('MIB', '').strip()) / 1024, 1)
+            elif 'GIB' in mem_str: # Handle GiB from nvidia-smi if units aren't suppressed
+                return round(float(mem_str.replace('GIB', '').strip()), 1)
+            elif source == 'wmic': # Assume bytes from wmic if no unit
+                 return round(float(mem_str) / (1024**3), 1)
+        except ValueError:
+            return None
+        # Return None if parsing fails or source is not wmic/nvidia-smi with expected units
+        return None
+
+    @staticmethod
+    def detect_nvidia_gpus() -> Tuple[bool, List[Dict[str, Any]]]:
         """
-        Detect NVIDIA GPUs in the system regardless of driver installation
+        Detect NVIDIA GPUs in the system, prioritizing reliable VRAM detection.
 
         Returns:
-            tuple: (has_nvidia_gpu, gpu_list)
+            tuple: (has_nvidia_gpu, gpu_list with reliable VRAM where possible)
         """
         gpus = []
         has_nvidia = False
 
+        # Try nvidia-smi first, as it's the most reliable if drivers are installed
+        try:
+            detailed_info = subprocess.run(
+                ['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'], # Keep units for clarity
+                capture_output=True, text=True, check=True, timeout=5 # Added timeout
+            )
+            if detailed_info.returncode == 0:
+                has_nvidia = True
+                for gpu_line in detailed_info.stdout.strip().split('\n'):
+                    if gpu_line.strip():
+                        gpu_parts = [p.strip() for p in gpu_line.split(',')]
+                        name = gpu_parts[0].strip()
+                        driver = gpu_parts[1].strip() if len(gpu_parts) > 1 else 'Unknown'
+                        memory_str = gpu_parts[2].strip() if len(gpu_parts) > 2 else None
+                        memory_gb = DependencyChecker._parse_memory_to_gb(memory_str, 'nvidia-smi')
+
+                        gpus.append({
+                            'name': name,
+                            'driver_version': driver if driver != '[N/A]' else 'Unknown',
+                            'memory_total_gb': memory_gb,
+                            'source': 'nvidia-smi'
+                        })
+                # If nvidia-smi worked, we likely have the best info, return early
+                return has_nvidia, gpus
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.debug(f"nvidia-smi check failed or not available: {e}. Falling back to OS-specific methods.")
+            # Continue to OS-specific checks
+        except Exception as e:
+             logger.error(f"Unexpected error during nvidia-smi check: {e}")
+             # Continue to OS-specific checks
+
+        # Fallback to OS-specific methods if nvidia-smi failed or wasn't found
         try:
             if sys.platform == 'win32':
                 # Windows detection using WMI
                 result = subprocess.run(
-                    ['wmic', 'path', 'win32_VideoController', 'get', 'name,PNPDeviceID,AdapterRAM,DriverVersion'],
-                    capture_output=True, text=True, check=False
+                    ['wmic', 'path', 'Win32_VideoController', 'get', 'Name,AdapterRAM,DriverVersion', '/value'],
+                    capture_output=True, text=True, check=False, encoding='utf-8', errors='ignore'
                 )
 
                 if result.returncode == 0:
-                    lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
-                    # Skip the header line
-                    for line in lines[1:]:
-                        parts = line.split()
-                        if not parts:
-                            continue
-
-                        # Join all parts except the last few which are the other properties
-                        name = ' '.join(parts[:-3]) if len(parts) > 3 else ' '.join(parts)
-
-                        if 'nvidia' in name.lower():
-                            has_nvidia = True
-                            # Try to extract more details if available
-                            try:
-                                # Get more detailed info using nvidia-smi if available
-                                detailed_info = subprocess.run(
-                                    ['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'],
-                                    capture_output=True, text=True, check=False
-                                )
-                                if detailed_info.returncode == 0:
-                                    for gpu_line in detailed_info.stdout.strip().split('\n'):
-                                        if gpu_line.strip():
-                                            gpu_parts = gpu_line.split(',')
-                                            gpus.append({
-                                                'name': gpu_parts[0].strip(),
-                                                'driver_version': gpu_parts[1].strip() if len(gpu_parts) > 1 else 'Unknown',
-                                                'memory': gpu_parts[2].strip() if len(gpu_parts) > 2 else 'Unknown'
-                                            })
-                                else:
-                                    # nvidia-smi failed, use basic info from wmic
-                                    gpus.append({
-                                        'name': name,
-                                        'driver_version': 'Not installed or unknown',
-                                        'memory': 'Unknown'
-                                    })
-                            except Exception as e:
-                                # nvidia-smi not available, use basic info
+                    # Parse WMI /value format
+                    current_gpu = {}
+                    for line in result.stdout.splitlines():
+                        line = line.strip()
+                        if not line: # End of a block
+                            if current_gpu and 'nvidia' in current_gpu.get('Name', '').lower():
+                                # Only add if it's an NVIDIA GPU
+                                has_nvidia = True
+                                memory_gb = DependencyChecker._parse_memory_to_gb(current_gpu.get('AdapterRAM'), 'wmic')
                                 gpus.append({
-                                    'name': name,
-                                    'driver_version': 'Not installed or unknown',
-                                    'memory': 'Unknown'
+                                    'name': current_gpu.get('Name'),
+                                    'driver_version': current_gpu.get('DriverVersion', 'Unknown'),
+                                    'memory_total_gb': memory_gb, # VRAM from wmic is reasonably reliable
+                                    'source': 'wmic'
                                 })
+                            current_gpu = {}
+                            continue
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            current_gpu[key.strip()] = value.strip()
+                    # Process the last GPU block if any
+                    if current_gpu and 'nvidia' in current_gpu.get('Name', '').lower():
+                        has_nvidia = True
+                        memory_gb = DependencyChecker._parse_memory_to_gb(current_gpu.get('AdapterRAM'), 'wmic')
+                        gpus.append({
+                            'name': current_gpu.get('Name'),
+                            'driver_version': current_gpu.get('DriverVersion', 'Unknown'),
+                            'memory_total_gb': memory_gb,
+                            'source': 'wmic'
+                        })
+
             elif sys.platform == 'linux':
-                # Linux detection using lspci
+                # Linux detection using lspci - ONLY for detection, NOT for VRAM.
                 try:
-                    result = subprocess.run(
-                        ['lspci', '-nn'],
+                    result = subprocess.run( # Use machine-readable format
+                        ['lspci', '-vmm', '-nn'], # Use machine-readable format
                         capture_output=True, text=True, check=False
                     )
-
                     if result.returncode == 0:
-                        for line in result.stdout.split('\n'):
-                            if 'NVIDIA' in line or 'nvidia' in line.lower():
-                                has_nvidia = True
-                                # Extract the device name
-                                name = line.split(':')[-1].strip()
-
-                                # Try to get more details with nvidia-smi
-                                try:
-                                    detailed_info = subprocess.run(
-                                        ['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'],
-                                        capture_output=True, text=True, check=False
-                                    )
-                                    if detailed_info.returncode == 0:
-                                        for gpu_line in detailed_info.stdout.strip().split('\n'):
-                                            if gpu_line.strip():
-                                                gpu_parts = gpu_line.split(',')
-                                                gpus.append({
-                                                    'name': gpu_parts[0].strip(),
-                                                    'driver_version': gpu_parts[1].strip() if len(gpu_parts) > 1 else 'Unknown',
-                                                    'memory': gpu_parts[2].strip() if len(gpu_parts) > 2 else 'Unknown'
-                                                })
-                                    else:
-                                        # nvidia-smi failed, use basic info
-                                        gpus.append({
-                                            'name': name,
-                                            'driver_version': 'Not installed or unknown',
-                                            'memory': 'Unknown'
-                                        })
-                                except Exception:
-                                    # nvidia-smi not available
+                        current_gpu = {}
+                        for line in result.stdout.splitlines():
+                            line = line.strip()
+                            if not line and current_gpu: # End of device block
+                                # Check if it's an NVIDIA VGA controller
+                                if "VGA compatible controller" in current_gpu.get("Class", "") and \
+                                   "nvidia" in current_gpu.get("Vendor", "").lower():
+                                    # Found NVIDIA, but VRAM from lspci is unreliable
+                                    has_nvidia = True
                                     gpus.append({
-                                        'name': name,
-                                        'driver_version': 'Not installed or unknown',
-                                        'memory': 'Unknown'
+                                        'name': current_gpu.get("Device", "Unknown NVIDIA Device"),
+                                        'driver_version': 'Unknown (lspci)',
+                                        'memory_total_gb': None, # Cannot get from lspci reliably
+                                        'source': 'lspci'
                                     })
+                                current_gpu = {}
+                            elif ':' in line:
+                                key, value = line.split(':', 1)
+                                current_gpu[key.strip()] = value.strip()
+                        # Process last block
+                        if current_gpu and "VGA compatible controller" in current_gpu.get("Class", "") and \
+                           "nvidia" in current_gpu.get("Vendor", "").lower():
+                            has_nvidia = True
+                            gpus.append({
+                                'name': current_gpu.get("Device", "Unknown NVIDIA Device"),
+                                'driver_version': 'Unknown (lspci)',
+                                'memory_total_gb': None,
+                                'source': 'lspci'
+                            })
                 except Exception as e:
                     logger.debug(f"Error using lspci to detect GPUs: {e}")
-
-                    # Fallback to checking for nvidia-smi directly
-                    try:
-                        result = subprocess.run(
-                            ['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'],
-                            capture_output=True, text=True, check=False
-                        )
-                        if result.returncode == 0:
-                            has_nvidia = True
-                            for gpu_line in result.stdout.strip().split('\n'):
-                                if gpu_line.strip():
-                                    gpu_parts = gpu_line.split(',')
-                                    gpus.append({
-                                        'name': gpu_parts[0].strip(),
-                                        'driver_version': gpu_parts[1].strip() if len(gpu_parts) > 1 else 'Unknown',
-                                        'memory': gpu_parts[2].strip() if len(gpu_parts) > 2 else 'Unknown'
-                                    })
-                    except Exception:
-                        pass
+                    # If lspci fails, we already tried nvidia-smi, not much else to do reliably
 
             elif sys.platform == 'darwin':
-                # macOS detection - NVIDIA GPUs are rare on Macs, but check anyway
+                # macOS detection using system_profiler - ONLY for detection, NOT for VRAM.
                 try:
                     result = subprocess.run(
                         ['system_profiler', 'SPDisplaysDataType'],
                         capture_output=True, text=True, check=False
                     )
-
                     if result.returncode == 0:
-                        for line in result.stdout.split('\n'):
-                            if 'NVIDIA' in line:
-                                has_nvidia = True
-                                gpus.append({
-                                    'name': line.strip(),
-                                    'driver_version': 'macOS integrated',
-                                    'memory': 'Unknown'
-                                })
+                        chipset_model = None
+                        in_nvidia_section = False
+
+                        for line in result.stdout.splitlines():
+                            line = line.strip()
+                            if "Chipset Model:" in line:
+                                # Reset previous state if we encounter a new chipset
+                                if chipset_model and in_nvidia_section:
+                                     has_nvidia = True
+                                     gpus.append({
+                                         'name': chipset_model,
+                                         'driver_version': 'macOS Integrated',
+                                         'memory_total_gb': None, # VRAM parsing is unreliable
+                                         'source': 'system_profiler'
+                                     })
+                                chipset_model = line.split(":", 1)[1].strip()
+                                in_nvidia_section = 'nvidia' in chipset_model.lower()
+
+                        # Capture the last detected GPU if it was NVIDIA
+                        if chipset_model and in_nvidia_section:
+                            has_nvidia = True
+                            gpus.append({
+                                'name': chipset_model,
+                                'driver_version': 'macOS Integrated',
+                                'memory_total_gb': None, # VRAM parsing is unreliable
+                                'source': 'system_profiler'
+                            })
                 except Exception as e:
                     logger.debug(f"Error detecting GPUs on macOS: {e}")
 
         except Exception as e:
             logger.error(f"Error detecting NVIDIA GPUs: {e}")
+
+        # If multiple sources detected GPUs, prefer nvidia-smi results if available
+        # This simple check assumes nvidia-smi lists all GPUs if it works.
+        # More complex deduplication might be needed if mixing sources.
+        if any(gpu['source'] == 'nvidia-smi' for gpu in gpus):
+            gpus = [gpu for gpu in gpus if gpu['source'] == 'nvidia-smi']
 
         return has_nvidia, gpus
 
@@ -260,7 +299,27 @@ class DependencyChecker:
                     text=True,
                     check=False,
                 )
-                return result.returncode == 0
+                # Check system path as well
+                system32_path = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32')
+                if result.returncode != 0:
+                     result = subprocess.run(
+                        ["where", f"/R", system32_path, f"{library_name}.dll"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                if result.returncode == 0:
+                    return True
+
+                # Fallback: Check common CUDA paths if 'where' fails
+                program_files = os.environ.get('ProgramFiles', 'C:\\Program Files')
+                cuda_path = os.path.join(program_files, 'NVIDIA GPU Computing Toolkit', 'CUDA')
+                common_versions = ['v12.1', 'v12.0', 'v11.8', 'v11.7', 'v11.0'] # Example versions
+                for version in common_versions:
+                    bin_path = os.path.join(cuda_path, version, 'bin')
+                    if os.path.exists(os.path.join(bin_path, f"{library_name}.dll")):
+                        return True
+                return False # Return false if not found by 'where' or in common paths
             except (subprocess.SubprocessError, FileNotFoundError):
                 return False
 
@@ -289,6 +348,11 @@ class DependencyChecker:
         has_nvidia_gpu, gpu_list = DependencyChecker.detect_nvidia_gpus()
         details["has_nvidia_hardware"] = has_nvidia_gpu
         details["gpu_list"] = gpu_list
+
+        # Calculate total VRAM *only from reliable sources*
+        total_vram = sum(gpu.get('memory_total_gb', 0) or 0 for gpu in gpu_list if gpu.get('memory_total_gb') is not None and gpu['source'] in ['nvidia-smi', 'wmic'])
+        if total_vram > 0:
+            details["total_vram_gb"] = round(total_vram, 1)
 
         # Check for torch
         torch_available, torch_version = (
@@ -557,7 +621,8 @@ class DependencyChecker:
 
             # Log detected GPUs
             for gpu in results["cuda"]["gpu_list"]:
-                logger.info(f"   Detected GPU: {gpu['name']} (Driver: {gpu['driver_version']})")
+                vram_str = f"{gpu.get('memory_total_gb')} GB" if gpu.get('memory_total_gb') is not None else "N/A (Unreliable Source)"
+                logger.info(f"   Detected GPU: {gpu.get('name', 'N/A')} (Driver: {gpu.get('driver_version', 'N/A')}, VRAM: {vram_str}, Source: {gpu.get('source', 'N/A')})")
 
             # Platform-specific advice
             if platform.system() == "Windows":

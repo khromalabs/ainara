@@ -18,7 +18,8 @@
             <!-- Step indicators -->
             <div class="setup-steps">
                 <div class="step active" data-step="welcome">Welcome</div>
-                <div class="step" data-step="llm">LLM Setup</div>
+                <div class="step" data-step="ollama">Local Models</div>
+                <div class="step" data-step="llm">LLM Providers</div>
                 <div class="step" data-step="stt">Speech2Text</div>
                 <div class="step" data-step="skills">Native Skills</div>
                 <div class="step" data-step="mcp">MCP Servers</div>
@@ -35,6 +36,18 @@
                     <p>We'll set up your LLM provider and configure API keys for various skills.</p>
                     <div class="button-row">
                         <div></div> <!-- Empty div to maintain spacing -->
+                        <button class="next-btn">Next</button>
+                    </div>
+                </div>
+
+                <!-- Ollama setup step -->
+                <div class="step-panel" id="ollama-panel">
+                    <h2>Ollama Local Setup</h2>
+                    <p>Configure local LLM models using Ollama. Download models based on your hardware capabilities.</p>
+                    <div id="ollama-hardware-info" class="hardware-info"></div>
+                    <div id="ollama-models-container"></div>
+                    <div class="button-row">
+                        <button class="back-btn">Back</button>
                         <button class="next-btn">Next</button>
                     </div>
                 </div>

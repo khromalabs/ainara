@@ -24,11 +24,15 @@ const ConfigHelper = require('../../utils/ConfigHelper');
 // const path = require('path');
 // const yaml = require('js-yaml');
 
+
+const ollama = require('ollama');
+
+
 // Create a ConfigManager instance
 const config = new ConfigManager();
 
 // Step navigation
-const steps = ['welcome', 'llm', 'stt', 'skills', 'mcp', 'shortcuts', 'finish'];
+const steps = ['welcome', 'ollama', 'llm', 'stt', 'skills', 'mcp', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 let providersData = null;
 // Track modified fields
@@ -45,6 +49,7 @@ const modifiedFields = {
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadProviders();
+    updateLLMStepTitle(); // Update the LLM step title
 });
 
 // Function to load the backend config via API
@@ -419,6 +424,22 @@ function setupEventListeners() {
 
     // Setup shortcut key capture
     setupShortcutCapture();
+    
+    // Generate Ollama UI when navigating to the Ollama step
+    const ollamaObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                const ollamaPanel = document.getElementById('ollama-panel');
+                if (ollamaPanel && ollamaPanel.classList.contains('active')) {
+                    initializeOllamaStep().catch(err => console.error('Error initializing Ollama step:', err));
+                }
+            }
+        });
+    });
+    const ollamaPanel = document.getElementById('ollama-panel');
+    if (ollamaPanel) {
+        ollamaObserver.observe(ollamaPanel, { attributes: true });
+    }
 
     // Add CSS for hardware acceleration info and shortcuts
     const style = document.createElement('style');
@@ -485,6 +506,86 @@ function setupEventListeners() {
 
         .gpu-details li {
             margin-bottom: 5px;
+        }
+
+        .hardware-info ul {
+            margin: 5px 0 0 20px;
+            padding: 0;
+        }
+
+        .hardware-info li {
+            margin-bottom: 5px;
+        }
+
+        #ollama-models-container {
+            margin-top: 20px;
+        }
+
+        #ollama-models-container ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        #ollama-models-container li {
+            background-color: #f9f9f9;
+            padding: 10px;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #ollama-models-container select {
+            padding: 8px;
+            margin-right: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 300px;
+        }
+
+        #download-model-btn {
+            background-color: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #download-model-btn:hover {
+            background-color: #218838;
+        }
+
+        #download-model-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        #download-progress {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        #download-progress p {
+            margin: 0;
+        }
+
+        .delete-model-btn {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .delete-model-btn:hover {
+            background-color: #c82333;
         }
 
         .field-description {
@@ -1451,10 +1552,10 @@ async function testLLMConnectionFetch(llmConfig) {
         // testResult.textContent = JSON.stringify(llmConfig);
         // return;
 
-        Logger.log('Testing LLM connection with config:', JSON.stringify({
+        Logger.log('Setup: Testing LLM connection via IPC with config:', JSON.stringify({
             provider: llmConfig.provider,
             model: llmConfig.model,
-            // Don't log API keys
+            // Don't log API keys if they were included
             api_base: llmConfig.api_base
         }));
 
@@ -1462,19 +1563,20 @@ async function testLLMConnectionFetch(llmConfig) {
         const response = await fetch(
             config.get('pybridge.api_url') + "/test-llm", {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(llmConfig)
             }
         );
 
-        Logger.log(JSON.stringify(response))
+        // Logger.log(JSON.stringify(response)) // This logs the Response object, not the body
 
         testResult.classList.remove('hidden', 'success', 'error');
         result = await response.json();
+        Logger.log('Setup: Received test result from pybridge:', result);
 
         if (response.ok && result.success) {
+            testResult.textContent = 'Connection successful! LLM is working properly.';
+            testResult.classList.add('success');
             // Mark the provider as modified when test is successful
             const selectedProviderId = document.querySelector('input[name="llm-provider"]:checked')?.value;
             if (selectedProviderId) {
@@ -1482,13 +1584,12 @@ async function testLLMConnectionFetch(llmConfig) {
             }
 
             let error_msg = await saveLLMConfig();
-            if (error_msg) {
+            if (error_msg) { // saveLLMConfig returns error message string or null
                 testResult.textContent = error_msg;
                 testResult.classList.remove('hidden', 'success');
                 testResult.classList.add('error');
             } else {
-                testResult.textContent = 'Connection successful! LLM is working properly. Provider registered.';
-                testResult.classList.add('success');
+                testResult.textContent += ' Provider registered.'; // Append registration message
                 document.getElementById('llm-next').disabled = false;
             }
         } else {
@@ -1497,11 +1598,11 @@ async function testLLMConnectionFetch(llmConfig) {
         }
 
     } catch (error) {
-        Logger.error('LLM connection test failed:' + error.message);
-        console.log('LLM connection test failed:', error.message);
+        Logger.error('Setup: LLM connection test failed:', error);
+        // console.log('LLM connection test failed:', error.message);
         const testResult = document.getElementById('test-result');
         testResult.classList.add('error');
-        testResult.textContent = "Failed to connect to LLM provider: " + JSON.stringify(result);
+        testResult.textContent = `Failed to test LLM provider: ${error.message || JSON.stringify(result || 'Unknown error')}`;
     }
 }
 
@@ -1550,6 +1651,8 @@ function validateCurrentStep() {
     switch (currentStep) {
         case 'welcome':
             return true;
+        case 'ollama':
+            return true; // No strict validation needed; user can skip if no models are downloaded
         case 'llm':
             // LLM step is valid if the next button is enabled (after successful test)
             return !document.getElementById('llm-next').disabled;
@@ -2351,6 +2454,224 @@ function setupShortcutCapture() {
         triggerDisplay.textContent = triggerInput.value;
         modifiedFields.shortcuts.add('trigger-shortcut');
     });
+}
+
+// Function to update the LLM step title
+function updateLLMStepTitle() {
+    const llmStepElement = document.querySelector('.step[data-step="llm"]');
+    if (llmStepElement) {
+        llmStepElement.textContent = 'LLM Providers';
+    }
+    const llmPanelElement = document.getElementById('llm-panel');
+    if (llmPanelElement) {
+        const titleElement = llmPanelElement.querySelector('h2');
+        if (titleElement) {
+            titleElement.textContent = 'LLM Provider Selection';
+        }
+    }
+}
+
+// New function to initialize the Ollama step
+async function initializeOllamaStep() {
+    await displayHardwareInfo();
+    await displayOllamaModels();
+}
+
+// New function to display hardware information using PyBridge endpoint
+async function displayHardwareInfo() {
+    const hardwareInfoElement = document.getElementById('ollama-hardware-info');
+    if (!hardwareInfoElement) return;
+
+    hardwareInfoElement.innerHTML = '<p>Checking system hardware...</p>';
+
+    try {
+        const response = await fetch(config.get('pybridge.api_url') + '/hardware/acceleration');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch hardware info: ${response.statusText}`);
+        }
+        const hwInfo = await response.json();
+
+        console.log("Hardware Info Received:", hwInfo);
+
+        let vramText = "VRAM information not available.";
+        let gpuListText = "";
+        let recommendationText = "<p>Recommendations based on VRAM:</p><ul>";
+        const totalVram = hwInfo.details?.total_vram_gb || 0;
+
+        if (hwInfo.details && hwInfo.details.total_vram_gb) {
+            vramText = `Total Detected GPU VRAM: <strong>${hwInfo.details.total_vram_gb} GB</strong> (from reliable sources)`;
+        } else if (hwInfo.gpu_list && hwInfo.gpu_list.length > 0) {
+            let calculatedVram = 0;
+            let reliableSourceFound = false;
+            hwInfo.gpu_list.forEach(gpu => {
+                if (gpu.memory_total_gb && ['nvidia-smi', 'wmic'].includes(gpu.source)) {
+                    calculatedVram += gpu.memory_total_gb;
+                    reliableSourceFound = true;
+                }
+            });
+            if (reliableSourceFound) {
+                vramText = `Total Detected GPU VRAM: <strong>${calculatedVram.toFixed(1)} GB</strong> (from reliable sources)`;
+            }
+        }
+
+        if (hwInfo.gpu_list && hwInfo.gpu_list.length > 0) {
+            gpuListText = "Detected GPUs:<ul>";
+            hwInfo.gpu_list.forEach(gpu => {
+                const vramInfo = gpu.memory_total_gb ? `${gpu.memory_total_gb} GB` : 'VRAM N/A';
+                const sourceInfo = gpu.source ? `(Source: ${gpu.source})` : '';
+                gpuListText += `<li>${gpu.name || 'Unknown GPU'} - ${vramInfo} ${sourceInfo}</li>`;
+            });
+            gpuListText += "</ul>";
+        } else {
+            gpuListText = "<p>No specific GPUs detected by the backend checker.</p>";
+        }
+
+        if (totalVram >= 22) {
+            recommendationText += "<li>Suitable for large models (e.g., 70B Q4, 34B).</li>";
+        } else if (totalVram >= 14) {
+            recommendationText += "<li>Suitable for medium models (e.g., 34B Q4, 13B).</li>";
+        } else if (totalVram >= 7) {
+            recommendationText += "<li>Suitable for smaller models (e.g., 13B Q4, 7B).</li>";
+        } else if (totalVram >= 3.5) {
+            recommendationText += "<li>Suitable for tiny models (e.g., 7B Q4, 3B).</li>";
+        } else {
+            recommendationText += "<li>Limited VRAM. May only run very small models or rely heavily on CPU/RAM.</li>";
+        }
+        recommendationText += "<li>Note: RAM is also important for running models.</li></ul>";
+        if (hwInfo.platform === 'darwin') {
+            recommendationText += "<p>On macOS, Ollama uses Metal acceleration on Apple Silicon.</p>";
+        }
+
+        hardwareInfoElement.innerHTML = `
+            <p>${vramText}</p>
+            ${gpuListText}
+            ${recommendationText}
+        `;
+
+        // Store VRAM for model recommendation logic
+        config.set('ollama.totalVram', totalVram);
+        config.saveConfig();
+    } catch (error) {
+        console.error('Error fetching or displaying hardware info:', error);
+        hardwareInfoElement.innerHTML = `<p class="error">Could not retrieve hardware information: ${error.message}</p>`;
+    }
+}
+
+// New function to display Ollama models and management UI
+async function displayOllamaModels() {
+    const modelsContainer = document.getElementById('ollama-models-container');
+    if (!modelsContainer) return;
+
+    modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
+
+    try {
+        const client = new ollama.Ollama({ host: 'http://localhost:11434' });
+        const models = await client.list();
+        console.log("Ollama Models:", models);
+
+        let modelsHtml = '<h3>Local Ollama Models</h3>';
+        if (models.models && models.models.length > 0) {
+            modelsHtml += '<ul>';
+            models.models.forEach(model => {
+                modelsHtml += `<li>${model.name} <button class="delete-model-btn" data-model="${model.name}">Delete</button></li>`;
+            });
+            modelsHtml += '</ul>';
+        } else {
+            modelsHtml += '<p>No local models found. Download models to use Ollama locally.</p>';
+        }
+
+        modelsHtml += '<h3>Download New Model</h3>';
+        modelsHtml += '<select id="ollama-model-select">';
+        const recommendedModels = getRecommendedModels();
+        recommendedModels.forEach(model => {
+            modelsHtml += `<option value="${model.id}">${model.name} (${model.size} GB)</option>`;
+        });
+        modelsHtml += '</select>';
+        modelsHtml += '<button id="download-model-btn">Download Model</button>';
+        modelsHtml += '<div id="download-progress"></div>';
+
+        modelsContainer.innerHTML = modelsHtml;
+
+        // Add event listeners for delete buttons
+        document.querySelectorAll('.delete-model-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const modelName = btn.dataset.model;
+                if (confirm(`Are you sure you want to delete ${modelName}?`)) {
+                    await deleteOllamaModel(client, modelName);
+                }
+            });
+        });
+
+        // Add event listener for download button
+        document.getElementById('download-model-btn').addEventListener('click', async () => {
+            const modelSelect = document.getElementById('ollama-model-select');
+            const modelId = modelSelect.value;
+            await downloadOllamaModel(client, modelId);
+        });
+    } catch (error) {
+        console.error('Error fetching Ollama models:', error);
+        modelsContainer.innerHTML = `<p class="error">Could not fetch Ollama models: ${error.message}</p>`;
+    }
+}
+
+// New function to get recommended models based on VRAM
+function getRecommendedModels() {
+    const totalVram = config.get('ollama.totalVram', 0);
+    console.log("Total VRAM for model recommendation:", totalVram);
+    const models = [
+        { id: 'llama3:8b', name: 'Llama 3 (8B)', size: 4.7, minVram: 5 },
+        { id: 'llama3.1:8b', name: 'Llama 3.1 (8B)', size: 4.7, minVram: 5 },
+        { id: 'mistral:7b', name: 'Mistral (7B)', size: 4.1, minVram: 5 },
+        { id: 'grok-2:latest', name: 'Grok 2', size: 10, minVram: 12 },
+        { id: 'phi3:3.8b', name: 'Phi 3 (3.8B)', size: 2.4, minVram: 3 },
+        { id: 'gemma2:9b', name: 'Gemma 2 (9B)', size: 5.3, minVram: 6 },
+    ];
+
+    const filteredModels = models.filter(model => totalVram >= model.minVram);
+    console.log("Filtered Models based on VRAM:", filteredModels);
+    return filteredModels.length > 0 ? filteredModels : models; // Return all models if none meet VRAM criteria
+}
+
+// New function to download Ollama model
+async function downloadOllamaModel(client, modelId) {
+    const downloadBtn = document.getElementById('download-model-btn');
+    const progressDiv = document.getElementById('download-progress');
+    downloadBtn.disabled = true;
+    progressDiv.innerHTML = `<p>Downloading ${modelId}...</p>`;
+
+    try {
+        await client.pull({
+            model: modelId,
+            stream: true
+        }, (response) => {
+            if (response.status === 'downloading') {
+                const percent = Math.round((response.completed / response.total) * 100);
+                progressDiv.innerHTML = `<p>Downloading ${modelId}: ${percent}%</p>`;
+            } else if (response.status === 'success') {
+                progressDiv.innerHTML = `<p>${modelId} downloaded successfully!</p>`;
+                setTimeout(() => {
+                    displayOllamaModels();
+                }, 2000);
+            }
+        });
+    } catch (error) {
+        console.error('Error downloading model:', error);
+        progressDiv.innerHTML = `<p class="error">Error downloading ${modelId}: ${error.message}</p>`;
+    } finally {
+        downloadBtn.disabled = false;
+    }
+}
+
+// New function to delete Ollama model
+async function deleteOllamaModel(client, modelName) {
+    try {
+        await client.delete({ model: modelName });
+        alert(`${modelName} deleted successfully.`);
+        await displayOllamaModels();
+    } catch (error) {
+        console.error('Error deleting model:', error);
+        alert(`Error deleting ${modelName}: ${error.message}`);
+    }
 }
 
 async function finishSetup() {

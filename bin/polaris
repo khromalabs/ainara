@@ -1,3 +1,5 @@
 #!/bin/sh
-cd $HOME/lab/src/ainara/
-npm start
+cd $HOME/lab/src/ainara/dist/
+EXECUTABLE=$(find . -maxdepth 1 -type f -executable -print -quit)
+echo $EXECUTABLE
+"$EXECUTABLE"

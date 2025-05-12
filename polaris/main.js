@@ -33,7 +33,6 @@ const ConfigHelper = require('./utils/ConfigHelper');
 const Logger = require('./utils/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
-
 const debugMode = true;
 const debugDisableWizard = false;
 
@@ -267,6 +266,7 @@ async function appInitialization() {
         windowManager.initialize([ComRingWindow, ChatDisplayWindow], __dirname);
         appSetupEventHandlers();
         await appCreateTray();
+
         await waitForWindowsAndComponentsReady();
 
         // --- Port Availability Check (Packaged App Only) ---
