@@ -1010,14 +1010,33 @@ function loadProviders() {
     nextButton.disabled = true;
 }
 
+// Function to get local Ollama models
+async function getLocalOllamaModels() {
+    try {
+        const client = new ollama.Ollama({ host: 'http://localhost:11434' });
+        const models = await client.list();
+        console.log("Local Ollama Models for Providers:", models.models);
+        return models.models ? models.models.map(model => ({
+            name: model.name,
+            contextWindow: 4096 // Default context window; adjust if Ollama provides this info
+        })) : [];
+    } catch (error) {
+        console.error('Error fetching local Ollama models for providers:', error);
+        return [];
+    }
+}
+
 // Add new function to load existing providers
 async function loadExistingProviders() {
     try {
         const backendConfig = await loadBackendConfig();
         const existingProviders = backendConfig?.llm?.providers || [];
         const selectedProvider = backendConfig?.llm?.selected_provider;
+        
+        // Get local Ollama models
+        const ollamaModels = await getLocalOllamaModels();
 
-        if (existingProviders.length === 0) {
+        if (existingProviders.length === 0 && ollamaModels.length === 0) {
             // Clear any existing container if there are no providers
             const existingContainer = document.getElementById('existing-providers');
             if (existingContainer) {
@@ -1030,6 +1049,27 @@ async function loadExistingProviders() {
                 section.remove();
             }
             return; // No existing providers
+        }
+
+        // Add Ollama models to the providers list if not already present
+        let providersModified = false;
+        ollamaModels.forEach(model => {
+            const modelName = `ollama/${model.name}`;
+            if (!existingProviders.some(provider => provider.model === modelName)) {
+                existingProviders.push({
+                    model: modelName,
+                    api_base: "http://localhost:11434",
+                    context_window: model.contextWindow || 4096 // Default if not specified
+                });
+                providersModified = true;
+            }
+        });
+
+        // Update the backend config with the potentially modified providers list
+        if (providersModified) {
+            backendConfig.llm.providers = existingProviders;
+            // Save the updated config - this ensures if Ollama models were added, they're persisted
+            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         }
 
         // Create a container for existing providers if it doesn't exist
@@ -1056,11 +1096,14 @@ async function loadExistingProviders() {
         // Add each existing provider
         existingProviders.forEach((provider, index) => {
             const providerId = `existing-${index}`;
-            const providerModel = provider.model;
-            const isSelected = selectedProvider === providerModel;
+            const isOllamaModel = provider.model.startsWith('ollama/');
+            const providerModel = isOllamaModel ? 
+                `Ollama: ${provider.model.split('/')[1]}` : 
+                provider.model;
+            const isSelected = selectedProvider === provider.model;
 
             existingContainer.innerHTML += `
-                <div class="existing-provider ${isSelected ? 'selected' : ''}">
+                <div class="existing-provider ${isSelected ? 'selected' : ''} ${isOllamaModel ? 'ollama-provider' : ''}">
                     <input type="radio" name="existing-provider" id="${providerId}"
                         value="${index}" ${isSelected ? 'checked' : ''}>
                     <label for="${providerId}">
@@ -1085,6 +1128,19 @@ async function loadExistingProviders() {
             if (hasSelectedProvider || selectedProvider) {
                 document.getElementById('llm-next').disabled = false;
             }
+        }
+
+        // Add some styling for Ollama providers
+        const style = document.createElement('style');
+        style.textContent = `
+            .ollama-provider {
+                background-color: #f0f8ff;
+                border-left: 3px solid #1e90ff;
+            }
+        `;
+        if (!document.getElementById('ollama-provider-style')) {
+            style.id = 'ollama-provider-style';
+            document.head.appendChild(style);
         }
 
         // Add event listeners for existing provider selection
@@ -2654,6 +2710,8 @@ function getRecommendedModels() {
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
         { id: 'qwen:14b', name: 'Qwen 2.5 (14B)', size: 9, minVram: 12 },
+        { id: 'llama3:8b', name: 'Llama 3 (8B)', size: 5, minVram: 6 },
+        { id: 'mistral:7b', name: 'Mistral (7B)', size: 4.5, minVram: 6 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
