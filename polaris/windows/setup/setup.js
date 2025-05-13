@@ -2580,14 +2580,30 @@ async function displayOllamaModels() {
             modelsHtml += '<p>No local models found. Download models to use Ollama locally.</p>';
         }
 
-        modelsHtml += '<h3>Download New Model</h3>';
-        modelsHtml += '<select id="ollama-model-select">';
+        // Extract names of local models for easy lookup
+        const localModelNames = models.models ? models.models.map(model => model.name) : [];
         const recommendedModels = getRecommendedModels();
-        recommendedModels.forEach(model => {
-            modelsHtml += `<option value="${model.id}">${model.name} (${model.size} GB)</option>`;
-        });
-        modelsHtml += '</select>';
-        modelsHtml += '<button id="download-model-btn">Download Model</button>';
+        const featuredModelsForDropdown = recommendedModels.filter(model => !localModelNames.includes(model.id));
+
+        modelsHtml += '<h3>Featured Models</h3>';
+
+        if (featuredModelsForDropdown.length === 0) {
+            modelsHtml += '<p>No featured models left to be added</p>';
+        } else {
+            modelsHtml += '<select id="ollama-model-select">';
+            featuredModelsForDropdown.forEach(model => {
+                modelsHtml += `<option value="${model.id}">${model.name} (${model.size} GB)</option>`;
+            });
+            modelsHtml += '</select>';
+            modelsHtml += '<button id="download-model-btn">Download Model</button>';
+        }
+
+        // Add "Other models" section
+        modelsHtml += '<h3>Other models</h3>';
+        modelsHtml += '<p>You can download any model from <a href="#" class="external-link" data-url="https://ollama.com/library">Ollama Hub</a>. Enter the model name (e.g., mistral:latest).</p>';
+        modelsHtml += '<input type="text" id="ollama-other-model-input" placeholder="e.g., mistral:latest" style="width: 280px; margin-right: 10px;">';
+        modelsHtml += '<button id="download-other-model-btn">Download Model</button>';
+
         modelsHtml += '<div id="download-progress"></div>';
 
         modelsContainer.innerHTML = modelsHtml;
@@ -2603,11 +2619,29 @@ async function displayOllamaModels() {
         });
 
         // Add event listener for download button
-        document.getElementById('download-model-btn').addEventListener('click', async () => {
-            const modelSelect = document.getElementById('ollama-model-select');
-            const modelId = modelSelect.value;
-            await downloadOllamaModel(client, modelId);
-        });
+        const downloadBtn = document.getElementById('download-model-btn');
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', async () => {
+                const modelSelect = document.getElementById('ollama-model-select');
+                const modelId = modelSelect.value;
+                await downloadOllamaModel(client, modelId, downloadBtn); // Pass the button element
+            });
+        }
+
+        // Add event listener for the "Other model" download button
+        const downloadOtherModelBtn = document.getElementById('download-other-model-btn');
+        if (downloadOtherModelBtn) {
+            downloadOtherModelBtn.addEventListener('click', async () => {
+                const modelInput = document.getElementById('ollama-other-model-input');
+                const modelId = modelInput.value.trim();
+                if (modelId) {
+                    await downloadOllamaModel(client, modelId, downloadOtherModelBtn); // Pass the button element
+                    modelInput.value = ''; // Clear input after attempting download
+                } else {
+                    alert('Please enter a model name to download.');
+                }
+            });
+        }
     } catch (error) {
         console.error('Error fetching Ollama models:', error);
         modelsContainer.innerHTML = `<p class="error">Could not fetch Ollama models: ${error.message}</p>`;
@@ -2619,12 +2653,7 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
-        { id: 'llama3:8b', name: 'Llama 3 (8B)', size: 4.7, minVram: 5 },
-        { id: 'llama3.1:8b', name: 'Llama 3.1 (8B)', size: 4.7, minVram: 5 },
-        { id: 'mistral:7b', name: 'Mistral (7B)', size: 4.1, minVram: 5 },
-        { id: 'grok-2:latest', name: 'Grok 2', size: 10, minVram: 12 },
-        { id: 'phi3:3.8b', name: 'Phi 3 (3.8B)', size: 2.4, minVram: 3 },
-        { id: 'gemma2:9b', name: 'Gemma 2 (9B)', size: 5.3, minVram: 6 },
+        { id: 'qwen:14b', name: 'Qwen 2.5 (14B)', size: 9, minVram: 12 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
@@ -2633,11 +2662,11 @@ function getRecommendedModels() {
 }
 
 // New function to download Ollama model
-async function downloadOllamaModel(client, modelId) {
-    const downloadBtn = document.getElementById('download-model-btn');
+async function downloadOllamaModel(client, modelId, buttonElement) {
     const progressDiv = document.getElementById('download-progress');
-    downloadBtn.disabled = true;
+    if (buttonElement) buttonElement.disabled = true;
     progressDiv.innerHTML = `<p>Downloading ${modelId}...</p>`;
+    let downloadCompletedSuccessfully = false;
 
     try {
         await client.pull({
@@ -2649,16 +2678,18 @@ async function downloadOllamaModel(client, modelId) {
                 progressDiv.innerHTML = `<p>Downloading ${modelId}: ${percent}%</p>`;
             } else if (response.status === 'success') {
                 progressDiv.innerHTML = `<p>${modelId} downloaded successfully!</p>`;
-                setTimeout(() => {
-                    displayOllamaModels();
-                }, 2000);
+                downloadCompletedSuccessfully = true;
             }
         });
+        if (downloadCompletedSuccessfully) {
+            // Refresh model list after a short delay to ensure Ollama has processed the new model
+            setTimeout(() => {
+                displayOllamaModels(); // This will re-enable buttons as part of the refresh
+            }, 1000);
+        }
     } catch (error) {
         console.error('Error downloading model:', error);
         progressDiv.innerHTML = `<p class="error">Error downloading ${modelId}: ${error.message}</p>`;
-    } finally {
-        downloadBtn.disabled = false;
     }
 }
 
