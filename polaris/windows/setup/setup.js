@@ -2548,22 +2548,25 @@ function displayOllamaServerConfig() {
     const ollamaPanel = document.getElementById('ollama-panel');
     if (ollamaPanel) {
         const serverConfigHtml = `
-            <div id="ollama-server-config" style="margin-top: 20px;">
+            <div id="ollama-server-config" style="margin-top: 20px; width: 100%;">
                 <h3>Ollama Server Configuration</h3>
-                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; max-width: 800px;">
+                    <!-- Server IP Field -->
                     <div class="form-group" style="flex: 1; min-width: 200px;">
-                        <label for="ollama-server-ip">Server IP:</label>
-                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100">
-                        <p class="field-description">Enter the IP address or hostname of the server running Ollama.</p>
+                        <label for="ollama-server-ip" style="display: block; margin-bottom: 5px;">Server IP:</label>
+                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                        <p class="field-description">Optional alternate Ollama address.</p>
                     </div>
+                    <!-- Port Field -->
                     <div class="form-group" style="flex: 0.5; min-width: 100px;">
-                        <label for="ollama-port">Port:</label>
-                        <input type="number" id="ollama-port" value="${config.get('ollama.port', 11434)}" placeholder="e.g., 11434">
-                        <p class="field-description">Enter the port number for the Ollama server.</p>
+                        <label for="ollama-port" style="display: block; margin-bottom: 5px;">Port:</label>
+                        <input type="number" id="ollama-port" value="${config.get('ollama.port', 11434)}" placeholder="e.g., 11434" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                        <p class="field-description">Optional alternate Ollama port.</p>
                     </div>
-                    <div class="form-group" style="flex: 0; min-width: auto; margin-left: auto;">
+                    <!-- Reload Button -->
+                    <div class="form-group" style="flex: 0; min-width: auto; margin-left: auto; margin-top: 25px;">
                         <button id="reload-ollama-config-btn" style="background-color: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; transition: background-color 0.3s;">Reload</button>
-                        <p class="field-description">Reload Ollama configuration after changes.</p>
+                        <p class="field-description"></p>
                     </div>
                 </div>
             </div>
@@ -2580,7 +2583,7 @@ function displayOllamaServerConfig() {
         const reloadBtn = document.getElementById('reload-ollama-config-btn');
         if (reloadBtn) {
             reloadBtn.addEventListener('click', async () => {
-                // Save the current configuration
+                // Save the current configuraticonfiguration on
                 const serverIp = document.getElementById('ollama-server-ip').value;
                 const port = parseInt(document.getElementById('ollama-port').value, 10);
                 config.set('ollama.serverIp', serverIp);
@@ -2592,7 +2595,7 @@ function displayOllamaServerConfig() {
                 try {
                     let hwInfo = await displayHardwareInfo();
                     await displayOllamaModels(hwInfo);
-                    alert('Ollama configuration reloaded successfully.');
+                    // alert('Ollama configuration reloaded successfully.');
                 } catch (error) {
                     console.error('Error reloading Ollama configuration:', error);
                     alert(`Error reloading Ollama configuration: ${error.message}`);
@@ -2790,7 +2793,7 @@ async function displayOllamaModels(hwInfo) {
         }
     } catch (error) {
         console.error('Error fetching Ollama models:', error);
-        modelsContainer.innerHTML = modelsInfo+`<p class="error">Could not fetch Ollama models: ${error.message}</p>`;
+        modelsContainer.innerHTML = modelsInfo+`<br><h3 style="margin:'0 auto'">Ollama is not available. Please ensure is installed and running in the specified address to be able to use local LLM models in Ainara.<br><a class="external-link" href="#" data-url="https://ollama.com/download">Ollama download link</a></h3>`;
     }
 }
 
