@@ -65,7 +65,6 @@ async function loadBackendConfig() {
         return await response.json();
     } catch (error) {
         console.error('Error loading backend config:', error);
-
     }
 }
 
@@ -1955,11 +1954,12 @@ function validateSTTForm() {
 
 async function saveCurrentStepData() {
     const currentStep = steps[currentStepIndex];
+    let serverIp = null, port = null;
 
     switch (currentStep) {
         case 'ollama':
-            const serverIp = document.getElementById('ollama-server-ip')?.value || 'localhost';
-            const port = parseInt(document.getElementById('ollama-port')?.value || '11434', 10);
+            serverIp = document.getElementById('ollama-server-ip')?.value || 'localhost';
+            port = parseInt(document.getElementById('ollama-port')?.value || '11434', 10);
             config.set('ollama.serverIp', serverIp);
             config.set('ollama.port', port);
             config.saveConfig();
@@ -2538,24 +2538,38 @@ function updateLLMStepTitle() {
 
 // New function to initialize the Ollama step
 async function initializeOllamaStep() {
-    let hwInfo = await displayHardwareInfo();
-    await displayOllamaModels(hwInfo);
+    await displayOllamaModels();
+    const serverIp = config.get('ollama.serverIp');
+    const hardwareInfoElement = document.getElementById('ollama-hardware-info');
+    if (serverIp == "localhost" || serverIp == "127.0.0.1") {
+        hardwareInfoElement.style.display = "block";
+        await displayHardwareInfo();
+    } else {
+        if (hardwareInfoElement) {
+            hardwareInfoElement.style.display = "none";
+            // hardwareInfoElement.innerHTML = '<p>Hardware information is not displayed for remote Ollama servers.</p>';
+        }
+    }
     displayOllamaServerConfig();
 }
 
 // Function to display Ollama server configuration
 function displayOllamaServerConfig() {
     const ollamaPanel = document.getElementById('ollama-panel');
+    let existingConfig = document.getElementById('ollama-server-config');
+    if (existingConfig) {
+        existingConfig.remove(); // Remove existing config to avoid duplicates
+    }
     if (ollamaPanel) {
         const serverConfigHtml = `
-            <div id="ollama-server-config" style="margin-top: 20px; width: 100%;">
+            <div id="ollama-server-config" style="margin-top: 20px; width: 100%">
                 <h3>Ollama Server Configuration</h3>
-                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; max-width: 800px;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; max-width: 800px; margin-bottom: 15px;">
                     <!-- Server IP Field -->
                     <div class="form-group" style="flex: 1; min-width: 200px;">
                         <label for="ollama-server-ip" style="display: block; margin-bottom: 5px;">Server IP:</label>
                         <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                        <p class="field-description">Optional alternate Ollama address.</p>
+                        <p class="field-description">Optional alternate Ollama host address.</p>
                     </div>
                     <!-- Port Field -->
                     <div class="form-group" style="flex: 0.5; min-width: 100px;">
@@ -2593,8 +2607,7 @@ function displayOllamaServerConfig() {
                 reloadBtn.disabled = true;
                 reloadBtn.textContent = 'Reloading...';
                 try {
-                    let hwInfo = await displayHardwareInfo();
-                    await displayOllamaModels(hwInfo);
+                    await initializeOllamaStep(); // Reinitialize to update hardware info visibility based on new IP
                     // alert('Ollama configuration reloaded successfully.');
                 } catch (error) {
                     console.error('Error reloading Ollama configuration:', error);
@@ -2688,21 +2701,18 @@ async function displayHardwareInfo() {
         console.error('Error fetching or displaying hardware info:', error);
         hardwareInfoElement.innerHTML = `<p class="error">Could not retrieve hardware information: ${error.message}</p>`;
     }
-
-    return hwInfo;
 }
 
 // New function to display Ollama models and management UI
-async function displayOllamaModels(hwInfo) {
+async function displayOllamaModels() {
     const modelsContainer = document.getElementById('ollama-models-container');
     if (!modelsContainer) return;
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
     let modelsInfo = ""
-    let ollamaip = config.get('ollama.serverIp', 'localhost');
+    const ollamaip = config.get('ollama.serverIp', 'localhost');
+    const totalVram = config.get('ollama.totalVram', 0);
 
-    // Add VRAM warning if less than 12GB
-    const totalVram = hwInfo.details.total_vram_gb;
     if (totalVram > 0 && totalVram < 12 && (ollamaip == "localhost" || ollamaip == "127.0.0.1") ) {
         modelsInfo += '<div class="warning-message" style="background-color: #fff3cd; border-left: 4px solid; color: #884400; padding: 10px; margin-bottom: 15px;">';
         modelsInfo += '<span class="icon">⚠</span>';
@@ -2794,7 +2804,7 @@ async function displayOllamaModels(hwInfo) {
         }
     } catch (error) {
         console.error('Error fetching Ollama models:', error);
-        modelsContainer.innerHTML = modelsInfo+`<br><h3 style="margin:'0 auto'">Ollama is not available. Please ensure is installed and running in the specified address to be able to use local LLM models in Ainara.<br><a class="external-link" href="#" data-url="https://ollama.com/download">Ollama download link</a></h3>`;
+        modelsContainer.innerHTML = modelsInfo+`<h3 style="margin:'0 auto'">Ollama is not available. Please ensure is installed and running in the specified address to be able to use local LLM models in Ainara.<br><a class="external-link" href="#" data-url="https://ollama.com/download">Ollama download link</a></h3>`;
     }
 }
 

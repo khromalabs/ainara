@@ -76,5 +76,10 @@ module.exports = {
     },
     startup: {
         startMinimized: false
+    },
+    ollama: {
+        serverIp: "localhost",
+        port: 11434,
+        totalVram: 0
     }
 };
