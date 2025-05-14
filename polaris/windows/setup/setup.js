@@ -2699,10 +2699,11 @@ async function displayOllamaModels(hwInfo) {
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
     let modelsInfo = ""
+    let ollamaip = config.get('ollama.serverIp', 'localhost');
 
     // Add VRAM warning if less than 12GB
     const totalVram = hwInfo.details.total_vram_gb;
-    if (totalVram > 0 && totalVram < 12) {
+    if (totalVram > 0 && totalVram < 12 && (ollamaip == "localhost" || ollamaip == "127.0.0.1") ) {
         modelsInfo += '<div class="warning-message" style="background-color: #fff3cd; border-left: 4px solid; color: #884400; padding: 10px; margin-bottom: 15px;">';
         modelsInfo += '<span class="icon">⚠</span>';
         modelsInfo += '<span>Warning: Your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
