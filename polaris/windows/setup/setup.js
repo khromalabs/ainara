@@ -2529,13 +2529,15 @@ function updateLLMStepTitle() {
 
 // New function to initialize the Ollama step
 async function initializeOllamaStep() {
-    await displayHardwareInfo();
-    await displayOllamaModels();
+    let hwInfo = await displayHardwareInfo();
+    await displayOllamaModels(hwInfo);
 }
 
 // New function to display hardware information using PyBridge endpoint
 async function displayHardwareInfo() {
     const hardwareInfoElement = document.getElementById('ollama-hardware-info');
+    let hwInfo = null;
+
     if (!hardwareInfoElement) return;
 
     hardwareInfoElement.innerHTML = '<p>Checking system hardware...</p>';
@@ -2545,7 +2547,7 @@ async function displayHardwareInfo() {
         if (!response.ok) {
             throw new Error(`Failed to fetch hardware info: ${response.statusText}`);
         }
-        const hwInfo = await response.json();
+        hwInfo = await response.json();
 
         console.log("Hardware Info Received:", hwInfo);
 
@@ -2611,14 +2613,28 @@ async function displayHardwareInfo() {
         console.error('Error fetching or displaying hardware info:', error);
         hardwareInfoElement.innerHTML = `<p class="error">Could not retrieve hardware information: ${error.message}</p>`;
     }
+
+    return hwInfo;
 }
 
 // New function to display Ollama models and management UI
-async function displayOllamaModels() {
+async function displayOllamaModels(hwInfo) {
     const modelsContainer = document.getElementById('ollama-models-container');
     if (!modelsContainer) return;
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
+    let modelsInfo = ""
+
+    // Add VRAM warning if less than 12GB
+    const totalVram = hwInfo.details.total_vram_gb;
+    if (totalVram > 0 && totalVram < 12) {
+        modelsInfo += '<div class="warning-message" style="background-color: #fff3cd; border-left: 4px solid; color: #884400; padding: 10px; margin-bottom: 15px;">';
+        modelsInfo += '<span class="icon">⚠</span>';
+        modelsInfo += '<span>Warning: Your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
+        modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
+        modelsInfo += 'Consider using cloud-based providers for better performance.</span>';
+        modelsInfo += '</div>';
+    }
 
     try {
         const client = new ollama.Ollama({ host: 'http://localhost:11434' });
@@ -2662,7 +2678,7 @@ async function displayOllamaModels() {
 
         modelsHtml += '<div id="download-progress"></div>';
 
-        modelsContainer.innerHTML = modelsHtml;
+        modelsContainer.innerHTML = modelsInfo+modelsHtml;
 
         // Add event listeners for delete buttons
         document.querySelectorAll('.delete-model-btn').forEach(btn => {
@@ -2700,7 +2716,7 @@ async function displayOllamaModels() {
         }
     } catch (error) {
         console.error('Error fetching Ollama models:', error);
-        modelsContainer.innerHTML = `<p class="error">Could not fetch Ollama models: ${error.message}</p>`;
+        modelsContainer.innerHTML = modelsInfo+`<p class="error">Could not fetch Ollama models: ${error.message}</p>`;
     }
 }
 
@@ -2710,8 +2726,6 @@ function getRecommendedModels() {
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
         { id: 'qwen:14b', name: 'Qwen 2.5 (14B)', size: 9, minVram: 12 },
-        { id: 'llama3:8b', name: 'Llama 3 (8B)', size: 5, minVram: 6 },
-        { id: 'mistral:7b', name: 'Mistral (7B)', size: 4.5, minVram: 6 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
