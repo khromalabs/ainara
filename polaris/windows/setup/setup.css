@@ -26,6 +26,20 @@ body {
     color: #444;
 }
 
+.warning-block {
+    background-color: #fff3cd;
+    color: #884400 !important;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-left: 4px solid;
+    font-weight: bold;
+    line-height: 15px;
+}
+
+.warning-block:before {
+    content: '⚠ Warning: ';
+}
+
 .setup-container {
     max-width: 950px;
     margin: 0 auto;

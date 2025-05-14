@@ -1,5 +1,9 @@
 #!/bin/sh
-cd $HOME/lab/src/ainara/dist/
-EXECUTABLE=$(find . -maxdepth 1 -type f -executable -print -quit)
-echo $EXECUTABLE
-"$EXECUTABLE"
+if [ -f "package.json" ]; then
+	npm run start 
+else
+	cd $HOME/lab/src/ainara/dist/
+	EXECUTABLE=$(find . -maxdepth 1 -type f -executable -print -quit)
+	echo $EXECUTABLE
+	"$EXECUTABLE"
+fi

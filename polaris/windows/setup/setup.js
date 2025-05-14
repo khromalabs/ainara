@@ -2575,13 +2575,13 @@ function displayOllamaServerConfig() {
                     <div class="form-group" style="flex: 1; min-width: 200px;">
                         <label for="ollama-server-ip" style="display: block; margin-bottom: 5px;">Server IP:</label>
                         <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                        <p class="field-description">Optional alternate Ollama host address.</p>
+                        <p class="field-description">Optional alternate Ollama host address, localhost by default.</p>
                     </div>
                     <!-- Port Field -->
                     <div class="form-group" style="flex: 0.5; min-width: 100px;">
                         <label for="ollama-port" style="display: block; margin-bottom: 5px;">Port:</label>
                         <input type="number" id="ollama-port" value="${config.get('ollama.port', 11434)}" placeholder="e.g., 11434" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                        <p class="field-description">Optional alternate Ollama port.</p>
+                        <p class="field-description">Optional alternate Ollama port, 11434 by default.</p>
                     </div>
                     <!-- Reload Button -->
                     <div class="form-group" style="flex: 0; min-width: auto; margin-left: auto; margin-top: 25px;">
@@ -2720,11 +2720,10 @@ async function displayOllamaModels() {
     const totalVram = config.get('ollama.totalVram', 0);
 
     if (totalVram > 0 && totalVram < 12 && (ollamaip == "localhost" || ollamaip == "127.0.0.1") ) {
-        modelsInfo += '<div class="warning-message" style="background-color: #fff3cd; border-left: 4px solid; color: #884400; padding: 10px; margin-bottom: 15px;">';
-        modelsInfo += '<span class="icon">⚠</span>';
-        modelsInfo += '<span>Warning: Your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
+        modelsInfo += '<div class="warning-block">';
+        modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
         modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
-        modelsInfo += 'Consider using cloud-based providers for better performance.</span>';
+        modelsInfo += 'Consider using cloud-based providers for better performance.';
         modelsInfo += '</div>';
     }
 
@@ -2732,13 +2731,13 @@ async function displayOllamaModels() {
         const serverIp = config.get('ollama.serverIp', 'localhost');
         const port = config.get('ollama.port', 11434);
         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
-        const models = await client.list();
-        console.log("Ollama Models:", models);
+        const modelsResponse = await client.list();
+        console.log("Ollama Models:", modelsResponse);
 
         let modelsHtml = '<h3>Local Ollama Models</h3>';
-        if (models.models && models.models.length > 0) {
+        if (modelsResponse.models && modelsResponse.models.length > 0) {
             modelsHtml += '<ul>';
-            models.models.forEach(model => {
+            modelsResponse.models.forEach(model => {
                 modelsHtml += `<li>${model.name} <button class="delete-model-btn" data-model="${model.name}">Delete</button></li>`;
             });
             modelsHtml += '</ul>';
@@ -2747,9 +2746,9 @@ async function displayOllamaModels() {
         }
 
         // Extract names of local models for easy lookup
-        const localModelNames = models.models ? models.models.map(model => model.name) : [];
+        const localModelNames = modelsResponse.models ? modelsResponse.models.map(model => model.name) : [];
         const recommendedModels = getRecommendedModels();
-        const featuredModelsForDropdown = recommendedModels.filter(model => !localModelNames.includes(model.id));
+        const featuredModelsForDropdown = recommendedModels.filter(model => !localModelNames.some(name => name.includes(model.id.split(':')[0])));
 
         modelsHtml += '<h3>Featured Models</h3>';
 
@@ -2779,6 +2778,7 @@ async function displayOllamaModels() {
             btn.addEventListener('click', async () => {
                 const modelName = btn.dataset.model;
                 if (confirm(`Are you sure you want to delete ${modelName}?`)) {
+                    btn.disabled = true; // Disable delete button during operation
                     await deleteOllamaModel(client, modelName);
                 }
             });
@@ -2788,6 +2788,7 @@ async function displayOllamaModels() {
         const downloadBtn = document.getElementById('download-model-btn');
         if (downloadBtn) {
             downloadBtn.addEventListener('click', async () => {
+                downloadBtn.disabled = true; // Disable download button during operation
                 const modelSelect = document.getElementById('ollama-model-select');
                 const modelId = modelSelect.value;
                 await downloadOllamaModel(client, modelId, downloadBtn); // Pass the button element
@@ -2798,6 +2799,7 @@ async function displayOllamaModels() {
         const downloadOtherModelBtn = document.getElementById('download-other-model-btn');
         if (downloadOtherModelBtn) {
             downloadOtherModelBtn.addEventListener('click', async () => {
+                downloadOtherModelBtn.disabled = true; // Disable download button during operation
                 const modelInput = document.getElementById('ollama-other-model-input');
                 const modelId = modelInput.value.trim();
                 if (modelId) {
@@ -2810,7 +2812,7 @@ async function displayOllamaModels() {
         }
     } catch (error) {
         console.error('Error fetching Ollama models:', error);
-        modelsContainer.innerHTML = modelsInfo+`<h3 style="margin:'0 auto'">Ollama is not available. Please ensure is installed and running in the specified address to be able to use local LLM models in Ainara.<br><a class="external-link" href="#" data-url="https://ollama.com/download">Ollama download link</a></h3>`;
+        modelsContainer.innerHTML = modelsInfo+`<div class="warning-block">Ollama is not available. To use Ollama models in Ainara ensure is installed and running in the specified address, then reboot Ainara.<br><a class="external-link" href="#" data-url="https://ollama.com/download">Ollama download link</a></div>`;
     }
 }
 
@@ -2831,33 +2833,45 @@ function getRecommendedModels() {
 async function downloadOllamaModel(client, modelId, buttonElement) {
     const progressDiv = document.getElementById('download-progress');
     if (buttonElement) buttonElement.disabled = true;
-    progressDiv.innerHTML = `<p>Downloading ${modelId}...</p>`;
+    progressDiv.innerHTML = `<p>Initiating download for ${modelId}...</p>`;
     let downloadCompletedSuccessfully = false;
 
     try {
-        await client.pull({
+        const stream = await client.pull({
             model: modelId,
             stream: true
-        }, (response) => {
-            if (response.status === 'downloading') {
-                const percent = Math.round((response.completed / response.total) * 100);
-                progressDiv.innerHTML = `<p>Downloading ${modelId}: ${percent}%</p>`;
-            } else if (response.status === 'success') {
-                progressDiv.innerHTML = `<p>${modelId} downloaded successfully!</p>`;
-                downloadCompletedSuccessfully = true;
-            }
         });
+        for await (const part of stream) {
+            if (part.digest) {
+                let percent = 0;
+                if (part.completed && part.total) {
+                    percent = Math.round((part.completed / part.total) * 100);
+                }
+                progressDiv.innerHTML = `<p>${part.status}: ${percent}%</p>`;
+            } else if (part.status) {
+                progressDiv.innerHTML = `<p>${part.status}</p>`;
+                if (part.status.includes('success') || part.status.includes('completed')) {
+                    downloadCompletedSuccessfully = true;
+                    progressDiv.innerHTML = `<p>${modelId} downloaded successfully!</p>`;
+                }
+            }
+        }
         if (downloadCompletedSuccessfully) {
+            progressDiv.innerHTML += `<p>Refreshing model list...</p>`;
             // Load the model into memory after download
+            progressDiv.innerHTML += `<p>Loading model into memory...</p>`;
             await loadOllamaModel(client, modelId);
             // Refresh model list after a short delay to ensure Ollama has processed the new model
             setTimeout(() => {
                 displayOllamaModels(); // This will re-enable buttons as part of the refresh
             }, 1000);
         }
+        buttonElement.disabled = false; // Re-enable button if download fails or completes
+        progressDiv.scrollIntoView({ behavior: 'smooth', block: 'end' }); // Ensure progress is visible
     } catch (error) {
         console.error('Error downloading model:', error);
         progressDiv.innerHTML = `<p class="error">Error downloading ${modelId}: ${error.message}</p>`;
+        buttonElement.disabled = false; // Re-enable button on error
     }
 }
 
