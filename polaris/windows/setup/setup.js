@@ -2543,17 +2543,19 @@ function updateLLMStepTitle() {
 // New function to initialize the Ollama step
 async function initializeOllamaStep() {
     await displayOllamaModels();
-    const serverIp = config.get('ollama.serverIp');
+    // const serverIp = config.get('ollama.serverIp');
     const hardwareInfoElement = document.getElementById('ollama-hardware-info');
-    if (serverIp == "localhost" || serverIp == "127.0.0.1") {
-        hardwareInfoElement.style.display = "block";
-        await displayHardwareInfo();
-    } else {
-        if (hardwareInfoElement) {
-            hardwareInfoElement.style.display = "none";
-            // hardwareInfoElement.innerHTML = '<p>Hardware information is not displayed for remote Ollama servers.</p>';
-        }
-    }
+    hardwareInfoElement.style.display = "none";
+    await displayHardwareInfo();
+    // if (serverIp == "localhost" || serverIp == "127.0.0.1") {
+    //     hardwareInfoElement.style.display = "block";
+    //     await displayHardwareInfo();
+    // } else {
+    //     if (hardwareInfoElement) {
+    //         hardwareInfoElement.style.display = "none";
+    //         // hardwareInfoElement.innerHTML = '<p>Hardware information is not displayed for remote Ollama servers.</p>';
+    //     }
+    // }
     displayOllamaServerConfig();
 }
 
@@ -2864,7 +2866,25 @@ async function deleteOllamaModel(client, modelName) {
     try {
         await client.delete({ model: modelName });
         alert(`${modelName} deleted successfully.`);
+        
+        // Remove the model from LLM providers list
+        const backendConfig = await loadBackendConfig();
+        const modelProviderName = `ollama/${modelName}`;
+        if (backendConfig.llm && backendConfig.llm.providers) {
+            const providerIndex = backendConfig.llm.providers.findIndex(provider => provider.model === modelProviderName);
+            if (providerIndex !== -1) {
+                backendConfig.llm.providers.splice(providerIndex, 1);
+                // If this was the selected provider, clear the selection or select another if available
+                if (backendConfig.llm.selected_provider === modelProviderName) {
+                    backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ? backendConfig.llm.providers[0].model : null;
+                }
+                await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+                await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+            }
+        }
+        
         await displayOllamaModels();
+        loadExistingProviders(); // Refresh the providers list in the LLM step
     } catch (error) {
         console.error('Error deleting model:', error);
         alert(`Error deleting ${modelName}: ${error.message}`);
