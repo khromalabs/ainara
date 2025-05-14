@@ -35,6 +35,7 @@ const process = require('process');
 const { nativeTheme } = require('electron');
 const debugMode = true;
 const debugDisableWizard = false;
+const ollama = require('ollama');
 
 
 const config = new ConfigManager();
@@ -47,6 +48,7 @@ let setupWindow = null;
 let wizardActive = false;
 let externallyManagedServices = false;
 let updateProgressWindow = null;
+let ollamaClient = null;
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
 
@@ -245,11 +247,21 @@ function showSetupWizard() {
     });
 }
 
+function initializeOllamaClient() {
+    const serverIp = config.get('ollama.serverIp', 'localhost');
+    const port = config.get('ollama.port', 11434);
+    ollamaClient = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
+    Logger.info(`Ollama client initialized with server: ${serverIp}:${port}`);
+}
+
 async function appInitialization() {
     try {
         Logger.setDebugMode(debugMode);
         app.isQuitting = false;
         await app.whenReady();
+
+        // Initialize Ollama client
+        initializeOllamaClient();
 
         if (process.platform === 'darwin') {
             app.dock.hide()
@@ -410,6 +422,9 @@ async function appInitialization() {
 
         // Update the provider submenu
         await updateProviderSubmenu();
+
+        // Start Ollama keep-alive mechanism
+        startOllamaKeepAlive();
 
         // Close splash and show main window
         splashWindow.updateProgress('Ready!', 100);
@@ -587,6 +602,39 @@ function truncateMiddle(str, maxLength) {
     return start + '...' + end;
 }
 
+// Add function to load Ollama model into memory
+async function loadOllamaModel(modelId) {
+    if (!ollamaClient) {
+        initializeOllamaClient();
+    }
+    try {
+        // Send a simple request to ensure the model is loaded and ready
+        await ollamaClient.chat({
+            model: modelId,
+            messages: [{ role: 'user', content: 'Hello, are you ready?' }],
+            stream: false
+        });
+        Logger.info(`Model ${modelId} loaded and ready.`);
+    } catch (error) {
+        Logger.error(`Error loading model ${modelId}:`, error);
+    }
+}
+
+// Add a keep-alive mechanism to ensure the selected Ollama model remains loaded
+function startOllamaKeepAlive() {
+    setInterval(async () => {
+        try {
+            const { selected_provider } = await ConfigHelper.getLLMProviders();
+            if (selected_provider && selected_provider.startsWith('ollama/')) {
+                const modelId = selected_provider.split('/')[1];
+                await loadOllamaModel(modelId);
+            }
+        } catch (error) {
+            Logger.error('Error in Ollama keep-alive:', error);
+        }
+    }, 300000); // Check every 5 minutes
+}
+
 // Add function to update provider submenu
 async function updateProviderSubmenu() {
     try {
@@ -622,6 +670,12 @@ async function updateProviderSubmenu() {
                             }
                         });
                         tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(model, 44));
+                        
+                        // If it's an Ollama model, ensure it's loaded
+                        if (model.startsWith('ollama/')) {
+                            const modelId = model.split('/')[1];
+                            await loadOllamaModel(modelId);
+                        }
                     }
                 }
             };

@@ -1013,7 +1013,9 @@ function loadProviders() {
 // Function to get local Ollama models
 async function getLocalOllamaModels() {
     try {
-        const client = new ollama.Ollama({ host: 'http://localhost:11434' });
+        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const port = config.get('ollama.port', 11434);
+        const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
         const models = await client.list();
         console.log("Local Ollama Models for Providers:", models.models);
         return models.models ? models.models.map(model => ({
@@ -1955,6 +1957,13 @@ async function saveCurrentStepData() {
     const currentStep = steps[currentStepIndex];
 
     switch (currentStep) {
+        case 'ollama':
+            const serverIp = document.getElementById('ollama-server-ip')?.value || 'localhost';
+            const port = parseInt(document.getElementById('ollama-port')?.value || '11434', 10);
+            config.set('ollama.serverIp', serverIp);
+            config.set('ollama.port', port);
+            config.saveConfig();
+            break;
         case 'llm':
             await saveLLMConfig();
             break;
@@ -2531,6 +2540,69 @@ function updateLLMStepTitle() {
 async function initializeOllamaStep() {
     let hwInfo = await displayHardwareInfo();
     await displayOllamaModels(hwInfo);
+    displayOllamaServerConfig();
+}
+
+// Function to display Ollama server configuration
+function displayOllamaServerConfig() {
+    const ollamaPanel = document.getElementById('ollama-panel');
+    if (ollamaPanel) {
+        const serverConfigHtml = `
+            <div id="ollama-server-config" style="margin-top: 20px;">
+                <h3>Ollama Server Configuration</h3>
+                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                    <div class="form-group" style="flex: 1; min-width: 200px;">
+                        <label for="ollama-server-ip">Server IP:</label>
+                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100">
+                        <p class="field-description">Enter the IP address or hostname of the server running Ollama.</p>
+                    </div>
+                    <div class="form-group" style="flex: 0.5; min-width: 100px;">
+                        <label for="ollama-port">Port:</label>
+                        <input type="number" id="ollama-port" value="${config.get('ollama.port', 11434)}" placeholder="e.g., 11434">
+                        <p class="field-description">Enter the port number for the Ollama server.</p>
+                    </div>
+                    <div class="form-group" style="flex: 0; min-width: auto; margin-left: auto;">
+                        <button id="reload-ollama-config-btn" style="background-color: #007bff; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; transition: background-color 0.3s;">Reload</button>
+                        <p class="field-description">Reload Ollama configuration after changes.</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        // Insert after hardware info or at the end of the panel
+        const hardwareInfo = document.getElementById('ollama-hardware-info');
+        if (hardwareInfo) {
+            hardwareInfo.insertAdjacentHTML('afterend', serverConfigHtml);
+        } else {
+            ollamaPanel.insertAdjacentHTML('beforeend', serverConfigHtml);
+        }
+
+        // Add event listener for the reload button
+        const reloadBtn = document.getElementById('reload-ollama-config-btn');
+        if (reloadBtn) {
+            reloadBtn.addEventListener('click', async () => {
+                // Save the current configuration
+                const serverIp = document.getElementById('ollama-server-ip').value;
+                const port = parseInt(document.getElementById('ollama-port').value, 10);
+                config.set('ollama.serverIp', serverIp);
+                config.set('ollama.port', port);
+                config.saveConfig();
+                // Refresh the Ollama step information
+                reloadBtn.disabled = true;
+                reloadBtn.textContent = 'Reloading...';
+                try {
+                    let hwInfo = await displayHardwareInfo();
+                    await displayOllamaModels(hwInfo);
+                    alert('Ollama configuration reloaded successfully.');
+                } catch (error) {
+                    console.error('Error reloading Ollama configuration:', error);
+                    alert(`Error reloading Ollama configuration: ${error.message}`);
+                } finally {
+                    reloadBtn.disabled = false;
+                    reloadBtn.textContent = 'Reload';
+                }
+            });
+        }
+    }
 }
 
 // New function to display hardware information using PyBridge endpoint
@@ -2637,7 +2709,9 @@ async function displayOllamaModels(hwInfo) {
     }
 
     try {
-        const client = new ollama.Ollama({ host: 'http://localhost:11434' });
+        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const port = config.get('ollama.port', 11434);
+        const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
         const models = await client.list();
         console.log("Ollama Models:", models);
 
@@ -2754,6 +2828,8 @@ async function downloadOllamaModel(client, modelId, buttonElement) {
             }
         });
         if (downloadCompletedSuccessfully) {
+            // Load the model into memory after download
+            await loadOllamaModel(client, modelId);
             // Refresh model list after a short delay to ensure Ollama has processed the new model
             setTimeout(() => {
                 displayOllamaModels(); // This will re-enable buttons as part of the refresh
@@ -2774,6 +2850,26 @@ async function deleteOllamaModel(client, modelName) {
     } catch (error) {
         console.error('Error deleting model:', error);
         alert(`Error deleting ${modelName}: ${error.message}`);
+    }
+}
+
+// Add new function to load Ollama model into memory
+async function loadOllamaModel(client, modelId) {
+    try {
+        // Ollama client does not have a direct "load" method, but we can send a request to ensure it's ready
+        // For example, send a simple chat request or check model status
+        await client.chat({
+            model: modelId,
+            messages: [{ role: 'user', content: 'Hello, are you ready?' }],
+            stream: false
+        });
+        console.log(`Model ${modelId} loaded and ready.`);
+        const progressDiv = document.getElementById('download-progress');
+        progressDiv.innerHTML += `<p>Model ${modelId} loaded and ready.</p>`;
+    } catch (error) {
+        console.error(`Error loading model ${modelId}:`, error);
+        const progressDiv = document.getElementById('download-progress');
+        progressDiv.innerHTML += `<p class="error">Error loading model ${modelId}: ${error.message}</p>`;
     }
 }
 

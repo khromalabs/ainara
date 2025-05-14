@@ -68,6 +68,14 @@ class ConfigManager {
                 const fileContents = fs.readFileSync(this.configFile, 'utf8');
                 this.config = JSON.parse(fileContents);
             }
+        
+            // Ensure Ollama settings are present in config
+            if (!this.config.ollama) {
+                this.config.ollama = {
+                    serverIp: 'localhost',
+                    port: 11434
+                };
+            }
             // Update the timestamp after successful load
             this.lastLoadTimestamp = this._getFileModificationTime();
             console.log('Configuration loaded successfully');
