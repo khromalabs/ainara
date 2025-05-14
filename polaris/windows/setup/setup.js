@@ -1052,17 +1052,21 @@ async function loadExistingProviders() {
             return; // No existing providers
         }
 
-        // Add Ollama models to the providers list if not already present
+        // Add Ollama models to the providers list, ensuring no duplicates
         let providersModified = false;
         ollamaModels.forEach(model => {
             const modelName = `ollama/${model.name}`;
             if (!existingProviders.some(provider => provider.model === modelName)) {
                 existingProviders.push({
                     model: modelName,
-                    api_base: "http://localhost:11434",
+                    api_base: `http://${config.get('ollama.serverIp', 'localhost')}:${config.get('ollama.port', 11434)}`,
                     context_window: model.contextWindow || 4096 // Default if not specified
                 });
                 providersModified = true;
+            } else {
+                // Update the api_base in case the server IP or port has changed
+                const existingProvider = existingProviders.find(provider => provider.model === modelName);
+                existingProvider.api_base = `http://${config.get('ollama.serverIp', 'localhost')}:${config.get('ollama.port', 11434)}`;
             }
         });
 
