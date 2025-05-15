@@ -376,6 +376,85 @@ async function generateSkillsUI() {
     }
 }
 
+async function updateOllamaProviders() {
+    try {
+        // Load current backend config
+        const backendConfig = await loadBackendConfig();
+        if (!backendConfig.llm) {
+            backendConfig.llm = { backend: "litellm", providers: [] };
+        }
+
+        // Get current Ollama models
+        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const port = config.get('ollama.port', 11434);
+        const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
+        const modelsResponse = await client.list();
+        const ollamaModels = modelsResponse.models || [];
+
+        // Track if changes were made
+        let providersModified = false;
+        let selectedProviderChanged = false;
+
+        // Get existing Ollama providers
+        const existingProviders = backendConfig.llm.providers || [];
+        const existingOllamaProviders = existingProviders.filter(p => p.model.startsWith('ollama/'));
+        const currentOllamaModelNames = ollamaModels.map(model => `ollama/${model.name}`);
+
+        // Remove Ollama providers that no longer exist
+        const initialProviderCount = existingProviders.length;
+        backendConfig.llm.providers = existingProviders.filter(provider => {
+            if (provider.model.startsWith('ollama/')) {
+                return currentOllamaModelNames.includes(provider.model);
+            }
+            return true;
+        });
+        if (backendConfig.llm.providers.length !== initialProviderCount) {
+            providersModified = true;
+            // Check if the selected provider was removed
+            const selectedProvider = backendConfig.llm.selected_provider;
+            if (selectedProvider && selectedProvider.startsWith('ollama/') && 
+                !backendConfig.llm.providers.some(p => p.model === selectedProvider)) {
+                backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ? 
+                    backendConfig.llm.providers[0].model : null;
+                selectedProviderChanged = true;
+            }
+        }
+
+        // Add new Ollama models to providers if not already present
+        ollamaModels.forEach(model => {
+            const modelName = `ollama/${model.name}`;
+            if (!existingProviders.some(provider => provider.model === modelName)) {
+                backendConfig.llm.providers.push({
+                    model: modelName,
+                    api_base: `http://${serverIp}:${port}`,
+                    context_window: 4096 // Default context window
+                });
+                providersModified = true;
+            } else {
+                // Update the api_base in case the server IP or port has changed
+                const existingProvider = backendConfig.llm.providers.find(provider => provider.model === modelName);
+                if (existingProvider.api_base !== `http://${serverIp}:${port}`) {
+                    existingProvider.api_base = `http://${serverIp}:${port}`;
+                    providersModified = true;
+                }
+            }
+        });
+
+        // Save changes to backend if modified
+        if (providersModified) {
+            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+            if (selectedProviderChanged) {
+                await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+            }
+        }
+
+        return { success: true, config: backendConfig };
+    } catch (error) {
+        console.error('Error updating Ollama providers:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 // Function to load existing API keys from config
 async function loadExistingApiKeys() {
     try {
@@ -1033,78 +1112,12 @@ async function getLocalOllamaModels() {
 // Add new function to load existing providers
 async function loadExistingProviders() {
     try {
+        // First, update Ollama providers to ensure the list is current
+        await updateOllamaProviders();
+
         const backendConfig = await loadBackendConfig();
         let existingProviders = backendConfig?.llm?.providers || [];
         const selectedProvider = backendConfig?.llm?.selected_provider;
-
-        // Get local Ollama models
-        const ollamaModels = await getLocalOllamaModels();
-
-        if (existingProviders.length === 0 && ollamaModels.length === 0) {
-            // Clear any existing container if there are no providers
-            const existingContainer = document.getElementById('existing-providers');
-            if (existingContainer) {
-                existingContainer.innerHTML = '';
-            }
-
-            // Also remove the entire section if it exists
-            const section = document.querySelector('.existing-providers-section');
-            if (section) {
-                section.remove();
-            }
-            return; // No existing providers
-        }
-
-        // Filter out Ollama providers that no longer exist in ollamaModels
-        const initialProviderCount = existingProviders.length;
-        const existingOllamaModels = ollamaModels.map(model => `ollama/${model.name}`);
-        existingProviders = existingProviders.filter(provider => {
-            if (provider.model.startsWith('ollama/')) {
-                return existingOllamaModels.includes(provider.model);
-            }
-            return true;
-        });
-
-        // If providers were removed, update the backend config
-        let selectedProviderChanged = false;
-        if (existingProviders.length !== initialProviderCount) {
-            backendConfig.llm.providers = existingProviders;
-            // Check if the selected provider was removed
-            if (selectedProvider && selectedProvider.startsWith('ollama/') && 
-                !existingProviders.some(p => p.model === selectedProvider)) {
-                backendConfig.llm.selected_provider = existingProviders.length > 0 ? existingProviders[0].model : null;
-                selectedProviderChanged = true;
-            }
-            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-            if (selectedProviderChanged) {
-                await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
-            }
-        }
-
-        // Add Ollama models to the providers list, ensuring no duplicates
-        let providersModified = false;
-        ollamaModels.forEach(model => {
-            const modelName = `ollama/${model.name}`;
-            if (!existingProviders.some(provider => provider.model === modelName)) {
-                existingProviders.push({
-                    model: modelName,
-                    api_base: `http://${config.get('ollama.serverIp', 'localhost')}:${config.get('ollama.port', 11434)}`,
-                    context_window: model.contextWindow || 4096 // Default if not specified
-                });
-                providersModified = true;
-            } else {
-                // Update the api_base in case the server IP or port has changed
-                const existingProvider = existingProviders.find(provider => provider.model === modelName);
-                existingProvider.api_base = `http://${config.get('ollama.serverIp', 'localhost')}:${config.get('ollama.port', 11434)}`;
-            }
-        });
-
-        // Update the backend config with the potentially modified providers list
-        if (providersModified) {
-            backendConfig.llm.providers = existingProviders;
-            // Save the updated config - this ensures if Ollama models were added, they're persisted
-            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        }
 
         // Create a container for existing providers if it doesn't exist
         let existingContainer = document.getElementById('existing-providers');
@@ -1126,6 +1139,11 @@ async function loadExistingProviders() {
 
         // Clear existing content
         existingContainer.innerHTML = '';
+
+        if (existingProviders.length === 0) {
+            existingContainer.innerHTML = '<p>No providers configured yet. Add a new provider below.</p>';
+            return;
+        }
 
         // Add each existing provider
         existingProviders.forEach((provider, index) => {
@@ -1207,7 +1225,6 @@ async function loadExistingProviders() {
                     if (errorMsg) {
                         console.error("Error saving provider selection:", errorMsg);
                     }
-
                 }
             });
         });
@@ -2892,6 +2909,9 @@ async function downloadOllamaModel(client, modelId, buttonElement) {
             // Load the model into memory after download
             progressDiv.innerHTML += `<p>Loading model into memory...</p>`;
             await loadOllamaModel(client, modelId);
+            // Update providers list with new model
+            progressDiv.innerHTML += `<p>Updating providers list...</p>`;
+            await updateOllamaProviders();
             // Refresh model list after a short delay to ensure Ollama has processed the new model
             setTimeout(() => {
                 displayOllamaModels(); // This will re-enable buttons as part of the refresh
@@ -2912,21 +2932,8 @@ async function deleteOllamaModel(client, modelName) {
         await client.delete({ model: modelName });
         alert(`${modelName} deleted successfully.`);
 
-        // Remove the model from LLM providers list
-        const backendConfig = await loadBackendConfig();
-        const modelProviderName = `ollama/${modelName}`;
-        if (backendConfig.llm && backendConfig.llm.providers) {
-            const providerIndex = backendConfig.llm.providers.findIndex(provider => provider.model === modelProviderName);
-            if (providerIndex !== -1) {
-                backendConfig.llm.providers.splice(providerIndex, 1);
-                // If this was the selected provider, clear the selection or select another if available
-                if (backendConfig.llm.selected_provider === modelProviderName) {
-                    backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ? backendConfig.llm.providers[0].model : null;
-                }
-                await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-                await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
-            }
-        }
+        // Update providers list after deletion
+        await updateOllamaProviders();
 
         await displayOllamaModels();
         loadExistingProviders(); // Refresh the providers list in the LLM step
