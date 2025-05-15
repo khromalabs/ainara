@@ -397,7 +397,7 @@ async function updateOllamaProviders() {
 
         // Get existing Ollama providers
         const existingProviders = backendConfig.llm.providers || [];
-        const existingOllamaProviders = existingProviders.filter(p => p.model.startsWith('ollama/'));
+        // const existingOllamaProviders = existingProviders.filter(p => p.model.startsWith('ollama/'));
         const currentOllamaModelNames = ollamaModels.map(model => `ollama/${model.name}`);
 
         // Remove Ollama providers that no longer exist
@@ -446,6 +446,8 @@ async function updateOllamaProviders() {
             if (selectedProviderChanged) {
                 await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
             }
+            // Refresh the provider list in the LLM step UI
+            await loadExistingProviders();
         }
 
         return { success: true, config: backendConfig };
@@ -1091,23 +1093,23 @@ function loadProviders() {
     nextButton.disabled = true;
 }
 
-// Function to get local Ollama models
-async function getLocalOllamaModels() {
-    try {
-        const serverIp = config.get('ollama.serverIp', 'localhost');
-        const port = config.get('ollama.port', 11434);
-        const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
-        const models = await client.list();
-        console.log("Local Ollama Models for Providers:", models.models);
-        return models.models ? models.models.map(model => ({
-            name: model.name,
-            contextWindow: 4096 // Default context window; adjust if Ollama provides this info
-        })) : [];
-    } catch (error) {
-        console.error('Error fetching local Ollama models for providers:', error);
-        return [];
-    }
-}
+// // Function to get local Ollama models
+// async function getLocalOllamaModels() {
+//     try {
+//         const serverIp = config.get('ollama.serverIp', 'localhost');
+//         const port = config.get('ollama.port', 11434);
+//         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
+//         const models = await client.list();
+//         console.log("Local Ollama Models for Providers:", models.models);
+//         return models.models ? models.models.map(model => ({
+//             name: model.name,
+//             contextWindow: 4096 // Default context window; adjust if Ollama provides this info
+//         })) : [];
+//     } catch (error) {
+//         console.error('Error fetching local Ollama models for providers:', error);
+//         return [];
+//     }
+// }
 
 // Add new function to load existing providers
 async function loadExistingProviders() {
