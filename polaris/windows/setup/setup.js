@@ -423,7 +423,7 @@ function setupEventListeners() {
 
     // Setup shortcut key capture
     setupShortcutCapture();
-    
+
     // Generate Ollama UI when navigating to the Ollama step
     const ollamaObserver = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
@@ -781,7 +781,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'qwen,deepseek-v3,deepseek-chat,deepseek-coder,llama,-8b,-3b,-1b';
+                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat,deepseek-coder,llama,-8b,-3b,-1b';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -944,6 +944,9 @@ function loadProvidersWithFilter(filter = '') {
 
                 // Add each provider
                 for (const [id, provider] of sortedProviders) {
+                    if (id == "ollama") {
+                        continue;
+                    }
                     html += `
                         <div class="provider-option">
                             <input type="radio" name="llm-provider" id="${id}" value="${id}">
@@ -1033,7 +1036,7 @@ async function loadExistingProviders() {
         const backendConfig = await loadBackendConfig();
         const existingProviders = backendConfig?.llm?.providers || [];
         const selectedProvider = backendConfig?.llm?.selected_provider;
-        
+
         // Get local Ollama models
         const ollamaModels = await getLocalOllamaModels();
 
@@ -1102,8 +1105,8 @@ async function loadExistingProviders() {
         existingProviders.forEach((provider, index) => {
             const providerId = `existing-${index}`;
             const isOllamaModel = provider.model.startsWith('ollama/');
-            const providerModel = isOllamaModel ? 
-                `Ollama: ${provider.model.split('/')[1]}` : 
+            const providerModel = isOllamaModel ?
+                `Ollama: ${provider.model.split('/')[1]}` :
                 provider.model;
             const isSelected = selectedProvider === provider.model;
 
@@ -2556,6 +2559,8 @@ async function initializeOllamaStep() {
     //         // hardwareInfoElement.innerHTML = '<p>Hardware information is not displayed for remote Ollama servers.</p>';
     //     }
     // }
+    const serverConfigElement = document.getElementById('ollama-server-config');
+    serverConfigElement.style.display = "none";
     displayOllamaServerConfig();
 }
 
@@ -2880,7 +2885,7 @@ async function deleteOllamaModel(client, modelName) {
     try {
         await client.delete({ model: modelName });
         alert(`${modelName} deleted successfully.`);
-        
+
         // Remove the model from LLM providers list
         const backendConfig = await loadBackendConfig();
         const modelProviderName = `ollama/${modelName}`;
@@ -2896,7 +2901,7 @@ async function deleteOllamaModel(client, modelName) {
                 await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
             }
         }
-        
+
         await displayOllamaModels();
         loadExistingProviders(); // Refresh the providers list in the LLM step
     } catch (error) {
