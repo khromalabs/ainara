@@ -1034,7 +1034,7 @@ async function getLocalOllamaModels() {
 async function loadExistingProviders() {
     try {
         const backendConfig = await loadBackendConfig();
-        const existingProviders = backendConfig?.llm?.providers || [];
+        let existingProviders = backendConfig?.llm?.providers || [];
         const selectedProvider = backendConfig?.llm?.selected_provider;
 
         // Get local Ollama models
@@ -1053,6 +1053,32 @@ async function loadExistingProviders() {
                 section.remove();
             }
             return; // No existing providers
+        }
+
+        // Filter out Ollama providers that no longer exist in ollamaModels
+        const initialProviderCount = existingProviders.length;
+        const existingOllamaModels = ollamaModels.map(model => `ollama/${model.name}`);
+        existingProviders = existingProviders.filter(provider => {
+            if (provider.model.startsWith('ollama/')) {
+                return existingOllamaModels.includes(provider.model);
+            }
+            return true;
+        });
+
+        // If providers were removed, update the backend config
+        let selectedProviderChanged = false;
+        if (existingProviders.length !== initialProviderCount) {
+            backendConfig.llm.providers = existingProviders;
+            // Check if the selected provider was removed
+            if (selectedProvider && selectedProvider.startsWith('ollama/') && 
+                !existingProviders.some(p => p.model === selectedProvider)) {
+                backendConfig.llm.selected_provider = existingProviders.length > 0 ? existingProviders[0].model : null;
+                selectedProviderChanged = true;
+            }
+            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+            if (selectedProviderChanged) {
+                await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
+            }
         }
 
         // Add Ollama models to the providers list, ensuring no duplicates
