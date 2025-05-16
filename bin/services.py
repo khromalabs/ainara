@@ -82,7 +82,7 @@ def check_service_health(url, service_name, timeout=2):
 
 
 def watch_services_health(
-    services_to_watch, check_interval=10, start_polaris=False
+    services_to_watch, start_polaris=False, check_interval=10
 ):
     """
     Watch the health of services and report any issues
@@ -614,7 +614,7 @@ def main():
     parser.add_argument(
         "--health-interval",
         type=int,
-        default=30,
+        default=10,
         help="Interval in seconds between health checks when enabled (default: 30)",
     )
     parser.add_argument(
@@ -756,7 +756,7 @@ def main():
                 services_to_watch["pybridge"] = PYBRIDGE_HEALTH_URL
 
             if services_to_watch:
-                watch_services_health(services_to_watch)
+                watch_services_health(services_to_watch, args.start_polaris, args.health_interval)
             else:
                 print("No services to monitor for health.")
                 print("Running...")
