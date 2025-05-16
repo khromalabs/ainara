@@ -44,6 +44,11 @@ def parse_args():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable profiling for the server",
+    )
     return parser.parse_args()
 
 
@@ -196,5 +201,30 @@ if __name__ == "__main__":
     logger.info(f"Starting Orakle development server on port {args.port}")
     logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
 
+    # Set up profiling if enabled
+    if args.profile:
+        import cProfile
+        import pstats
+        import os
+        # Use the log directory from logging_manager
+        log_dir = logging_manager._log_directory
+        profile_output = os.path.join(log_dir, "orakle_profile.prof")
+        logger.info(f"Profiling enabled. Output will be saved to {profile_output}")
+        profiler = cProfile.Profile()
+        profiler.enable()
+       
     app = create_app()
-    app.run(port=args.port)
+   
+    # Run the app with or without profiling
+    try:
+        app.run(port=args.port)
+    finally:
+        # If profiling is enabled, save the profile data
+        if args.profile:
+            profiler.disable()
+            logger.info(f"Saving profiling data to {profile_output}")
+            profiler.dump_stats(profile_output)
+            # Print some basic stats to the log
+            stats = pstats.Stats(profile_output)
+            logger.info("Top 10 functions by cumulative time:")
+            stats.sort_stats('cumulative').print_stats(10)

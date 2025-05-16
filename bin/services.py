@@ -289,10 +289,16 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
         cmd = ORAKLE_CMD
         log_file = ORAKLE_LOG
         args = []
+        # Add profiling arguments if enabled
+        if argsg.enable_profiling:
+            args.extend(["--profile"])
     elif service == "pybridge":
         cmd = PYBRIDGE_CMD
         log_file = PYBRIDGE_LOG
         args = []
+        # Add profiling arguments if enabled
+        if argsg.enable_profiling:
+            args.extend(["--profile"])
     elif service == "ollama":
         if TEMPORARILY_DISABLE_OLLAMA:
             return {
@@ -606,6 +612,11 @@ def main():
         action="store_true",
         help="Start the Polaris frontend once services are healthy",
     )
+    parser.add_argument(
+        "--enable-profiling",
+        action="store_true",
+        help="Enable profiling for Python services using cProfile",
+    )
     args = parser.parse_args()
     global argsg
     argsg = args
@@ -707,6 +718,15 @@ def main():
     # Output results
     for service, result in results.items():
         print(f"{service}: {result['message']}")
+        
+    # Print profiling information if enabled
+    if args.enable_profiling:
+        print("\nProfiling is enabled for Python services")
+        print("Profile data will be saved to the log directory")
+        print("To analyze the profiles, you can use tools like:")
+        print("  - pstats (built-in): python -m pstats /path/to/profile.prof")
+        print("  - snakeviz (install with pip): snakeviz /path/to/profile.prof")
+        print("  - pyprof2calltree: pyprof2calltree -i /path/to/profile.prof -o calltree.out && kcachegrind calltree.out")
 
     try:
         # If health check is enabled, monitor service health
