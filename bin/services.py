@@ -41,7 +41,6 @@ OLLAMA_LOG = os.path.join(LOG_DIR, "ollama.log")
 ORAKLE_CMD = "python -m ainara.orakle.server"
 PYBRIDGE_CMD = "python -m ainara.framework.pybridge"
 OLLAMA_CMD = "ollama"
-TEMPORARILY_DISABLE_OLLAMA = True  # Set to False to re-enable Ollama
 
 # Service health endpoints
 ORAKLE_HEALTH_URL = "http://localhost:5000/health"
@@ -82,7 +81,9 @@ def check_service_health(url, service_name, timeout=2):
         return False
 
 
-def watch_services_health(services_to_watch, check_interval=5, start_polaris=False):
+def watch_services_health(
+    services_to_watch, check_interval=5, start_polaris=False
+):
     """
     Watch the health of services and report any issues
 
@@ -132,15 +133,22 @@ def watch_services_health(services_to_watch, check_interval=5, start_polaris=Fal
                     was_unhealthy = False
 
                 # Start Polaris if requested and not already started
-                if start_polaris and not polaris_started and not unhealthy_services:
-                    print("All services are healthy. Starting Polaris frontend...")
+                if (
+                    start_polaris
+                    and not polaris_started
+                    and not unhealthy_services
+                ):
+                    print(
+                        "All services are healthy. Starting Polaris"
+                        " frontend..."
+                    )
                     try:
                         # Start the frontend in a new process
                         subprocess.Popen(
                             POLARIS_CMD.split(),
                             shell=True,
                             stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE
+                            stderr=subprocess.PIPE,
                         )
                         polaris_started = True
                         print("Polaris frontend started")
@@ -215,12 +223,15 @@ def get_services_status():
     """Get status of all services"""
     status = {
         "orakle": "running" if is_service_running(ORAKLE_CMD) else "stopped",
-        "pybridge": "running" if is_service_running(PYBRIDGE_CMD) else "stopped",
+        "pybridge": (
+            "running" if is_service_running(PYBRIDGE_CMD) else "stopped"
+        ),
     }
-    if not TEMPORARILY_DISABLE_OLLAMA:
-        status["ollama"] = "running" if is_service_running(OLLAMA_CMD + " serve") else "stopped"
-    else:
-        status["ollama"] = "temporarily disabled"
+    status["ollama"] = (
+        "running"
+        if (argsg.start_ollama and is_service_running(OLLAMA_CMD + " serve"))
+        else "stopped"
+    )
     return status
 
 
@@ -232,7 +243,7 @@ def stop_services():
             "orakle": "ainara.orakle.server",
             "pybridge": "ainara.framework.pybridge",
         }
-        if not TEMPORARILY_DISABLE_OLLAMA:
+        if argsg.start_ollama:
             service_identifiers["ollama"] = OLLAMA_CMD
 
         # Find and terminate processes
@@ -299,12 +310,11 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
         # Add profiling arguments if enabled
         if argsg.enable_profiling:
             args.extend(["--profile"])
-    elif service == "ollama":
-        if TEMPORARILY_DISABLE_OLLAMA:
-            return {
-                "status": "info",
-                "message": "Ollama is temporarily disabled (change TEMPORARILY_DISABLE_OLLAMA to False to enable)"
-            }
+    elif service == "ollama" and not args.start_ollama:
+        return {
+            "status": "info",
+            "message": "Ollama not started (use --start-ollama to enable)",
+        }
         cmd = OLLAMA_CMD
         log_file = OLLAMA_LOG
         args = ["serve"]
@@ -464,7 +474,7 @@ def tail_logs():
             log_files["pybridge"] = open(PYBRIDGE_LOG, "r")
             log_positions["pybridge"] = 0
 
-        if not TEMPORARILY_DISABLE_OLLAMA and not argsg.skip_ollama:
+        if argsg.start_ollama:
             log_files["ollama"] = open(OLLAMA_LOG, "r")
             log_positions["ollama"] = 0
 
@@ -533,7 +543,7 @@ def check_and_start_service(
     service_name, args, results, venv_active, venv_path
 ):
     """Start a service and handle any failures"""
-    if not getattr(args, f"skip_{service_name}"):
+    if service_name != "ollama" or args.start_ollama:
         results[service_name] = start_service(
             service_name,
             skip=getattr(args, f"skip_{service_name}"),
@@ -563,9 +573,9 @@ def main():
         help="Skip starting the Pybridge server",
     )
     parser.add_argument(
-        "--skip-ollama",
+        "--start-ollama",
         action="store_true",
-        help="Skip starting the Ollama LLM server",
+        help="Start the Ollama LLM server (disabled by default)",
     )
     parser.add_argument(
         "--stop", action="store_true", help="Stop all running servers"
@@ -637,8 +647,11 @@ def main():
         print(f"  Orakle:   {status['orakle']}")
         print(f"  Pybridge: {status['pybridge']}")
         print(f"  Ollama:   {status['ollama']}")
-        if TEMPORARILY_DISABLE_OLLAMA:
-            print("    Note: Ollama is temporarily disabled (change TEMPORARILY_DISABLE_OLLAMA to False to enable)")
+        if not argsg.start_ollama:
+            print(
+                "    Note: Ollama is not started (use --start-ollama to"
+                " enable)"
+            )
         return
 
     # Stop services if requested
@@ -671,11 +684,11 @@ def main():
             print("Use --no-venv to suppress this warning.")
 
     # Start services
-    # TODO force configuration restart
-#    if os.path.exists("/home/ruben/.config/ainara/ainara.yaml"):
-#        os.remove("/home/ruben/.config/ainara/ainara.yaml")
-#    if os.path.exists("/home/ruben/.config/ainara/polaris/polaris.json"):
-#        os.remove("/home/ruben/.config/ainara/polaris/polaris.json")
+    # Forces configuration restart
+    #    if os.path.exists("/home/ruben/.config/ainara/ainara.yaml"):
+    #        os.remove("/home/ruben/.config/ainara/ainara.yaml")
+    #    if os.path.exists("/home/ruben/.config/ainara/polaris/polaris.json"):
+    #        os.remove("/home/ruben/.config/ainara/polaris/polaris.json")
     results = {}
     service_failed = False
 
@@ -718,15 +731,20 @@ def main():
     # Output results
     for service, result in results.items():
         print(f"{service}: {result['message']}")
-        
+
     # Print profiling information if enabled
     if args.enable_profiling:
         print("\nProfiling is enabled for Python services")
         print("Profile data will be saved to the log directory")
         print("To analyze the profiles, you can use tools like:")
         print("  - pstats (built-in): python -m pstats /path/to/profile.prof")
-        print("  - snakeviz (install with pip): snakeviz /path/to/profile.prof")
-        print("  - pyprof2calltree: pyprof2calltree -i /path/to/profile.prof -o calltree.out && kcachegrind calltree.out")
+        print(
+            "  - snakeviz (install with pip): snakeviz /path/to/profile.prof"
+        )
+        print(
+            "  - pyprof2calltree: pyprof2calltree -i /path/to/profile.prof -o"
+            " calltree.out && kcachegrind calltree.out"
+        )
 
     try:
         # If health check is enabled, monitor service health
