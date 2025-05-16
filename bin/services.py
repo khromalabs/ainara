@@ -82,7 +82,7 @@ def check_service_health(url, service_name, timeout=2):
 
 
 def watch_services_health(
-    services_to_watch, check_interval=5, start_polaris=False
+    services_to_watch, check_interval=10, start_polaris=False
 ):
     """
     Watch the health of services and report any issues
@@ -95,7 +95,7 @@ def watch_services_health(
     try:
         print("Monitoring...")
         fails = 0
-        fails_limit = 6
+        fails_limit = 3
         was_unhealthy = False
         polaris_started = False
 
@@ -607,15 +607,15 @@ def main():
         help="Continue even if some services fail to start",
     )
     parser.add_argument(
-        "--health-check",
+        "--no-health-check",
         action="store_true",
-        help="Monitor health of services after starting",
+        help="Disable health monitoring of services after starting",
     )
     parser.add_argument(
         "--health-interval",
         type=int,
         default=30,
-        help="Interval in seconds between health checks (default: 30)",
+        help="Interval in seconds between health checks when enabled (default: 30)",
     )
     parser.add_argument(
         "--start-polaris",
@@ -748,7 +748,7 @@ def main():
 
     try:
         # If health check is enabled, monitor service health
-        if args.health_check:
+        if not args.no_health_check:
             services_to_watch = {}
             if not args.skip_orakle:
                 services_to_watch["orakle"] = ORAKLE_HEALTH_URL
