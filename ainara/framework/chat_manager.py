@@ -337,40 +337,12 @@ class ChatManager:
         if not sentence.strip():
             return
 
-        # if "Processing" in sentence:
-        if re.match(r"^Processing [A-Za-z_][A-Za-z0-9_]+\.\.\.$", sentence):
-            # if re.match(r'^Processing[.*]\.\.\.$', sentence):
+        if "_orakle_loading_signal_" in sentence:
             logger.info(f"PROCESSING: '{sentence}'")
             yield ndjson("signal", "loading", {"state": "start"})
+            return
 
         try:
-            # # Check if this is a JSON signal that needs to be passed through directly
-            # if stream_type == "json" and sentence.startswith('{"event"'):
-            #     yield sentence
-            #     # events.append(ndjson("signal", "command", {"name": cmd_name}))
-            #     # audio_file, duration = self.tts.generate_audio(phrase)
-            #     # event_data = self._create_audio_stream_event(
-            #     #     audio_file=audio_file,
-            #     #     text_content=phrase,
-            #     #     duration=duration,
-            #     #     skill=True,
-            #     # )
-            #     # events.append(ndjson("message", "stream", event_data))
-            #      return
-            #
-            #     try:
-            #         # Attempt to parse the JSON string
-            #         data = json.loads(sentence)
-            #         if 'type' in data and data['type'] == 'signal':
-            #             logger.info("_process_streaming_sentence 2 '" + sentence + "'")
-            #             # This is a signal from middleware, pass it through directly
-            #             yield sentence
-            #             return
-            #     except json.JSONDecodeError:
-            #         # Handle the case where the string is not valid JSON
-            #         pass
-
-            # logger.info("_process_streaming_sentence 3 '" + sentence + "'")
             audio_file, duration = self.tts.generate_audio(sentence)
             if stream_type == "json":
                 event_data = self._create_audio_stream_event(

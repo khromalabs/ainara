@@ -346,6 +346,8 @@ class OrakleMiddleware:
 
             # Yield processing message
             yield f"\n{selection_data.get("skill_intention", "Processing...")}...\n\n"
+            yield "\n_orakle_loading_signal_\n"
+
             # Execute the selected skill with parameters
             result = self.execute_orakle_command(
                 selected_skill_id, parameters, chat_manager
