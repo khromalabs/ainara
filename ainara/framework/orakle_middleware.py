@@ -345,8 +345,7 @@ class OrakleMiddleware:
             )
 
             # Yield processing message
-            yield f"\nProcessing {selected_skill_id}...\n\n"
-
+            yield f"\n{selection_data.get("skill_intention", "Processing...")}...\n\n"
             # Execute the selected skill with parameters
             result = self.execute_orakle_command(
                 selected_skill_id, parameters, chat_manager
@@ -364,6 +363,22 @@ class OrakleMiddleware:
                 f"ORAKLE: {error_msg} LLM response: {selection_response}"
             )
             yield f"\nError: {error_msg}\n\n"
+
+    # def ndjson(event_type: str, event_name: str, content: Any = None) -> str:
+    #     """Create a standardized NDJSON event string.
+    #
+    #     Args:
+    #         event_type: Type of event (e.g. "llm_response", "loading", "interpretation")
+    #         event_name: Name of event (e.g. "start", "token", "stop", "complete")
+    #         content: Optional content payload
+    #
+    #     Returns:
+    #         NDJSON formatted string with newline
+    #     """
+    #     event = {"event": event_name, "type": event_type}
+    #     if content is not None:
+    #         event["content"] = content
+    #     return json.dumps(event) + "\n"
 
     def execute_orakle_command(
         self, skill_id: str, params: dict, chat_manager=None
