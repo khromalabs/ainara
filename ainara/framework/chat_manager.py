@@ -339,7 +339,9 @@ class ChatManager:
 
         if "_orakle_loading_signal_" in sentence:
             logger.info(f"PROCESSING: '{sentence}'")
-            yield ndjson("signal", "loading", {"state": "start"})
+            split_sentence = sentence.split("|")
+            skill_id = split_sentence[1].strip("\n") if len(split_sentence) > 1 else "skill_id"
+            yield ndjson("signal", "loading", {"state": "start", "type": "skill", "skill_id": skill_id})
             return
 
         try:

@@ -1181,7 +1181,11 @@ class ComRing extends BaseComponent {
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
                         ringContainer.classList.add('loading');
                         // Show "Thinking..." message
-                        sttStatus.textContent = 'Thinking...';
+                        if (event.content?.type == "skill") {
+                            sttStatus.textContent = 'Using Skill: "' + event.content.skill_id + '"...';
+                        } else {
+                            sttStatus.textContent = 'Thinking...';
+                        }
                         sttStatus.classList.add('active');
                     } else if (event.content.state === 'stop') {
                         this.circle.classList.remove('loading');
