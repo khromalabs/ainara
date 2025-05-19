@@ -670,7 +670,7 @@ async function updateProviderSubmenu() {
                             }
                         });
                         tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(model, 44));
-                        
+
                         // If it's an Ollama model, ensure it's loaded
                         if (model.startsWith('ollama/')) {
                             const modelId = model.split('/')[1];
@@ -693,7 +693,7 @@ async function updateProviderSubmenu() {
                 label: 'LLM Models',
                 submenu: [
                     {
-                        label: 'Configure LLM Models',
+                        label: 'Switch LLM Model',
                         click: () => showSetupWizard()
                     },
                     { type: 'separator' },
