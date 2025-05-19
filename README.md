@@ -8,7 +8,7 @@
 
 Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
 
-It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools can be both locally on the user's system, utilizing the Orakle server approach developed by this project, or remotelly. Ainara is compatible now with the MCP protocol as well. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
+It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools can be both locally in the user's system, using the Orakle server approach developed by this project, or be accessed remotelly. For this purpose Ainara is compatible now with the MCP protocol as well. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
 
 Finally, this project aims to create a truly AI companion experience. Conversations will not be session-based; user interactions with the LLM will be recorded permanently as a continuous conversation (though users can choose to exclude specific parts). [TODO]
 
