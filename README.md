@@ -8,11 +8,11 @@
 
 Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
 
-It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools reside exclusively on the user's system, utilizing the Orakle server approach developed by this project. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
+It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools can be both locally on the user's system, utilizing the Orakle server approach developed by this project, or remotelly. Ainara is compatible now with the MCP protocol as well. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
 
-Finally, this project aims to create a truly AI companion experience. Conversations are not strictly session-based; user interactions with the LLM will be recorded permanently as a continuous conversation (though users can choose to exclude specific parts). [TODO]
+Finally, this project aims to create a truly AI companion experience. Conversations will not be session-based; user interactions with the LLM will be recorded permanently as a continuous conversation (though users can choose to exclude specific parts). [TODO]
 
-All interaction data remains private on the user's system.
+All interaction data will remain private on the user's system.
 
 ## Demonstration video
 
@@ -27,10 +27,8 @@ An important aspect to highlight in this video: I'm not using any commercial LLM
 ### Orakle
 A REST API server that provides:
 - Extensible skills system
-- Recipe workflow execution
-- Web content processing
-- News search capabilities
-- Text processing with LLMs
+- Working client-side, all the skills and a live conversation can be hot-swapped between LLM providers
+- MCP compatible for third party servers.
 
 ### Polaris
 A modern desktop-integrated application that provides:
