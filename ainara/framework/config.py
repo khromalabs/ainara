@@ -78,8 +78,14 @@ class ConfigManager:
     def _get_default_config_path(self):
         """Get the path to the default configuration template"""
         # Look for defaults in several possible locations
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            path = Path(sys._MEIPASS + "/resources/ainara.yaml.defaults")
+            if path.exists():
+                return path
+
         possible_paths = [
             Path("resources/ainara.yaml.defaults"),  # Project root
+            Path("../resources/ainara.yaml.defaults"),  # Project root
             Path(__file__).parent.parent
             / "resources/ainara.yaml.defaults",  # Relative to this file
             Path(
