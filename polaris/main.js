@@ -166,7 +166,7 @@ function showSetupWizard() {
         splashWindow.updateProgress('Waiting for services to be ready...', 40);
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 120000; // 120 seconds timeout
+        const timeout = 240000; // 240 seconds timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (ServiceManager.isAllHealthy()) {
@@ -370,7 +370,7 @@ async function appInitialization() {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 120000; // 120 seconds timeout
+        const timeout = 240000; // 240 seconds timeout
         let servicesHealthy = false;
 
         while (Date.now() - startTime < timeout) {
