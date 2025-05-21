@@ -269,8 +269,16 @@ async function appInitialization() {
 
         // Set application icon
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-        if (process.platform === 'darwin' && !app.dock.isHidden()) {
-            app.dock.setIcon(path.join(__dirname, 'assets', `tray-icon-active-${theme}.png`));
+        if (process.platform === 'darwin') {
+            // Check if app.dock.isHidden is a function before calling it.
+            // This is a safeguard, especially for newer/beta OS versions like macOS Sequoia.
+            if (typeof app.dock.isHidden === 'function') {
+                if (!app.dock.isHidden()) {
+                    app.dock.setIcon(path.join(__dirname, 'assets', `tray-icon-active-${theme}.png`));
+                }
+            } else {
+                Logger.error(`app.dock.isHidden is not a function. Dock icon may not be set as expected. Type: ${typeof app.dock.isHidden}`);
+            }
         }
 
         // Initialize window manager and windows
