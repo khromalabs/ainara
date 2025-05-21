@@ -61,7 +61,7 @@
     "mac": {
       "target": [
         {
-          "target": ["dmg"],
+          "target": ["dmg"]
         }
       ],
       "icon": "polaris/resources/icon.icns",
