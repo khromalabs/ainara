@@ -35,9 +35,10 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder build",
-    "build:win": "electron-builder build --win --publish onTag",
-    "build:mac": "electron-builder build --mac --publish onTag",
-    "build:linux": "electron-builder build --linux --publish onTag"
+    "build:win": "electron-builder build --win --publish always",
+    "build:mac:x64": "electron-builder build --mac --x64 --publish always",
+    "build:mac:arm64": "electron-builder build --mac --arm64 --publish always",
+    "build:linux": "electron-builder build --linux --publish always"
   },
   "build": {
     "appId": "app.ainara.polaris",
@@ -61,13 +62,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": "x64"
         }
       ],
-      "x64ArchFiles": "Contents/Resources/bin/servers/_internal/**/*.dylib",
       "icon": "polaris/resources/icon.icns",
       "category": "public.app-category.productivity",
       "extraResources": [
