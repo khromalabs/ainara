@@ -2871,7 +2871,8 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
-        { id: 'qwen:14b', name: 'Qwen 2.5 (14B)', size: 9, minVram: 12 },
+        { id: 'qwen2.5-coder:14b', name: 'Qwen 2.5 Coder (14B)', size: 9, minVram: 12 },
+        { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder (32B)', size: 20, minVram: 24 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
