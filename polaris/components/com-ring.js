@@ -878,7 +878,7 @@ class ComRing extends BaseComponent {
                             resolver();
                             this.animationResolvers.delete(messageId);
                         }
-                    }, 60000);
+                    }, 30000);
 
                     // Store timeout to clear it if animation completes
                     this.animationTimeouts.set(messageId, timeout);
@@ -1182,7 +1182,7 @@ class ComRing extends BaseComponent {
                         ringContainer.classList.add('loading');
                         // Show "Thinking..." message
                         if (event.content?.type == "skill") {
-                            sttStatus.textContent = 'Using Skill: "' + event.content.skill_id + '"...';
+                            sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
                         } else {
                             sttStatus.textContent = 'Thinking...';
                         }
