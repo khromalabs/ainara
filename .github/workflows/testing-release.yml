@@ -203,11 +203,27 @@ jobs:
       if: runner.os != 'Windows'
       shell: bash
       run: |
-        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+        if [[ "${{ matrix.os }}" == "macos-latest" ]] || [[ "${{ matrix.os }}" == "macos-14" ]]; then
           # Find the generated DMG file (electron-builder names it like 'ProductName-Version.dmg')
-          DMG_PATH=$(find dist -maxdepth 1 -name "Ainara Polaris*.dmg" -print -quit)
+          # For electron-builder, artifactName is "${productName}-${version}-${arch}.${ext}"
+          # Example: "Ainara Polaris-0.5.2-arm64.dmg" or "Ainara Polaris-0.5.2-x64.dmg"
+          # The version part comes from steps.archive_name.outputs.version-part
+          # The arch part comes from the build command or can be inferred.
+
+          BUILT_ARCH="x64" # Default for macos-latest
+          if [[ "${{ matrix.os }}" == "macos-14" ]]; then
+            BUILT_ARCH="arm64"
+          fi
+
+          # Construct the expected DMG name from electron-builder
+          # Note: package.json version is used by electron-builder, not necessarily the tag version part.
+          # We need to get the version from package.json or rely on a pattern.
+          # A simpler find might be better if the version in the tag doesn't match package.json exactly.
+          DMG_PATTERN="dist/Ainara Polaris-*${BUILT_ARCH}.dmg"
+          DMG_PATH=$(find dist -maxdepth 1 -name "Ainara Polaris*${BUILT_ARCH}.dmg" -print -quit)
+
           if [ -z "$DMG_PATH" ]; then
-            echo "Error: DMG file not found in dist directory."
+            echo "Error: DMG file matching pattern '${DMG_PATTERN}' not found in dist directory."
             ls -R dist # List contents for debugging
             exit 1
           fi
@@ -215,8 +231,6 @@ jobs:
           # Rename the DMG to the desired archive filename
           mv "$DMG_PATH" "${{ env.ARCHIVE_FILENAME }}"
           echo "Renamed DMG to ${{ env.ARCHIVE_FILENAME }}"
-          # Copy latest-mac.yml if it exists (though it's generated later)
-          # [ -f "latest-mac.yml" ] && cp latest-mac.yml dist/
         else
           # Keep existing Linux logic (assuming zip for now)
           rm -rf dist/servers
