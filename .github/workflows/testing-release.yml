@@ -255,7 +255,7 @@ jobs:
       run: |
         echo "VERSION_PART is: ${{ steps.archive_name.outputs.version-part }}"
         echo "All env vars:"
-        env | grep VERSION
+        env | grep VERSION || true
 
     - name: Package testing artifacts
       uses: actions/upload-artifact@v4
