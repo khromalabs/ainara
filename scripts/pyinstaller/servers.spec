@@ -139,6 +139,7 @@ common_imports = [
     # ML/AI related
     'transformers',
     'sentence_transformers',
+    'transformers.models',
     'torch',
     'chromadb',
     'litellm',
