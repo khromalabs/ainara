@@ -36,7 +36,7 @@ soundfile==0.13.0
 sympy==1.13.1
 telegram==0.0.1
 textblob==0.19.0
-torch==2.2.2
+torch==2.6.0
 tweepy==4.15.0
 validators==0.34.0
 spacy==3.8.5
