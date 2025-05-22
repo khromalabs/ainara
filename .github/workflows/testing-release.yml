@@ -221,7 +221,7 @@ jobs:
           # Keep existing Linux logic (assuming zip for now)
           rm -rf dist/servers
           [ -f "latest-linux.yml" ] && cp latest-linux.yml dist/
-          zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
+          zip -r ${{ env.ARCHIVE_FILENAME }} dist/
         fi
 
     - name: Create YAML Metadata for DMG (macOS)
