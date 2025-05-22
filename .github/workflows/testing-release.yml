@@ -10,22 +10,11 @@ on:
 jobs:
   build:
     strategy:
-      fail-fast: false # Prevent other jobs from stopping if one fails
       matrix:
-        include:
-          - os_name: windows-latest
-            os_for_build: windows-latest # Electron builder OS target
-            npm_build_script: build:win
-            arch_suffix: "" # No suffix for Windows in this setup
-          - os_name: macos-13 # For x64 builds (macos-13 is Intel)
-            os_for_build: macos-latest # Electron builder OS target
-            npm_build_script: build:mac:x64
-            arch_suffix: x64
-          - os_name: macos-14 # For arm64 builds (macos-14 is Apple Silicon)
-            os_for_build: macos-latest # Electron builder OS target
-            npm_build_script: build:mac:arm64
-            arch_suffix: arm64
-    runs-on: ${{ matrix.os_name }}
+        # os: [ubuntu-latest, macos-latest, windows-latest]
+        # os: [macos-latest, macos-latest-arm64, windows-latest]
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
       contents: write
@@ -119,19 +108,22 @@ jobs:
       run: |
         npm install
 
-    - name: Build frontend for ${{ matrix.os_name }}
+    - name: Build frontend for ${{ matrix.os }}
       shell: bash
       run: |
-        npm run ${{ matrix.npm_build_script }}
-        echo "--- Contents of dist after build (OS: ${{ runner.os }}, Arch: ${{ matrix.arch_suffix }}) ---"
-        ls -R dist # IMPORTANT: To see what electron-builder created and where
+        if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+          npm run build:linux
+        elif [ "${{ matrix.os }}" == "macos-14" ]; then
+          npm run build:mac:arm64
+        elif [ "${{ matrix.os }}" == "macos-latest" ]; then
+          npm run build:mac:x64
+        else
+          npm run build:win
+        fi
 
     - name: Determine Archive Name
       id: archive_name
       shell: bash
-      env: # Pass matrix variables to the script environment
-        OS_NAME_MATRIX: ${{ matrix.os_name }}
-        ARCH_SUFFIX_MATRIX: ${{ matrix.arch_suffix }}
       run: |
         # Extract tag name (e.g., testing-v1.0.0)
         TAG_NAME="${{ github.ref_name }}"
@@ -139,266 +131,162 @@ jobs:
         BRANCH_PART="${TAG_NAME%-v*}"
         # Extract version part (e.g., v1.0.0)
         VERSION_PART="${TAG_NAME#*-}"
-        # Clean the OS name (e.g., macos-13 -> macos, windows-latest -> windows)
-        OS_NAME_CLEANED="$(echo "$OS_NAME_MATRIX" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
-        ARCH_SUFFIX="$ARCH_SUFFIX_MATRIX"
-        FILENAME_ARCH_SUFFIX=""
-        if [ -n "$ARCH_SUFFIX" ]; then
-          FILENAME_ARCH_SUFFIX="-${ARCH_SUFFIX}"
+        # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
+        OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
+        
+        # Add architecture detection
+        if [[ "${{ matrix.os }}" == "macos-14" ]]; then
+          ARCH="arm64"
+        elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          ARCH="x64"
+        else
+          ARCH=""
         fi
 
         # Construct the desired filename, use .exe for Windows
         if [ "${{ runner.os }}" == "Windows" ]; then
-          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}.exe" >> $GITHUB_ENV
-          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}.exe"
+          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe" >> $GITHUB_ENV
+          echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
+          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe"
         elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}${FILENAME_ARCH_SUFFIX}.dmg" >> $GITHUB_ENV
-          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}${FILENAME_ARCH_SUFFIX}.dmg"
+          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-${ARCH}.dmg" >> $GITHUB_ENV
+          echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
+          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-${ARCH}.dmg"
         else
           # Assuming Linux still uses zip for now
-          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}${FILENAME_ARCH_SUFFIX}.zip" >> $GITHUB_ENV
-          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}${FILENAME_ARCH_SUFFIX}.zip"
+          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip" >> $GITHUB_ENV
+          echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
+          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip"
         fi
 
         # Output version part for use in other steps
         echo "version-part=${VERSION_PART}" >> $GITHUB_OUTPUT
-        # Correctly output the GITHUB_ENV variable's value
-        # The GITHUB_ENV file is processed after the script, so we need to echo the variable name for the next step to use it via env context
-        # Or, more directly, output the value itself if we construct it here.
-        # For simplicity, let's ensure ARCHIVE_FILENAME is available in GITHUB_OUTPUT for the next step.
-        # The GITHUB_ENV method is fine, the next step just needs to access it via ${{ env.ARCHIVE_FILENAME }}
-        # To be explicit for GITHUB_OUTPUT:
-        if [ "${{ runner.os }}" == "Windows" ]; then
-          echo "archive_filename_out=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}.exe" >> $GITHUB_OUTPUT
-        elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          echo "archive_filename_out=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}${FILENAME_ARCH_SUFFIX}.dmg" >> $GITHUB_OUTPUT
-        else
-          echo "archive_filename_out=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME_CLEANED}${FILENAME_ARCH_SUFFIX}.zip" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Locate and Prepare Artifacts
-      id: prep_artifacts
-      shell: bash
-      env:
-        ARCHIVE_FILENAME: ${{ steps.archive_name.outputs.archive_filename_out }}
-        ARCH_SUFFIX: ${{ matrix.arch_suffix }}
-        APP_VERSION: ${{ steps.archive_name.outputs.version-part }}
-        PRODUCT_NAME: "Ainara Polaris" # From your package.json
-      run: |
-        echo "Preparing artifacts. Final archive name: $ARCHIVE_FILENAME"
-        ORIGINAL_ARTIFACT_PATH=""
-        EB_GENERATED_UPDATE_YML_NAME="" # This will be latest.yml or latest-mac.yml
-
-        # Common search directories for electron-builder output
-        # Adjust these if your electron-builder output structure is different based on ls -R dist
-        SEARCH_DIRS=( "dist" "dist/win-unpacked" "dist/mac" "dist/mac-${ARCH_SUFFIX}" "dist/linux-unpacked" )
-
-        if [ "${{ runner.os }}" == "Windows" ]; then
-          EB_GENERATED_UPDATE_YML_NAME="latest.yml"
-          for dir in "${SEARCH_DIRS[@]}"; do
-            if [ -d "$dir" ]; then
-              # Find the Setup EXE. electron-builder might name it "PRODUCT_NAME Setup VERSION.exe"
-              # Or just PRODUCT_NAME-VERSION.exe if nsis-web target
-              FOUND_EXE=$(find "$dir" -maxdepth 1 \( -name "$PRODUCT_NAME Setup*.exe" -o -name "$PRODUCT_NAME-*.exe" \) -print -quit)
-              if [ -n "$FOUND_EXE" ]; then ORIGINAL_ARTIFACT_PATH="$FOUND_EXE"; break; fi
-            fi
-          done
-        elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          EB_GENERATED_UPDATE_YML_NAME="latest-mac.yml"
-          for dir in "${SEARCH_DIRS[@]}"; do
-            if [ -d "$dir" ]; then
-              # DMG name can be "PRODUCT_NAME-VERSION-ARCH.dmg" or "PRODUCT_NAME-VERSION.dmg"
-              # Prefer arch-specific name if it exists, then generic.
-              FOUND_DMG=$(find "$dir" -maxdepth 1 \( -name "$PRODUCT_NAME-*$ARCH_SUFFIX.dmg" -o -name "$PRODUCT_NAME-*.dmg" \) -print -quit)
-              if [ -n "$FOUND_DMG" ]; then ORIGINAL_ARTIFACT_PATH="$FOUND_DMG"; break; fi
-            fi
-          done
-        fi
-
-        if [ -z "$ORIGINAL_ARTIFACT_PATH" ] || [ ! -f "$ORIGINAL_ARTIFACT_PATH" ]; then
-          echo "::error::Original artifact not found! Searched in ${SEARCH_DIRS[*]}. Listing dist:"
-          ls -R dist
-          exit 1
-        fi
-        echo "Found original artifact: $ORIGINAL_ARTIFACT_PATH"
-        mv "$ORIGINAL_ARTIFACT_PATH" "$ARCHIVE_FILENAME"
-        echo "Renamed to: $ARCHIVE_FILENAME"
-        echo "final_artifact_path=$ARCHIVE_FILENAME" >> $GITHUB_OUTPUT
-
-        # Locate and process electron-builder's main update YAML (latest.yml or latest-mac.yml)
-        ORIGINAL_EB_UPDATE_YML_PATH=""
-        for dir in "${SEARCH_DIRS[@]}"; do # Search in dist and its subdirectories where electron-builder might place it
-          if [ -d "$dir" ] && [ -f "$dir/$EB_GENERATED_UPDATE_YML_NAME" ]; then
-            ORIGINAL_EB_UPDATE_YML_PATH="$dir/$EB_GENERATED_UPDATE_YML_NAME"
-            break
-          fi
-        done
-
-        if [ -f "$ORIGINAL_EB_UPDATE_YML_PATH" ]; then
-          echo "Found electron-builder update YAML: $ORIGINAL_EB_UPDATE_YML_PATH"
-          # Update 'path:' and the first 'url:' under 'files:' to the new ARCHIVE_FILENAME
-          # Using yq would be safer: yq e '(.path = strenv(ARCHIVE_FILENAME)) | (.files[0].url = strenv(ARCHIVE_FILENAME))' -i "$ORIGINAL_EB_UPDATE_YML_PATH"
-          sed -i.bak -e "s|^path: .*|path: $ARCHIVE_FILENAME|" \
-                     -e "/^files:/,/^  - url:/{s|^  - url: .*|  - url: $ARCHIVE_FILENAME|;}" "$ORIGINAL_EB_UPDATE_YML_PATH"
-
-
-          FINAL_UPDATE_YML_PATH_NAME_FOR_UPLOAD="$([ "${{ runner.os }}" == "macOS" ] && echo "latest-mac-${ARCH_SUFFIX}.yml" || echo "$EB_GENERATED_UPDATE_YML_NAME")"
-          mv "$ORIGINAL_EB_UPDATE_YML_PATH" "$FINAL_UPDATE_YML_PATH_NAME_FOR_UPLOAD"
-          echo "Processed and moved electron-builder YAML to $FINAL_UPDATE_YML_PATH_NAME_FOR_UPLOAD"
-          echo "final_update_yml_path=$FINAL_UPDATE_YML_PATH_NAME_FOR_UPLOAD" >> $GITHUB_OUTPUT
-        else
-          echo "::warning::Electron-builder generated $EB_GENERATED_UPDATE_YML_NAME not found in ${SEARCH_DIRS[*]} or dist/. Auto-update might be affected."
-        fi
 
     - name: Debug VERSION_PART
       shell: bash
       run: |
         echo "VERSION_PART is: ${{ steps.archive_name.outputs.version-part }}"
         echo "All env vars:"
-        env | grep VERSION || true
+        env | grep VERSION
+
+    - name: Create Archive (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # Do not remove dist/servers as it's needed for the NSIS installer
+        # Copy latest.yml to dist if it exists
+        if (Test-Path "latest.yml") {
+            Copy-Item "latest.yml" -Destination dist\
+        }
+        # Find the NSIS installer generated by electron-builder
+        $installerPath = Get-ChildItem -Path "dist" -Filter "Ainara Polaris Setup *.exe" | Select-Object -First 1
+        if ($installerPath) {
+            Move-Item -Path $installerPath.FullName -Destination ${{ env.ARCHIVE_FILENAME }}
+            Write-Host "Renamed installer to ${{ env.ARCHIVE_FILENAME }}"
+        } else {
+            Write-Error "NSIS installer not found in dist directory"
+            exit 1
+        }
+
+    - name: Create YAML Metadata for ZIP (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $exePath = "${{ env.ARCHIVE_FILENAME }}"
+        $exeSize = (Get-Item $exePath).Length
+        $sha512 = (Get-FileHash -Path $exePath -Algorithm SHA512).Hash.ToLower()
+        $yamlContent = "version: ${{ steps.archive_name.outputs.version-part }}`nfiles:`n  - url: ${{ env.ARCHIVE_FILENAME }}`n    sha512: $sha512`n    size: $exeSize`npath: ${{ env.ARCHIVE_FILENAME }}`nsha512: $sha512`nreleaseDate: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss.fffZ')"
+        Set-Content -Path "latest.yml" -Value $yamlContent
+        Copy-Item "latest.yml" -Destination "${{ env.ARCHIVE_FILENAME }}.yml"
+
+    - name: Create Archive (macOS/Linux)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          # Find the generated DMG file (electron-builder names it like 'ProductName-Version.dmg')
+          DMG_PATH=$(find dist -maxdepth 1 -name "Ainara Polaris*.dmg" -print -quit)
+          if [ -z "$DMG_PATH" ]; then
+            echo "Error: DMG file not found in dist directory."
+            ls -R dist # List contents for debugging
+            exit 1
+          fi
+          echo "Found DMG: $DMG_PATH"
+          # Rename the DMG to the desired archive filename
+          mv "$DMG_PATH" "${{ env.ARCHIVE_FILENAME }}"
+          echo "Renamed DMG to ${{ env.ARCHIVE_FILENAME }}"
+          # Copy latest-mac.yml if it exists (though it's generated later)
+          # [ -f "latest-mac.yml" ] && cp latest-mac.yml dist/
+        else
+          # Keep existing Linux logic (assuming zip for now)
+          rm -rf dist/servers
+          [ -f "latest-linux.yml" ] && cp latest-linux.yml dist/
+          zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
+        fi
+
+    - name: Create YAML Metadata for DMG (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        dmg_path="${{ env.ARCHIVE_FILENAME }}"
+        dmg_size=$(stat -f %z "$dmg_path")
+        sha512=$(shasum -a 512 "$dmg_path" | awk '{print tolower($1)}')
+        ARCHIVE_FILENAME="${{ env.ARCHIVE_FILENAME }}"
+        RELEASE_DATE=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
+        echo "version: ${{ steps.archive_name.outputs.version-part }}" > "latest-mac.yml"
+        echo "files:" >> "latest-mac.yml"
+        echo "  - url: $ARCHIVE_FILENAME" >> "latest-mac.yml"
+        echo "    sha512: $sha512" >> "latest-mac.yml"
+        echo "    size: $dmg_size" >> "latest-mac.yml"
+        echo "path: $ARCHIVE_FILENAME" >> "latest-mac.yml"
+        echo "sha512: $sha512" >> "latest-mac.yml"
+        echo "releaseDate: $RELEASE_DATE" >> "latest-mac.yml"
+        cp "latest-mac.yml" "${{ env.ARCHIVE_FILENAME }}.yml"
 
     - name: Package testing artifacts
       uses: actions/upload-artifact@v4
       with:
-        # Use a unique name for each artifact bundle from the matrix job
-        name: build-output-${{ runner.os }}-${{ matrix.arch_suffix || 'default' }}
-        path: |
-          ${{ steps.prep_artifacts.outputs.final_artifact_path }}
-          ${{ steps.prep_artifacts.outputs.final_update_yml_path }}
+        name: ${{ env.ARCHIVE_FILENAME }}
+        path: ${{ env.ARCHIVE_FILENAME }}
         if-no-files-found: error
 
-  # New job to consolidate and publish the release
-  publish_release:
-    name: Assemble and Publish Release
-    runs-on: ubuntu-latest
-    needs: build # Depends on the matrix build job
-    if: startsWith(github.ref, 'refs/tags/') # Only run for tag pushes
-    permissions:
-      contents: write # Required to create/update releases
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    steps:
-    - name: Checkout code # Optional, if you need scripts from your repo
-      uses: actions/checkout@v3
-
-    - name: Install yq (YAML processor for safer YAML manipulation)
-      run: |
-        sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && sudo chmod +x /usr/bin/yq
-        yq --version
-
-    - name: Download all build artifacts
-      uses: actions/download-artifact@v4
-      # No 'name' specified, so it downloads all artifacts produced by 'needs' jobs
-      # Each artifact bundle will be in a subdirectory named after its upload name
-      # e.g., ./build-output-windows-latest-default/, ./build-output-macos-13-x64/, etc.
-
-    - name: Debug downloaded files
-      run: ls -R .
-
-    - name: Prepare Release Assets and Consolidate Auto-Update YAMLs
-      id: assemble_assets
+    # Prepare platform-specific update YAML file name
+    - name: Set update YAML filename
+      id: set_yaml_filename
       shell: bash
       run: |
-        RELEASE_VERSION_FULL=$(echo "${{ github.ref_name }}" | sed 's/testing-v//;s/release-v//;s/v//') # Extracts "0.5.2"
-        RELEASE_DATE=$(date -u +'%Y-%m-%dT%H:%M:%S.%3NZ')
-        UPLOAD_FILES_LIST="" # Accumulator for all asset file paths for the release
-
-        # --- Windows ---
-        WINDOWS_DIR=$(find . -type d -name "build-output-windows-latest*" -print -quit)
-        if [ -d "$WINDOWS_DIR" ]; then
-          WINDOWS_EXE=$(find "$WINDOWS_DIR" -name "*.exe" -print -quit)
-          EB_LATEST_YML=$(find "$WINDOWS_DIR" -name "latest.yml" -print -quit) # This is the one processed in build job
-
-          if [ -f "$WINDOWS_EXE" ]; then UPLOAD_FILES_LIST+="$WINDOWS_EXE "; fi
-          if [ -f "$EB_LATEST_YML" ]; then UPLOAD_FILES_LIST+="$EB_LATEST_YML "; fi
-        else
-          echo "::warning::Windows build artifacts not found in $WINDOWS_DIR"
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          echo "UPDATE_YAML=latest.yml" >> $GITHUB_ENV
+        elif [ "${{ runner.os }}" == "macOS" ]; then
+          echo "UPDATE_YAML=latest-mac.yml" >> $GITHUB_ENV
+        elif [ "${{ runner.os }}" == "Linux" ]; then
+          echo "UPDATE_YAML=latest-linux.yml" >> $GITHUB_ENV
         fi
 
-        # --- macOS ---
-        CONSOLIDATED_LATEST_MAC_YML_NAME="latest-mac.yml"
-        echo "version: $RELEASE_VERSION_FULL" > $CONSOLIDATED_LATEST_MAC_YML_NAME
-        echo "releaseDate: $RELEASE_DATE" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-        echo "files:" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-        MAC_PRIMARY_PATH_SET=false
-        MAC_FILES_COUNT=0
-
-        # Process ARM64 Mac
-        MAC_ARM64_DIR=$(find . -type d -name "build-output-macos-*-arm64*" -print -quit)
-        if [ -d "$MAC_ARM64_DIR" ]; then
-          MAC_ARM64_DMG=$(find "$MAC_ARM64_DIR" -name "*.dmg" -print -quit)
-          # This is the arch-specific latest-mac-arm64.yml generated by electron-builder and renamed in build job
-          EB_LATEST_MAC_ARCH_YML=$(find "$MAC_ARM64_DIR" -name "latest-mac-arm64.yml" -print -quit)
-
-          if [ -f "$MAC_ARM64_DMG" ]; then UPLOAD_FILES_LIST+="$MAC_ARM64_DMG "; fi
-          if [ -f "$EB_LATEST_MAC_ARCH_YML" ] && [ -f "$MAC_ARM64_DMG" ]; then
-            URL_ARM64=$(yq e '.files[0].url' "$EB_LATEST_MAC_ARCH_YML") # Assumes first file entry is the correct one
-            SHA512_ARM64=$(yq e '.files[0].sha512' "$EB_LATEST_MAC_ARCH_YML")
-            SIZE_ARM64=$(yq e '.files[0].size' "$EB_LATEST_MAC_ARCH_YML")
-            echo "  - url: $URL_ARM64" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-            echo "    sha512: $SHA512_ARM64" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-            echo "    size: $SIZE_ARM64" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-            MAC_FILES_COUNT=$((MAC_FILES_COUNT + 1))
-            if [ "$MAC_PRIMARY_PATH_SET" = false ]; then
-              yq e ".path = \"$URL_ARM64\" | .sha512 = \"$SHA512_ARM64\"" -i $CONSOLIDATED_LATEST_MAC_YML_NAME
-              MAC_PRIMARY_PATH_SET=true
-            fi
-          else
-            echo "::warning::DMG or arch-specific YAML not found for ARM64 Mac in $MAC_ARM64_DIR"
-          fi
-        else
-          echo "::warning::ARM64 Mac build artifacts directory not found."
+    # Rename the YAML file to the platform-specific name
+    - name: Prepare update YAML file
+      shell: bash
+      run: |
+        if [ -f "${{ env.ARCHIVE_FILENAME }}.yml" ]; then
+          cp "${{ env.ARCHIVE_FILENAME }}.yml" "${{ env.UPDATE_YAML }}"
         fi
-
-        # Process X64 Mac
-        MAC_X64_DIR=$(find . -type d -name "build-output-macos-*-x64*" -print -quit)
-        if [ -d "$MAC_X64_DIR" ]; then
-          MAC_X64_DMG=$(find "$MAC_X64_DIR" -name "*.dmg" -print -quit)
-          EB_LATEST_MAC_ARCH_YML=$(find "$MAC_X64_DIR" -name "latest-mac-x64.yml" -print -quit)
-
-          if [ -f "$MAC_X64_DMG" ]; then UPLOAD_FILES_LIST+="$MAC_X64_DMG "; fi
-          if [ -f "$EB_LATEST_MAC_ARCH_YML" ] && [ -f "$MAC_X64_DMG" ]; then
-            URL_X64=$(yq e '.files[0].url' "$EB_LATEST_MAC_ARCH_YML")
-            SHA512_X64=$(yq e '.files[0].sha512' "$EB_LATEST_MAC_ARCH_YML")
-            SIZE_X64=$(yq e '.files[0].size' "$EB_LATEST_MAC_ARCH_YML")
-            echo "  - url: $URL_X64" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-            echo "    sha512: $SHA512_X64" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-            echo "    size: $SIZE_X64" >> $CONSOLIDATED_LATEST_MAC_YML_NAME
-            MAC_FILES_COUNT=$((MAC_FILES_COUNT + 1))
-            if [ "$MAC_PRIMARY_PATH_SET" = false ]; then
-              yq e ".path = \"$URL_X64\" | .sha512 = \"$SHA512_X64\"" -i $CONSOLIDATED_LATEST_MAC_YML_NAME
-              MAC_PRIMARY_PATH_SET=true
-            fi
-          else
-            echo "::warning::DMG or arch-specific YAML not found for X64 Mac in $MAC_X64_DIR"
-          fi
-        else
-          echo "::warning::X64 Mac build artifacts directory not found."
-        fi
-
-        if [ "$MAC_FILES_COUNT" -gt 0 ]; then
-          UPLOAD_FILES_LIST+="$CONSOLIDATED_LATEST_MAC_YML_NAME "
-        else
-          echo "::warning::No Mac files found to include in $CONSOLIDATED_LATEST_MAC_YML_NAME. It will not be uploaded."
-          rm -f $CONSOLIDATED_LATEST_MAC_YML_NAME # Remove empty or incomplete yml
-        fi
-
-        echo "Final list of asset files to upload: $UPLOAD_FILES_LIST"
-        # Convert space-separated string to newline-separated for GITHUB_OUTPUT, filter empty lines
-        echo "asset_paths=$(echo "$UPLOAD_FILES_LIST" | tr ' ' '\n' | sed '/^$/d')" >> $GITHUB_OUTPUT
 
     - name: Create testing release
+      # Only run this step if the workflow was triggered by a tag push
+      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        name: Testing Release ${{ github.ref_name }} # More descriptive name
+        name: Testing Release
         body: |
-          Automated testing release.
-          Version: $(echo "${{ github.ref_name }}" | sed 's/.*-v//')
+          Automated testing release from testing branch
+          OS: ${{ matrix.os }}
+          Python: 3.12
           SHA: ${{ github.sha }}
-          Contains Windows (x64), macOS (x64, arm64) builds.
         draft: false
         prerelease: true
-        fail_on_unmatched_files: true # Important: fail if any listed files are not found
-        files: ${{ steps.assemble_assets.outputs.asset_paths }}
+        files: |
+          ${{ env.ARCHIVE_FILENAME }}
+          ${{ env.ARCHIVE_FILENAME }}.yml
+          ${{ env.UPDATE_YAML }}

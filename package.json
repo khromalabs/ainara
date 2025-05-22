@@ -64,6 +64,7 @@
           "target": "dmg"
         }
       ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "icon": "polaris/resources/icon.icns",
       "category": "public.app-category.productivity",
       "extraResources": [
