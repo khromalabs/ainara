@@ -239,7 +239,8 @@ jobs:
           # Update 'path:' and the first 'url:' under 'files:' to the new ARCHIVE_FILENAME
           # Using yq would be safer: yq e '(.path = strenv(ARCHIVE_FILENAME)) | (.files[0].url = strenv(ARCHIVE_FILENAME))' -i "$ORIGINAL_EB_UPDATE_YML_PATH"
           sed -i.bak -e "s|^path: .*|path: $ARCHIVE_FILENAME|" \
-                     -e "/^files:/,/^  - url:/{s|^    url: .*|    url: $ARCHIVE_FILENAME|}" "$ORIGINAL_EB_UPDATE_YML_PATH"
+                     -e "/^files:/,/^  - url:/{s|^  - url: .*|  - url: $ARCHIVE_FILENAME|;}" "$ORIGINAL_EB_UPDATE_YML_PATH"
+
 
           FINAL_UPDATE_YML_PATH_NAME_FOR_UPLOAD="$([ "${{ runner.os }}" == "macOS" ] && echo "latest-mac-${ARCH_SUFFIX}.yml" || echo "$EB_GENERATED_UPDATE_YML_NAME")"
           mv "$ORIGINAL_EB_UPDATE_YML_PATH" "$FINAL_UPDATE_YML_PATH_NAME_FOR_UPLOAD"
@@ -375,7 +376,7 @@ jobs:
         else
           echo "::warning::X64 Mac build artifacts directory not found."
         fi
-        
+
         if [ "$MAC_FILES_COUNT" -gt 0 ]; then
           UPLOAD_FILES_LIST+="$CONSOLIDATED_LATEST_MAC_YML_NAME "
         else
