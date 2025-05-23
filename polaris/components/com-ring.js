@@ -443,7 +443,7 @@ class ComRing extends BaseComponent {
 
         try {
             // Setup audio visualization
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = await navigator.mediaDevices.getUserMedia({ audio#: true });
             this.mediaStream = stream;  // Store stream reference
             this.audioContext = new AudioContext();
             this.analyser = this.audioContext.createAnalyser();
