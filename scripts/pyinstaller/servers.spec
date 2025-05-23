@@ -249,14 +249,14 @@ a_orakle = Analysis(
     hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
-    module_collection_mode={
-        'transformers': 'py',
-    },
+    #module_collection_mode={
+    #    'transformers': 'py',
+    #},
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,
 )
 
 # Analysis for PyBridge
@@ -269,14 +269,14 @@ a_pybridge = Analysis(
     hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
-    module_collection_mode={
-        'transformers': 'py',
-    },
+    #module_collection_mode={
+    #    'transformers': 'py',
+    #},
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,
 )
 
 # MERGE statement to combine the analyses
