@@ -154,7 +154,8 @@ common_imports = [
     'emoji',
     'normalise',
     'spacy',
-    'en_core_web_sm'
+    'en_core_web_sm',
+    'transformers.models.deepseek_v3',
 
     # Framework modules
     'ainara.framework',
