@@ -3,6 +3,7 @@ import os
 import sys
 import importlib
 import platform
+from PyInstaller.utils.hooks import collect_submodules
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -152,10 +153,9 @@ common_imports = [
     'nltk',
     'textblob',
     'emoji',
-    'normalise',
-    'spacy',
-    'en_core_web_sm',
-    'transformers.models.deepseek_v3',
+    'normalise', # Text normalization
+    'spacy', # NLTK and Spacy for text processing
+    'en_core_web_sm', # Default English model for Spacy
 
     # Framework modules
     'ainara.framework',
@@ -168,6 +168,13 @@ common_imports = [
     'ainara.framework.stt.whisper',
     'ainara.framework.tts',
 ]
+
+# Conditionally add all submodules from transformers.models for macOS
+# This is to handle dynamic imports within the transformers library that
+# seem to cause issues specifically in macOS bundles.
+if platform.system() == "Darwin":
+    print("INFO: macOS detected, adding all transformers.models submodules.")
+    common_imports += collect_submodules('transformers.models')
 
 # Orakle-specific data and imports
 orakle_datas = [
