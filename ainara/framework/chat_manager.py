@@ -30,10 +30,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Generator, List, Literal, Optional, Union
 
-import nltk
 from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
+from ainara.framework.utils import load_spacy_model
 from ainara.framework.config import config
 from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
@@ -85,7 +85,9 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
-        self.nltk_initialized = False
+
+        # Load spaCy model for sentence segmentation
+        self.nlp = load_spacy_model()
 
         # # Add a reentrant lock for thread safety
         # self.chat_lock = threading.RLock()
@@ -248,20 +250,12 @@ class ChatManager:
         if not text.strip():
             return []
 
-        # nltk_data_dir = config.get_subdir("cache.directory", "nltk")
-        # logger.info("-------------------------------------------")
-        # logger.info(f"env NLTK_DATA={os.environ['NLTK_DATA']}")
-        # logger.info(f"nltk.data.path={nltk.data.path}")
-        # logger.info(f"NLTK in {nltk_data_dir} processing text: `{text}`")
+        if not self.nlp:
+            logger.error("spaCy model not available")
+            raise RuntimeError("spacy model not available")
 
-        # Function to check if paragraph contains special patterns that should skip NLTK processing
+        # Function to check if paragraph contains special patterns that should be handled differently
         def contains_special_patterns(text):
-            # # Check for markdown URLs: [text](url)
-            # if re.search(r"\[([^\]]+)\]\(([^)]+)\)", text):
-            #     return True
-            # # Check for regular URLs: http://example.com
-            # if re.search(r"https?://[^\s)>]+", text):
-            #     return True
             # Check for inline code: `code`
             if re.search(r"`([^`]+)`", text):
                 return True
@@ -272,55 +266,39 @@ class ChatManager:
             if re.search(r"^\s*[\*\-\d]+\.?\s+", text, re.MULTILINE):
                 return True
             # Check for numbered lists
-            # if re.search(r'^\s*\d+\.\s+.+', text, re.MULTILINE):
             if re.search(
                 r"^\s*(\d+\.\s+|\*\s+|-\s+|\+\s+).+", text, re.MULTILINE
             ):
                 return True
             return False
 
-        # Find sentence boundaries (periods, exclamation marks, question marks followed by space or newline)
-        sentence_ends = list(
-            # re.finditer(r"(?<!\d)[.](\s|$)|[:!?](\s|$)|\n", text)
-            re.finditer(r"\n", text)
-        )
+        # Find paragraph boundaries (newlines)
+        paragraph_ends = list(re.finditer(r"\n", text))
 
-        if not sentence_ends:
+        if not paragraph_ends:
             return []
 
         sentences = []
         last_end = 0
 
-        for match in sentence_ends:
+        for match in paragraph_ends:
             end_pos = match.end()
-            sentence = text[last_end:end_pos].strip()
-            if sentence:
-                if contains_special_patterns(sentence):
-                    sentences.append(sentence)
+            paragraph = text[last_end:end_pos].strip()
+            if paragraph:
+                if 0:  # contains_special_patterns(paragraph):
+                    sentences.append(paragraph)
                 else:
                     try:
-                        # Use NLTK to split the paragraph into sentences
-                        # logger.info("NLTK PRE:")
-                        # logger.info(pprint.pformat(paragraph))
-                        paragraph_sentences = nltk.sent_tokenize(sentence)
-                        # logger.info("NLTK POST:")
-                        # logger.info(pprint.pformat(paragraph))
-                        # logger.info("NLTK END")
+                        # Use spaCy to split the paragraph into sentences
+                        doc = self.nlp(paragraph)
+                        paragraph_sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
                         sentences.extend(paragraph_sentences)
-                    except (LookupError, ImportError) as e:
-                        # raise RuntimeError(
-                        #     "Failed to split sentences via NLTK"
-                        # )
-                        logger.error(f"NLTK tokenization error: {e}")
+                    except Exception as e:
+                        logger.error(f"spaCy sentence tokenization error: {e}")
                         logger.error(f"Error type: {type(e).__name__}")
                         logger.error(f"Error details: {str(e)}")
-                        import traceback
-                        logger.error(f"Traceback: {traceback.format_exc()}")
-                        logger.error(f"NLTK data path during error: {nltk.data.path}")
-                        logger.error(f"Text that caused the error: '{sentence}'")
-                        raise RuntimeError(
-                            f"Failed to split sentences via NLTK: {str(e)}"
-                        )
+                        # Fallback to simple splitting
+                        sentences.append(paragraph)
             last_end = end_pos
 
         return sentences
@@ -724,24 +702,6 @@ class ChatManager:
 
         self.chat_history = new_history
 
-    def _check_nltk(self):
-        # Initialize NLTK for sentence tokenization
-        try:
-            if not self.nltk_initialized:
-                # Use the configured NLTK data path
-                nltk_data_dir = config.get_subdir("cache.directory", "nltk")
-                os.environ["NLTK_DATA"] = nltk_data_dir
-                nltk.data.path = [nltk_data_dir]  # Override default paths
-                # Test if punkt tokenizer is available
-                nltk.data.find("tokenizers/punkt")  # Standard for sent_tokenize
-                logger.info("NLTK sentence tokenization initialized successfully")
-                self.nltk_initialized = True
-                return None
-        except (ImportError, LookupError) as e:
-            logger.error(f"NLTK sentence tokenization not available: {e}")
-            # raise RuntimeError("Failed to import NLTK sentence tokenization")
-            return "NLTK sentence tokenization not available"
-
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -758,10 +718,9 @@ class ChatManager:
         if isinstance(stream, bool):
             stream = "cli" if stream else None
 
-        msg_error = self._check_nltk()
-        if msg_error:
-            yield ndjson("signal", "error", {"message": msg_error})
-            return
+        # Check if spaCy model is available
+        if not self.nlp:
+            raise RuntimeError("spacy model not available")
 
         # Start loading animation for CLI mode or send start event for JSON mode
         loading = None

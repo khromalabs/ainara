@@ -30,6 +30,7 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from ainara.framework.config import ConfigManager
+from ainara.framework.utils import load_spacy_model
 
 from .base import OrakleMatcherBase
 
@@ -66,37 +67,9 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             logger.error(f"Failed to load model {model_name}: {e}")
             raise
 
-        try:
-            spacy_model = "en_core_web_sm"
-            model_version = "<not in bundle>"
-            if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-                spacy_path = os.path.join(sys._MEIPASS, spacy_model)
-                meta_file = os.path.join(spacy_path, "meta.json")
-                if os.path.exists(meta_file):
-                    try:
-                        with open(meta_file, "r") as f:
-                            meta_data = json.load(f)
-                            model_version = meta_data.get("version")
-                            spacy_model = os.path.join(
-                                spacy_path, f"{spacy_model}-{model_version}"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Could not read version from meta.json: {e}"
-                        )
-                        raise
-                else:
-                    logger.error("Could not read meta.json file")
-                    raise
-            logger.info(f"Loading spaCy model '{spacy_model}'")
-            self.nlp = spacy.load(spacy_model)
-            logger.info("Initialized spaCy")
-        except Exception as e:
-            logger.warning(
-                f"Failed to load spaCy model '{spacy_model}': '{e}'."
-            )
-            logger.warning(f"spacy_path: '{spacy_path}'")
-            raise
+        self.nlp = load_spacy_model()
+        if not self.nlp:
+            logger.error("Failed to load spaCy model. Some functionality may be limited.")
 
         self.config = ConfigManager()
 
