@@ -576,9 +576,8 @@ def create_app():
 
             # Check for required resources
             resources = [
-                # "corpora/brown",
-                # "tokenizers/punkt",
-                "tokenizers/punkt_tab",
+                "tokenizers/punkt",  # Essential for nltk.sent_tokenize
+                # "corpora/brown", # TextBlob also downloads this
                 # "taggers/averaged_perceptron_tagger",
                 # "corpora/wordnet",
             ]
@@ -690,9 +689,8 @@ def create_app():
 
             # Download required resources
             resources = [
-                # "brown",
-                "punkt_tab",
-                # "averaged_perceptron_tagger",
+                "punkt",  # Essential for nltk.sent_tokenize
+                # "averaged_perceptron_tagger", # TextBlob also downloads this
                 # "wordnet",
             ]
             for resource in resources:

@@ -733,7 +733,7 @@ class ChatManager:
                 os.environ["NLTK_DATA"] = nltk_data_dir
                 nltk.data.path = [nltk_data_dir]  # Override default paths
                 # Test if punkt tokenizer is available
-                nltk.data.find("tokenizers/punkt_tab")
+                nltk.data.find("tokenizers/punkt")  # Standard for sent_tokenize
                 logger.info("NLTK sentence tokenization initialized successfully")
                 self.nltk_initialized = True
                 return None
