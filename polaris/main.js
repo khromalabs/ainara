@@ -504,19 +504,46 @@ function appSetupShortcuts() {
 
 // Convert other methods to regular functions (keeping their existing logic)
 async function appCreateTray() {
-    const iconPath = path.join(__dirname, 'assets');
+    const { nativeImage } = require('electron'); // Ensure nativeImage is required
+    const iconBasePath = path.join(__dirname, 'assets');
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
+    Logger.info(`appCreateTray: Called. wizardActive = ${wizardActive}, theme = ${theme}`);
+
      if (wizardActive) {
-        Logger.info('Can\'t create the tray while the wizard is active');
+        Logger.info('appCreateTray: Wizard is active, skipping tray creation.');
         return;
      }
 
     // Set initial tray icon based on service health
     const iconStatus =  'inactive';
-    tray = new Tray(path.join(iconPath, `tray-icon-${iconStatus}-${theme}.png`));
+    const iconFileName = `tray-icon-${iconStatus}-${theme}.png`;
+    const fullIconPath = path.join(iconBasePath, iconFileName);
 
-    windowManager.setTray(tray, iconPath);
+    Logger.info(`appCreateTray: Attempting to use icon: ${fullIconPath}`);
+
+    let image = nativeImage.createFromPath(fullIconPath);
+
+    if (image.isEmpty()) {
+        Logger.error(`appCreateTray: Failed to load image at ${fullIconPath}. Image is empty.`);
+        // As a fallback test, you could try creating a known system image if on macOS
+        // if (process.platform === 'darwin') {
+        //     Logger.info('appCreateTray: Attempting to use system NSActionTemplate image as fallback.');
+        //     image = nativeImage.createFromNamedImage('NSActionTemplate');
+        // }
+        if (image.isEmpty()) { // If still empty after potential fallback
+            Logger.error('appCreateTray: Fallback image also empty or not applicable. Tray icon will likely not appear.');
+            return; // Can't create tray without a valid image
+        }
+    } else {
+        Logger.info(`appCreateTray: Image loaded successfully from ${fullIconPath}. Size: ${JSON.stringify(image.getSize())}`);
+    }
+
+    try {
+        tray = new Tray(image); // Use the loaded nativeImage object
+        Logger.info('appCreateTray: Tray object created successfully.');
+
+        windowManager.setTray(tray, iconBasePath); // Pass iconBasePath for potential future use by windowManager
 
     // Add service management to tray menu
     const contextMenu = Menu.buildFromTemplate([
@@ -573,9 +600,25 @@ async function appCreateTray() {
     ]);
 
     tray.setContextMenu(contextMenu);
+        Logger.info('appCreateTray: Context menu set.');
 
     // Optional: Single click to toggle windows
-    tray.on('click', () => windowManager.toggleVisibility());
+        tray.on('click', () => {
+            Logger.info('Tray clicked.');
+            windowManager.toggleVisibility();
+        });
+        Logger.info('appCreateTray: Click listener added.');
+
+        // Set initial tooltip
+        let llmProviders = await ConfigHelper.getLLMProviders();
+        if (llmProviders && llmProviders.selected_provider) {
+            tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+        } else {
+            tray.setToolTip('Ainara Polaris v' + config.get('setup.version'));
+        }
+    } catch (error) {
+        Logger.error(`appCreateTray: Error during tray setup: ${error.message}`, error);
+    }
 }
 
 function truncateMiddle(str, maxLength) {
@@ -886,9 +929,7 @@ function appSetupEventHandlers() {
 
     // Prevent app from closing when all windows are closed
     app.on('window-all-closed', () => {
-        if (process.platform !== 'darwin') {
-            app.quit();
-        }
+        app.quit();
     });
 
     // Handle app activation (e.g., clicking dock icon on macOS)
