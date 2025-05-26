@@ -337,20 +337,9 @@ class PiperTTS(TTSBackend):
             except RuntimeError:
                 # Binary not found, try to download it
                 self.logger.info(
-                    "Piper binary not found, attempting to download..."
+                    "Piper binary not found"
                 )
-                if not self._download_piper_binary():
-                    self.logger.error("Failed to download Piper binary")
-                    return False
-
-                # Try to find the binary again
-                try:
-                    self.binary = self._find_piper_binary()
-                except RuntimeError:
-                    self.logger.error(
-                        "Still cannot find Piper binary after download attempt"
-                    )
-                    return False
+                return False
 
             # Step 2: Ensure voice model is available
             try:
