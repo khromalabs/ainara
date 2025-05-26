@@ -510,13 +510,13 @@ async function appCreateTray() {
 
     Logger.info(`appCreateTray: Called. wizardActive = ${wizardActive}, theme = ${theme}`);
 
-     if (wizardActive) {
+    if (wizardActive) {
         Logger.info('appCreateTray: Wizard is active, skipping tray creation.');
         return;
-     }
+    }
 
     // Set initial tray icon based on service health
-    const iconStatus =  'inactive';
+    const iconStatus = 'inactive';
     const iconFileName = `tray-icon-${iconStatus}-${theme}.png`;
     const fullIconPath = path.join(iconBasePath, iconFileName);
 
@@ -526,17 +526,38 @@ async function appCreateTray() {
 
     if (image.isEmpty()) {
         Logger.error(`appCreateTray: Failed to load image at ${fullIconPath}. Image is empty.`);
-        // As a fallback test, you could try creating a known system image if on macOS
-        // if (process.platform === 'darwin') {
-        //     Logger.info('appCreateTray: Attempting to use system NSActionTemplate image as fallback.');
-        //     image = nativeImage.createFromNamedImage('NSActionTemplate');
-        // }
         if (image.isEmpty()) { // If still empty after potential fallback
             Logger.error('appCreateTray: Fallback image also empty or not applicable. Tray icon will likely not appear.');
             return; // Can't create tray without a valid image
         }
     } else {
         Logger.info(`appCreateTray: Image loaded successfully from ${fullIconPath}. Size: ${JSON.stringify(image.getSize())}`);
+        
+        // Resize the icon based on platform requirements
+        const size = image.getSize();
+        
+        if (process.platform === 'darwin') {
+            // macOS: 22x22 (standard) or 44x44 (Retina)
+            // macOS menu bar has strict size requirements
+            if (size.width > 44 || size.height > 44) {
+                Logger.info(`appCreateTray: Resizing image for macOS (${size.width}x${size.height} → 22x22)`);
+                image = image.resize({ width: 22, height: 22 });
+                Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
+            }
+            // Set as template image for better appearance in macOS menu bar
+            image.setTemplateImage(true);
+            Logger.info(`appCreateTray: Set as template image for macOS`);
+        } else if (process.platform === 'win32') {
+            // Windows: 16x16 (standard) or 32x32 (high DPI)
+            // Windows typically expects small icons for the system tray
+            if (size.width > 32 || size.height > 32) {
+                Logger.info(`appCreateTray: Resizing image for Windows (${size.width}x${size.height} → 16x16)`);
+                image = image.resize({ width: 16, height: 16 });
+                Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
+            }
+        }
+        // For Linux, we'll keep the original size as Linux desktop environments are more flexible
+        // This allows for larger tray icons on Linux if desired
     }
 
     try {
