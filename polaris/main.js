@@ -517,7 +517,15 @@ async function appCreateTray() {
 
     // Set initial tray icon based on service health
     const iconStatus = 'inactive';
-    const iconFileName = `tray-icon-${iconStatus}-${theme}.png`;
+    // Use platform-specific icon naming
+    let iconFileName;
+    if (process.platform === 'darwin') {
+        // On macOS, use a template image with the proper naming convention
+        iconFileName = `tray-icon-${iconStatus}-Template.png`;
+    } else {
+        // On other platforms, continue using theme-specific icons
+        iconFileName = `tray-icon-${iconStatus}-${theme}.png`;
+    }
     const fullIconPath = path.join(iconBasePath, iconFileName);
 
     Logger.info(`appCreateTray: Attempting to use icon: ${fullIconPath}`);
@@ -526,43 +534,43 @@ async function appCreateTray() {
 
     if (image.isEmpty()) {
         Logger.error(`appCreateTray: Failed to load image at ${fullIconPath}. Image is empty.`);
-        if (image.isEmpty()) { // If still empty after potential fallback
+        // Try fallback to theme-specific icon if template image fails
+        if (process.platform === 'darwin') {
+            const fallbackPath = path.join(iconBasePath, `tray-icon-${iconStatus}-${theme}.png`);
+            Logger.info(`appCreateTray: Trying fallback icon: ${fallbackPath}`);
+            image = nativeImage.createFromPath(fallbackPath);
+        }
+        
+        if (image.isEmpty()) {
             Logger.error('appCreateTray: Fallback image also empty or not applicable. Tray icon will likely not appear.');
             return; // Can't create tray without a valid image
         }
     } else {
         Logger.info(`appCreateTray: Image loaded successfully from ${fullIconPath}. Size: ${JSON.stringify(image.getSize())}`);
-        
-        // Resize the icon based on platform requirements
+    }
+    
+    // Only resize for Windows - macOS uses properly sized template images
+    // and Linux can handle various sizes
+    if (process.platform === 'win32') {
         const size = image.getSize();
-        
-        if (process.platform === 'darwin') {
-            // macOS: 22x22 (standard) or 44x44 (Retina)
-            // macOS menu bar has strict size requirements
-            if (size.width > 44 || size.height > 44) {
-                Logger.info(`appCreateTray: Resizing image for macOS (${size.width}x${size.height} → 22x22)`);
-                image = image.resize({ width: 22, height: 22 });
-                Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
-            }
-            // Set as template image for better appearance in macOS menu bar
-            image.setTemplateImage(true);
-            Logger.info(`appCreateTray: Set as template image for macOS`);
-        } else if (process.platform === 'win32') {
-            // Windows: 16x16 (standard) or 32x32 (high DPI)
-            // Windows typically expects small icons for the system tray
-            if (size.width > 32 || size.height > 32) {
-                Logger.info(`appCreateTray: Resizing image for Windows (${size.width}x${size.height} → 16x16)`);
-                image = image.resize({ width: 16, height: 16 });
-                Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
-            }
+        // Windows: 16x16 (standard) or 32x32 (high DPI)
+        // Windows typically expects small icons for the system tray
+        if (size.width > 32 || size.height > 32) {
+            Logger.info(`appCreateTray: Resizing image for Windows (${size.width}x${size.height} → 16x16)`);
+            image = image.resize({ width: 16, height: 16 });
+            Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
         }
-        // For Linux, we'll keep the original size as Linux desktop environments are more flexible
-        // This allows for larger tray icons on Linux if desired
     }
 
     try {
-        tray = new Tray(image); // Use the loaded nativeImage object
+        tray = new Tray(image);
         Logger.info('appCreateTray: Tray object created successfully.');
+        
+        // For macOS, set highlight mode
+        if (process.platform === 'darwin') {
+            tray.setHighlightMode('selection');
+            Logger.info('appCreateTray: Set macOS highlight mode to selection');
+        }
 
         windowManager.setTray(tray, iconBasePath); // Pass iconBasePath for potential future use by windowManager
 
@@ -1011,7 +1019,16 @@ function appSetupEventHandlers() {
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
         Logger.info('System theme changed:', theme);
         const iconStatus = windowManager && windowManager.currentState ? windowManager.currentState : 'inactive';
-        const iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
+   
+        // Use platform-specific icon path
+        let iconPath;
+        if (process.platform === 'darwin') {
+            // On macOS, use template image regardless of theme change
+            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-Template.png`);
+        } else {
+            // On other platforms, update based on theme
+            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
+        }
 
         // Update tray icon
         if (tray && !tray.isDestroyed()) {
