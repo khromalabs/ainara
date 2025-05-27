@@ -65,14 +65,28 @@
         }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "icon": "polaris/resources/icon.icns",
       "category": "public.app-category.productivity",
+      "identity": null,
+      "type": "development",
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist",
       "hardenedRuntime" : true,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "This app needs access to your microphone to enable voice commands and interaction."
-      }
+          "NSMicrophoneUsageDescription": "This app needs access to your microphone to enable voice commands and interaction."
+      },
+      "extraResources": [
+          {
+              "from": "dist/servers",
+              "to": "bin/servers",
+              "filter": [
+                  "**/*",
+                  "!**/_internal/resources/bin/windows/**",
+                  "!**/_internal/resources/bin/linux/**"
+              ]
+          }
+      ]
     },
     "win": {
       "target": "nsis",
