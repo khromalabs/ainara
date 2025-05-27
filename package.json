@@ -65,7 +65,6 @@
         }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "icon": "polaris/resources/icon.icns",
       "category": "public.app-category.productivity",
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist",
