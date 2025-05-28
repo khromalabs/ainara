@@ -1080,17 +1080,19 @@ function loadProvidersWithFilter(filter = '') {
 // Replace the existing loadProviders function
 function loadProviders() {
     // First load existing providers from backend config
-    loadExistingProviders();
+    const nextButton = document.getElementById('llm-next');
+    const testResult = document.getElementById('test-result');
+
+    // Reset UI state related to new provider testing and assume button is disabled initially.
+    // It will be enabled by loadExistingProviders if a valid selection exists,
+    // or by testLLMConnectionFetch if a new provider is successfully tested.
+    testResult.classList.add('hidden');
+    nextButton.disabled = true;
+
+    loadExistingProviders(); // This might enable nextButton if an existing provider is selected.
 
     const filter = document.getElementById('model-filter')?.value || '';
     loadProvidersWithFilter(filter);
-
-    // Hide test result and disable next button when providers are reloaded
-    const testResult = document.getElementById('test-result');
-    const nextButton = document.getElementById('llm-next');
-
-    testResult.classList.add('hidden');
-    nextButton.disabled = true;
 }
 
 // // Function to get local Ollama models
