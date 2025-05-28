@@ -292,6 +292,7 @@ async function appInitialization() {
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
             splashWindow.close();
+            startOllamaKeepAlive();
             // Alternate application start for dev purposes
             externallyManagedServices = true;
             const resourceCheck = await ServiceManager.checkResourcesInitialization();
@@ -687,18 +688,18 @@ async function loadOllamaModel(modelId) {
 }
 
 // Add a keep-alive mechanism to ensure the selected Ollama model remains loaded
-function startOllamaKeepAlive() {
-    setInterval(async () => {
-        try {
-            const { selected_provider } = await ConfigHelper.getLLMProviders();
-            if (selected_provider && selected_provider.startsWith('ollama/')) {
-                const modelId = selected_provider.split('/')[1];
-                await loadOllamaModel(modelId);
-            }
-        } catch (error) {
-            Logger.error('Error in Ollama keep-alive:', error);
+async function startOllamaKeepAlive() {
+    try {
+        const { selected_provider } = await ConfigHelper.getLLMProviders();
+        Logger.info(`startOllamaKeepAlive: selected_provider: ${selected_provider}.`);
+        if (selected_provider && selected_provider.startsWith('ollama/')) {
+            const modelId = selected_provider.split('/')[1];
+            await loadOllamaModel(modelId);
         }
-    }, 300000); // Check every 5 minutes
+        setTimeout(startOllamaKeepAlive, 290000);
+    } catch (error) {
+        Logger.error('Error in Ollama keep-alive:', error);
+    }
 }
 
 // Add function to update provider submenu
