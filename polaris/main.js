@@ -540,7 +540,7 @@ async function appCreateTray() {
             Logger.info(`appCreateTray: Trying fallback icon: ${fallbackPath}`);
             image = nativeImage.createFromPath(fallbackPath);
         }
-        
+
         if (image.isEmpty()) {
             Logger.error('appCreateTray: Fallback image also empty or not applicable. Tray icon will likely not appear.');
             return; // Can't create tray without a valid image
@@ -548,7 +548,7 @@ async function appCreateTray() {
     } else {
         Logger.info(`appCreateTray: Image loaded successfully from ${fullIconPath}. Size: ${JSON.stringify(image.getSize())}`);
     }
-    
+
     // Only resize for Windows - macOS uses properly sized template images
     // and Linux can handle various sizes
     if (process.platform === 'win32') {
@@ -565,7 +565,7 @@ async function appCreateTray() {
     try {
         tray = new Tray(image);
         Logger.info('appCreateTray: Tray object created successfully.');
-        
+
         // For macOS, set highlight mode
         if (process.platform === 'darwin') {
             tray.setHighlightMode('selection');
@@ -631,9 +631,13 @@ async function appCreateTray() {
     tray.setContextMenu(contextMenu);
         Logger.info('appCreateTray: Context menu set.');
 
-    // Optional: Single click to toggle windows
+        // Optional: Single click to toggle windows
         tray.on('click', () => {
             Logger.info('Tray clicked.');
+            if (wizardActive) {
+                Logger.info('Wizard active, skipping visibility toggle');
+                return
+            }
             windowManager.toggleVisibility();
         });
         Logger.info('appCreateTray: Click listener added.');
@@ -1019,7 +1023,7 @@ function appSetupEventHandlers() {
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
         Logger.info('System theme changed:', theme);
         const iconStatus = windowManager && windowManager.currentState ? windowManager.currentState : 'inactive';
-   
+
         // Use platform-specific icon path
         let iconPath;
         if (process.platform === 'darwin') {
