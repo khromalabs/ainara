@@ -252,11 +252,11 @@ if __name__ == "__main__":
         profiler = cProfile.Profile()
         profiler.enable()
 
-    created_app = create_app(internet_available=is_online)
+    app = create_app(internet_available=is_online)
 
     # Run the app with or without profiling
     try:
-        created_app.run(port=args.port)
+        app.run(port=args.port)
     finally:
         # If profiling is enabled, save the profile data
         if args.profile:
