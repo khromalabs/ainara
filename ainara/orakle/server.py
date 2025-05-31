@@ -256,7 +256,7 @@ if __name__ == "__main__":
 
     # Run the app with or without profiling
     try:
-        app.run(port=args.port)
+        app.run(host='0.0.0.0', port=args.port)
     finally:
         # If profiling is enabled, save the profile data
         if args.profile:
