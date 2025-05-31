@@ -1,6 +1,6 @@
 {
   "name": "polaris",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Ainara Polaris - Ainara AI Companion Framework Desktop Integration",
   "main": "polaris/main.js",
   "author": {
