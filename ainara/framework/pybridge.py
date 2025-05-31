@@ -115,8 +115,8 @@ def parse_args():
     parser.add_argument(
         "--port",
         type=int,
-        default=5001,
-        help="Port to run the server on (default: 5001)",
+        default=8101,
+        help="Port to run the server on (default: 8101)",
     )
     parser.add_argument(
         "--log-level",
@@ -243,7 +243,7 @@ def create_app():
         llm=llm,
         tts=tts,
         flask_app=app,
-        orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:5000"]),
+        orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
     )
 
     @app.route("/health", methods=["GET"])
@@ -801,7 +801,7 @@ def create_app():
                         "id": "api_base",
                         "name": "API Base URL",
                         "type": "text",
-                        "placeholder": "http://localhost:8000/v1",
+                        "placeholder": "http://127.0.0.1:8000/v1",
                         "required": True,
                     },
                     {

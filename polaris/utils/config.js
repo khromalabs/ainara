@@ -72,7 +72,7 @@ class ConfigManager {
             // Ensure Ollama settings are present in config
             if (!this.config.ollama) {
                 this.config.ollama = {
-                    serverIp: 'localhost',
+                    serverIp: '127.0.0.1',
                     port: 11434
                 };
             }

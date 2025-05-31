@@ -122,7 +122,7 @@ CUSTOM_BACKEND_CONFIG = {
     "text_backend": {
         "type": "my_package.redis_backend.RedisStorage",
         "config": {
-            "host": "localhost",
+            "host": "127.0.0.1",
             "port": 6379,
             "db": 0
         }

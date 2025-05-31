@@ -36,7 +36,7 @@ from ainara.orakle import __version__
 def parse_args():
     parser = argparse.ArgumentParser(description="Orakle Server")
     parser.add_argument(
-        "--port", type=int, default=5000, help="Port to run the server on"
+        "--port", type=int, default=8100, help="Port to run the server on"
     )
     parser.add_argument(
         "--log-level",

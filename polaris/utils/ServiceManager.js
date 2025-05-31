@@ -82,7 +82,7 @@ class ServiceManager {
     }
 
     /**
-     * Checks if a specific TCP port is already in use on localhost.
+     * Checks if a specific TCP port is already in use on 127.0.0.1.
      * @param {number} port The port number to check.
      * @returns {Promise<boolean>} A promise that resolves to true if the port is in use, false otherwise.
      * @private Internal helper method.
@@ -269,7 +269,7 @@ class ServiceManager {
 
         this.healthCheckInterval = setInterval(async () => {
             await this.checkServicesHealth();
-        }, 5000);
+        }, 8100);
     }
 
     async checkServicesHealth() {

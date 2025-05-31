@@ -43,8 +43,8 @@ PYBRIDGE_CMD = "python -m ainara.framework.pybridge"
 OLLAMA_CMD = "ollama"
 
 # Service health endpoints
-ORAKLE_HEALTH_URL = "http://localhost:5000/health"
-PYBRIDGE_HEALTH_URL = "http://localhost:5001/health"
+ORAKLE_HEALTH_URL = "http://127.0.0.1:8100/health"
+PYBRIDGE_HEALTH_URL = "http://127.0.0.1:8101/health"
 
 # Frontend command
 POLARIS_CMD = "npm run start"

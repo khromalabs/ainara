@@ -385,7 +385,7 @@ async function updateOllamaProviders() {
         }
 
         // Get current Ollama models
-        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const serverIp = config.get('ollama.serverIp', '127.0.0.1');
         const port = config.get('ollama.port', 11434);
         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
         const modelsResponse = await client.list();
@@ -1098,7 +1098,7 @@ function loadProviders() {
 // // Function to get local Ollama models
 // async function getLocalOllamaModels() {
 //     try {
-//         const serverIp = config.get('ollama.serverIp', 'localhost');
+//         const serverIp = config.get('ollama.serverIp', '127.0.0.1');
 //         const port = config.get('ollama.port', 11434);
 //         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
 //         const models = await client.list();
@@ -2012,7 +2012,7 @@ async function saveCurrentStepData() {
 
     switch (currentStep) {
         case 'ollama':
-            serverIp = document.getElementById('ollama-server-ip')?.value || 'localhost';
+            serverIp = document.getElementById('ollama-server-ip')?.value || '127.0.0.1';
             port = parseInt(document.getElementById('ollama-port')?.value || '11434', 10);
             config.set('ollama.serverIp', serverIp);
             config.set('ollama.port', port);
@@ -2597,7 +2597,7 @@ async function initializeOllamaStep() {
     const hardwareInfoElement = document.getElementById('ollama-hardware-info');
     hardwareInfoElement.style.display = "none";
     await displayHardwareInfo();
-    // if (serverIp == "localhost" || serverIp == "127.0.0.1") {
+    // if (serverIp == "127.0.0.1" || serverIp == "127.0.0.1") {
     //     hardwareInfoElement.style.display = "block";
     //     await displayHardwareInfo();
     // } else {
@@ -2626,8 +2626,8 @@ function displayOllamaServerConfig() {
                     <!-- Server IP Field -->
                     <div class="form-group" style="flex: 1; min-width: 200px;">
                         <label for="ollama-server-ip" style="display: block; margin-bottom: 5px;">Server IP:</label>
-                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                        <p class="field-description">Optional alternate Ollama host address, localhost by default.</p>
+                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', '127.0.0.1')}" placeholder="e.g., 127.0.0.1 or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                        <p class="field-description">Optional alternate Ollama host address, 127.0.0.1 by default.</p>
                     </div>
                     <!-- Port Field -->
                     <div class="form-group" style="flex: 0.5; min-width: 100px;">
@@ -2768,10 +2768,10 @@ async function displayOllamaModels() {
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
     let modelsInfo = ""
-    const ollamaip = config.get('ollama.serverIp', 'localhost');
+    const ollamaip = config.get('ollama.serverIp', '127.0.0.1');
     const totalVram = config.get('ollama.totalVram', 0);
 
-    if (totalVram > 0 && totalVram < 12 && (ollamaip == "localhost" || ollamaip == "127.0.0.1") ) {
+    if (totalVram > 0 && totalVram < 12 && (ollamaip == "127.0.0.1" || ollamaip == "127.0.0.1") ) {
         modelsInfo += '<div class="warning-block">';
         modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
         modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
@@ -2780,7 +2780,7 @@ async function displayOllamaModels() {
     }
 
     try {
-        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const serverIp = config.get('ollama.serverIp', '127.0.0.1');
         const port = config.get('ollama.port', 11434);
         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
         const modelsResponse = await client.list();

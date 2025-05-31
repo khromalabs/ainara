@@ -248,7 +248,7 @@ function showSetupWizard() {
 }
 
 function initializeOllamaClient() {
-    const serverIp = config.get('ollama.serverIp', 'localhost');
+    const serverIp = config.get('ollama.serverIp', '127.0.0.1');
     const port = config.get('ollama.port', 11434);
     ollamaClient = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
     Logger.info(`Ollama client initialized with server: ${serverIp}:${port}`);

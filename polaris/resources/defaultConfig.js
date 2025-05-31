@@ -23,17 +23,17 @@ module.exports = {
                 service: 'custom',
                 custom: {
                     apiKey: 'local',
-                    apiUrl: 'http://127.0.0.1:5001/framework/stt',
+                    apiUrl: 'http://127.0.0.1:8101/framework/stt',
                     headers: {}
                 }
             }
         }
     },
     orakle: {
-        api_url: 'http://localhost:5000'
+        api_url: 'http://127.0.0.1:8100'
     },
     pybridge: {
-        api_url: 'http://localhost:5001'
+        api_url: 'http://127.0.0.1:8101'
     },
     window: {
         width: 300,
@@ -78,7 +78,7 @@ module.exports = {
         startMinimized: false
     },
     ollama: {
-        serverIp: "localhost",
+        serverIp: "127.0.0.1",
         port: 11434,
         totalVram: 0
     }
