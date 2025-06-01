@@ -116,7 +116,8 @@ class ServiceManager {
      */
     async checkPortsAvailability() {
         Logger.info('Checking availability of required network ports...');
-        for (const [serviceId, service] of Object.entries(this.services)) {
+        // for (const [serviceId, service] of Object.entries(this.services)) {
+        for (const [ , service] of Object.entries(this.services)) {
             try {
                 const url = new URL(service.url.replace('/health', '')); // Use base URL
                 const port = parseInt(url.port, 10);
@@ -172,6 +173,8 @@ class ServiceManager {
             this.startService('pybridge')
         ];
 
+        this.startProgress = 30;
+
         this.updateProgress(this.initializeMsg, this.startProgress);
 
         try {
@@ -223,8 +226,8 @@ class ServiceManager {
                     }
                 });
 
-                // Check if service starts successfully in a minute top
-                this.waitForHealth(serviceId, 60000)
+                // Check if service starts successfully in three minutes top
+                this.waitForHealth(serviceId, 180000)
                     .then(() => resolve())
                     .catch(err => reject(err));
 
@@ -408,7 +411,7 @@ class ServiceManager {
                 if (force) {
                     return true;
                 }
-                
+
                 // If graceful shutdown failed, try force kill as a last resort
                 Logger.log('Attempting force kill of remaining services...');
                 return await this.stopServices({ force: true });

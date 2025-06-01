@@ -24,7 +24,7 @@ import atexit
 import json
 import logging
 import os
-import pprint
+# import pprint
 import shutil
 import sys
 import time
@@ -503,7 +503,6 @@ def create_app():
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
 
-
     def check_whisper_models():
         """Check if Whisper models are available"""
         try:
@@ -555,7 +554,6 @@ def create_app():
                 "initialized": False,
                 "message": f"Error checking Whisper models: {str(e)}",
             }
-
 
     def setup_whisper_models():
         """Download and setup whisper models"""
@@ -1034,21 +1032,21 @@ if __name__ == "__main__":
     # Set up logging first, before any logger calls
     logging_manager.setup(log_level=args.log_level, log_name="pybridge.log")
     # logging_manager.addFilter(["pybridge", "chat_completion"])
-    
+
     # Set up profiling if enabled
     if args.profile:
         import cProfile
         import pstats
-        import os
+        # import os
         # Use the log directory from logging_manager
         log_dir = logging_manager._log_directory
         profile_output = os.path.join(log_dir, "pybridge_profile.prof")
         logger.info(f"Profiling enabled. Output will be saved to {profile_output}")
         profiler = cProfile.Profile()
         profiler.enable()
-       
+
     app = create_app()
-   
+
     # Run the app with or without profiling
     try:
         app.run(port=args.port)

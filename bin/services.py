@@ -59,6 +59,8 @@ VENV_PATHS = [
     ),
 ]
 
+WATCH_SERVICES_HEALTH_FIRST = True
+
 
 def check_service_health(url, service_name, timeout=2):
     """Check if a service is healthy by calling its health endpoint"""
@@ -93,6 +95,7 @@ def watch_services_health(
         start_polaris: Whether to start the Polaris frontend when services are healthy
     """
     try:
+        global WATCH_SERVICES_HEALTH_FIRST
         print("Monitoring...")
         fails = 0
         fails_limit = 3
@@ -128,7 +131,8 @@ def watch_services_health(
                 else:
                     print("Retrying...")
             else:
-                if was_unhealthy:
+                if was_unhealthy or WATCH_SERVICES_HEALTH_FIRST:
+                    WATCH_SERVICES_HEALTH_FIRST = False
                     print("Services are healthy now")
                     was_unhealthy = False
 
@@ -145,7 +149,7 @@ def watch_services_health(
                     try:
                         # Start the frontend in a new process
                         subprocess.Popen(
-                            POLARIS_CMD.split(),
+                            POLARIS_CMD,
                             shell=True,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
@@ -262,7 +266,7 @@ def stop_services():
                         try:
                             # Try graceful termination first
                             p = psutil.Process(proc.pid)
-                            p.terminate()
+                            p.send_signal(2)  # SIGINT
 
                             # Wait for up to 3 seconds
                             gone, alive = psutil.wait_procs([p], timeout=3)
