@@ -132,7 +132,7 @@ function showSetupWizard() {
     async function restartWithSplash() {
         if (externallyManagedServices) {
             Logger.info("Externally managed services need manual restart. Exiting.");
-            app.exit(1);
+            app.quit();
         }
         // Create splash window
         splashWindow = new SplashWindow(config, null, null, __dirname);
@@ -143,7 +143,7 @@ function showSetupWizard() {
                 'Service Error',
                 'Failed to stop required services. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
         // Set up service manager progress callback
@@ -159,7 +159,7 @@ function showSetupWizard() {
                 'Service Error',
                 'Failed to start required services. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
         // Wait for services to be healthy
@@ -181,7 +181,7 @@ function showSetupWizard() {
                 'Service Error',
                 'Services did not become healthy within the timeout period. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
         // Services are ready, initialize the rest of the app
@@ -205,7 +205,7 @@ function showSetupWizard() {
                     'Initialization Error',
                     `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                 );
-                app.exit(1);
+                app.quit();
             }
         } else {
             Logger.info('All required resources are already initialized');
@@ -239,7 +239,7 @@ function showSetupWizard() {
         if (!config.get('setup.completed', false)) {
             Logger.info('Setup incomplete - forcing immediate exit');
             await ServiceManager.stopServices();
-            app.exit(1); // Hard exit without cleanup
+            app.quit(); // Hard exit without cleanup
         } else {
             splashWindow.close();
             await setupComplete();
@@ -310,7 +310,7 @@ async function appInitialization() {
                         'Initialization Error',
                         `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                     );
-                    app.exit(1);
+                    app.quit();
                 }
             } else {
                 Logger.info('All required resources are already initialized');
@@ -352,7 +352,7 @@ async function appInitialization() {
                 'Service Error',
                 'Failed to start required services. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
 
@@ -405,7 +405,7 @@ async function appInitialization() {
                     'Initialization Error',
                     `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                 );
-                app.exit(1);
+                app.quit();
             }
         } else {
             Logger.info('All required resources are already initialized');
@@ -471,7 +471,7 @@ function handlePortConflictError(port, serviceName) {
         'Application Startup Error',
         message + '\n\n' + detail
     );
-    app.exit(1);
+    app.quit();
 }
 
 function showWindows(force=false) {
@@ -498,7 +498,7 @@ function appSetupShortcuts() {
            Logger.info('Successfully registered shortcut:', shortcutKey);
         } else {
             Logger.error('Failed to register shortcut:', shortcutKey);
-            app.exit(1);
+            app.quit();
         }
     }
 }
@@ -1114,7 +1114,7 @@ function appHandleCriticalError(error) {
     if (windowManager) {
         windowManager.cleanup();
     }
-    app.exit(1);
+    app.quit();
 }
 
 let isForceShutdown = false;
@@ -1130,7 +1130,7 @@ process.on('SIGINT', async () => {
     app.exit(0);
   } catch (err) {
     Logger.error('Forced shutdown failed:', err);
-    app.exit(1);
+    app.quit();
   }
 });
 
@@ -1150,5 +1150,5 @@ app.on('before-quit', async (event) => {
 // Initialize and start the application
 appInitialization().catch(err => {
     Logger.error('Failed to initialize app:', err);
-    app.exit(1);
+    app.quit();
 });
