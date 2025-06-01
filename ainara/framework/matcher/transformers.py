@@ -43,7 +43,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
     understanding and intelligent skill matching.
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-base-en-v1.5"):
+    def __init__(self, model_name: str = "sentence-transformers/all-mpnet-base-v2"):
         """
         Initialize the matcher with a specified transformer model.
 

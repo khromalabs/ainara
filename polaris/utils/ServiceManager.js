@@ -549,7 +549,7 @@ class ServiceManager {
                             // Start the fake progress timer if still running
                             progressIntervalId = setInterval(() => {
                                 if (visualProgress < maxFakeProgress) {
-                                    visualProgress = Math.min(visualProgress + 1, maxFakeProgress);
+                                    visualProgress = Math.min(visualProgress + 0.3, maxFakeProgress);
                                     // Update UI with fake progress but last real message
                                     this.updateProgress(lastActualMessage, visualProgress);
                                     // console.log(`Fake progress incremented to ${visualProgress}%`);
@@ -558,7 +558,7 @@ class ServiceManager {
                                     // in case a real update resets it later.
                                     // console.log("Fake progress reached cap.");
                                 }
-                            }, 3000); // Increment every 3 seconds
+                            }, 2000); // Increment every two seconds
                             // console.log("Started fake progress interval");
                         }
 
