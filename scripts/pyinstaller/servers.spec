@@ -169,12 +169,8 @@ common_imports = [
     'ainara.framework.tts',
 ]
 
-# Conditionally add all submodules from transformers.models for macOS
-# This is to handle dynamic imports within the transformers library that
-# seem to cause issues specifically in macOS bundles.
-if platform.system() == "Darwin":
-    print("INFO: macOS detected, adding all transformers.models submodules.")
-    common_imports += collect_submodules('transformers.models')
+# Add all the transformers models to common imports
+common_imports += collect_submodules('transformers.models')
 
 # Orakle-specific data and imports
 orakle_datas = [
