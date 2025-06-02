@@ -168,6 +168,10 @@ class ConfigManager:
                             self._get_data_directory()
                         )
 
+                    # Force correct orakle server URL (temporary enforcement)
+                    if "orakle" in self.config and "servers" in self.config["orakle"]:
+                        self.config["orakle"]["servers"] = ["http://127.0.0.1:8100"]
+
                     return
                 except Exception as e:
                     print(

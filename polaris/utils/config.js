@@ -76,6 +76,15 @@ class ConfigManager {
                     port: 11434
                 };
             }
+            
+            // Force correct Python server URLs (temporary enforcement)
+            if (this.config.orakle) {
+                this.config.orakle.api_url = 'http://127.0.0.1:8100';
+            }
+            if (this.config.pybridge) {
+                this.config.pybridge.api_url = 'http://127.0.0.1:8101';
+            }
+            
             // Update the timestamp after successful load
             this.lastLoadTimestamp = this._getFileModificationTime();
             console.log('Configuration loaded successfully');

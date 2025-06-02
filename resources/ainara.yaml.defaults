@@ -59,7 +59,7 @@ llm:
 # Ainara configuration
 orakle:
   servers:
-    - "http://127.0.0.1:5000"
+    - "http://127.0.0.1:8100"
 
 # Audio configuration
 audio:

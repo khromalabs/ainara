@@ -1,4 +1,5 @@
 resources/*
+!resources/ainara.yaml.defaults
 static/*
 venv/*
 node_modules/*

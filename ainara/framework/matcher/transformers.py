@@ -16,16 +16,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
-import json
 import logging
-import os
 import pprint
 import re
-import sys
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-import spacy
 import torch
 from transformers import AutoModel, AutoTokenizer
 
