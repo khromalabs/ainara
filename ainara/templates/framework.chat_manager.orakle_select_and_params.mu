@@ -27,6 +27,9 @@ Based on the user's request and the detailed skill descriptions provided above:
     - For calculator: "Let me calculate that for you" or "Working out that equation now"
     - For file search: "Searching through your files now" or "I'll find that document for you"
     - For weather: "Checking the current forecast" or "Let me see what the weather's doing"
+7. **Assess User Frustration**: Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
+    - Include a `frustration_level` field in the JSON output: a float from 0.0 (no frustration) to 1.0 (high frustration).
+    - Include a `frustration_reason` field: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
 
 
 Example Output Format:
@@ -36,7 +39,9 @@ Example Output Format:
     "query": "recent documents about project X",
     "file_type": "pdf"
   },
-  "skill_intention": "I'm looking in the local file system for the requested file..."
+  "skill_intention": "I'm looking in the local file system for the requested file...",
+  "frustration_level": 0.1,
+  "frustration_reason": ""
 }
 
 Another Example:
@@ -45,7 +50,9 @@ Another Example:
   "parameters": {
     "expression": "cos(3.14159) * 2"
   },
-  "skill_intention": "I'm checking the calculator..."
+  "skill_intention": "I'm checking the calculator...",
+  "frustration_level": 0.0,
+  "frustration_reason": null
 }
 
 Ensure the output contains ONLY the JSON object, with no explanations, comments, backticks, or any other text before or after it. Use double quotes for all keys and string values within the JSON. For empty or null values, just use `null`.
