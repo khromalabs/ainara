@@ -32,10 +32,10 @@ from typing import Dict, List, Optional
 
 # from ainara.framework.config import ConfigManager
 from ainara.framework.llm import create_llm_backend
-from ainara.scripts.evaluation.evaluator import OrakleEvaluator
-from ainara.scripts.evaluation.metrics import calculate_aggregate_metrics
-from ainara.scripts.evaluation.report_generator import generate_report
-from ainara.scripts.evaluation.config.eval_config import (
+from .evaluator import OrakleEvaluator
+from .metrics import calculate_aggregate_metrics
+from .report_generator import generate_report
+from .config.eval_config import (
     DEFAULT_LLM_CONFIGS,
     EvaluationConfig,
 )
@@ -58,33 +58,34 @@ def setup_logging(log_level: str = "INFO") -> None:
     )
 
 
-def load_test_suites(suite_names: List[str]) -> Dict:
+def load_tests(test_names: List[str]) -> Dict:
     """
     Load test suites by name.
 
     Args:
-        suite_names: List of test suite module names to load
+        test_names: List of test suite module names to load
 
     Returns:
         Dictionary mapping suite names to loaded test suite objects
     """
     suites = {}
-    for suite_name in suite_names:
+    for test_name in test_names:
         try:
             # Import the module
-            module_path = f"ainara.scripts.evaluation.test_suites.{suite_name}"
+            module_path = f"scripts.evaluation.tests.{test_name}"
+            logger.info(f"module: {module_path}")
             module = importlib.import_module(module_path)
 
             # Get the test suite class (assuming it follows naming convention)
-            class_name = "".join(word.capitalize() for word in suite_name.split("_")) + "TestSuite"
+            class_name = "".join(word.capitalize() for word in test_name.split("_")) + "TestSuite"
             suite_class = getattr(module, class_name)
 
             # Instantiate the test suite
             suite_instance = suite_class()
-            suites[suite_name] = suite_instance
-            logger.info(f"Loaded test suite: {suite_name} with {len(suite_instance.test_cases)} test cases")
+            suites[test_name] = suite_instance
+            logger.info(f"Loaded test suite: {test_name} with {len(suite_instance.test_cases)} test cases")
         except (ImportError, AttributeError) as e:
-            logger.error(f"Failed to load test suite {suite_name}: {str(e)}")
+            logger.error(f"Failed to load test suite {test_name}: {str(e)}")
 
     return suites
 
@@ -92,7 +93,7 @@ def load_test_suites(suite_names: List[str]) -> Dict:
 def run_evaluation(
     config: Optional[EvaluationConfig] = None,
     llm_configs: Optional[List[Dict]] = None,
-    test_suites: Optional[List[str]] = None,
+    test: Optional[List[str]] = None,
     output_dir: Optional[str] = None,
 ) -> Dict:
     """
@@ -101,7 +102,7 @@ def run_evaluation(
     Args:
         config: Optional evaluation configuration object
         llm_configs: Optional list of LLM configurations to override config
-        test_suites: Optional list of test suite names to override config
+        test: Optional list of test suite names to override config
         output_dir: Optional directory for output files
 
     Returns:
@@ -116,8 +117,8 @@ def run_evaluation(
     # Override config if parameters provided
     if llm_configs is not None:
         config.llm_configs = llm_configs
-    if test_suites is not None:
-        config.test_suites = test_suites
+    if test is not None:
+        config.test = test
     if output_dir is not None:
         config.output_dir = output_dir
 
@@ -128,10 +129,10 @@ def run_evaluation(
     setup_logging(config.log_level)
 
     logger.info(f"Starting evaluation with {len(config.llm_configs)} LLM configurations")
-    logger.info(f"Test suites to run: {config.test_suites}")
+    logger.info(f"Test suites to run: {config.tests}")
 
     # Load test suites
-    suites = load_test_suites(config.test_suites)
+    suites = load_tests(config.tests)
     if not suites:
         logger.error("No test suites could be loaded. Aborting evaluation.")
         return {"error": "No test suites loaded"}
@@ -257,7 +258,7 @@ def main():
         config.llm_configs = llm_configs
 
     if args.suite:
-        config.test_suites = args.suite
+        config.test = args.suite
 
     if args.output_dir:
         config.output_dir = args.output_dir

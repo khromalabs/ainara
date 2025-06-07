@@ -20,7 +20,7 @@
 Test suite for complex query evaluation.
 """
 
-from ainara.evaluation.test_suites.base import TestCase, TestSuite
+from .base import TestCase, TestSuite
 
 
 class ComplexQueriesTestSuite(TestSuite):

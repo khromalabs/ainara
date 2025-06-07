@@ -28,10 +28,10 @@ from typing import Dict, Optional
 from ainara.framework.llm.base import LLMBackend
 from ainara.framework.matcher.transformers import OrakleMatcherTransformers
 from ainara.framework.template_manager import TemplateManager
-from ainara.scripts.evaluation.config.eval_config import EvaluationConfig
-from ainara.scripts.evaluation.metrics import (calculate_interpretation_score,
-                                               calculate_parameter_score)
-from ainara.scripts.evaluation.test_suites.base import TestCase, TestSuite
+from .config.eval_config import EvaluationConfig
+from .metrics import (calculate_interpretation_score,
+                      calculate_parameter_score)
+from .tests.base import TestCase, TestSuite
 
 logger = logging.getLogger(__name__)
 
@@ -427,12 +427,12 @@ class OrakleEvaluator:
         )
         return suite_results
 
-    def evaluate_all_suites(self, test_suites: Dict[str, TestSuite]) -> Dict:
+    def evaluate_all_suites(self, tests: Dict[str, TestSuite]) -> Dict:
         """
         Evaluate all provided test suites.
 
         Args:
-            test_suites: Dictionary mapping suite names to TestSuite objects
+            tests: Dictionary mapping suite names to TestSuite objects
 
         Returns:
             Dictionary containing evaluation results for all test suites
@@ -458,7 +458,7 @@ class OrakleEvaluator:
         total_duration = 0
 
         # Evaluate each test suite
-        for suite_name, suite in test_suites.items():
+        for suite_name, suite in tests.items():
             suite_result = self.evaluate_suite(suite)
             all_results["suites"][suite_name] = suite_result
 

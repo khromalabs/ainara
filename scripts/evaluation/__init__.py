@@ -23,8 +23,8 @@ This package provides tools to systematically evaluate how different LLMs
 perform within the Orakle framework across various test scenarios.
 """
 
-from ainara.scripts.evaluation.eval_runner import run_evaluation
-from ainara.scripts.evaluation.evaluator import OrakleEvaluator
-from ainara.scripts.evaluation.test_suites.base import TestCase, TestSuite
+from .runner import run_evaluation
+from .evaluator import OrakleEvaluator
+from .tests.base import TestCase, TestSuite
 
 __all__ = ["run_evaluation", "OrakleEvaluator", "TestCase", "TestSuite"]
