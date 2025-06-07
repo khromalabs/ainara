@@ -330,6 +330,14 @@ class OrakleMiddleware:
             selection_data = json.loads(selection_response)
             selected_skill_id = selection_data.get("skill_id")
             parameters = selection_data.get("parameters", {})
+            skill_intention = selection_data.get("skill_intention", "Processing...")
+            frustration_level = selection_data.get("frustration_level", 0.0)
+            frustration_reason = selection_data.get("frustration_reason", "")
+
+            logger.info(
+                f"ORAKLE: Detected frustration level: {frustration_level:.2f}. "
+                f"Reason: '{frustration_reason}'. Query: '{query}'"
+            )
 
             if not selected_skill_id:
                 error_msg = "Failed to select a skill from candidates."
@@ -345,7 +353,8 @@ class OrakleMiddleware:
             )
 
             # Yield processing message
-            yield f"\nProcessing {selected_skill_id}...\n\n"
+            yield f"\n{skill_intention}\n\n"
+            yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
 
             # Execute the selected skill with parameters
             result = self.execute_orakle_command(
@@ -364,6 +373,22 @@ class OrakleMiddleware:
                 f"ORAKLE: {error_msg} LLM response: {selection_response}"
             )
             yield f"\nError: {error_msg}\n\n"
+
+    # def ndjson(event_type: str, event_name: str, content: Any = None) -> str:
+    #     """Create a standardized NDJSON event string.
+    #
+    #     Args:
+    #         event_type: Type of event (e.g. "llm_response", "loading", "interpretation")
+    #         event_name: Name of event (e.g. "start", "token", "stop", "complete")
+    #         content: Optional content payload
+    #
+    #     Returns:
+    #         NDJSON formatted string with newline
+    #     """
+    #     event = {"event": event_name, "type": event_type}
+    #     if content is not None:
+    #         event["content"] = content
+    #     return json.dumps(event) + "\n"
 
     def execute_orakle_command(
         self, skill_id: str, params: dict, chat_manager=None

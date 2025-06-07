@@ -192,7 +192,13 @@ class FasterWhisperSTT(STTBackend):
         if platform.system() == "Linux":
             self.device = "cpu"
             self.compute_type = "int8"
-            logger.info("Forcing CPU mode on Linux to avoid CUDA library issues")
+            logger.info("Forcing CPU mode on Linux to avoid potential library issues.")
+        elif platform.system() == "Darwin":  # macOS
+            self.device = "cpu"
+            self.compute_type = "int8"  # Optimal for CPU
+            logger.info(
+                "Forcing CPU mode on macOS (Darwin) as MPS is not supported by CTranslate2 (a faster-whisper dependency)."
+            )
         else:
             self.device = user_device or optimal_config.get("device", "cpu")
             self.compute_type = user_compute_type or optimal_config.get("compute_type", "int8")

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Allows JavaScript JIT compilation, essential for V8 performance -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Allows writing to executable memory, also needed by V8 -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- Allows loading of non-system libraries, useful if you have native modules or plugins -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- Allows your app to make outgoing network connections -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!-- If your app needs to listen for incoming network connections, uncomment the following: -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+  <!-- For microphone access in a SANDBOXED app, you would need: -->
+  <!--
+  <key>com.apple.security.device.microphone</key>
+  <true/>
+  -->
+  <!-- By default, Electron apps are not sandboxed. If you were to enable sandboxing,
+       you would set com.apple.security.app-sandbox to true and declare all necessary
+       permissions (file access, hardware, etc.) here.
+       For a non-sandboxed app, this key can be omitted or set to false.
+  -->
+  <!-- <key>com.apple.security.app-sandbox</key> -->
+  <!-- <false/> -->
+</dict>
+</plist>

@@ -249,9 +249,26 @@ class WindowManager {
     updateTrayIcon(state) {
         this.currentState = state;
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-        const iconPath = path.join(this.iconPath, `tray-icon-${state}-${theme}.png`);
-        Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
-        this.tray.setImage(iconPath);
+
+        // Check if iconPath and tray are properly initialized
+        if (this.iconPath && this.tray && !this.tray.isDestroyed()) {
+            let iconFileName;
+
+            // Use platform-specific icon naming
+            if (process.platform === 'darwin') {
+                // On macOS, use template image
+                iconFileName = `tray-icon-${state}-Template.png`;
+            } else {
+                // On other platforms, use theme-specific icons
+                iconFileName = `tray-icon-${state}-${theme}.png`;
+            }
+
+            const iconPath = path.join(this.iconPath, iconFileName);
+            Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
+            this.tray.setImage(iconPath);
+        } else {
+            Logger.warn(`Cannot update tray icon: iconPath=${this.iconPath}, tray=${!!this.tray}`);
+        }
     }
 
     getWindows() {

@@ -47,7 +47,7 @@ config_manager.load_config()
 
 # Get Orakle servers from config
 ORAKLE_SERVERS = config_manager.get(
-    "orakle.servers", ["http://127.0.0.1:5000"]
+    "orakle.servers", ["http://127.0.0.1:8100"]
 )
 
 init()

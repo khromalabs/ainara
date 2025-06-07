@@ -385,7 +385,7 @@ async function updateOllamaProviders() {
         }
 
         // Get current Ollama models
-        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const serverIp = config.get('ollama.serverIp', '127.0.0.1');
         const port = config.get('ollama.port', 11434);
         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
         const modelsResponse = await client.list();
@@ -862,7 +862,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat,deepseek-coder,llama,-8b,-3b,-1b';
+                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat,deepseek-coder,llama,-8b,-7b,-3b,-1b';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -1080,23 +1080,25 @@ function loadProvidersWithFilter(filter = '') {
 // Replace the existing loadProviders function
 function loadProviders() {
     // First load existing providers from backend config
-    loadExistingProviders();
+    const nextButton = document.getElementById('llm-next');
+    const testResult = document.getElementById('test-result');
+
+    // Reset UI state related to new provider testing and assume button is disabled initially.
+    // It will be enabled by loadExistingProviders if a valid selection exists,
+    // or by testLLMConnectionFetch if a new provider is successfully tested.
+    testResult.classList.add('hidden');
+    nextButton.disabled = true;
+
+    loadExistingProviders(); // This might enable nextButton if an existing provider is selected.
 
     const filter = document.getElementById('model-filter')?.value || '';
     loadProvidersWithFilter(filter);
-
-    // Hide test result and disable next button when providers are reloaded
-    const testResult = document.getElementById('test-result');
-    const nextButton = document.getElementById('llm-next');
-
-    testResult.classList.add('hidden');
-    nextButton.disabled = true;
 }
 
 // // Function to get local Ollama models
 // async function getLocalOllamaModels() {
 //     try {
-//         const serverIp = config.get('ollama.serverIp', 'localhost');
+//         const serverIp = config.get('ollama.serverIp', '127.0.0.1');
 //         const port = config.get('ollama.port', 11434);
 //         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
 //         const models = await client.list();
@@ -2010,7 +2012,7 @@ async function saveCurrentStepData() {
 
     switch (currentStep) {
         case 'ollama':
-            serverIp = document.getElementById('ollama-server-ip')?.value || 'localhost';
+            serverIp = document.getElementById('ollama-server-ip')?.value || '127.0.0.1';
             port = parseInt(document.getElementById('ollama-port')?.value || '11434', 10);
             config.set('ollama.serverIp', serverIp);
             config.set('ollama.port', port);
@@ -2595,7 +2597,7 @@ async function initializeOllamaStep() {
     const hardwareInfoElement = document.getElementById('ollama-hardware-info');
     hardwareInfoElement.style.display = "none";
     await displayHardwareInfo();
-    // if (serverIp == "localhost" || serverIp == "127.0.0.1") {
+    // if (serverIp == "127.0.0.1" || serverIp == "127.0.0.1") {
     //     hardwareInfoElement.style.display = "block";
     //     await displayHardwareInfo();
     // } else {
@@ -2624,8 +2626,8 @@ function displayOllamaServerConfig() {
                     <!-- Server IP Field -->
                     <div class="form-group" style="flex: 1; min-width: 200px;">
                         <label for="ollama-server-ip" style="display: block; margin-bottom: 5px;">Server IP:</label>
-                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', 'localhost')}" placeholder="e.g., localhost or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                        <p class="field-description">Optional alternate Ollama host address, localhost by default.</p>
+                        <input type="text" id="ollama-server-ip" value="${config.get('ollama.serverIp', '127.0.0.1')}" placeholder="e.g., 127.0.0.1 or 192.168.1.100" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                        <p class="field-description">Optional alternate Ollama host address, 127.0.0.1 by default.</p>
                     </div>
                     <!-- Port Field -->
                     <div class="form-group" style="flex: 0.5; min-width: 100px;">
@@ -2766,10 +2768,10 @@ async function displayOllamaModels() {
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
     let modelsInfo = ""
-    const ollamaip = config.get('ollama.serverIp', 'localhost');
+    const ollamaip = config.get('ollama.serverIp', '127.0.0.1');
     const totalVram = config.get('ollama.totalVram', 0);
 
-    if (totalVram > 0 && totalVram < 12 && (ollamaip == "localhost" || ollamaip == "127.0.0.1") ) {
+    if (totalVram > 0 && totalVram < 12 && (ollamaip == "127.0.0.1" || ollamaip == "127.0.0.1") ) {
         modelsInfo += '<div class="warning-block">';
         modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
         modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
@@ -2778,7 +2780,7 @@ async function displayOllamaModels() {
     }
 
     try {
-        const serverIp = config.get('ollama.serverIp', 'localhost');
+        const serverIp = config.get('ollama.serverIp', '127.0.0.1');
         const port = config.get('ollama.port', 11434);
         const client = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
         const modelsResponse = await client.list();
@@ -2871,7 +2873,8 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
-        { id: 'qwen:14b', name: 'Qwen 2.5 (14B)', size: 9, minVram: 12 },
+        { id: 'qwen2.5-coder:14b', name: 'Qwen 2.5 Coder (14B)', size: 9, minVram: 12 },
+        { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder (32B)', size: 20, minVram: 24 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
@@ -2972,7 +2975,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.5.0');
+    config.set('setup.version', '0.5.4');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

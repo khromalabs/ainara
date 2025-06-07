@@ -12,8 +12,8 @@ jobs:
     strategy:
       matrix:
         # os: [ubuntu-latest, macos-latest, windows-latest]
-        # os: [macos-latest, macos-latest-arm64, windows-latest]
-        os: [windows-latest]
+        os: [windows-latest, macos-14]
+        # os: [macos-14]
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
@@ -113,8 +113,10 @@ jobs:
       run: |
         if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
           npm run build:linux
+        elif [ "${{ matrix.os }}" == "macos-14" ]; then
+          npm run build:mac:arm64
         elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-          npm run build:mac
+          npm run build:mac:x64
         else
           npm run build:win
         fi
@@ -131,6 +133,15 @@ jobs:
         VERSION_PART="${TAG_NAME#*-}"
         # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
         OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
+        
+        # Add architecture detection
+        if [[ "${{ matrix.os }}" == "macos-14" ]]; then
+          ARCH="arm64"
+        elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          ARCH="x64"
+        else
+          ARCH=""
+        fi
 
         # Construct the desired filename, use .exe for Windows
         if [ "${{ runner.os }}" == "Windows" ]; then
@@ -138,9 +149,9 @@ jobs:
           echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
           echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.exe"
         elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-universal.dmg" >> $GITHUB_ENV
+          echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-${ARCH}.dmg" >> $GITHUB_ENV
           echo "VERSION_PART=${VERSION_PART}" >> $GITHUB_ENV
-          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-universal.dmg"
+          echo "Generated filename: ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}-${ARCH}.dmg"
         else
           # Assuming Linux still uses zip for now
           echo "ARCHIVE_FILENAME=ainara-polaris-${BRANCH_PART}-${VERSION_PART}-${OS_NAME}.zip" >> $GITHUB_ENV
@@ -192,11 +203,27 @@ jobs:
       if: runner.os != 'Windows'
       shell: bash
       run: |
-        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+        if [[ "${{ matrix.os }}" == "macos-latest" ]] || [[ "${{ matrix.os }}" == "macos-14" ]]; then
           # Find the generated DMG file (electron-builder names it like 'ProductName-Version.dmg')
-          DMG_PATH=$(find dist -maxdepth 1 -name "Ainara Polaris*.dmg" -print -quit)
+          # For electron-builder, artifactName is "${productName}-${version}-${arch}.${ext}"
+          # Example: "Ainara Polaris-0.5.2-arm64.dmg" or "Ainara Polaris-0.5.2-x64.dmg"
+          # The version part comes from steps.archive_name.outputs.version-part
+          # The arch part comes from the build command or can be inferred.
+
+          BUILT_ARCH="x64" # Default for macos-latest
+          if [[ "${{ matrix.os }}" == "macos-14" ]]; then
+            BUILT_ARCH="arm64"
+          fi
+
+          # Construct the expected DMG name from electron-builder
+          # Note: package.json version is used by electron-builder, not necessarily the tag version part.
+          # We need to get the version from package.json or rely on a pattern.
+          # A simpler find might be better if the version in the tag doesn't match package.json exactly.
+          DMG_PATTERN="dist/Ainara Polaris-*${BUILT_ARCH}.dmg"
+          DMG_PATH=$(find dist -maxdepth 1 -name "Ainara Polaris*${BUILT_ARCH}.dmg" -print -quit)
+
           if [ -z "$DMG_PATH" ]; then
-            echo "Error: DMG file not found in dist directory."
+            echo "Error: DMG file matching pattern '${DMG_PATTERN}' not found in dist directory."
             ls -R dist # List contents for debugging
             exit 1
           fi
@@ -204,13 +231,11 @@ jobs:
           # Rename the DMG to the desired archive filename
           mv "$DMG_PATH" "${{ env.ARCHIVE_FILENAME }}"
           echo "Renamed DMG to ${{ env.ARCHIVE_FILENAME }}"
-          # Copy latest-mac.yml if it exists (though it's generated later)
-          # [ -f "latest-mac.yml" ] && cp latest-mac.yml dist/
         else
           # Keep existing Linux logic (assuming zip for now)
           rm -rf dist/servers
           [ -f "latest-linux.yml" ] && cp latest-linux.yml dist/
-          zip -s 2g -r ${{ env.ARCHIVE_FILENAME }} dist/
+          zip -r ${{ env.ARCHIVE_FILENAME }} dist/
         fi
 
     - name: Create YAML Metadata for DMG (macOS)

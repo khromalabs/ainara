@@ -29,9 +29,16 @@ def create_llm_backend(config: dict) -> LLMBackend:
     Returns:
         Configured LLM backend instance
     """
-    backend_type = config.get("backend", "litellm")
+    # The 'config' parameter here is the specific dictionary for one LLM provider
+    # from the evaluation loop, or the general llm config during normal app use.
+    # For evaluation, 'provider' key usually indicates the type (e.g., 'litellm').
+    # For general use, 'backend' key in the main llm config block indicates the type.
+    backend_type = config.get("provider", config.get("backend", "litellm"))
 
     if backend_type == "litellm":
-        return LiteLLM()
+        # Pass the specific provider_config to LiteLLM
+        # If 'config' is from the evaluator, it's already a specific provider_config.
+        # If 'config' is the global llm config, LiteLLM's constructor will handle it.
+        return LiteLLM(provider_config=config if "model" in config else None)
     else:
         raise ValueError(f"Unsupported LLM backend type: {backend_type}")

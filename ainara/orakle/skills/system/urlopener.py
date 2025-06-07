@@ -134,7 +134,7 @@ class SystemUrlopener(Skill):
 
         Examples:
             "https://www.example.com" → Opens example.com in default browser.
-            "http://localhost:8080" → Opens local development server.
+            "http://127.0.0.1:8080" → Opens local development server.
             "file:///home/user/doc.pdf" → Opens PDF in default application.
             "google.com,microsoft.com" → Opens both sites in separate tabs.
             "github.com | stackoverflow.com" → Opens both sites in separate tabs.

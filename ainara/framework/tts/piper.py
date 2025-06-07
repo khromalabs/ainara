@@ -140,7 +140,7 @@ class PiperTTS(TTSBackend):
 
     def _get_resource_base_dir(self) -> Path:
         """Determine the base directory for resources (project root or MEIPASS)."""
-        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             # Running as a bundled app (PyInstaller)
             return Path(sys._MEIPASS)
         else:
@@ -158,19 +158,29 @@ class PiperTTS(TTSBackend):
         system = platform.system()
 
         if system == "Windows":
-            bundled_path = resource_base_dir / "resources/bin/windows/piper/piper.exe"
+            bundled_path = (
+                resource_base_dir / "resources/bin/windows/piper/piper.exe"
+            )
         elif system == "Darwin":  # macOS
             mac_arch = self._get_macos_architecture()
-            bundled_path = resource_base_dir / f"resources/bin/macos/{mac_arch}/piper/piper"
+            bundled_path = (
+                resource_base_dir
+                / f"resources/bin/macos/{mac_arch}/piper/piper"
+            )
         else:  # Linux
-            bundled_path = resource_base_dir / "resources/bin/linux/piper/piper"
+            bundled_path = (
+                resource_base_dir / "resources/bin/linux/piper/piper"
+            )
 
         if "bundled_path" in locals() and bundled_path.exists():
             self.logger.info(f"Using bundled Piper binary: {bundled_path}")
             return str(bundled_path)
 
         # If we get here, we couldn't find piper
-        msg_error = "Could not find piper binary. Please install piper or specify the path in config."
+        msg_error = (
+            "Could not find piper binary. Please install piper or specify the"
+            " path in config."
+        )
         self.logger.error(msg_error)
         raise RuntimeError(msg_error)
 
@@ -327,20 +337,9 @@ class PiperTTS(TTSBackend):
             except RuntimeError:
                 # Binary not found, try to download it
                 self.logger.info(
-                    "Piper binary not found, attempting to download..."
+                    "Piper binary not found"
                 )
-                if not self._download_piper_binary():
-                    self.logger.error("Failed to download Piper binary")
-                    return False
-
-                # Try to find the binary again
-                try:
-                    self.binary = self._find_piper_binary()
-                except RuntimeError:
-                    self.logger.error(
-                        "Still cannot find Piper binary after download attempt"
-                    )
-                    return False
+                return False
 
             # Step 2: Ensure voice model is available
             try:

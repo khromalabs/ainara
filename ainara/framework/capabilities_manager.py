@@ -38,28 +38,36 @@ logger = logging.getLogger(__name__)  # Use module-level logger
 
 class CapabilitiesManager:
     # Modified __init__ to accept config and initialize MCP manager
-    def __init__(self, flask_app, config):
+    def __init__(self, flask_app, config, internet_available: bool):
         self.app = flask_app
         self.config = config
+        self.internet_available = internet_available
         self.capabilities: Dict[str, Dict[str, Any]] = (
             {}
         )  # Unified capabilities store
         self.mcp_client_manager = None
 
         # Initialize MCP Client Manager (if available and configured)
-        if MCP_AVAILABLE:
-            mcp_config_section = self.config.get("mcp_clients")
-            if mcp_config_section:
-                logger.info("Initializing MCP Client Manager...")
-                self.mcp_client_manager = MCPClientManager(mcp_config_section)
-                # Register shutdown hook for MCP cleanup
-                atexit.register(self.shutdown_mcp)
-                logger.info("Registered MCP shutdown hook.")
+        if MCP_AVAILABLE and self.internet_available:
+            mcp_config_section = self.config.get("mcp_clients", None)
+            if mcp_config_section and isinstance(mcp_config_section, list) and len(mcp_config_section) > 0:
+                logger.info("MCP SDK available, internet connected, and 'mcp_clients' configured. Initializing MCP Client Manager...")
+                try:
+                    self.mcp_client_manager = MCPClientManager(mcp_config_section)
+                    # Register shutdown hook for MCP cleanup
+                    atexit.register(self.shutdown_mcp)
+                    logger.info("Registered MCP shutdown hook.")
+                except Exception as e:
+                    logger.error(f"Failed to initialize MCPClientManager: {e}", exc_info=True)
+                    self.mcp_client_manager = None # Ensure it's None on failure
             else:
                 logger.info(
-                    "No 'mcp_clients' section found in config. Skipping MCP"
-                    " initialization."
+                    "MCP SDK available and internet connected, but 'mcp_clients' section in config is missing, empty, or not a list. Skipping MCP initialization."
                 )
+        elif MCP_AVAILABLE and not self.internet_available:
+            logger.warning(
+                "MCP SDK is available, but no internet connection detected at startup. Skipping MCP Client Manager initialization."
+            )
         else:
             logger.warning(
                 "MCP SDK not found. Skipping MCP initialization. Install with"

@@ -3,6 +3,7 @@ import os
 import sys
 import importlib
 import platform
+from PyInstaller.utils.hooks import collect_submodules
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -152,9 +153,9 @@ common_imports = [
     'nltk',
     'textblob',
     'emoji',
-    'normalise',
-    'spacy',
-    'en_core_web_sm'
+    'normalise', # Text normalization
+    'spacy', # NLTK and Spacy for text processing
+    'en_core_web_sm', # Default English model for Spacy
 
     # Framework modules
     'ainara.framework',
@@ -167,6 +168,9 @@ common_imports = [
     'ainara.framework.stt.whisper',
     'ainara.framework.tts',
 ]
+
+# Add all the transformers models to common imports
+common_imports += collect_submodules('transformers.models')
 
 # Orakle-specific data and imports
 orakle_datas = [
@@ -249,11 +253,14 @@ a_orakle = Analysis(
     hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
+    #module_collection_mode={
+    #    'transformers': 'py',
+    #},
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,
 )
 
 # Analysis for PyBridge
@@ -266,11 +273,14 @@ a_pybridge = Analysis(
     hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
+    #module_collection_mode={
+    #    'transformers': 'py',
+    #},
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
-    noarchive=False,
+    noarchive=True,
 )
 
 # MERGE statement to combine the analyses

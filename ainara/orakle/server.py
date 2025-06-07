@@ -18,6 +18,7 @@
 
 
 import argparse
+import socket
 import time
 from datetime import datetime
 
@@ -35,7 +36,7 @@ from ainara.orakle import __version__
 def parse_args():
     parser = argparse.ArgumentParser(description="Orakle Server")
     parser.add_argument(
-        "--port", type=int, default=5000, help="Port to run the server on"
+        "--port", type=int, default=8100, help="Port to run the server on"
     )
     parser.add_argument(
         "--log-level",
@@ -60,6 +61,33 @@ CORS(app)
 startup_time = datetime.utcnow()
 
 
+def check_internet_connection(logger_instance, timeout=3):
+    """
+    Check for internet connectivity by trying to connect to a known host.
+    Tries a list of reliable public DNS servers.
+    """
+    # List of reliable hosts (IP, port) to check.
+    # Using common DNS servers on their standard port 53.
+    reliable_hosts = [
+        ("8.8.8.8", 53),  # Google DNS
+        ("1.1.1.1", 53),  # Cloudflare DNS
+        ("9.9.9.9", 53),  # Quad9 DNS
+    ]
+
+    socket.setdefaulttimeout(timeout)
+    for host, port in reliable_hosts:
+        try:
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+            logger_instance.info(f"Internet connection test to {host}:{port} successful.")
+            return True  # Connection successful to at least one host
+        except socket.error as ex:
+            logger_instance.debug(f"Internet connection test to {host}:{port} failed: {ex}")
+            continue  # Try the next host
+
+    logger_instance.warning("Internet connection test failed for all reliable hosts.")
+    return False
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
     """Comprehensive health check endpoint"""
@@ -73,12 +101,15 @@ def health_check():
         "status": "ok",
         "version": __version__,
         "uptime_seconds": (datetime.utcnow() - startup_time).total_seconds(),
+        "internet_available": getattr(app, "internet_available", False),
         "services": {
             "capabilities_manager": app.capabilities_manager is not None,
             "config": config is not None,
             "logging": logging_manager is not None,
         },
-        "dependencies": {"dummy": True, "mcp_sdk_available": MCP_AVAILABLE},
+        "dependencies": {
+            "mcp_sdk_available": MCP_AVAILABLE,
+        },
     }
 
     # Only include storage check if memory is enabled
@@ -101,10 +132,13 @@ def health_check():
     return status
 
 
-def create_app():
+def create_app(internet_available: bool):
     """Create and configure the Flask application"""
+    # Store internet status on the app object for access in routes like /health
+    app.internet_available = internet_available
+
     # Store reference to capabilities manager, passing the global config
-    app.capabilities_manager = CapabilitiesManager(app, config)
+    app.capabilities_manager = CapabilitiesManager(app, config, internet_available)
 
     @app.route("/config", methods=["PUT"])
     def update_config():
@@ -198,10 +232,15 @@ if __name__ == "__main__":
     logging_manager.setup(log_level=args.log_level, log_name="orakle.log")
     # Get logger after setup
     logger = logging_manager.logger
+
+    # Perform internet check after logger is configured
+    is_online = check_internet_connection(logger)
+    logger.info(f"Internet connection available at startup: {is_online}")
+
     logger.info(f"Starting Orakle development server on port {args.port}")
     logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
 
-    # Set up profiling if enabled
+    # Set up profiling if enabled (needs to be before create_app if it profiles app creation)
     if args.profile:
         import cProfile
         import pstats
@@ -212,12 +251,12 @@ if __name__ == "__main__":
         logger.info(f"Profiling enabled. Output will be saved to {profile_output}")
         profiler = cProfile.Profile()
         profiler.enable()
-       
-    app = create_app()
-   
+
+    app = create_app(internet_available=is_online)
+
     # Run the app with or without profiling
     try:
-        app.run(port=args.port)
+        app.run(host='0.0.0.0', port=args.port)
     finally:
         # If profiling is enabled, save the profile data
         if args.profile:

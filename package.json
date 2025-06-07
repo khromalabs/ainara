@@ -1,6 +1,6 @@
 {
   "name": "polaris",
-  "version": "0.5.0",
+  "version": "0.5.4",
   "description": "Ainara Polaris - Ainara AI Companion Framework Desktop Integration",
   "main": "polaris/main.js",
   "author": {
@@ -35,9 +35,10 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder build",
-    "build:win": "electron-builder build --win --publish onTag",
-    "build:mac": "electron-builder build --mac --publish onTag",
-    "build:linux": "electron-builder build --linux --publish onTag"
+    "build:win": "electron-builder build --win --publish always",
+    "build:mac:x64": "electron-builder build --mac --x64 --publish always",
+    "build:mac:arm64": "electron-builder build --mac --arm64 --publish always",
+    "build:linux": "electron-builder build --linux --publish always"
   },
   "build": {
     "appId": "app.ainara.polaris",
@@ -60,26 +61,30 @@
     "mac": {
       "target": [
         {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "target": "dmg"
         }
       ],
-      "x64ArchFiles": "Contents/Resources/bin/servers/_internal/**/*.dylib",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "icon": "polaris/resources/icon.icns",
       "category": "public.app-category.productivity",
+      "identity": "-",
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "hardenedRuntime" : true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+          "NSMicrophoneUsageDescription": "This app needs access to your microphone to enable voice commands and interaction."
+      },
       "extraResources": [
-        {
-          "from": "dist/servers",
-          "to": "bin/servers",
-          "filter": [
-            "**/*",
-            "!**/_internal/resources/bin/windows/**",
-            "!**/_internal/resources/bin/linux/**"
-          ]
-        }
+          {
+              "from": "dist/servers",
+              "to": "bin/servers",
+              "filter": [
+                  "**/*",
+                  "!**/_internal/resources/bin/windows/**",
+                  "!**/_internal/resources/bin/linux/**"
+              ]
+          }
       ]
     },
     "win": {

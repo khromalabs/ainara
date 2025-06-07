@@ -24,7 +24,7 @@ import atexit
 import json
 import logging
 import os
-import pprint
+# import pprint
 import shutil
 import sys
 import time
@@ -115,8 +115,8 @@ def parse_args():
     parser.add_argument(
         "--port",
         type=int,
-        default=5001,
-        help="Port to run the server on (default: 5001)",
+        default=8101,
+        help="Port to run the server on (default: 8101)",
     )
     parser.add_argument(
         "--log-level",
@@ -243,7 +243,7 @@ def create_app():
         llm=llm,
         tts=tts,
         flask_app=app,
-        orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:5000"]),
+        orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
     )
 
     @app.route("/health", methods=["GET"])
@@ -350,19 +350,12 @@ def create_app():
         try:
             results = {"status": "success", "initialized": True, "details": {}}
 
-            # Check NLTK data
-            nltk_status = check_nltk_data()
-            results["details"]["nltk"] = nltk_status
-
             # Check Whisper models
             whisper_status = check_whisper_models()
             results["details"]["whisper"] = whisper_status
 
-            # If any resource is not initialized, set the overall status
-            if (
-                not nltk_status["initialized"]
-                or not whisper_status["initialized"]
-            ):
+            # If whisper resource is not initialized, set the overall status
+            if not whisper_status["initialized"]:
                 results["initialized"] = False
 
             return jsonify(results)
@@ -404,19 +397,11 @@ def create_app():
                     }
                 )
 
-                # --- Check what needs to be initialized ---
-                # Note: Calling check_resources() directly might be problematic if it relies on Flask context.
-                # Re-checking basic conditions is safer within the generator.
-                resources_to_init = []
-                nltk_check = check_nltk_data()  # Assume safe to call
-                if not nltk_check.get("initialized"):
-                    resources_to_init.append("nltk")
-                whisper_check = check_whisper_models()  # Assume safe to call
-                if not whisper_check.get("initialized"):
-                    resources_to_init.append("whisper")
+                # Check if whisper needs initialization
+                whisper_check = check_whisper_models()
+                resources_to_init = ["whisper"] if not whisper_check.get("initialized") else []
 
-                total_resources = len(resources_to_init)
-                if total_resources == 0:
+                if not resources_to_init:
                     yield format_sse(
                         {
                             "status": "complete",
@@ -430,42 +415,8 @@ def create_app():
                     return  # End stream
 
                 completed_resources = 0
-                progress_per_resource = 100 / total_resources
-
-                # --- Initialize NLTK if needed ---
-                if "nltk" in resources_to_init:
-                    current_progress = int(
-                        completed_resources * progress_per_resource
-                    )
-                    yield format_sse(
-                        {
-                            "status": "running",
-                            "progress": current_progress,
-                            "message": "Setting up NLTK data...",
-                        }
-                    )
-                    logger.info("SSE Initialization: Setting up NLTK...")
-                    nltk_result = setup_nltk()  # Blocking call
-                    if not nltk_result:
-                        # Yield error and stop
-                        yield format_sse(
-                            {
-                                "status": "error",
-                                "progress": current_progress,
-                                "message": "NLTK setup failed",
-                            }
-                        )
-                        return
-                    completed_resources += 1
-                    yield format_sse(
-                        {
-                            "status": "running",
-                            "progress": int(
-                                completed_resources * progress_per_resource
-                            ),
-                            "message": "NLTK setup complete.",
-                        }
-                    )
+                total_resources = len(resources_to_init)
+                progress_per_resource = 100 / total_resources if total_resources > 0 else 100
 
                 # --- Initialize Whisper models if needed ---
                 if "whisper" in resources_to_init:
@@ -552,70 +503,6 @@ def create_app():
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
 
-    def check_nltk_data():
-        """Check if NLTK data is available"""
-        try:
-            import os
-            from pathlib import Path
-
-            import nltk
-
-            # Configure NLTK paths using the config
-            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
-            nltk_data_path = str(Path(nltk_data_dir).absolute())
-            os.environ["NLTK_DATA"] = nltk_data_path
-            nltk.data.path = [nltk_data_path]  # Override default paths
-
-            # Check if directory exists
-            if not os.path.exists(nltk_data_path):
-                return {
-                    "initialized": False,
-                    "message": "NLTK data directory does not exist",
-                    "path": nltk_data_path,
-                }
-
-            # Check for required resources
-            resources = [
-                # "corpora/brown",
-                # "tokenizers/punkt",
-                "tokenizers/punkt_tab",
-                # "taggers/averaged_perceptron_tagger",
-                # "corpora/wordnet",
-            ]
-
-            missing_resources = []
-
-            for resource in resources:
-                try:
-                    # Try to find the resource
-                    nltk.data.find(f"{resource}", paths=[nltk_data_path])
-                except LookupError:
-                    missing_resources.append(resource)
-
-            if missing_resources:
-                return {
-                    "initialized": False,
-                    "message": (
-                        "Missing NLTK resources:"
-                        f" {', '.join(missing_resources)}"
-                    ),
-                    "missing": pprint.pformat(missing_resources),
-                    "path": nltk_data_path,
-                }
-            else:
-                return {
-                    "initialized": True,
-                    "message": "NLTK data is available",
-                    "path": nltk_data_path,
-                }
-        except Exception as e:
-            logger.error(f"Error checking NLTK data: {e}")
-            return {
-                "initialized": False,
-                "message": f"Error checking NLTK data: {str(e)}",
-                "path": nltk_data_path,
-            }
-
     def check_whisper_models():
         """Check if Whisper models are available"""
         try:
@@ -667,52 +554,6 @@ def create_app():
                 "initialized": False,
                 "message": f"Error checking Whisper models: {str(e)}",
             }
-
-    def setup_nltk():
-        """Download NLTK and TextBlob data to project-local directory"""
-        try:
-            # Import the necessary libraries
-            import os
-            import tempfile
-            from pathlib import Path
-
-            import nltk
-            from textblob.download_corpora import download_lite
-
-            # Configure NLTK paths using the config
-            nltk_data_dir = config.get_subdir("cache.directory", "nltk")
-            nltk_data_path = str(Path(nltk_data_dir).absolute())
-            os.environ["NLTK_DATA"] = nltk_data_path
-            nltk.data.path = [nltk_data_path]  # Override default paths
-
-            os.makedirs(nltk_data_path, exist_ok=True)
-            logger.info(f"Downloading NLTK data to: {nltk_data_path}")
-
-            # Download required resources
-            resources = [
-                # "brown",
-                "punkt_tab",
-                # "averaged_perceptron_tagger",
-                # "wordnet",
-            ]
-            for resource in resources:
-                nltk.download(
-                    resource, download_dir=nltk_data_path, quiet=True
-                )
-                logger.info(f"Downloaded {resource}")
-
-            # Download TextBlob corpora
-            logger.info("Downloading TextBlob corpora...")
-            old_dir = tempfile.tempdir
-            tempfile.tempdir = nltk_data_path
-            download_lite()
-            tempfile.tempdir = old_dir
-
-            logger.info("NLTK setup complete!")
-            return True
-        except Exception as e:
-            logger.error(f"Error setting up NLTK: {e}")
-            return False
 
     def setup_whisper_models():
         """Download and setup whisper models"""
@@ -958,7 +799,7 @@ def create_app():
                         "id": "api_base",
                         "name": "API Base URL",
                         "type": "text",
-                        "placeholder": "http://localhost:8000/v1",
+                        "placeholder": "http://127.0.0.1:8000/v1",
                         "required": True,
                     },
                     {
@@ -1191,21 +1032,21 @@ if __name__ == "__main__":
     # Set up logging first, before any logger calls
     logging_manager.setup(log_level=args.log_level, log_name="pybridge.log")
     # logging_manager.addFilter(["pybridge", "chat_completion"])
-    
+
     # Set up profiling if enabled
     if args.profile:
         import cProfile
         import pstats
-        import os
+        # import os
         # Use the log directory from logging_manager
         log_dir = logging_manager._log_directory
         profile_output = os.path.join(log_dir, "pybridge_profile.prof")
         logger.info(f"Profiling enabled. Output will be saved to {profile_output}")
         profiler = cProfile.Profile()
         profiler.enable()
-       
+
     app = create_app()
-   
+
     # Run the app with or without profiling
     try:
         app.run(port=args.port)

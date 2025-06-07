@@ -132,7 +132,7 @@ function showSetupWizard() {
     async function restartWithSplash() {
         if (externallyManagedServices) {
             Logger.info("Externally managed services need manual restart. Exiting.");
-            app.exit(1);
+            app.quit();
         }
         // Create splash window
         splashWindow = new SplashWindow(config, null, null, __dirname);
@@ -143,7 +143,7 @@ function showSetupWizard() {
                 'Service Error',
                 'Failed to stop required services. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
         // Set up service manager progress callback
@@ -159,14 +159,14 @@ function showSetupWizard() {
                 'Service Error',
                 'Failed to start required services. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
         // Wait for services to be healthy
         splashWindow.updateProgress('Waiting for services to be ready...', 40);
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 120000; // 120 seconds timeout
+        const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (ServiceManager.isAllHealthy()) {
@@ -181,7 +181,7 @@ function showSetupWizard() {
                 'Service Error',
                 'Services did not become healthy within the timeout period. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
         // Services are ready, initialize the rest of the app
@@ -205,7 +205,7 @@ function showSetupWizard() {
                     'Initialization Error',
                     `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                 );
-                app.exit(1);
+                app.quit();
             }
         } else {
             Logger.info('All required resources are already initialized');
@@ -239,7 +239,7 @@ function showSetupWizard() {
         if (!config.get('setup.completed', false)) {
             Logger.info('Setup incomplete - forcing immediate exit');
             await ServiceManager.stopServices();
-            app.exit(1); // Hard exit without cleanup
+            app.quit(); // Hard exit without cleanup
         } else {
             splashWindow.close();
             await setupComplete();
@@ -248,7 +248,7 @@ function showSetupWizard() {
 }
 
 function initializeOllamaClient() {
-    const serverIp = config.get('ollama.serverIp', 'localhost');
+    const serverIp = config.get('ollama.serverIp', '127.0.0.1');
     const port = config.get('ollama.port', 11434);
     ollamaClient = new ollama.Ollama({ host: `http://${serverIp}:${port}` });
     Logger.info(`Ollama client initialized with server: ${serverIp}:${port}`);
@@ -262,16 +262,6 @@ async function appInitialization() {
 
         // Initialize Ollama client
         initializeOllamaClient();
-
-        if (process.platform === 'darwin') {
-            app.dock.hide()
-        }
-
-        // Set application icon
-        const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-        if (process.platform === 'darwin' && !app.dock.isHidden()) {
-            app.dock.setIcon(path.join(__dirname, 'assets', `tray-icon-active-${theme}.png`));
-        }
 
         // Initialize window manager and windows
         windowManager = new WindowManager(config);
@@ -302,6 +292,7 @@ async function appInitialization() {
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
             splashWindow.close();
+            startOllamaKeepAlive();
             // Alternate application start for dev purposes
             externallyManagedServices = true;
             const resourceCheck = await ServiceManager.checkResourcesInitialization();
@@ -319,7 +310,7 @@ async function appInitialization() {
                         'Initialization Error',
                         `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                     );
-                    app.exit(1);
+                    app.quit();
                 }
             } else {
                 Logger.info('All required resources are already initialized');
@@ -361,7 +352,7 @@ async function appInitialization() {
                 'Service Error',
                 'Failed to start required services. Please check the logs for details.'
             );
-            app.exit(1);
+            app.quit();
             return;
         }
 
@@ -370,7 +361,7 @@ async function appInitialization() {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 120000; // 120 seconds timeout
+        const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
 
         while (Date.now() - startTime < timeout) {
@@ -414,7 +405,7 @@ async function appInitialization() {
                     'Initialization Error',
                     `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
                 );
-                app.exit(1);
+                app.quit();
             }
         } else {
             Logger.info('All required resources are already initialized');
@@ -480,7 +471,7 @@ function handlePortConflictError(port, serviceName) {
         'Application Startup Error',
         message + '\n\n' + detail
     );
-    app.exit(1);
+    app.quit();
 }
 
 function showWindows(force=false) {
@@ -507,26 +498,82 @@ function appSetupShortcuts() {
            Logger.info('Successfully registered shortcut:', shortcutKey);
         } else {
             Logger.error('Failed to register shortcut:', shortcutKey);
-            app.exit(1);
+            app.quit();
         }
     }
 }
 
 // Convert other methods to regular functions (keeping their existing logic)
 async function appCreateTray() {
-    const iconPath = path.join(__dirname, 'assets');
+    const { nativeImage } = require('electron'); // Ensure nativeImage is required
+    const iconBasePath = path.join(__dirname, 'assets');
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
 
-     if (wizardActive) {
-        Logger.info('Can\'t create the tray while the wizard is active');
+    Logger.info(`appCreateTray: Called. wizardActive = ${wizardActive}, theme = ${theme}`);
+
+    if (wizardActive) {
+        Logger.info('appCreateTray: Wizard is active, skipping tray creation.');
         return;
-     }
+    }
 
     // Set initial tray icon based on service health
-    const iconStatus =  'inactive';
-    tray = new Tray(path.join(iconPath, `tray-icon-${iconStatus}-${theme}.png`));
+    const iconStatus = 'inactive';
+    // Use platform-specific icon naming
+    let iconFileName;
+    if (process.platform === 'darwin') {
+        // On macOS, use a template image with the proper naming convention
+        iconFileName = `tray-icon-${iconStatus}-Template.png`;
+    } else {
+        // On other platforms, continue using theme-specific icons
+        iconFileName = `tray-icon-${iconStatus}-${theme}.png`;
+    }
+    const fullIconPath = path.join(iconBasePath, iconFileName);
 
-    windowManager.setTray(tray, iconPath);
+    Logger.info(`appCreateTray: Attempting to use icon: ${fullIconPath}`);
+
+    let image = nativeImage.createFromPath(fullIconPath);
+
+    if (image.isEmpty()) {
+        Logger.error(`appCreateTray: Failed to load image at ${fullIconPath}. Image is empty.`);
+        // Try fallback to theme-specific icon if template image fails
+        if (process.platform === 'darwin') {
+            const fallbackPath = path.join(iconBasePath, `tray-icon-${iconStatus}-${theme}.png`);
+            Logger.info(`appCreateTray: Trying fallback icon: ${fallbackPath}`);
+            image = nativeImage.createFromPath(fallbackPath);
+        }
+
+        if (image.isEmpty()) {
+            Logger.error('appCreateTray: Fallback image also empty or not applicable. Tray icon will likely not appear.');
+            return; // Can't create tray without a valid image
+        }
+    } else {
+        Logger.info(`appCreateTray: Image loaded successfully from ${fullIconPath}. Size: ${JSON.stringify(image.getSize())}`);
+    }
+
+    // Only resize for Windows - macOS uses properly sized template images
+    // and Linux can handle various sizes
+    if (process.platform === 'win32') {
+        const size = image.getSize();
+        // Windows: 16x16 (standard) or 32x32 (high DPI)
+        // Windows typically expects small icons for the system tray
+        if (size.width > 32 || size.height > 32) {
+            Logger.info(`appCreateTray: Resizing image for Windows (${size.width}x${size.height} → 16x16)`);
+            image = image.resize({ width: 16, height: 16 });
+            Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
+        }
+    }
+
+    try {
+        tray = new Tray(image);
+        Logger.info('appCreateTray: Tray object created successfully.');
+
+        // For macOS, set highlight mode
+        if (process.platform === 'darwin') {
+            tray.setHighlightMode('selection');
+            Logger.info('appCreateTray: Set macOS highlight mode to selection');
+        }
+
+        windowManager.setTray(tray, iconBasePath); // Pass iconBasePath for potential future use by windowManager
 
     // Add service management to tray menu
     const contextMenu = Menu.buildFromTemplate([
@@ -583,9 +630,29 @@ async function appCreateTray() {
     ]);
 
     tray.setContextMenu(contextMenu);
+        Logger.info('appCreateTray: Context menu set.');
 
-    // Optional: Single click to toggle windows
-    tray.on('click', () => windowManager.toggleVisibility());
+        // Optional: Single click to toggle windows
+        tray.on('click', () => {
+            Logger.info('Tray clicked.');
+            if (wizardActive) {
+                Logger.info('Wizard active, skipping visibility toggle');
+                return
+            }
+            windowManager.toggleVisibility();
+        });
+        Logger.info('appCreateTray: Click listener added.');
+
+        // Set initial tooltip
+        let llmProviders = await ConfigHelper.getLLMProviders();
+        if (llmProviders && llmProviders.selected_provider) {
+            tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
+        } else {
+            tray.setToolTip('Ainara Polaris v' + config.get('setup.version'));
+        }
+    } catch (error) {
+        Logger.error(`appCreateTray: Error during tray setup: ${error.message}`, error);
+    }
 }
 
 function truncateMiddle(str, maxLength) {
@@ -621,18 +688,18 @@ async function loadOllamaModel(modelId) {
 }
 
 // Add a keep-alive mechanism to ensure the selected Ollama model remains loaded
-function startOllamaKeepAlive() {
-    setInterval(async () => {
-        try {
-            const { selected_provider } = await ConfigHelper.getLLMProviders();
-            if (selected_provider && selected_provider.startsWith('ollama/')) {
-                const modelId = selected_provider.split('/')[1];
-                await loadOllamaModel(modelId);
-            }
-        } catch (error) {
-            Logger.error('Error in Ollama keep-alive:', error);
+async function startOllamaKeepAlive() {
+    try {
+        const { selected_provider } = await ConfigHelper.getLLMProviders();
+        Logger.info(`startOllamaKeepAlive: selected_provider: ${selected_provider}.`);
+        if (selected_provider && selected_provider.startsWith('ollama/')) {
+            const modelId = selected_provider.split('/')[1];
+            await loadOllamaModel(modelId);
         }
-    }, 300000); // Check every 5 minutes
+        setTimeout(startOllamaKeepAlive, 290000);
+    } catch (error) {
+        Logger.error('Error in Ollama keep-alive:', error);
+    }
 }
 
 // Add function to update provider submenu
@@ -670,7 +737,7 @@ async function updateProviderSubmenu() {
                             }
                         });
                         tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(model, 44));
-                        
+
                         // If it's an Ollama model, ensure it's loaded
                         if (model.startsWith('ollama/')) {
                             const modelId = model.split('/')[1];
@@ -693,7 +760,7 @@ async function updateProviderSubmenu() {
                 label: 'LLM Models',
                 submenu: [
                     {
-                        label: 'Configure LLM Models',
+                        label: 'Switch LLM Model',
                         click: () => showSetupWizard()
                     },
                     { type: 'separator' },
@@ -896,9 +963,7 @@ function appSetupEventHandlers() {
 
     // Prevent app from closing when all windows are closed
     app.on('window-all-closed', () => {
-        if (process.platform !== 'darwin') {
-            app.quit();
-        }
+        app.quit();
     });
 
     // Handle app activation (e.g., clicking dock icon on macOS)
@@ -959,7 +1024,16 @@ function appSetupEventHandlers() {
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
         Logger.info('System theme changed:', theme);
         const iconStatus = windowManager && windowManager.currentState ? windowManager.currentState : 'inactive';
-        const iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
+
+        // Use platform-specific icon path
+        let iconPath;
+        if (process.platform === 'darwin') {
+            // On macOS, use template image regardless of theme change
+            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-Template.png`);
+        } else {
+            // On other platforms, update based on theme
+            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
+        }
 
         // Update tray icon
         if (tray && !tray.isDestroyed()) {
@@ -1040,7 +1114,7 @@ function appHandleCriticalError(error) {
     if (windowManager) {
         windowManager.cleanup();
     }
-    app.exit(1);
+    app.quit();
 }
 
 let isForceShutdown = false;
@@ -1056,7 +1130,7 @@ process.on('SIGINT', async () => {
     app.exit(0);
   } catch (err) {
     Logger.error('Forced shutdown failed:', err);
-    app.exit(1);
+    app.quit();
   }
 });
 
@@ -1076,5 +1150,5 @@ app.on('before-quit', async (event) => {
 // Initialize and start the application
 appInitialization().catch(err => {
     Logger.error('Failed to initialize app:', err);
-    app.exit(1);
+    app.quit();
 });

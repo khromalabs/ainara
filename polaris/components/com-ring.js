@@ -60,7 +60,7 @@ class ComRing extends BaseComponent {
             this.audioTimeouts = new Map();      // Store audio timeouts
 
             // Get pybridge API endpoint from config
-            this.pybridgeEndpoint = this.config.get('pybridge.api_url', 'http://localhost:5001');
+            this.pybridgeEndpoint = this.config.get('pybridge.api_url', 'http://127.0.0.1:8101');
             this.pybridgeEndpoints = {
                 chat: `${this.pybridgeEndpoint}/framework/chat`,
             };
@@ -233,7 +233,7 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     sttStatus.classList.remove('active2');
                     sttStatus.textContent = '';
-                }, 5000);
+                }, 8100);
             }
         });
 
@@ -738,7 +738,7 @@ class ComRing extends BaseComponent {
 
         // Keep the message visible by refreshing it periodically
         const refreshInterval = 1000; // 1 second
-        const totalDuration = 5000;   // 5 seconds total
+        const totalDuration = 8100;   // 5 seconds total
         const refreshCount = Math.floor(totalDuration / refreshInterval);
 
         // Use a single interval instead of multiple timeouts
@@ -878,7 +878,7 @@ class ComRing extends BaseComponent {
                             resolver();
                             this.animationResolvers.delete(messageId);
                         }
-                    }, 60000);
+                    }, 30000);
 
                     // Store timeout to clear it if animation completes
                     this.animationTimeouts.set(messageId, timeout);
@@ -931,7 +931,7 @@ class ComRing extends BaseComponent {
                     };
 
                     // Calculate timeout based on audio duration if available
-                    let timeoutDuration = 15000; // Default 15 seconds
+                    let timeoutDuration = 18100; // Default 15 seconds
                     if (nextMessage.audioDuration) {
                         // Add a buffer of 3 seconds to the actual duration
                         timeoutDuration = (nextMessage.audioDuration * 1000) + 3000;
@@ -1181,7 +1181,11 @@ class ComRing extends BaseComponent {
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
                         ringContainer.classList.add('loading');
                         // Show "Thinking..." message
-                        sttStatus.textContent = 'Thinking...';
+                        if (event.content?.type == "skill") {
+                            sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
+                        } else {
+                            sttStatus.textContent = 'Thinking...';
+                        }
                         sttStatus.classList.add('active');
                     } else if (event.content.state === 'stop') {
                         this.circle.classList.remove('loading');
