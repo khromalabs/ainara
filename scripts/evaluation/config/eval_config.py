@@ -24,59 +24,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-# Default LLM configurations for evaluation
-DEFAULT_LLM_CONFIGS = {
-    "gpt-3.5-turbo": {
-        "name": "gpt-3.5-turbo",
-        "provider": "litellm",
-        "model": "gpt-3.5-turbo",
-    },
-    "gpt-4": {
-        "name": "gpt-4",
-        "provider": "litellm",
-        "model": "gpt-4",
-    },
-    "claude-3-opus": {
-        "name": "claude-3-opus",
-        "provider": "litellm",
-        "model": "claude-3-opus-20240229",
-    },
-    "claude-3-sonnet": {
-        "name": "claude-3-sonnet",
-        "provider": "litellm",
-        "model": "claude-3-sonnet-20240229",
-    },
-    "claude-3-haiku": {
-        "name": "claude-3-haiku",
-        "provider": "litellm",
-        "model": "claude-3-haiku-20240307",
-    },
-    "llama-3-70b": {
-        "name": "llama-3-70b",
-        "provider": "litellm",
-        "model": "meta/llama-3-70b-instruct",
-    },
-    "llama-3-8b": {
-        "name": "llama-3-8b",
-        "provider": "litellm",
-        "model": "meta/llama-3-8b-instruct",
-    },
-    "mistral-large": {
-        "name": "mistral-large",
-        "provider": "litellm",
-        "model": "mistral/mistral-large-latest",
-    },
-    "mistral-medium": {
-        "name": "mistral-medium",
-        "provider": "litellm",
-        "model": "mistral/mistral-medium-latest",
-    },
-    "mistral-small": {
-        "name": "mistral-small",
-        "provider": "litellm",
-        "model": "mistral/mistral-small-latest",
-    },
-}
 
 # Default tests suites to run
 DEFAULT_TEST_SUITES = [
@@ -90,12 +37,7 @@ class EvaluationConfig:
     """Configuration for evaluation runs."""
 
     # LLM configurations to test
-    llm_configs: List[Dict] = field(
-        default_factory=lambda: [
-            DEFAULT_LLM_CONFIGS["gpt-3.5-turbo"],
-            DEFAULT_LLM_CONFIGS["gpt-4"],
-        ]
-    )
+    llm_configs: List[Dict] = field(default_factory=list)
 
     # Test suites to run
     tests: List[str] = field(default_factory=lambda: DEFAULT_TEST_SUITES)

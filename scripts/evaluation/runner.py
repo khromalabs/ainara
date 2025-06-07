@@ -28,17 +28,14 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-# from ainara.framework.config import ConfigManager
+from ainara.framework.config import config as ainara_config_manager
 from ainara.framework.llm import create_llm_backend
 from .evaluator import OrakleEvaluator
 from .metrics import calculate_aggregate_metrics
 from .report_generator import generate_report
-from .config.eval_config import (
-    DEFAULT_LLM_CONFIGS,
-    EvaluationConfig,
-)
+from .config.eval_config import EvaluationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +87,49 @@ def load_tests(test_names: List[str]) -> Dict:
     return suites
 
 
+def get_llm_configs_from_ainara_config() -> List[Dict[str, Any]]:
+    """Loads LLM configurations from Ainara's global config manager."""
+    formatted_llm_configs: List[Dict[str, Any]] = []
+    ainara_llm_config = ainara_config_manager.get("llm")
+
+    if not ainara_llm_config or "providers" not in ainara_llm_config:
+        logger.warning("No 'llm.providers' found in Ainara configuration.")
+        return []
+
+    providers_list = ainara_llm_config.get("providers", [])
+    if not isinstance(providers_list, list):
+        logger.warning("'llm.providers' is not a list in Ainara configuration.")
+        return []
+
+    default_provider_type = ainara_llm_config.get("selected_backend", "litellm")
+
+    for i, p_config in enumerate(providers_list):
+        if not isinstance(p_config, dict):
+            logger.warning(f"Skipping non-dictionary provider config at index {i}: {p_config}")
+            continue
+
+        model_identifier = p_config.get("model")
+        if not model_identifier:
+            logger.warning(f"Provider config at index {i} is missing 'model' key: {p_config}")
+            continue
+
+        llm_name = p_config.get("name", model_identifier)
+
+        final_config: Dict[str, Any] = {
+            "name": llm_name,
+            "provider": p_config.get("provider", default_provider_type),
+            **p_config, # Include all other keys from the provider config
+        }
+        formatted_llm_configs.append(final_config)
+
+    if not formatted_llm_configs:
+        logger.warning("No valid LLM provider configurations were extracted from Ainara config.")
+    return formatted_llm_configs
+
 def run_evaluation(
     config: Optional[EvaluationConfig] = None,
     llm_configs: Optional[List[Dict]] = None,
-    test: Optional[List[str]] = None,
+    tests: Optional[List[str]] = None,
     output_dir: Optional[str] = None,
 ) -> Dict:
     """
@@ -102,7 +138,7 @@ def run_evaluation(
     Args:
         config: Optional evaluation configuration object
         llm_configs: Optional list of LLM configurations to override config
-        test: Optional list of test suite names to override config
+        tests: Optional list of test suite names to override config
         output_dir: Optional directory for output files
 
     Returns:
@@ -117,10 +153,14 @@ def run_evaluation(
     # Override config if parameters provided
     if llm_configs is not None:
         config.llm_configs = llm_configs
-    if test is not None:
-        config.test = test
+    if tests is not None:
+        config.tests = tests
     if output_dir is not None:
         config.output_dir = output_dir
+
+    if not config.llm_configs:
+        logger.error("No LLM configurations specified for evaluation. Aborting.")
+        return {"error": "No LLM configurations specified"}
 
     # Ensure output directory exists
     os.makedirs(config.output_dir, exist_ok=True)
@@ -231,43 +271,58 @@ def main():
     """Main entry point for running evaluations from command line."""
     args = parse_args()
 
-    # Load config from file if specified
-    config = None
+    # Load Ainara's main configuration first
+    ainara_config_manager.load_config() # Ensures it's loaded if not already
+
+    # Load base evaluation config from file if specified
+    eval_config_obj: EvaluationConfig
     if args.config:
         with open(args.config, "r") as f:
             config_dict = json.load(f)
-            config = EvaluationConfig.from_dict(config_dict)
+            eval_config_obj = EvaluationConfig.from_dict(config_dict)
     else:
-        config = EvaluationConfig()
+        eval_config_obj = EvaluationConfig() # Starts with empty llm_configs
 
     # Override with command line arguments
+    # Determine LLM configurations
     if args.llm:
-        # Convert LLM names to configs
-        llm_configs = []
+        all_ainara_llms = get_llm_configs_from_ainara_config()
+        selected_llm_configs = []
         for llm_name in args.llm:
-            # Check if it's a predefined config
-            if llm_name in DEFAULT_LLM_CONFIGS:
-                llm_configs.append(DEFAULT_LLM_CONFIGS[llm_name])
+            found_config = next(
+                (c for c in all_ainara_llms if c.get("name") == llm_name or c.get("model") == llm_name), None
+            )
+            if found_config:
+                selected_llm_configs.append(found_config)
             else:
-                # Assume it's a model name for the default provider
-                llm_configs.append({
+                # Fallback: if not in Ainara config, assume it's a direct model name for the default provider
+                logger.warning(
+                    f"LLM '{llm_name}' not found in Ainara config. Assuming direct model name "
+                    f"for provider '{ainara_config_manager.get('llm.selected_backend', 'litellm')}'."
+                )
+                selected_llm_configs.append({
                     "name": llm_name,
-                    "provider": "litellm",
+                    "provider": ainara_config_manager.get("llm.selected_backend", "litellm"),
                     "model": llm_name,
                 })
-        config.llm_configs = llm_configs
+        eval_config_obj.llm_configs = selected_llm_configs
+    elif not eval_config_obj.llm_configs: # Only if not set by eval config file and no --llm args
+        # No specific LLMs requested via CLI or eval config file, use all from Ainara config
+        eval_config_obj.llm_configs = get_llm_configs_from_ainara_config()
+
+    if not eval_config_obj.llm_configs:
+        logger.error("No LLM configurations to evaluate. Check Ainara config, evaluation config file, or --llm arguments. Aborting.")
+        return
 
     if args.suite:
-        config.test = args.suite
-
+        eval_config_obj.tests = args.suite # Note: EvaluationConfig uses 'tests'
     if args.output_dir:
-        config.output_dir = args.output_dir
-
+        eval_config_obj.output_dir = args.output_dir
     if args.log_level:
-        config.log_level = args.log_level
+        eval_config_obj.log_level = args.log_level
 
     # Run evaluation
-    run_evaluation(config)
+    run_evaluation(config=eval_config_obj)
 
 
 if __name__ == "__main__":

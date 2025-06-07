@@ -31,15 +31,25 @@ from .base import LLMBackend
 class LiteLLM(LLMBackend):
     """LiteLLM implementation of LLM backend"""
 
-    def __init__(self):
-        self.config = ConfigManager()
-        super().__init__(self.config)
+    def __init__(self, provider_config: dict = None):
+        self.global_config = ConfigManager() # For fallback or general settings
+        super().__init__(self.global_config) # Base class might need global config
         self.completion = completion
         self.acompletion = acompletion
+
         try:
-            self.provider = self.initialize_provider()
+            if provider_config and "model" in provider_config:
+                # If a specific provider_config is given (e.g., from evaluator), use it directly
+                self.logger.info(f"Initializing LiteLLM with specific provider config: {provider_config.get('name', provider_config.get('model'))}")
+                # Ensure all necessary keys are present, potentially merging with some defaults if needed.
+                # The provider_config should already contain model, api_base, api_key etc.
+                self.provider = {**provider_config} # Make a copy
+                if not self.provider.get("model"):
+                    raise ValueError("Model not specified in provider_config")
+            else:
+                # Fallback to old behavior if no specific config is given (e.g., for normal app use)
+                self.provider = self.initialize_provider(config=self.global_config)
         except Exception as e:
-            # Create a placeholder provider that's invisible to the external world
             self.provider = {"_placeholder": True, "model": "gpt-3.5-turbo"}
             self.logger.warning(
                 "No LLM providers configured. Creating placeholder provider"
@@ -181,16 +191,16 @@ class LiteLLM(LLMBackend):
 
         self.logger.info("initialize_provider")
 
-        config = config or self.config
+        current_config = config or self.global_config
 
         # Try each provider until we find one that works
-        for p in config.get("llm.providers", {}):
-            config_selected_provider = config.get("llm.selected_provider")
+        for p_conf in current_config.get("llm.providers", []): # Ensure it's a list
+            config_selected_provider = current_config.get("llm.selected_provider")
             # Check if this is the selected provider
-            if config_selected_provider == p.get("model"):
-                provider.update(p)
+            if config_selected_provider == p_conf.get("model") or config_selected_provider == p_conf.get("name"):
+                provider.update(p_conf)
                 self.logger.info(
-                    f"Using selected LLM provider: {p.get('model', 'unknown')}"
+                    f"Using selected LLM provider: {p_conf.get('name', p_conf.get('model', 'unknown'))}"
                 )
                 return provider
 
