@@ -15,21 +15,21 @@ Based on the user's request and the detailed skill descriptions provided above:
 1.  **Choose the single BEST skill** from the candidates that most accurately fulfills the user's request. PAY CLOSE ATTENTION to the skill description and carefully select the most appropiate skill for the user request.
 2.  **Extract the necessary parameters** for the chosen skill from the user's request ("{{query}}"), following the parameter specifications listed in that skill's description.
 3.  NEVER add a parameter which is not present in the parameter specifications. If a potentially required parameter to fulfill the user's request is not present, simply discard that skill as a possible candidate. All the possible paramers will always be present in the parameter specifications.
-4.  Only add parameters identified as optional if are REALLY required to fulfill the user's request.
-5.  Format the output STRICTLY as a JSON object containing ONLY the chosen `skill_id` (string) and the extracted `parameters` (object).
-6. Add a natural-sounding phrase that a helpful assistant would say before performing the requested action. This should:
+4.  Only add parameters identified as optional if they are REALLY required to fulfill the user's request.
+5.  Format your output as a single, complete JSON object. This JSON object MUST include the following top-level keys: `skill_id` (string), `parameters` (object), `skill_intention` (string), `frustration_level` (float), and `frustration_reason` (string or null). The specific content for these keys should be determined by following instructions 1-4, 6, and 7.
+6. For the `skill_intention` key in the JSON object (defined in point 5), provide a phrase that a helpful assistant would say before performing the requested action. This should:
     - Be conversational and human-like (e.g., "Let me check that for you" rather than "Processing request")
     - Briefly indicate what you're about to do without technical jargon
     - Vary your phrasing (don't always start with "I'm checking" or "I'm looking")
     - Match the tone of the user's request (casual, urgent, curious, etc.)
     - Be concise (1-2 short sentences maximum)
     Examples:
-    - For calculator: "Let me calculate that for you" or "Working out that equation now"
-    - For file search: "Searching through your files now" or "I'll find that document for you"
-    - For weather: "Checking the current forecast" or "Let me see what the weather's doing"
-7. **Assess User Frustration**: Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
-    - Include a `frustration_level` field in the JSON output: a float from 0.0 (no frustration) to 1.0 (high frustration).
-    - Include a `frustration_reason` field: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
+    - For calculator: `skill_intention: "Let me calculate that for you."` or `"Working out that equation now."`
+    - For file search: `skill_intention: "Searching through your files now."` or `"I'll find that document for you."`
+    - For weather: `skill_intention: "Checking the current forecast."` or `"Let me see what the weather's doing."`
+7. **Assess User Frustration** to populate the `frustration_level` and `frustration_reason` keys in the JSON object (defined in point 5): Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
+    - The `frustration_level` key should contain: a float from 0.0 (no frustration) to 1.0 (high frustration).
+    - The `frustration_reason` key should contain: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
 
 
 Example Output Format:
@@ -56,3 +56,6 @@ Another Example:
 }
 
 Ensure the output contains ONLY the JSON object, with no explanations, comments, backticks, or any other text before or after it. Use double quotes for all keys and string values within the JSON. For empty or null values, just use `null`.
+Your entire response MUST consist SOLELY of this JSON object.
+
+DON'T provide any comments appart from the JSON object.
