@@ -49,11 +49,16 @@ class CapabilitiesManager:
 
         # Initialize MCP Client Manager (if available and configured)
         if MCP_AVAILABLE and self.internet_available:
-            mcp_config_section = self.config.get("mcp_clients", None)
-            if mcp_config_section and isinstance(mcp_config_section, list) and len(mcp_config_section) > 0:
-                logger.info("MCP SDK available, internet connected, and 'mcp_clients' configured. Initializing MCP Client Manager...")
+            # Expect mcp_clients to be a dictionary directly
+            mcp_clients_config = self.config.get("mcp_clients", None)
+            if mcp_clients_config and isinstance(mcp_clients_config, dict) and len(mcp_clients_config) > 0:
+                logger.info(
+                    "MCP SDK available, internet connected, and 'mcp_clients' (dictionary) configured. "
+                    f"Found {len(mcp_clients_config)} client(s). Initializing MCP Client Manager..."
+                )
                 try:
-                    self.mcp_client_manager = MCPClientManager(mcp_config_section)
+                    # Pass the dictionary directly to MCPClientManager
+                    self.mcp_client_manager = MCPClientManager(mcp_clients_config)
                     # Register shutdown hook for MCP cleanup
                     atexit.register(self.shutdown_mcp)
                     logger.info("Registered MCP shutdown hook.")
@@ -62,7 +67,7 @@ class CapabilitiesManager:
                     self.mcp_client_manager = None # Ensure it's None on failure
             else:
                 logger.info(
-                    "MCP SDK available and internet connected, but 'mcp_clients' section in config is missing, empty, or not a list. Skipping MCP initialization."
+                    "MCP SDK available and internet connected, but 'mcp_clients' section in config is missing, empty, or not a dictionary. Skipping MCP initialization."
                 )
         elif MCP_AVAILABLE and not self.internet_available:
             logger.warning(
