@@ -24,6 +24,7 @@ package_data_entries = [
         'model_prices_and_context_window_backup.json'
     ]),
     ('en_core_web_sm', ['.']),
+    ('newspaper', ['.']),
 ]
 
 # Generate datas array from package data directories
@@ -136,6 +137,7 @@ common_imports = [
     'googleapiclient',
     'googleapiclient.discovery',
     'tiktoken',
+	'newspaper',
 
     # ML/AI related
     'transformers',
