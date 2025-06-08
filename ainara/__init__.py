@@ -18,4 +18,4 @@
 
 
 __version__ = "0.5.4"
-__version_info__ = (0, 5, 3)
+__version_info__ = (0, 5, 4)
