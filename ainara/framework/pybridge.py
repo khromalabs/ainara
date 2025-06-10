@@ -46,7 +46,6 @@ from ainara.framework.dependency_checker import DependencyChecker
 # --- Global instances ---
 config = ConfigManager()
 config.load_config()
-llm = create_llm_backend(config.get("llm", {}))
 
 
 def cleanup_audio_directory(static_folder: str) -> None:
@@ -137,6 +136,9 @@ def parse_args():
 
 
 def create_app():
+
+    llm = create_llm_backend(config.get("llm", {}))
+    app.llm = llm
 
     # Get audio buffer size from config
     AUDIO_BUFFER_SIZE_MB = config.get("audio.buffer_size_mb", 10)
@@ -240,7 +242,7 @@ def create_app():
 
     # Create chat_manager as app attribute so it's accessible to all routes
     app.chat_manager = ChatManager(
-        llm=llm,
+        llm=app.llm,
         tts=tts,
         flask_app=app,
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
@@ -266,7 +268,7 @@ def create_app():
                 "config_manager": config is not None,
                 "logging": logging_manager is not None,
             },
-            "dependencies": {"llm_available": llm is not None},
+            "dependencies": {"llm_available": app.llm is not None},
         }
 
         # Only include storage check if memory is enabled
@@ -334,6 +336,7 @@ def create_app():
             # # logger.info(f"new configuration: {pprint.pformat(data)}")
 
             new_llm = create_llm_backend(config.get("llm", {}))
+            app.llm = new_llm
             app.chat_manager.llm = new_llm
 
             return jsonify({"success": True})
@@ -696,7 +699,7 @@ def create_app():
                 f" {filter_models if filter_models else 'None'}"
             )
 
-            providers = llm.get_available_providers()
+            providers = app.llm.get_available_providers()
             # logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
 
             # Format the response
@@ -864,7 +867,7 @@ def create_app():
             api_base = data.get("api_base", None)  # Optional
 
             # Create a temporary provider config for the LLM backend
-            normalized_model = llm.normalize_model_name(model, provider)
+            normalized_model = app.llm.normalize_model_name(model, provider)
 
             logger.info(
                 f"Testing LLM connection for model: provider: {provider} "
@@ -885,7 +888,7 @@ def create_app():
                 " greeting."
             )
             try:
-                response = llm.chat(
+                response = app.llm.chat(
                     chat_history=[
                         {
                             "role": "system",

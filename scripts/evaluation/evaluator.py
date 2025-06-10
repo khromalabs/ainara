@@ -163,12 +163,18 @@ class OrakleEvaluator:
         )
 
         # Get LLM response
-        selection_response = self.llm.chat(
+        chat_result = self.llm.chat(
             chat_history=self.llm.prepare_chat(
                 system_message=self.system_message, new_message=prompt
             ),
             stream=False,
         )
+
+        # Handle both tuple and string returns
+        if isinstance(chat_result, tuple):
+            selection_response = chat_result[0]
+        else:
+            selection_response = chat_result
 
         selection_duration = time.time() - selection_start
 
@@ -256,13 +262,19 @@ class OrakleEvaluator:
             )
 
             # Get interpretation
-            interpretation = self.llm.chat(
+            chat_result = self.llm.chat(
                 chat_history=self.llm.prepare_chat(
                     system_message=self.system_message,
                     new_message=interpretation_prompt,
                 ),
                 stream=False,
             )
+
+            # Handle both tuple and string returns
+            if isinstance(chat_result, tuple):
+                interpretation = chat_result[0]
+            else:
+                interpretation = chat_result
 
             interpretation_duration = time.time() - interpretation_start
 

@@ -18,7 +18,7 @@
 
 import json
 import os
-from typing import Generator, List, Union
+from typing import Generator, List, Optional, Tuple, Union
 
 import pkg_resources
 from litellm import acompletion, completion, get_max_tokens, token_counter
@@ -206,14 +206,6 @@ class LiteLLM(LLMBackend):
 
         raise RuntimeError("No working LLM providers found")
 
-    def prepare_chat(
-        self, system_message: str, new_message: str
-    ) -> List[dict]:
-        """Format chat message for LLM processing"""
-        messages = [{"role": "system", "content": system_message}]
-        messages.append({"role": "user", "content": new_message})
-        return messages
-
     def _get_token_count(self, text: str, role: str) -> int:
         """Get accurate token count using LiteLLM"""
         if not text:
@@ -244,7 +236,7 @@ class LiteLLM(LLMBackend):
         chat_history: list = None,
         stream: bool = False,
         provider: dict = None,
-    ) -> Union[str, Generator]:
+    ) -> Union[Tuple[str, Optional[str]], Generator]:
         """Process text using LiteLLM"""
         # Check if we're using the placeholder provider
         if not provider and self.provider.get("_placeholder", False):
@@ -301,7 +293,7 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response)
+                    return self._handle_normal_response(response), None
 
             except Exception as e:
                 self.logger.error(f"LiteLLM completion error: {str(e)}")
@@ -338,7 +330,7 @@ class LiteLLM(LLMBackend):
         chat_history: list = None,
         stream: bool = False,
         provider: dict = None,
-    ) -> Union[str, Generator]:
+    ) -> Union[Tuple[str, Optional[str]], Generator]:
         """Process text using LiteLLM (async version)"""
         # Check if we're using the placeholder provider
         if not provider and self.provider.get("_placeholder", False):
@@ -414,7 +406,7 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response)
+                    return self._handle_normal_response(response), None
 
             except Exception as e:
                 self.logger.error(f"LiteLLM async completion error: {str(e)}")
