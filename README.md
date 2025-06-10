@@ -1,4 +1,4 @@
-# Ainara AI Assistant Framework
+# Ainara AI Companion Framework
 
 ![Ainara logo](./assets/ainara_logo.png)
 
@@ -6,7 +6,7 @@
 
 
 
-Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
+Ainara is a (work-in-progress) modular AI companion framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
 
 It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools can be both locally in the user's system, using the Orakle server approach developed by this project, or be accessed remotelly. For this purpose Ainara is compatible now with the MCP protocol as well. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
 
@@ -16,11 +16,8 @@ All interaction data will remain private on the user's system.
 
 ## Demonstration video
 
-UPDATE February 24th, 2025: This is the 7th video in my series featuring Ainara, and the 2nd featuring the desktop client, Polaris. It showcases a new local file search skill, a minimalistic typing functionality, and, behind the scenes, a new LLM-based skill matcher that is much more effective at determining user intent.
-
-An important aspect to highlight in this video: I'm not using any commercial LLM backend, but rather running llama.cpp with a 5-bit quantized version of Qwen 2.5 14B on my own server, which features a 'humble' NVidia RTX 3060 card. I'm quite impressed by how well it understands the instructions to interact with my local Orakle server, as demonstrated in this video.
-
-[![Watch the video](https://img.youtube.com/vi/mBimxZjGlWM/0.jpg)](https://www.youtube.com/watch?v=mBimxZjGlWM)
+UPDATE July 24th, 2025: This is the 13th video in my series featuring Ainara. This time is featuring a cloud LLM model, Grok 3 mini provided by xAI. The video shows the full process of installing, configuring Ainara and then a short demo showing the capabilities of Ainara detecting the user intention and applying the corresponding skills (or tools). MCP is now integrated in Ainara that allows to integrate external services in the AI like Google Maps, like is featured in this video.   
+[![Watch the video](https://img.youtube.com/vi/2rtOBR7hyzw/0.jpg)](https://www.youtube.com/watch?v=2rtOBR7hyzw)
 
 ## Components
 
