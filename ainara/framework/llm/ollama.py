@@ -215,7 +215,7 @@ class OllamaLLM(LLMBackend):
         chat_history: List[Dict],
         stream: bool = True,
         provider: Optional[Dict] = None,
-    ) -> Union[Tuple[str, Optional[str]], Generator[str, None, None]]:
+    ) -> Union[str, Generator[str, None, None]]:
         messages = self._prepare_messages_for_ollama(chat_history)
 
         logger.info(
@@ -258,7 +258,7 @@ class OllamaLLM(LLMBackend):
                 content = message.get("content", "")
                 thinking = message.get("thinking")
                 logger.debug(f"Ollama thinking content: {thinking}")
-                # return content, thinking
+                # thinking is not returned anymore
                 return content
 
         except ollama.ResponseError as e:
@@ -277,7 +277,7 @@ class OllamaLLM(LLMBackend):
         chat_history: List[Dict],
         stream: bool = True,
         provider: Optional[Dict] = None,
-    ) -> Union[Tuple[str, Optional[str]], AsyncGenerator[str, None]]:
+    ) -> Union[str, AsyncGenerator[str, None]]:
         messages = self._prepare_messages_for_ollama(chat_history)
 
         logger.info(
@@ -323,7 +323,7 @@ class OllamaLLM(LLMBackend):
                 content = message.get("content", "")
                 thinking = message.get("thinking")
                 logger.debug(f"Ollama async thinking content: {thinking}")
-                # return content, thinking
+                # thinking is not returned anymore
                 return content
 
         except ollama.ResponseError as e:

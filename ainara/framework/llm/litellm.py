@@ -236,7 +236,7 @@ class LiteLLM(LLMBackend):
         chat_history: list = None,
         stream: bool = False,
         provider: dict = None,
-    ) -> Union[Tuple[str, Optional[str]], Generator]:
+    ) -> Union[str, Generator]:
         """Process text using LiteLLM"""
         # Check if we're using the placeholder provider
         if not provider and self.provider.get("_placeholder", False):
@@ -293,7 +293,7 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response), None
+                    return self._handle_normal_response(response)
 
             except Exception as e:
                 self.logger.error(f"LiteLLM completion error: {str(e)}")
@@ -330,7 +330,7 @@ class LiteLLM(LLMBackend):
         chat_history: list = None,
         stream: bool = False,
         provider: dict = None,
-    ) -> Union[Tuple[str, Optional[str]], Generator]:
+    ) -> Union[str, Generator]:
         """Process text using LiteLLM (async version)"""
         # Check if we're using the placeholder provider
         if not provider and self.provider.get("_placeholder", False):
@@ -406,7 +406,7 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response), None
+                    return self._handle_normal_response(response)
 
             except Exception as e:
                 self.logger.error(f"LiteLLM async completion error: {str(e)}")
