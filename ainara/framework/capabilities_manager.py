@@ -31,7 +31,8 @@ from typing import (Annotated, Any, Dict, Optional, get_args, get_origin,
 from flask import jsonify, request
 
 # Import the new manager and related types
-from .mcp_client_manager import MCP_AVAILABLE, MCPClientManager, MCPTool
+from ainara.framework.mcp.client_manager import MCPClientManager
+from ainara.framework.mcp.tool import MCPTool
 
 logger = logging.getLogger(__name__)  # Use module-level logger
 
@@ -48,7 +49,7 @@ class CapabilitiesManager:
         self.mcp_client_manager = None
 
         # Initialize MCP Client Manager (if available and configured)
-        if MCP_AVAILABLE and self.internet_available:
+        if self.internet_available:
             # Expect mcp_clients to be a dictionary directly
             mcp_clients_config = self.config.get("mcp_clients", None)
             if mcp_clients_config and isinstance(mcp_clients_config, dict) and len(mcp_clients_config) > 0:
@@ -64,12 +65,12 @@ class CapabilitiesManager:
                     logger.info("Registered MCP shutdown hook.")
                 except Exception as e:
                     logger.error(f"Failed to initialize MCPClientManager: {e}", exc_info=True)
-                    self.mcp_client_manager = None # Ensure it's None on failure
+                    self.mcp_client_manager = None  # Ensure it's None on failure
             else:
                 logger.info(
                     "MCP SDK available and internet connected, but 'mcp_clients' section in config is missing, empty, or not a dictionary. Skipping MCP initialization."
                 )
-        elif MCP_AVAILABLE and not self.internet_available:
+        elif not self.internet_available:
             logger.warning(
                 "MCP SDK is available, but no internet connection detected at startup. Skipping MCP Client Manager initialization."
             )

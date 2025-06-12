@@ -28,8 +28,6 @@ from flask_cors import CORS
 from ainara.framework.capabilities_manager import CapabilitiesManager
 from ainara.framework.config import config  # Use the global config instance
 from ainara.framework.logging_setup import logging_manager
-from ainara.framework.mcp_client_manager import \
-    MCP_AVAILABLE  # Check MCP availability
 from ainara.orakle import __version__
 
 
@@ -108,7 +106,6 @@ def health_check():
             "logging": logging_manager is not None,
         },
         "dependencies": {
-            "mcp_sdk_available": MCP_AVAILABLE,
         },
     }
 
@@ -238,7 +235,7 @@ if __name__ == "__main__":
     logger.info(f"Internet connection available at startup: {is_online}")
 
     logger.info(f"Starting Orakle development server on port {args.port}")
-    logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
+    # logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
 
     # Set up profiling if enabled (needs to be before create_app if it profiles app creation)
     if args.profile:

@@ -15,7 +15,6 @@ lxml_html_clean==0.4.1
 mcp[cli]>=1.7.1
 newsapi_python==0.2.7
 newspaper3k==0.2.8
-nltk==3.9.1
 normalise==0.1.8
 numpy==2.2.4
 prompt_toolkit==3.0.50
