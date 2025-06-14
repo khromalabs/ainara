@@ -69,6 +69,9 @@ class ComRing extends BaseComponent {
             this.isProcessingUserMessage = false;
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
+            this.currentView = 'ring';
+            this.docFormat = 'text';
+
             this.state = {
                 keyPressed: false,
                 isRecording: false,
@@ -128,6 +131,11 @@ class ComRing extends BaseComponent {
                 this.shadowRoot.querySelector('.inner-circle'),
                 'inner-circle element not found'
             );
+            this.ringContainer = this.assert(
+                this.shadowRoot.querySelector('.ring-container'),
+                'ring-container element not found'
+            );
+            this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
 
             this.audioContext = null;
             this.mediaStream = null;
@@ -328,6 +336,15 @@ class ComRing extends BaseComponent {
         // Debug keyboard events
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
+            if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
+                console.log('Escape in document view: switching back to ring view.');
+                this.switchToRingView();
+                this.abortLLMResponse();
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
             if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
 ;
                 console.log("EVENT ESCAPE");
@@ -763,6 +780,22 @@ class ComRing extends BaseComponent {
         }, refreshInterval);
     }
 
+    switchToDocumentView(format) {
+        this.currentView = 'document';
+        this.docFormat = format;
+        ipcRenderer.send('set-view-mode', { view: 'document' });
+        this.ringContainer.style.display = 'none';
+        this.documentView.show();
+    }
+
+    switchToRingView() {
+        this.currentView = 'ring';
+        ipcRenderer.send('set-view-mode', { view: 'ring' });
+        this.ringContainer.style.display = 'flex';
+        this.documentView.hide();
+        this.documentView.clear(); // Clear all documents and reset state
+    }
+
     abortLLMResponse() {
         console.log('Aborting LLM response');
 
@@ -793,6 +826,11 @@ class ComRing extends BaseComponent {
             this.currentAudio.pause();
             this.currentAudio.src = '';
             this.currentAudio = null;
+        }
+
+        // If in document view, switch back to ring view
+        if (this.currentView === 'document') {
+            this.switchToRingView();
         }
 
         // Reset visual states
@@ -1208,6 +1246,22 @@ class ComRing extends BaseComponent {
                 if (event.type === 'signal') {
                     await this.showError(event.content.message);
                     ipcRenderer.send('chat-error', event.content.message);
+                }
+                break;
+
+            case 'setView':
+                if (event.type === 'ui' && event.content.view === 'document') {
+                    this.switchToDocumentView(event.content.format);
+                }
+                break;
+
+            case 'full':
+                if (event.type === 'content') {
+                    if (this.currentView === 'document') {
+                        this.documentView.addDocument(event.content.content, this.docFormat);
+                    } else {
+                        console.warn('Received full content but not in document view. Ignoring.');
+                    }
                 }
                 break;
         }

@@ -69,12 +69,47 @@ class ComRingWindow extends BaseWindow {
         this.manager = manager; // Store reference to window manager
         this.loadContent('./components/com-ring.html');
         this.setupEventHandlers();
+        this.originalSize = [windowWidth, windowHeight];
+        this.originalPosition = [options.x, options.y];
     }
 
     setupEventHandlers() {
         super.setupBaseEventHandlers();
 
         const { ipcMain } = require('electron');
+
+        ipcMain.on('set-view-mode', (event, args) => {
+            if (args.view === 'document') {
+                const docWidth = this.config.get('documentView.width', 800);
+                const docHeight = this.config.get('documentView.height', 600);
+
+                // Store current position before resizing
+                const [currentX, currentY] = this.window.getPosition();
+                this.originalPosition = [currentX, currentY];
+
+                this.window.setResizable(true);
+                this.window.setMinimumSize(400, 300);
+                this.window.setSize(docWidth, docHeight, true); // Animate
+                this.window.center();
+                this.window.setOpacity(1.0);
+                this.window.setBackgroundColor('#1e1e1e');
+
+            } else if (args.view === 'ring') {
+                // Restore original size and position
+                const [originalWidth, originalHeight] = this.originalSize;
+
+                this.window.setMinimumSize(originalWidth, originalHeight);
+                this.window.setSize(originalWidth, originalHeight, true); // Animate
+                this.window.setPosition(this.originalPosition[0], this.originalPosition[1], true);
+                this.window.setResizable(false);
+                this.window.setOpacity(1.0); // Keep it opaque during transition
+
+                // After a short delay, make it transparent again
+                setTimeout(() => {
+                    this.window.setBackgroundColor('#00000000'); // Transparent
+                }, 300); // Corresponds to transition time
+            }
+        });
 
         ipcMain.on('com-ring-focus', () => {
             this.window.focus();

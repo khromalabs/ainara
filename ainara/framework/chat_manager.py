@@ -360,6 +360,16 @@ class ChatManager:
         if not text.strip():
             return
 
+        # Handle non-TTS streaming directly to avoid sentence splitting logic
+        if not self.tts:
+            if stream_type == "json":
+                event_data = {"content": text, "flags": {"command": False, "audio": False}}
+                yield ndjson("message", "stream", event_data)
+                return
+            elif stream_type == "cli":
+                print(text, end="", flush=True)
+                return
+
         # Use the extracted method to split text into chunks
         chunks = self._split_text_into_chunks(text)
 
@@ -772,6 +782,9 @@ class ChatManager:
 
             processed_answer = ""
             text_buffer = ""
+            parsing_mode = "text"  # 'text' or 'doc'
+            doc_buffer = ""
+            doc_format = "plaintext"
 
             # Process the stream through the Orakle middleware
             # This now handles command execution and interpretation internally
@@ -782,49 +795,68 @@ class ChatManager:
                     continue
 
                 processed_answer += chunk
-                text_buffer += chunk
 
-                # Process complete sentences for immediate TTS
-                if self.tts:
-                    sentences = self._extract_complete_sentences(text_buffer)
-                    # if len(sentences) > 0:
-                    #     logger.info(" --- SENTENCES --- ")
-                    #     logger.info(pprint.pformat(sentences))
-                    if stream == "cli":
-                        loading.stop()
-                    elif stream == "json":
-                        yield ndjson("signal", "loading", {"state": "stop"})
-                    for sentence in sentences:
-                        if stream == "json":
-                            yield from self._process_streaming_sentence(
-                                sentence, stream
-                            )
-                        else:
-                            # For CLI mode, just process without collecting events
-                            for _ in self._process_streaming_sentence(
-                                sentence, stream
-                            ):
-                                pass
+                # Route chunk to the correct buffer based on current parsing mode
+                if parsing_mode == "doc":
+                    doc_buffer += chunk
+                else:
+                    text_buffer += chunk
 
-                    # Keep any incomplete sentence in the buffer
-                    if sentences:
-                        last_sentence = sentences[-1]
-                        last_pos = text_buffer.rfind(last_sentence) + len(
-                            last_sentence
-                        )
-                        text_buffer = text_buffer[last_pos:].strip()
-                elif stream == "cli":
-                    # For CLI without TTS, print directly
-                    print(chunk, end="", flush=True)
+                # --- State Machine for Parsing ---
+                # Loop to handle multiple state transitions within a single chunk (e.g., <doc>...</doc>)
+                while True:
+                    state_changed = False
+                    if parsing_mode == "text":
+                        doc_start_match = re.search(r'<doc format="([\w\d_.-]+)">', text_buffer)
+                        if doc_start_match:
+                            pre_doc_text = text_buffer[:doc_start_match.start()]
+                            if pre_doc_text.strip():
+                                yield from self._process_regular_text(pre_doc_text, stream)
+
+                            doc_format = doc_start_match.group(1)
+                            if stream == "json":
+                                yield ndjson("ui", "setView", {"view": "document", "format": doc_format})
+
+                            parsing_mode = "doc"
+                            doc_buffer = text_buffer[doc_start_match.end():]
+                            text_buffer = ""
+                            state_changed = True
+
+                    elif parsing_mode == "doc":
+                        doc_end_match = re.search(r'</doc>', doc_buffer)
+                        if doc_end_match:
+                            doc_content = doc_buffer[:doc_end_match.start()]
+                            if stream == "json":
+                                yield ndjson("content", "full", {"content": doc_content})
+
+                            parsing_mode = "text"
+                            text_buffer = doc_buffer[doc_end_match.end():]
+                            doc_buffer = ""
+                            state_changed = True
+
+                    if not state_changed:
+                        break
+
+                # --- Regular Text Processing ---
+                if parsing_mode == "text" and text_buffer:
+                    if self.tts:
+                        sentences = self._extract_complete_sentences(text_buffer)
+                        if sentences:
+                            if stream == "cli": loading.stop()
+                            elif stream == "json": yield ndjson("signal", "loading", {"state": "stop"})
+                            for sentence in sentences:
+                                yield from self._process_streaming_sentence(sentence, stream)
+
+                            last_sentence = sentences[-1]
+                            last_pos = text_buffer.rfind(last_sentence) + len(last_sentence)
+                            text_buffer = text_buffer[last_pos:].strip()
+                    elif text_buffer: # Non-TTS streaming
+                        print(text_buffer, end="", flush=True) if stream == "cli" else None
+                        text_buffer = ""
 
             # Process any remaining text in the buffer
-            if text_buffer and self.tts:
-                if stream == "json":
-                    yield from self._process_regular_text(text_buffer, stream)
-                else:
-                    # For CLI mode, just process without collecting events
-                    for _ in self._process_regular_text(text_buffer, stream):
-                        pass
+            if text_buffer.strip():
+                yield from self._process_regular_text(text_buffer, stream)
 
         except Exception as e:
             if loading:
