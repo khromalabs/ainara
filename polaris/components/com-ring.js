@@ -234,7 +234,7 @@ class ComRing extends BaseComponent {
             if (this.isWindowVisible) {
                 // Show provider change notification
                 const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                sttStatus.innerHTML = `Switched LLM model to:<br>${truncateMiddle(providerName, 44)}`;
+                sttStatus.innerHTML = `Switched LLM model to:<br><i>${truncateMiddle(providerName, 44)}</i>`;
                 sttStatus.classList.add('active2');
 
                 // Hide the message after 3 seconds
@@ -700,7 +700,8 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
-            await this.showError(event.content.message + " " + error);
+            // await this.showError(event.content.message + " " + error);
+            await this.showError(error);
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
@@ -1164,7 +1165,7 @@ class ComRing extends BaseComponent {
                             // Store the audio duration if available in the content
                             const audioDuration = content.flags.duration || null;
 
-                            console.log(JSON.stringify(content));
+                            // console.log(JSON.stringify(content));
 
                             // Add to message queue with audio
                             this.messageQueue.push({
@@ -1256,6 +1257,7 @@ class ComRing extends BaseComponent {
                 break;
 
             case 'full':
+                // console.log(JSON.stringify(event));
                 if (event.type === 'content') {
                     if (this.currentView === 'document') {
                         this.documentView.addDocument(event.content.content, this.docFormat);

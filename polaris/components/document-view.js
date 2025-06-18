@@ -1,5 +1,5 @@
-const BaseComponent = require('./base');
-
+/* global BaseComponent */
+/* eslint no-undef: "error" */
 class DocumentView extends BaseComponent {
     constructor() {
         super();
@@ -31,7 +31,7 @@ class DocumentView extends BaseComponent {
             this.showError(error);
         }
     }
-    
+
     addDocument(content, format = 'text') {
         this.documents.push({ content, format });
         this.currentIndex = this.documents.length - 1;

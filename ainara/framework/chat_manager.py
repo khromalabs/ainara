@@ -33,12 +33,12 @@ from typing import Any, Generator, List, Literal, Optional, Union
 from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.utils import load_spacy_model
 from ainara.framework.config import config
 from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
+from ainara.framework.utils import load_spacy_model
 
 # import pprint
 
@@ -291,7 +291,11 @@ class ChatManager:
                     try:
                         # Use spaCy to split the paragraph into sentences
                         doc = self.nlp(paragraph)
-                        paragraph_sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+                        paragraph_sentences = [
+                            sent.text.strip()
+                            for sent in doc.sents
+                            if sent.text.strip()
+                        ]
                         sentences.extend(paragraph_sentences)
                     except Exception as e:
                         logger.error(f"spaCy sentence tokenization error: {e}")
@@ -318,8 +322,16 @@ class ChatManager:
         if "_orakle_loading_signal_" in sentence:
             logger.info(f"PROCESSING: '{sentence}'")
             split_sentence = sentence.split("|")
-            skill_id = split_sentence[1].strip("\n") if len(split_sentence) > 1 else "skill_id"
-            yield ndjson("signal", "loading", {"state": "start", "type": "skill", "skill_id": skill_id})
+            skill_id = (
+                split_sentence[1].strip("\n")
+                if len(split_sentence) > 1
+                else "skill_id"
+            )
+            yield ndjson(
+                "signal",
+                "loading",
+                {"state": "start", "type": "skill", "skill_id": skill_id},
+            )
             return
 
         try:
@@ -363,7 +375,10 @@ class ChatManager:
         # Handle non-TTS streaming directly to avoid sentence splitting logic
         if not self.tts:
             if stream_type == "json":
-                event_data = {"content": text, "flags": {"command": False, "audio": False}}
+                event_data = {
+                    "content": text,
+                    "flags": {"command": False, "audio": False},
+                }
                 yield ndjson("message", "stream", event_data)
                 return
             elif stream_type == "cli":
@@ -807,15 +822,25 @@ class ChatManager:
                 while True:
                     state_changed = False
                     if parsing_mode == "text":
-                        doc_start_match = re.search(r'<doc format="([\w\d_.-]+)">', text_buffer)
+                        doc_start_match = re.search(
+                            r'<doc format="([\w\d_.-]+)">', text_buffer
+                        )
                         if doc_start_match:
-                            pre_doc_text = text_buffer[:doc_start_match.start()]
+                            pre_doc_text = text_buffer[
+                                : doc_start_match.start()
+                            ]
                             if pre_doc_text.strip():
-                                yield from self._process_regular_text(pre_doc_text, stream)
+                                yield from self._process_regular_text(
+                                    pre_doc_text, stream
+                                )
 
                             doc_format = doc_start_match.group(1)
                             if stream == "json":
-                                yield ndjson("ui", "setView", {"view": "document", "format": doc_format})
+                                yield ndjson(
+                                    "ui",
+                                    "setView",
+                                    {"view": "document", "format": doc_format},
+                                )
 
                             parsing_mode = "doc"
                             doc_buffer = text_buffer[doc_start_match.end():]
@@ -823,11 +848,14 @@ class ChatManager:
                             state_changed = True
 
                     elif parsing_mode == "doc":
-                        doc_end_match = re.search(r'</doc>', doc_buffer)
+                        doc_end_match = re.search(r"</doc>", doc_buffer)
                         if doc_end_match:
-                            doc_content = doc_buffer[:doc_end_match.start()]
+                            doc_content = doc_buffer[: doc_end_match.start()]
                             if stream == "json":
-                                yield ndjson("content", "full", {"content": doc_content})
+                                # def ndjson(event_name: str, event_type: str, content: Any = None) -> str:
+                                yield ndjson(
+                                    "content", "full", {"content": doc_content}
+                                )
 
                             parsing_mode = "text"
                             text_buffer = doc_buffer[doc_end_match.end():]
@@ -840,18 +868,32 @@ class ChatManager:
                 # --- Regular Text Processing ---
                 if parsing_mode == "text" and text_buffer:
                     if self.tts:
-                        sentences = self._extract_complete_sentences(text_buffer)
+                        sentences = self._extract_complete_sentences(
+                            text_buffer
+                        )
                         if sentences:
-                            if stream == "cli": loading.stop()
-                            elif stream == "json": yield ndjson("signal", "loading", {"state": "stop"})
+                            if stream == "cli":
+                                loading.stop()
+                            elif stream == "json":
+                                yield ndjson(
+                                    "signal", "loading", {"state": "stop"}
+                                )
                             for sentence in sentences:
-                                yield from self._process_streaming_sentence(sentence, stream)
+                                yield from self._process_streaming_sentence(
+                                    sentence, stream
+                                )
 
                             last_sentence = sentences[-1]
-                            last_pos = text_buffer.rfind(last_sentence) + len(last_sentence)
+                            last_pos = text_buffer.rfind(last_sentence) + len(
+                                last_sentence
+                            )
                             text_buffer = text_buffer[last_pos:].strip()
-                    elif text_buffer: # Non-TTS streaming
-                        print(text_buffer, end="", flush=True) if stream == "cli" else None
+                    elif text_buffer:  # Non-TTS streaming
+                        (
+                            print(text_buffer, end="", flush=True)
+                            if stream == "cli"
+                            else None
+                        )
                         text_buffer = ""
 
             # Process any remaining text in the buffer
