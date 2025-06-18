@@ -91,8 +91,6 @@ class ComRingWindow extends BaseWindow {
                 this.window.setMinimumSize(400, 300);
                 this.window.setSize(docWidth, docHeight, true); // Animate
                 this.window.center();
-                this.window.setOpacity(1.0);
-                this.window.setBackgroundColor('#1e1e1e');
 
             } else if (args.view === 'ring') {
                 // Restore original size and position
@@ -102,12 +100,6 @@ class ComRingWindow extends BaseWindow {
                 this.window.setSize(originalWidth, originalHeight, true); // Animate
                 this.window.setPosition(this.originalPosition[0], this.originalPosition[1], true);
                 this.window.setResizable(false);
-                this.window.setOpacity(1.0); // Keep it opaque during transition
-
-                // After a short delay, make it transparent again
-                setTimeout(() => {
-                    this.window.setBackgroundColor('#00000000'); // Transparent
-                }, 300); // Corresponds to transition time
             }
         });
 

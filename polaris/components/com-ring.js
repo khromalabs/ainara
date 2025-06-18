@@ -785,14 +785,14 @@ class ComRing extends BaseComponent {
         this.currentView = 'document';
         this.docFormat = format;
         ipcRenderer.send('set-view-mode', { view: 'document' });
-        this.ringContainer.style.display = 'none';
+        this.ringContainer.classList.add('document-view');
         this.documentView.show();
     }
 
     switchToRingView() {
         this.currentView = 'ring';
         ipcRenderer.send('set-view-mode', { view: 'ring' });
-        this.ringContainer.style.display = 'flex';
+        this.ringContainer.classList.remove('document-view');
         this.documentView.hide();
         this.documentView.clear(); // Clear all documents and reset state
     }

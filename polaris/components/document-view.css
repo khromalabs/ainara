@@ -1,12 +1,28 @@
 :host {
-    display: block;
-    width: 100%;
-    height: 100%;
-    background-color: #1e1e1e;
+    /* Position absolutely to fit inside the com-ring frame */
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    bottom: 140px; /* Leave space for the ring at the bottom */
+    background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */
     color: #d4d4d4;
     font-family: 'Menlo', 'Consolas', monospace;
-    border-radius: 8px;
+    border-radius: 16px; /* Match the inner frame's radius */
     overflow: hidden;
+    /* Initial state for animation: hidden */
+    opacity: 0;
+    transform: scale(0.98);
+    pointer-events: none;
+    /* Animate the appearance, with a slight delay to sync with window resize */
+    transition: opacity 0.5s ease-in-out 0.2s, transform 0.5s ease-in-out 0.2s;
+}
+
+:host(.visible) {
+    /* Final state for animation: visible */
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
 }
 
 .document-container {

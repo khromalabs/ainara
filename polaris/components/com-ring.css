@@ -28,15 +28,49 @@ body {
 
 .ring-container {
     display: flex;
+    /* Default state: center the ring */
     justify-content: center;
     align-items: center;
+    flex-direction: column; /* Always column now, makes it easier */
     height: 100%;
     width: 100%;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.7);
     border-radius: 24px;
     position: fixed;
     top: 0;
     left: 0;
+    padding: 20px;
+    box-sizing: border-box;
+    /* Add transitions for smooth changes */
+    transition: justify-content 0.6s ease-in-out, padding 0.6s ease-in-out;
+    overflow: hidden; /* Hide overflowing content during animation */
+}
+
+/* This pseudo-element will be the frame for the document view */
+.ring-container::after {
+    content: '';
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    /* Height is calculated to leave space for the ring at the bottom */
+    bottom: 140px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px; /* Slightly less rounded */
+    background: rgba(0, 0, 0, 0.2);
+    opacity: 0;
+    transform: scale(0.95);
+    transition: opacity 0.6s ease-in-out, transform 0.6s ease-in-out;
+    pointer-events: none;
+}
+
+.ring-container.document-view {
+    justify-content: flex-end;
+    padding-bottom: 30px; /* Give some space for the ring at the bottom */
+}
+.ring-container.document-view::after {
+    opacity: 1;
+    transform: scale(1);
 }
 
 .ring-container::before {
@@ -71,7 +105,15 @@ body {
     /* Enhance the base glow */
     box-shadow: 0 0 25px rgba(255, 255, 255, 0.6),
                 inset 0 0 25px rgba(255, 255, 255, 0.6);
-    transition: box-shadow 0.1s ease-out;
+    /* Animate size and margin for the transition */
+    transition: box-shadow 0.1s ease-out, width 0.6s ease-in-out, height 0.6s ease-in-out, margin 0.6s ease-in-out;
+    flex-shrink: 0; /* Prevent ring from shrinking */
+}
+
+/* Style for the ring in document view */
+.ring-container.document-view .ring-circle {
+    width: 60px;  /* Make it smaller */
+    height: 60px;
 }
 
 .ring-circle.recording {
@@ -105,7 +147,7 @@ body {
 
 .stt-status {
     position: absolute;
-    bottom: 10px;
+    bottom: 10px; /* Default position for small view */
     left: 50%;
     transform: translateX(-50%);
     color: rgba(255, 255, 255, 0.8);
@@ -113,12 +155,16 @@ body {
     font-size: 14px;
     text-align: center;
     opacity: 0;
-    transition: opacity 0.3s ease;
+    transition: opacity 0.3s ease, bottom 0.6s ease-in-out;
     /* Add text glow effect */
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
     /* Add animation when active */
     animation: none;
     width: 90%;
+}
+
+.ring-container.document-view .stt-status {
+    bottom: 115px; /* Position above the smaller ring, with more clearance */
 }
 
 .stt-status.active {

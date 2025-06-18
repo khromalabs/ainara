@@ -95,12 +95,12 @@ class DocumentView extends BaseComponent {
     }
 
     show() {
-        this.style.display = 'block';
+        this.classList.add('visible');
         this.isVisible = true;
     }
 
     hide() {
-        this.style.display = 'none';
+        this.classList.remove('visible');
         this.isVisible = false;
     }
 
