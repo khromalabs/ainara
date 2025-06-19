@@ -54,7 +54,7 @@ body {
     left: 20px;
     right: 20px;
     /* Height is calculated to leave space for the ring at the bottom */
-    bottom: 140px;
+    bottom: 170px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 16px; /* Slightly less rounded */
     background: rgba(0, 0, 0, 0.2);
@@ -66,8 +66,9 @@ body {
 
 .ring-container.document-view {
     justify-content: flex-end;
-    padding-bottom: 30px; /* Give some space for the ring at the bottom */
+    padding-bottom: 50px; /* Give some space for the ring at the bottom */
 }
+
 .ring-container.document-view::after {
     opacity: 1;
     transform: scale(1);
@@ -114,6 +115,7 @@ body {
 .ring-container.document-view .ring-circle {
     width: 60px;  /* Make it smaller */
     height: 60px;
+    /* margin-top: 10px; */
 }
 
 .ring-circle.recording {
@@ -164,7 +166,7 @@ body {
 }
 
 .ring-container.document-view .stt-status {
-    bottom: 115px; /* Position above the smaller ring, with more clearance */
+    bottom: 10px;
 }
 
 .stt-status.active {

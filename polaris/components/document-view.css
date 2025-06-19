@@ -4,7 +4,7 @@
     top: 20px;
     left: 20px;
     right: 20px;
-    bottom: 140px; /* Leave space for the ring at the bottom */
+    bottom: 170px; /* Leave space for the ring at the bottom */
     background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */
     color: #d4d4d4;
     font-family: 'Menlo', 'Consolas', monospace;
