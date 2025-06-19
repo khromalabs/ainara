@@ -727,6 +727,45 @@ class ChatManager:
 
         self.chat_history = new_history
 
+    def _handle_test_doc_view_stream(self, question: str, stream: str):
+        parts = question.strip().split(" ", 1)
+        if len(parts) < 2 or "," not in parts[1]:
+            usage_msg = "Usage: /testdocview <format>,<content>"
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+                logger.info("_handle_test_doc_view_stream 4")
+            return
+
+        command_body = parts[1]
+        doc_format, doc_content = command_body.split(",", 1)
+
+        if stream == "json":
+            yield ndjson("signal", "loading", {"state": "start"})
+            yield ndjson(
+                "ui",
+                "setView",
+                {"view": "document", "format": doc_format},
+            )
+            yield ndjson("content", "full", {"content": doc_content})
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+        elif stream == "cli":
+            print(f"\n--- Document (format: {doc_format}) ---")
+            print(doc_content)
+            print("---------------------------------")
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -742,6 +781,20 @@ class ChatManager:
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
             stream = "cli" if stream else None
+
+        # Handle /testdocview command for debugging
+        if question.strip().startswith("/testdocview"):
+            if stream:  # cli or json
+                yield from self._handle_test_doc_view_stream(question, stream)
+                return
+            else:  # no stream
+                parts = question.strip().split(" ", 1)
+                if len(parts) < 2 or "," not in parts[1]:
+                    return "Usage: /testdocview <format>,<content>"
+
+                command_body = parts[1]
+                doc_format, doc_content = command_body.split(",", 1)
+                return f'<doc format="{doc_format}">{doc_content}</doc>'
 
         # Check if spaCy model is available
         if not self.nlp:

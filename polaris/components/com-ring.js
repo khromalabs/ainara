@@ -377,7 +377,7 @@ class ComRing extends BaseComponent {
                     !isTypingMode &&
                     !this.state.isRecording &&
                     event.key.length === 1 &&
-                    /[a-zA-Z0-9]/.test(event.key)
+                    /[a-zA-Z0-9/]/.test(event.key)
                 ) {
                     // Only handle the first keystroke to enter typing mode
                     console.log('ComRing: Entering typing mode');
