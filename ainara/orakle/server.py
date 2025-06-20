@@ -91,9 +91,9 @@ def health_check():
     """Comprehensive health check endpoint"""
     start_time = time.time()
 
-    # Get memory configuration
-    memory_config = config.get("memory", {})
-    memory_enabled = memory_config.get("enabled", False)
+    # # Get memory configuration
+    # memory_config = config.get("memory", {})
+    # memory_enabled = memory_config.get("enabled", False)
 
     status = {
         "status": "ok",
@@ -109,11 +109,13 @@ def health_check():
         },
     }
 
-    # Only include storage check if memory is enabled
-    if memory_enabled:
-        status["dependencies"][
-            "storage_available"
-        ] = False  # Should implement actual storage check
+    # # Only include storage check if memory is enabled
+    # if memory_enabled:
+    #     # Check if chat_memory was successfully initialized in ChatManager
+    #     status["dependencies"]["storage_available"] = (
+    #         hasattr(app.chat_manager, "chat_memory")
+    #         and app.chat_manager.chat_memory is not None
+    #     )
 
     # Check if all essential services are available
     all_services_ok = all(status["services"].values())

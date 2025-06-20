@@ -112,18 +112,18 @@ class ChatMemory:
     def add_entry(
         self,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
         role: str = "user",
         user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Add a new entry to both storage backends
 
         Args:
             content: The message content
-            metadata: Additional metadata
             role: The role of the sender (user, assistant, system)
             user_id: Optional user identifier (overrides context user)
+            metadata: Additional metadata
 
         Returns:
             Message ID

@@ -63,6 +63,7 @@ class ComRing extends BaseComponent {
             this.pybridgeEndpoint = this.config.get('pybridge.api_url', 'http://127.0.0.1:8101');
             this.pybridgeEndpoints = {
                 chat: `${this.pybridgeEndpoint}/framework/chat`,
+                history: `${this.pybridgeEndpoint}/framework/chat/history`,
             };
 
             this.isWindowVisible = false;
@@ -80,6 +81,7 @@ class ComRing extends BaseComponent {
                 volume: this.config.get('ring.volume', 0)
             };
             console.log('ComRing: State initialized');
+            this.historyDate = null;
 
             // Setup keyboard shortcut configuration
             this.triggerKey = this.config.get('shortcuts.trigger', 'Space');
@@ -136,6 +138,8 @@ class ComRing extends BaseComponent {
                 'ring-container element not found'
             );
             this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
+            this.historyPrevButton = this.shadowRoot.querySelector('#history-prev');
+            this.historyNextButton = this.shadowRoot.querySelector('#history-next');
 
             this.audioContext = null;
             this.mediaStream = null;
@@ -263,13 +267,19 @@ class ComRing extends BaseComponent {
         });
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
-            if (!this.isProcessingUserMessage) {
-                this.isProcessingUserMessage = true;
-                await this.processUserMessage(message, true);
-                this.isProcessingUserMessage = false;
-            } else {
+            if (this.isProcessingUserMessage) {
                 console.log("process-typed-message: Avoiding concurrent entry");
+                return;
             }
+            this.isProcessingUserMessage = true;
+
+            if (message.trim() === '/history') {
+                console.log('Handling /history command');
+                await this.fetchAndDisplayChatHistory();
+            } else {
+                await this.processUserMessage(message, true);
+            }
+            this.isProcessingUserMessage = false;
         });
 
         ipcRenderer.on('exit-typing-mode', () => {
@@ -283,6 +293,13 @@ class ComRing extends BaseComponent {
             // Update UI based on typing mode
             this.circle.style.opacity = isTypingMode ? '0.4' : '1';
         });
+
+        if (this.historyPrevButton) {
+            this.historyPrevButton.addEventListener('click', () => this.navigateHistory('prev'));
+        }
+        if (this.historyNextButton) {
+            this.historyNextButton.addEventListener('click', () => this.navigateHistory('next'));
+        }
 
         // Add event listeners for animation events
         ipcRenderer.on('animation-started', (event, data) => {
@@ -781,6 +798,76 @@ class ComRing extends BaseComponent {
         }, refreshInterval);
     }
 
+    async fetchAndDisplayChatHistory(date = null) {
+        try {
+            const sttStatus = this.shadowRoot.querySelector('.stt-status');
+            sttStatus.textContent = 'Loading chat history...';
+            sttStatus.classList.add('active');
+
+            const url = date
+                ? `${this.pybridgeEndpoints.history}?date=${date}`
+                : this.pybridgeEndpoints.history;
+
+            const response = await fetch(url);
+
+            if (!response.ok) {
+                throw new Error(`Failed to fetch history: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            this.historyDate = data.date;
+            this.updateHistoryNav(data.has_previous, data.has_next);
+
+            this.switchToDocumentView('markdown');
+            this.documentView.clear();
+            this.documentView.addDocument(data.history, 'markdown');
+
+            sttStatus.classList.remove('active');
+            sttStatus.textContent = '';
+
+        } catch (error) {
+            console.error('Error fetching chat history:', error);
+            const sttStatus = this.shadowRoot.querySelector('.stt-status');
+            sttStatus.textContent = `Error: ${error.message}`;
+            sttStatus.classList.add('active', 'error');
+
+            setTimeout(() => {
+                sttStatus.classList.remove('active', 'error');
+                sttStatus.textContent = '';
+            }, 3000);
+        }
+    }
+
+    updateHistoryNav(has_previous, has_next) {
+        if (this.historyPrevButton) {
+            this.historyPrevButton.style.visibility = has_previous ? 'visible' : 'hidden';
+        }
+        if (this.historyNextButton) {
+            this.historyNextButton.style.visibility = has_next ? 'visible' : 'hidden';
+        }
+    }
+
+    navigateHistory(direction) {
+        if (!this.historyDate) return;
+
+        // The 'T12:00:00Z' avoids timezone-related date change issues
+        const currentDate = new Date(`${this.historyDate}T12:00:00Z`);
+
+        if (direction === 'prev') {
+            currentDate.setUTCDate(currentDate.getUTCDate() - 1);
+        } else {
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+        }
+
+        const newDateStr = currentDate.toISOString().split('T')[0];
+        this.fetchAndDisplayChatHistory(newDateStr);
+    }
+
     switchToDocumentView(format) {
         this.currentView = 'document';
         this.docFormat = format;
@@ -795,6 +882,7 @@ class ComRing extends BaseComponent {
         this.ringContainer.classList.remove('document-view');
         this.documentView.hide();
         this.documentView.clear(); // Clear all documents and reset state
+        this.updateHistoryNav(false, false);
     }
 
     abortLLMResponse() {

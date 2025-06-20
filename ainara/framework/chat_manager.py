@@ -811,7 +811,7 @@ class ChatManager:
         processed_answer = ""
         try:
             if self.chat_memory:
-                self.chat_memory.add_entry(question, {"role": "user"})
+                self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
             if (
@@ -975,7 +975,7 @@ class ChatManager:
                 # Log assistant response to chat memory
                 if self.chat_memory:
                     self.chat_memory.add_entry(
-                        processed_answer, {"role": "assistant"}
+                        processed_answer, "assistant"
                     )
             else:
                 # If there's no processed answer, add a placeholder
@@ -985,7 +985,7 @@ class ChatManager:
                 )
                 if self.chat_memory:
                     self.chat_memory.add_entry(
-                        "No response generated", {"role": "assistant"}
+                        "No response generated", "assistant"
                     )
 
             # Stop loading animation
