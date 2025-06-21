@@ -96,9 +96,8 @@ class ChatManager:
         self.template_manager = TemplateManager()
 
         # Initialize chat memory
-        memory_enabled = config.get("memory.enabled", True)
-        self.summary_enabled = config.get("summary.enabled", True)
-        if memory_enabled:
+        self.summary_enabled = config.get("memory.summary_enabled", True)
+        if config.get("memory.enabled", True):
             # Initialize chat memory using global config
             self.chat_memory = ChatMemory()
             logger.info("Chat memory initialized")
