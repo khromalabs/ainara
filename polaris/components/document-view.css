@@ -129,3 +129,10 @@ code {
 ::-webkit-scrollbar-thumb:hover {
     background: #666;
 }
+
+.document-content {
+    margin: 10px;
+    padding: 10px;
+    overflow: auto;
+    /* border: 10px solid yellow; */
+}

@@ -15,7 +15,7 @@ class DocumentView extends BaseComponent {
             this.shadowRoot.appendChild(template.content.cloneNode(true));
 
             this.container = this.shadowRoot.querySelector('.document-container');
-            this.codeBlock = this.shadowRoot.querySelector('code');
+            this.codeBlock = this.shadowRoot.querySelector('.document-content');
             this.formatBadge = this.shadowRoot.querySelector('.format-badge');
             this.counter = this.shadowRoot.querySelector('.counter');
             this.copyButton = this.shadowRoot.querySelector('.copy-button');
@@ -61,14 +61,16 @@ class DocumentView extends BaseComponent {
         this.container.classList.toggle('has-multiple-docs', this.documents.length > 1);
 
         this.formatBadge.textContent = doc.format;
-        this.codeBlock.textContent = doc.content;
-        this.codeBlock.className = `language-${doc.format}`;
+        this.codeBlock.innerHTML = (doc.format == "markdown") ?
+            this.parseMarkdown(doc.content) :
+            doc.content;
+        // this.codeBlock.className = `language-${doc.format}`;
 
-        if (window.hljs) {
-            window.hljs.highlightElement(this.codeBlock);
-        } else {
-            console.warn('highlight.js not found. Code will not be highlighted.');
-        }
+        // if (window.hljs) {
+        //     window.hljs.highlightElement(this.codeBlock);
+        // } else {
+        //     console.warn('highlight.js not found. Code will not be highlighted.');
+        // }
 
         // Update counter and button states
         this.counter.textContent = `${this.currentIndex + 1}/${this.documents.length}`;

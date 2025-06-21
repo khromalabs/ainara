@@ -146,6 +146,47 @@ class BaseComponent extends HTMLElement {
     render() {
         throw new Error('Component must implement render method');
     }
+
+    parseMarkdown(text) {
+        // Handle bold text with ** or __
+        text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/g, '<strong>$1$2</strong>');
+
+        // Handle italic text with * or _
+        text = text.replace(/\*(.*?)\*|_(.*?)_/g, '<em>$1$2</em>');
+
+        // Handle code blocks with `
+        text = text.replace(/`(.*?)`/g, '<code>$1</code>');
+        //
+        // Handle H1,H2
+        text = text.replace(/^### (.*?)\n/g, '<h3>$1</h3>');
+        text = text.replace(/^## (.*?)\n/g, '<h2>$1</h2>');
+        text = text.replace(/^# (.*?)\n/g, '<h1>$1</h1>');
+
+        // Handle CR
+        text = text.replace(/\n/g, '<br>');
+
+        // Handle links [text](url)
+        text = text.replace(/\[(.*?)\]\((.*?)\)/g, function(match, linkText, url) {
+            // Extract domain from URL
+            let domain = "";
+            try {
+                domain = new URL(url).hostname.replace(/^www\./, '');
+                // Truncate if too long
+                if (domain.length > 20) {
+                    domain = domain.substring(0, 17) + '...';
+                }
+            } catch (e) {
+                // If URL parsing fails, skip domain
+                console.log("Error parsing: " + e);
+            }
+
+            // Create a properly formatted HTML string
+            return '"' + linkText + '"' +
+                   (domain ? ' [' + domain + ']' : '');
+        });
+
+        return text;
+    }
 }
 
 module.exports = BaseComponent;

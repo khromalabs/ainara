@@ -252,3 +252,9 @@ body {
     border-color: rgba(255, 255, 255, 0.4);
     transition: border-color 0.3s ease;
 }
+
+.document-content {
+    margin: 10px;
+    overflow: auto;
+    border: 10px solid red;
+}
