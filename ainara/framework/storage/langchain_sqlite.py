@@ -18,15 +18,14 @@
 
 
 import logging
+import json
 import os
+import sqlite3
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ainara.framework.storage.base import StorageBackend
-
-from langchain.memory.chat_message_histories import SQLChatMessageHistory
-from langchain.schema import AIMessage, HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +50,65 @@ class LangChainSQLiteStorage(StorageBackend):
 
         self.db_path = db_path
         self.context_id = context_id
+        db_dir = os.path.dirname(os.path.abspath(db_path))
+        os.makedirs(db_dir, exist_ok=True)
 
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self._create_table()
 
-        # Create SQLite connection string
-        sqlite_uri = f"sqlite:///{db_path}"
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT value FROM db_metadata WHERE key = 'memory_id'")
+        row = cursor.fetchone()
+        if row is None:
+            memory_id = str(uuid.uuid4())
+            with self.conn:
+                self.conn.execute(
+                    "INSERT INTO db_metadata (key, value) VALUES (?, ?)",
+                    ("memory_id", memory_id),
+                )
+            self.memory_id = memory_id
+        else:
+            self.memory_id = row[0]
 
-        # Initialize LangChain's SQLChatMessageHistory
-        # LangChain still uses session_id terminology
-        self.history = SQLChatMessageHistory(
-            session_id=context_id, connection_string=sqlite_uri
-        )
+    def _create_table(self):
+        """Create tables and set schema version if they don't exist."""
+        with self.conn:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    context_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    user TEXT,
+                    metadata TEXT
+                )
+                """
+            )
+            # Add indexes for faster queries
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_context_timestamp ON messages (context_id, timestamp);"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_context_user ON messages (context_id, user);"
+            )
+
+            # Add a metadata table for versioning
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS db_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            # Initialize the schema version
+            self.conn.execute(
+                "INSERT OR IGNORE INTO db_metadata (key, value) VALUES (?, ?)",
+                ("schema_version", "1.0"),
+            )
 
     def add_message(
         self,
@@ -74,96 +120,114 @@ class LangChainSQLiteStorage(StorageBackend):
         # Generate a unique ID
         message_id = str(uuid.uuid4())
 
-        # Convert to LangChain message format
-        if role == "user":
-            lc_message = HumanMessage(content=content)
-        elif role == "assistant":
-            lc_message = AIMessage(content=content)
-        else:
-            lc_message = SystemMessage(content=content)
+        meta = metadata.copy() if metadata else {}
+        timestamp = meta.pop("timestamp", datetime.now().isoformat())
+        user = meta.get("user")
 
-        # Add metadata if provided
-        if metadata:
-            # Store our message ID in the metadata
-            metadata_with_id = metadata.copy()
-            metadata_with_id["message_id"] = message_id
-            lc_message.additional_kwargs = metadata_with_id
-        else:
-            lc_message.additional_kwargs = {"message_id": message_id}
-
-        # Add to LangChain history
-        self.history.add_message(lc_message)
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO messages (id, context_id, timestamp, role, content, user, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    self.context_id,
+                    timestamp,
+                    role,
+                    content,
+                    user,
+                    json.dumps(meta),
+                ),
+            )
 
         return message_id
 
     def get_messages(
-        self, limit: int = 100, offset: int = 0
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        users: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Get messages with pagination"""
-        # Get all messages from LangChain
-        all_messages = self.history.messages
+        """Get messages with pagination and filtering."""
+        query = "SELECT * FROM messages WHERE context_id = ?"
+        params = [self.context_id]
 
-        # Apply pagination
-        paginated_messages = (
-            all_messages[-limit - offset: -offset]
-            if offset > 0
-            else all_messages[-limit:]
-        )
+        if start_date:
+            query += " AND timestamp >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND timestamp <= ?"
+            params.append(end_date)
+        if users:
+            query += f" AND user IN ({','.join('?' for _ in users)})"
+            params.extend(users)
 
-        # Convert to our format
-        result = []
-        for msg in paginated_messages:
-            # Determine role
-            if isinstance(msg, HumanMessage):
-                role = "user"
-            elif isinstance(msg, AIMessage):
-                role = "assistant"
-            else:
-                role = "system"
+        query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
-            # Extract metadata and message_id
-            metadata = (
-                msg.additional_kwargs.copy()
-                if hasattr(msg, "additional_kwargs")
-                else {}
-            )
-            message_id = metadata.pop("message_id", str(uuid.uuid4()))
+        cursor = self.conn.cursor()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
 
-            # Create our message format
-            result.append(
-                {
-                    "id": message_id,
-                    "timestamp": metadata.pop(
-                        "timestamp", datetime.now().isoformat()
-                    ),
-                    "role": role,
-                    "content": msg.content,
-                    "metadata": metadata,
-                }
-            )
-
-        return result
+        # Convert rows to dictionaries and parse metadata
+        results = []
+        for row in rows:
+            msg = dict(row)
+            if msg.get("metadata"):
+                msg["metadata"] = json.loads(msg["metadata"])
+            results.append(msg)
+        return results
 
     def get_message_count(self) -> int:
         """Get total number of messages"""
-        return len(self.history.messages)
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(id) FROM messages WHERE context_id = ?", (self.context_id,)
+        )
+        return cursor.fetchone()[0]
 
-    def search_text(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Basic text search"""
-        # Get all messages
-        all_messages = self.get_messages(limit=1000)  # Practical limit
+    def search_text(
+        self,
+        query: str,
+        limit: int = 10,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        users: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Basic text search with filtering."""
+        sql_query = "SELECT * FROM messages WHERE context_id = ? AND content LIKE ?"
+        params = [self.context_id, f"%{query}%"]
 
-        # Filter by query
+        if start_date:
+            sql_query += " AND timestamp >= ?"
+            params.append(start_date)
+        if end_date:
+            sql_query += " AND timestamp <= ?"
+            params.append(end_date)
+        if users:
+            sql_query += f" AND user IN ({','.join('?' for _ in users)})"
+            params.extend(users)
+
+        sql_query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = self.conn.cursor()
+        cursor.execute(sql_query, params)
+        rows = cursor.fetchall()
+        
+        # Convert rows to dictionaries and parse metadata
         results = []
-        for msg in all_messages:
-            if query.lower() in msg["content"].lower():
-                results.append(msg)
-                if len(results) >= limit:
-                    break
-
+        for row in rows:
+            msg = dict(row)
+            if msg.get("metadata"):
+                msg["metadata"] = json.loads(msg["metadata"])
+            results.append(msg)
         return results
 
     def close(self):
         """Close any resources"""
-        # LangChain's SQLChatMessageHistory doesn't need explicit closing
-        pass
+        if self.conn:
+            self.conn.close()
