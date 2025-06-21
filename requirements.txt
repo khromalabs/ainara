@@ -8,8 +8,6 @@ faster-whisper==1.1.1
 Flask==3.1.0
 Flask_Cors==5.0.0
 google-api-python-client==2.166.0
-langchain-community==0.3.20
-langchain==0.3.21
 litellm==1.58.4
 lxml_html_clean==0.4.1
 mcp[cli]>=1.7.1
