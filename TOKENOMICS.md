@@ -18,15 +18,19 @@ The $AINARA token is a functional utility token designed to be the lifeblood of 
 
 3.  **Security & Curation (The "Bond"):**
     *   To ensure the quality and safety of the marketplace, AID App creators will be required to post a "Creator Bond" in $AINARA. This bond acts as a security deposit that can be forfeited ("slashed") through community governance if an app is found to be malicious or harmful, thus aligning creator incentives with the health of the network.
+    *   Slashed bonds are sent to a dedicated **Ecosystem Security Fund**, managed by the DAO. The primary purpose of this fund is to compensate users who were directly harmed by a malicious app. Any surplus funds are then used to finance a security bounty program, rewarding developers for proactively discovering and reporting vulnerabilities, thereby turning a punitive action into a proactive measure that strengthens the entire network.
 
 ## The Ecosystem Flywheel: Protocol-Driven Value
 
 The Ainara protocol is designed to be a self-sustaining ecosystem. Value is not extracted by a central company but is continuously reinvested into the protocol itself.
 
 *   **Protocol Fee:** A small, transparent fee (e.g., 2%) is automatically applied to every app transaction on the network. The fee percentage might be adjusted downwards over time with a function to ensure the stability and health of the token.
-*   **Automated Buyback and Burn:** 100% of these protocol fees are sent to an automated smart contract. This contract uses the collected fees to systematically purchase $AINARA from the open market and immediately sends the purchased tokens to an unrecoverable "burn" address.
+*   **Protocol-Driven Value Accrual:** 100% of these protocol fees are sent to an automated smart contract that allocates them to three core functions designed to create a self-sustaining ecosystem:
+    *   **Community Treasury:** A portion of fees are directed to a treasury governed by the DAO. These funds are used to finance ongoing protocol development, ecosystem grants, marketing initiatives, and other community-approved projects. This ensures the long-term health and growth of Ainara through a transparent, accountable grant system.
+    *   **Building Protocol-Owned Liquidity (POL):** A portion of fees are used to buy $AINARA, pair it with a reserve asset (like SOL or USDC), and add it to the primary liquidity pool. This deepens market liquidity, reduces slippage for traders, and creates a more stable price floor.
+    *   **Token Burning:** The remaining portion of fees is used to systematically purchase $AINARA from the open market and immediately send the purchased tokens to an unrecoverable "burn" address.
 
-This automated mechanism creates a direct link between platform activity and token supply: **More platform usage → More fees collected → More tokens burned → A perpetually decreasing total supply.** This rewards all participants in the ecosystem by increasing the scarcity of the token, without paying direct dividends.
+This three-pronged mechanism creates a virtuous cycle: **More platform usage → More fees collected → Sustainable funding for future growth, deeper market liquidity, AND a decreasing token supply.** This balanced strategy ensures the protocol can fund its own evolution while providing stability and rewarding long-term holders. The exact split between these functions will be managed to optimize for the current needs of the ecosystem and can be adjusted via governance in the future.
 
 ## Supply & Distribution
 
