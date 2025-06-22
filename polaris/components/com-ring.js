@@ -823,9 +823,9 @@ class ComRing extends BaseComponent {
             this.historyDate = data.date;
             this.updateHistoryNav(data.has_previous, data.has_next);
 
-            this.switchToDocumentView('markdown');
+            this.switchToDocumentView('chat-history');
             this.documentView.clear();
-            this.documentView.addDocument(data.history, 'markdown');
+            this.documentView.addDocument(data.history, 'chat-history');
 
             sttStatus.classList.remove('active');
             sttStatus.textContent = '';

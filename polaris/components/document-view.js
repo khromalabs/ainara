@@ -59,18 +59,18 @@ class DocumentView extends BaseComponent {
         const doc = this.documents[this.currentIndex];
         // Toggle visibility of navigation controls based on document count
         this.container.classList.toggle('has-multiple-docs', this.documents.length > 1);
-
         this.formatBadge.textContent = doc.format;
-        this.codeBlock.innerHTML = (doc.format == "markdown") ?
-            this.parseMarkdown(doc.content) :
-            doc.content;
-        // this.codeBlock.className = `language-${doc.format}`;
-
-        // if (window.hljs) {
-        //     window.hljs.highlightElement(this.codeBlock);
-        // } else {
-        //     console.warn('highlight.js not found. Code will not be highlighted.');
-        // }
+        if (doc.format == "chat-history") {
+            this.codeBlock.innerHTML = this.parseMarkdown(doc.content);
+        } else {
+            this.codeBlock.textContent = doc.content;
+            this.codeBlock.className = `language-${doc.format}`;
+            if (window.hljs) {
+                window.hljs.highlightElement(this.codeBlock);
+            } else {
+                console.warn('highlight.js not found. Code will not be highlighted.');
+            }
+        }
 
         // Update counter and button states
         this.counter.textContent = `${this.currentIndex + 1}/${this.documents.length}`;
