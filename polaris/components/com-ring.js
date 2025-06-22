@@ -138,8 +138,6 @@ class ComRing extends BaseComponent {
                 'ring-container element not found'
             );
             this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
-            this.historyPrevButton = this.shadowRoot.querySelector('#history-prev');
-            this.historyNextButton = this.shadowRoot.querySelector('#history-next');
 
             this.audioContext = null;
             this.mediaStream = null;
@@ -294,12 +292,9 @@ class ComRing extends BaseComponent {
             this.circle.style.opacity = isTypingMode ? '0.4' : '1';
         });
 
-        if (this.historyPrevButton) {
-            this.historyPrevButton.addEventListener('click', () => this.navigateHistory('prev'));
-        }
-        if (this.historyNextButton) {
-            this.historyNextButton.addEventListener('click', () => this.navigateHistory('next'));
-        }
+        // Listen for history navigation events from the document-view component
+        this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
+        this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));
 
         // Add event listeners for animation events
         ipcRenderer.on('animation-started', (event, data) => {
@@ -821,10 +816,14 @@ class ComRing extends BaseComponent {
             }
 
             this.historyDate = data.date;
-            this.updateHistoryNav(data.has_previous, data.has_next);
 
             this.switchToDocumentView('chat-history');
             this.documentView.clear();
+            this.documentView.updateNavControls({
+                show: true,
+                prev: data.has_previous,
+                next: data.has_next
+            });
             this.documentView.addDocument(data.history, 'chat-history');
 
             sttStatus.classList.remove('active');
@@ -843,14 +842,6 @@ class ComRing extends BaseComponent {
         }
     }
 
-    updateHistoryNav(has_previous, has_next) {
-        if (this.historyPrevButton) {
-            this.historyPrevButton.style.visibility = has_previous ? 'visible' : 'hidden';
-        }
-        if (this.historyNextButton) {
-            this.historyNextButton.style.visibility = has_next ? 'visible' : 'hidden';
-        }
-    }
 
     navigateHistory(direction) {
         if (!this.historyDate) return;
@@ -882,7 +873,6 @@ class ComRing extends BaseComponent {
         this.ringContainer.classList.remove('document-view');
         this.documentView.hide();
         this.documentView.clear(); // Clear all documents and reset state
-        this.updateHistoryNav(false, false);
     }
 
     abortLLMResponse() {

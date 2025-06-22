@@ -23,8 +23,20 @@ class DocumentView extends BaseComponent {
             this.nextButton = this.shadowRoot.querySelector('.next');
 
             this.copyButton.addEventListener('click', () => this.copyToClipboard());
-            this.prevButton.addEventListener('click', () => this.navigate(-1));
-            this.nextButton.addEventListener('click', () => this.navigate(1));
+            this.prevButton.addEventListener('click', () => {
+                if (this.formatBadge.textContent === 'chat-history') {
+                    this.emitEvent('history-prev-clicked');
+                } else {
+                    this.navigate(-1);
+                }
+            });
+            this.nextButton.addEventListener('click', () => {
+                if (this.formatBadge.textContent === 'chat-history') {
+                    this.emitEvent('history-next-clicked');
+                } else {
+                    this.navigate(1);
+                }
+            });
 
             this.hide(); // Initially hidden
         } catch (error) {
@@ -51,31 +63,29 @@ class DocumentView extends BaseComponent {
             this.codeBlock.textContent = '';
             this.formatBadge.textContent = '';
             this.counter.textContent = '0/0';
-            this.prevButton.disabled = true;
-            this.nextButton.disabled = true;
             return;
         }
 
         const doc = this.documents[this.currentIndex];
-        // Toggle visibility of navigation controls based on document count
-        this.container.classList.toggle('has-multiple-docs', this.documents.length > 1);
         this.formatBadge.textContent = doc.format;
-        if (doc.format == "chat-history") {
+        if (doc.format === "chat-history") {
             this.codeBlock.innerHTML = this.parseMarkdown(doc.content);
+            // History nav state is set externally via updateNavControls
         } else {
-            this.codeBlock.textContent = doc.content;
+            // Logic for other document types
+            this.container.classList.toggle('has-multiple-docs', this.documents.length > 1);
+            this.codeBlock.innerHTML = "<pre>" + doc.content + "</pre>";
             this.codeBlock.className = `language-${doc.format}`;
             if (window.hljs) {
                 window.hljs.highlightElement(this.codeBlock);
             } else {
                 console.warn('highlight.js not found. Code will not be highlighted.');
             }
+            // Update counter and button states for multi-doc view
+            this.counter.textContent = `${this.currentIndex + 1}/${this.documents.length}`;
+            this.prevButton.disabled = this.currentIndex === 0;
+            this.nextButton.disabled = this.currentIndex >= this.documents.length - 1;
         }
-
-        // Update counter and button states
-        this.counter.textContent = `${this.currentIndex + 1}/${this.documents.length}`;
-        this.prevButton.disabled = this.currentIndex === 0;
-        this.nextButton.disabled = this.currentIndex >= this.documents.length - 1;
     }
 
     copyToClipboard() {
@@ -106,9 +116,26 @@ class DocumentView extends BaseComponent {
         this.isVisible = false;
     }
 
+    updateNavControls(state) {
+        // state = { show: boolean, prev: boolean, next: boolean }
+        const controls = this.shadowRoot.querySelector('.controls');
+        controls.style.display = state.show ? 'flex' : '';
+        this.prevButton.disabled = !state.prev;
+        this.nextButton.disabled = !state.next;
+
+        // Also hide the counter if we are showing history nav
+        if (state.show) {
+            this.counter.style.display = 'none';
+            this.container.classList.remove('has-multiple-docs');
+        } else {
+            this.counter.style.display = ''; // reset to default
+        }
+    }
+
     clear() {
         this.documents = [];
         this.currentIndex = -1;
+        this.updateNavControls({ show: false }); // Hide controls
         this.render();
     }
 }
