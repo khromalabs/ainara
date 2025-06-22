@@ -274,6 +274,19 @@ class ComRing extends BaseComponent {
             if (message.trim() === '/history') {
                 console.log('Handling /history command');
                 await this.fetchAndDisplayChatHistory();
+            } else if (message.trim() === '/documents') {
+                console.log('Handling /documents command');
+                if (this.documentView && this.documentView.documents.length > 0 && this.docFormat !== 'chat-history') {
+                    this.switchToDocumentView(this.docFormat);
+                } else {
+                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                    sttStatus.textContent = 'No documents to display.';
+                    sttStatus.classList.add('active');
+                    setTimeout(() => {
+                        sttStatus.classList.remove('active');
+                        sttStatus.textContent = '';
+                    }, 3000);
+                }
             } else {
                 await this.processUserMessage(message, true);
             }
@@ -815,20 +828,29 @@ class ComRing extends BaseComponent {
                 throw new Error(data.error);
             }
 
-            this.historyDate = data.date;
+            // Check if the history content exists beyond just a potential header
+            const historyContent = data.history ? data.history.substring(data.history.indexOf('\n')).trim() : '';
 
-            this.switchToDocumentView('chat-history');
-            this.documentView.clear();
-            this.documentView.updateNavControls({
-                show: true,
-                prev: data.has_previous,
-                next: data.has_next
-            });
-            this.documentView.addDocument(data.history, 'chat-history');
-
-            sttStatus.classList.remove('active');
-            sttStatus.textContent = '';
-
+            if (historyContent) {
+                this.historyDate = data.date;
+                this.switchToDocumentView('chat-history');
+                this.documentView.clear();
+                this.documentView.updateNavControls({
+                    show: true,
+                    prev: data.has_previous,
+                    next: data.has_next
+                });
+                this.documentView.addDocument(data.history, 'chat-history');
+                sttStatus.classList.remove('active');
+                sttStatus.textContent = '';
+            } else {
+                // If no history, just show a message and don't switch view
+                sttStatus.textContent = 'No chat history for this day.';
+                setTimeout(() => {
+                    sttStatus.classList.remove('active');
+                    sttStatus.textContent = '';
+                }, 3000);
+            }
         } catch (error) {
             console.error('Error fetching chat history:', error);
             const sttStatus = this.shadowRoot.querySelector('.stt-status');
@@ -872,7 +894,6 @@ class ComRing extends BaseComponent {
         ipcRenderer.send('set-view-mode', { view: 'ring' });
         this.ringContainer.classList.remove('document-view');
         this.documentView.hide();
-        this.documentView.clear(); // Clear all documents and reset state
     }
 
     abortLLMResponse() {
@@ -1330,6 +1351,11 @@ class ComRing extends BaseComponent {
 
             case 'setView':
                 if (event.type === 'ui' && event.content.view === 'document') {
+                    // Only clear documents if we are starting a new document view session
+                    // from the main ring. This allows accumulating documents.
+                    if (this.currentView !== 'document') {
+                        this.documentView.clear();
+                    }
                     this.switchToDocumentView(event.content.format);
                 }
                 break;
