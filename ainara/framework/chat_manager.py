@@ -38,6 +38,7 @@ from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
+from ainara.framework.user_profile_manager import UserProfileManager
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -104,6 +105,15 @@ class ChatManager:
         else:
             self.chat_memory = None
             logger.info("Chat memory disabled")
+
+        # Initialize User Profile Manager
+        if self.chat_memory:
+            self.user_profile_manager = UserProfileManager(
+                llm=self.llm, chat_memory=self.chat_memory
+            )
+            logger.info("User Profile Manager initialized")
+        else:
+            self.user_profile_manager = None
 
         # Render the system message template
         current_date = datetime.now().date()
@@ -768,6 +778,8 @@ class ChatManager:
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
+        user_message_id = None
+        assistant_message_id = None
         """Main chat completion function
 
         Args:
@@ -810,7 +822,7 @@ class ChatManager:
         processed_answer = ""
         try:
             if self.chat_memory:
-                self.chat_memory.add_entry(question, "user")
+                user_message_id = self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
             if (
@@ -843,8 +855,41 @@ class ChatManager:
                 self.chat_history[1]["tokens"] = new_summary_tokens
                 logger.info(f"Applied new summary: {new_summary_copy[:50]}...")
             self.trim_context()
+
+            # --- User Profile Injection ---
+            turn_chat_history = self.chat_history
+            if self.user_profile_manager:
+                relevant_beliefs = (
+                    self.user_profile_manager.get_relevant_beliefs(question)
+                )
+                if relevant_beliefs:
+                    logger.info(
+                        f"Injecting {len(relevant_beliefs)} relevant beliefs"
+                        " into summary."
+                    )
+                    beliefs_prompt = self.template_manager.render(
+                        "framework.chat_manager.user_beliefs_prompt",
+                        {"beliefs": relevant_beliefs},
+                    )
+                    summary = self.chat_history[1]["content"]
+                    summary_ext = (
+                        beliefs_prompt
+                        if summary == "-"
+                        else f"{summary}\n\n{beliefs_prompt}"
+                    )
+                    summary_ext_tokens = self.llm._get_token_count(
+                        summary_ext, "system"
+                    )
+                    self.chat_history[1]["content"] = summary_ext
+                    self.chat_history[1]["tokens"] = summary_ext_tokens
+                    logger.info(
+                        "Applied new summary [+beliefs]:"
+                        f" {summary_ext[:50]}..."
+                    )
+
+            # --- LLM Call ---
             llm_response_stream = self.llm.chat(
-                chat_history=self.chat_history, stream=True
+                chat_history=turn_chat_history, stream=True
             )
 
             processed_answer = ""
@@ -973,7 +1018,7 @@ class ChatManager:
 
                 # Log assistant response to chat memory
                 if self.chat_memory:
-                    self.chat_memory.add_entry(
+                    assistant_message_id = self.chat_memory.add_entry(
                         processed_answer, "assistant"
                     )
             else:
@@ -983,7 +1028,7 @@ class ChatManager:
                     "No response generated", self.chat_history, "assistant"
                 )
                 if self.chat_memory:
-                    self.chat_memory.add_entry(
+                    assistant_message_id = self.chat_memory.add_entry(
                         "No response generated", "assistant"
                     )
 

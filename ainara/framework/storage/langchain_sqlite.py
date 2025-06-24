@@ -17,8 +17,8 @@
 # Lesser General Public License for more details.
 
 
-import logging
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -89,10 +89,12 @@ class LangChainSQLiteStorage(StorageBackend):
             )
             # Add indexes for faster queries
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_context_timestamp ON messages (context_id, timestamp);"
+                "CREATE INDEX IF NOT EXISTS idx_context_timestamp ON messages"
+                " (context_id, timestamp);"
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_context_user ON messages (context_id, user);"
+                "CREATE INDEX IF NOT EXISTS idx_context_user ON messages"
+                " (context_id, user);"
             )
 
             # Add a metadata table for versioning
@@ -185,7 +187,8 @@ class LangChainSQLiteStorage(StorageBackend):
         """Get total number of messages"""
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT COUNT(id) FROM messages WHERE context_id = ?", (self.context_id,)
+            "SELECT COUNT(id) FROM messages WHERE context_id = ?",
+            (self.context_id,),
         )
         return cursor.fetchone()[0]
 
@@ -198,7 +201,9 @@ class LangChainSQLiteStorage(StorageBackend):
         users: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Basic text search with filtering."""
-        sql_query = "SELECT * FROM messages WHERE context_id = ? AND content LIKE ?"
+        sql_query = (
+            "SELECT * FROM messages WHERE context_id = ? AND content LIKE ?"
+        )
         params = [self.context_id, f"%{query}%"]
 
         if start_date:
@@ -217,7 +222,47 @@ class LangChainSQLiteStorage(StorageBackend):
         cursor = self.conn.cursor()
         cursor.execute(sql_query, params)
         rows = cursor.fetchall()
-        
+
+        # Convert rows to dictionaries and parse metadata
+        results = []
+        for row in rows:
+            msg = dict(row)
+            if msg.get("metadata"):
+                msg["metadata"] = json.loads(msg["metadata"])
+            results.append(msg)
+        return results
+
+    def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single message by its ID."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM messages WHERE id = ?", (message_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        msg = dict(row)
+        if msg.get("metadata"):
+            msg["metadata"] = json.loads(msg["metadata"])
+        return msg
+
+    def get_messages_since(
+        self, timestamp: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get all messages since a given timestamp."""
+        query = "SELECT * FROM messages WHERE context_id = ?"
+        params = [self.context_id]
+
+        if timestamp:
+            query += " AND timestamp > ?"
+            params.append(timestamp)
+
+        query += " ORDER BY timestamp ASC"
+
+        cursor = self.conn.cursor()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
         # Convert rows to dictionaries and parse metadata
         results = []
         for row in rows:

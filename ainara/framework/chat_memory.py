@@ -22,9 +22,9 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from ainara.framework.storage import get_text_backend, get_vector_backend
 # Import our storage backends
 from ainara.framework.storage.base import StorageBackend
-from ainara.framework.storage import get_text_backend, get_vector_backend
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class ChatMemory:
             text_type = config.get("memory.text_storage.type", "sqlite")
             text_path = config.get(
                 "memory.text_storage.storage_path",
-                os.path.join(config.get("data.directory"), "chat_memory.db")
+                os.path.join(config.get("data.directory"), "chat_memory.db"),
             )
 
             # Ensure path is expanded
@@ -76,12 +76,11 @@ class ChatMemory:
             # Create text backend
             try:
                 self.storage = get_text_backend(
-                    text_type,
-                    db_path=text_path,
-                    context_id=context_id
+                    text_type, db_path=text_path, context_id=context_id
                 )
                 logger.info(
-                    f"Using {text_type} storage backend with context {context_id}"
+                    f"Using {text_type} storage backend with context"
+                    f" {context_id}"
                 )
             except Exception as e:
                 logger.error(f"Failed to initialize {text_type} backend: {e}")
@@ -91,11 +90,11 @@ class ChatMemory:
         vector_type = config.get("memory.vector_storage.type", "chroma")
         vector_path = config.get(
             "memory.vector_db_path",
-            os.path.join(config.get("data.directory"), "vector_db")
+            os.path.join(config.get("data.directory"), "vector_db"),
         )
         embedding_model = config.get(
             "memory.vector_storage.embedding_model",
-            "sentence-transformers/all-mpnet-base-v2"
+            "sentence-transformers/all-mpnet-base-v2",
         )
 
         # Ensure path is expanded
@@ -105,13 +104,16 @@ class ChatMemory:
                 vector_type,
                 vector_db_path=vector_path,
                 embedding_model=embedding_model,
-                collection_name=context_id
+                collection_name=context_id,
             )
             logger.info(
                 f"Using {vector_type} vector backend with context {context_id}"
             )
         except ImportError:
-            logger.warning(f"Vector storage backend '{vector_type}' dependencies not found. Semantic search will be disabled.")
+            logger.warning(
+                f"Vector storage backend '{vector_type}' dependencies not"
+                " found. Semantic search will be disabled."
+            )
             self.vector_storage = None
         except Exception as e:
             logger.error(f"Failed to initialize vector storage: {e}")
@@ -121,6 +123,7 @@ class ChatMemory:
         self,
         content: str,
         role: str = "user",
+        source_type: str = "chat_history",
         user_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -130,6 +133,7 @@ class ChatMemory:
         Args:
             content: The message content
             role: The role of the sender (user, assistant, system)
+            source_type: The origin of the content (e.g., 'chat_history', 'local_document')
             user_id: Optional user identifier (overrides context user)
             metadata: Additional metadata
 
@@ -139,9 +143,14 @@ class ChatMemory:
         # Create metadata with context information
         entry_metadata = metadata.copy() if metadata else {}
 
+        # Add the source type to the metadata
+        entry_metadata["source_type"] = source_type
+
         # Add a timestamp if one isn't already present. This is the authoritative timestamp.
         if "timestamp" not in entry_metadata:
-            entry_metadata["timestamp"] = datetime.now(timezone.utc).isoformat()
+            entry_metadata["timestamp"] = datetime.now(
+                timezone.utc
+            ).isoformat()
 
         # Add context information to metadata
         for key, value in self.context.items():
@@ -274,24 +283,24 @@ class ChatMemory:
             text_type = config.get("memory.text_storage.type", "sqlite")
             text_path = config.get(
                 "memory.text_storage.storage_path",
-                os.path.join(config.get("data.directory"), "chat_memory.db")
+                os.path.join(config.get("data.directory"), "chat_memory.db"),
             )
 
             # Create new text backend with new context
             self.storage = get_text_backend(
                 text_type,
                 db_path=os.path.expanduser(text_path),
-                context_id=new_context_id
+                context_id=new_context_id,
             )
 
             vector_type = config.get("memory.vector_storage.type", "chroma")
             vector_path = config.get(
                 "memory.vector_storage.storage_path",
-                os.path.join(config.get("data.directory"), "chat_memory.db")
+                os.path.join(config.get("data.directory"), "chat_memory.db"),
             )
             embedding_model = config.get(
                 "memory.vector_storage.embedding_model",
-                "sentence-transformers/all-mpnet-base-v2"
+                "sentence-transformers/all-mpnet-base-v2",
             )
 
             # Create new vector backend with new context
@@ -299,7 +308,7 @@ class ChatMemory:
                 vector_type,
                 vector_db_path=os.path.expanduser(vector_path),
                 embedding_model=embedding_model,
-                collection_name=new_context_id
+                collection_name=new_context_id,
             )
 
             # Update context
@@ -351,7 +360,9 @@ class ChatMemory:
         logger.info(f"Found {total_messages} messages to index.")
 
         for offset in range(0, total_messages, batch_size):
-            messages = self.storage.get_messages(limit=batch_size, offset=offset)
+            messages = self.storage.get_messages(
+                limit=batch_size, offset=offset
+            )
             if not messages:
                 break
 
@@ -372,7 +383,8 @@ class ChatMemory:
                 self.vector_storage.add_documents(documents_to_add)
 
             logger.info(
-                f"Indexed {offset + len(messages)} / {total_messages} messages."
+                f"Indexed {offset + len(messages)} /"
+                f" {total_messages} messages."
             )
 
         logger.info("Vector re-indexing complete.")
