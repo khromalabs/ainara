@@ -20,12 +20,14 @@
 import json
 import logging
 import os
+import uuid
 # from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
 from ainara.framework.llm.base import LLMBackend
+from ainara.framework.storage import get_vector_backend
 from ainara.framework.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,63 @@ class UserProfileManager:
         )
         self.template_manager = TemplateManager()
         self.profile = self._load_profile()
+
+        # Ensure all beliefs have a unique ID and save profile if changed
+        profile_updated = False
+        for beliefs in self.profile.get("key_beliefs", {}).values():
+            for belief in beliefs:
+                if "id" not in belief:
+                    belief["id"] = str(uuid.uuid4())
+                    profile_updated = True
+        if profile_updated:
+            logger.info(
+                "Added unique IDs to one or more beliefs. Saving profile."
+            )
+            self._save_profile()
+
+        # Initialize vector storage for beliefs
+        vector_type = config.get(
+            "user_profile.vector_storage.type",
+            config.get("memory.vector_storage.type", "chroma"),
+        )
+        vector_path = config.get(
+            "user_profile.vector_storage.path",
+            config.get(
+                "memory.vector_db_path",
+                os.path.join(config.get("data.directory"), "vector_db"),
+            ),
+        )
+        embedding_model = config.get(
+            "user_profile.vector_storage.embedding_model",
+            config.get(
+                "memory.vector_storage.embedding_model",
+                "sentence-transformers/all-mpnet-base-v2",
+            ),
+        )
+
+        # Ensure path is expanded
+        vector_path = os.path.expanduser(vector_path)
+        try:
+            self.vector_storage = get_vector_backend(
+                vector_type,
+                vector_db_path=vector_path,
+                embedding_model=embedding_model,
+                collection_name="user_profile_beliefs",
+            )
+            logger.info(
+                f"Using {vector_type} vector backend for user profile beliefs"
+            )
+            # Sync profile to vector store on startup
+            self._sync_profile_to_vector_store()
+        except ImportError:
+            logger.warning(
+                f"Vector storage backend '{vector_type}' dependencies not"
+                " found. User profile search will fall back to keyword matching."
+            )
+            self.vector_storage = None
+        except Exception as e:
+            logger.error(f"Failed to initialize vector storage for profile: {e}")
+            self.vector_storage = None
 
     def _load_profile(self) -> Dict[str, Any]:
         """Loads the user profile from disk, or creates a default one."""
@@ -66,13 +125,69 @@ class UserProfileManager:
                 json.dump(self.profile, f, indent=2, ensure_ascii=False)
         except IOError as e:
             logger.error(f"Failed to save user profile: {e}")
+            
+    def _sync_profile_to_vector_store(self):
+        """Clears and rebuilds the belief vector index from the profile."""
+        if not self.vector_storage:
+            logger.debug(
+                "Vector storage not available, skipping profile sync."
+            )
+            return
+
+        logger.info("Syncing user profile beliefs to vector store...")
+        self.vector_storage.reset()  # Clear the collection
+
+        all_beliefs = [
+            b
+            for topic_beliefs in self.profile.get("key_beliefs", {}).values()
+            for b in topic_beliefs
+        ]
+
+        if not all_beliefs:
+            logger.info("No beliefs found in profile to index.")
+            return
+
+        documents_to_add = []
+        for belief in all_beliefs:
+            # The document content is the belief text itself
+            content = belief.get("belief", "")
+            if not content:
+                continue
+
+            # The metadata will be the entire belief object
+            metadata = belief.copy()
+            documents_to_add.append(
+                {"page_content": content, "metadata": metadata}
+            )
+
+        if documents_to_add:
+            self.vector_storage.add_documents(documents_to_add)
+            logger.info(
+                f"Successfully indexed {len(documents_to_add)} beliefs in vector store."
+            )
 
     def get_relevant_beliefs(self, query: str, top_k: int = 3) -> List[Dict]:
         """
-        Finds beliefs relevant to the user's query.
-        NOTE: This is a simple keyword-based search for the draft. A real
-        implementation should use semantic vector search on the beliefs for better accuracy.
+        Finds beliefs relevant to the user's query using semantic vector
+        search, with a fallback to keyword matching.
         """
+        # Use vector search if available
+        if self.vector_storage:
+            try:
+                logger.debug(
+                    f"Performing semantic search for beliefs with query: '{query}'"
+                )
+                results = self.vector_storage.search(query, limit=top_k)
+                # The search result contains documents; extract the original
+                # belief from the metadata of each document.
+                return [doc.get("metadata", {}) for doc in results]
+            except Exception as e:
+                logger.error(
+                    f"Vector search for beliefs failed: {e}. Falling back to keyword search."
+                )
+
+        # Fallback to simple keyword-based search
+        logger.debug("Falling back to keyword search for beliefs.")
         relevant_beliefs = []
         all_beliefs = [
             b

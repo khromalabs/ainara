@@ -30,7 +30,7 @@ from ainara.framework.storage.base import StorageBackend
 logger = logging.getLogger(__name__)
 
 
-class LangChainSQLiteStorage(StorageBackend):
+class SQLiteStorage(StorageBackend):
     """LangChain SQLite implementation of chat storage"""
 
     def __init__(

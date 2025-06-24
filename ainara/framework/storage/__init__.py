@@ -18,13 +18,12 @@
 
 
 from ainara.framework.storage.base import StorageBackend
-from ainara.framework.storage.langchain_sqlite import \
-    LangChainSQLiteStorage
+from ainara.framework.storage.sqlite import SQLiteStorage
 from ainara.framework.storage.chroma import ChromaVectorStorage
 
 # Registry of available text storage backends
 TEXT_BACKENDS = {
-    "sqlite": LangChainSQLiteStorage,
+    "sqlite": SQLiteStorage,
 }
 
 # Registry of available vector storage backends
