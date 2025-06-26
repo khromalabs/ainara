@@ -115,6 +115,9 @@ class ChatManager:
         else:
             self.user_profile_manager = None
 
+        # Add a flag to track the initial profile update
+        self.initial_profile_update_complete = threading.Event()
+
         # Render the system message template
         current_date = datetime.now().date()
         self.system_message = self.template_manager.render(
@@ -148,12 +151,25 @@ class ChatManager:
         for skill in self.capabilities:
             skills_description_list += "\n - " + skill["description"]
 
+        # Check if the user profile is new to show an onboarding message
+        is_new_profile = False
+        if self.user_profile_manager:
+            profile_data = self.user_profile_manager.profile
+            if not profile_data.get("key_beliefs") and not profile_data.get(
+                "extended_beliefs"
+            ):
+                is_new_profile = True
+                logger.info(
+                    "User profile is new. Will display onboarding message."
+                )
+
         # Update system message with skills descriptions
         self.system_message = self.template_manager.render(
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": skills_description_list,
                 "current_date": current_date,
+                "is_new_profile": is_new_profile,
             },
         )
         self.llm.add_msg(self.system_message, self.chat_history, "system")
@@ -166,6 +182,9 @@ class ChatManager:
             self.summary_in_progress = False
             self.summary_executor = ThreadPoolExecutor(max_workers=1)
             self.current_summary = None
+
+        # Trigger initial profile update in the background
+        self._trigger_initial_profile_update()
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -315,6 +334,27 @@ class ChatManager:
             last_end = end_pos
 
         return sentences
+
+    def _trigger_initial_profile_update(self):
+        """Triggers the initial user profile update in a background thread."""
+        if not self.user_profile_manager:
+            self.initial_profile_update_complete.set()  # Mark as complete if not enabled
+            return
+
+        def _background_profile_update_task():
+            try:
+                logger.info(
+                    "Starting initial user profile update in background..."
+                )
+                self.user_profile_manager.process_new_messages_for_update()
+                logger.info("Initial user profile update completed.")
+            except Exception as e:
+                logger.error(f"Error during initial profile update: {e}")
+            finally:
+                # Signal that the update is complete, regardless of success
+                self.initial_profile_update_complete.set()
+
+        self.summary_executor.submit(_background_profile_update_task)
 
     def _process_streaming_sentence(
         self,
@@ -789,6 +829,72 @@ class ChatManager:
                 - "cli": CLI streaming with prints and loading animation
                 - "json": Streams JSON events in NDJSON format
         """
+        INITIAL_PROFILE_UPDATE_TIMEOUT = 20.0  # seconds
+
+        # Wait for the initial profile update to complete if it's still running
+        if not self.initial_profile_update_complete.is_set():
+            if stream == "json":
+                yield ndjson(
+                    "signal",
+                    "loading",
+                    {
+                        "state": "start",
+                        "type": "profile_update",
+                        "message": (
+                            "Analyzing recent conversations to update user"
+                            " profile..."
+                        ),
+                    },
+                )
+            elif stream == "cli":
+                # Simple message for CLI
+                print(
+                    "Analyzing recent conversations to update user profile...",
+                    flush=True,
+                )
+
+            # Block until the update is finished, with a timeout
+            completed_in_time = self.initial_profile_update_complete.wait(
+                timeout=INITIAL_PROFILE_UPDATE_TIMEOUT
+            )
+
+            if not completed_in_time:
+                # The wait timed out
+                logger.warning(
+                    "Initial user profile update timed out after"
+                    f" {INITIAL_PROFILE_UPDATE_TIMEOUT} seconds. Proceeding"
+                    " without it."
+                )
+                if stream == "json":
+                    yield ndjson(
+                        "signal",
+                        "error",
+                        {
+                            "message": (
+                                "User profile analysis took too long and was"
+                                " skipped."
+                            )
+                        },
+                    )
+                elif stream == "cli":
+                    print(
+                        "Warning: User profile analysis timed out.",
+                        file=sys.stderr,
+                    )
+                # Mark as complete to prevent blocking future interactions
+                self.initial_profile_update_complete.set()
+
+            if stream == "json":
+                yield ndjson(
+                    "signal",
+                    "loading",
+                    {"state": "stop", "type": "profile_update"},
+                )
+            elif stream == "cli":
+                # The "Done." message might be misleading if it timed out, so we remove it.
+                # The warning message for CLI provides sufficient feedback.
+                pass
+
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
             stream = "cli" if stream else None
@@ -859,17 +965,34 @@ class ChatManager:
             # --- User Profile Injection ---
             turn_chat_history = self.chat_history
             if self.user_profile_manager:
-                relevant_beliefs = (
+                # 1. Get all key beliefs (always included)
+                key_beliefs = self.user_profile_manager.get_key_beliefs()
+                logger.info(f"key_beliefs: {key_beliefs}")
+
+                # 2. Get relevant extended beliefs based on the current query
+                extended_beliefs = (
                     self.user_profile_manager.get_relevant_beliefs(question)
                 )
-                if relevant_beliefs:
+                logger.info(f"extended_beliefs: {key_beliefs}")
+
+                # 3. Combine and deduplicate beliefs
+                all_beliefs_map = {}
+                for belief in key_beliefs + extended_beliefs:
+                    # Use belief ID to ensure uniqueness
+                    if belief.get("id"):
+                        all_beliefs_map[belief["id"]] = belief
+                combined_beliefs = list(all_beliefs_map.values())
+                logger.info(f"combined_beliefs: {combined_beliefs}")
+
+                if combined_beliefs:
                     logger.info(
-                        f"Injecting {len(relevant_beliefs)} relevant beliefs"
-                        " into summary."
+                        f"Injecting {len(combined_beliefs)} beliefs"
+                        f" ({len(key_beliefs)} key,"
+                        f" {len(extended_beliefs)} extended) into summary."
                     )
                     beliefs_prompt = self.template_manager.render(
                         "framework.chat_manager.user_beliefs_prompt",
-                        {"beliefs": relevant_beliefs},
+                        {"beliefs": combined_beliefs},
                     )
                     summary = self.chat_history[1]["content"]
                     summary_ext = (
