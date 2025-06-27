@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class UserProfileManager:
-    """Manages the user's semantic profile (beliefs, preferences, facts)."""
+    """Manages the user's semantic profile (memories, preferences, facts)."""
 
     def __init__(self, llm: LLMBackend, chat_memory: ChatMemory):
         self.llm = llm
@@ -47,13 +47,13 @@ class UserProfileManager:
             config.get("data.directory"), "user_profile.json"
         )
 
-        # Setup database table for beliefs
-        self._create_beliefs_table()
+        # Setup database table for memories
+        self._create_memories_table()
 
         # Run a one-time migration from the old JSON file if it exists
         self._run_migration()
 
-        # Initialize vector storage for beliefs
+        # Initialize vector storage for memories
         vector_type = config.get(
             "user_profile.vector_storage.type",
             config.get("memory.vector_storage.type", "chroma"),
@@ -80,10 +80,10 @@ class UserProfileManager:
                 vector_type,
                 vector_db_path=vector_path,
                 embedding_model=embedding_model,
-                collection_name="user_profile_beliefs",
+                collection_name="user_profile_memories",
             )
             logger.info(
-                f"Using {vector_type} vector backend for user profile beliefs"
+                f"Using {vector_type} vector backend for user profile memories"
             )
             # Sync profile to vector store on startup only if needed
             needs_reset = self.storage.get_metadata("vector_db_needs_reset")
@@ -105,17 +105,17 @@ class UserProfileManager:
             )
             self.vector_storage = None
 
-    def _create_beliefs_table(self):
-        """Creates the user_beliefs table in the database if it doesn't exist."""
+    def _create_memories_table(self):
+        """Creates the user_memories table in the database if it doesn't exist."""
         try:
             with self.storage.conn:
                 self.storage.conn.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS user_beliefs (
+                    CREATE TABLE IF NOT EXISTS user_memories (
                         id TEXT PRIMARY KEY,
-                        belief_type TEXT NOT NULL,
+                        memory_type TEXT NOT NULL,
                         topic TEXT NOT NULL,
-                        belief TEXT NOT NULL,
+                        memory TEXT NOT NULL,
                         relevance REAL NOT NULL DEFAULT 1.0,
                         last_updated TEXT NOT NULL,
                         source_message_ids TEXT,
@@ -125,16 +125,16 @@ class UserProfileManager:
                     """
                 )
                 self.storage.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_beliefs_topic ON"
-                    " user_beliefs(topic);"
+                    "CREATE INDEX IF NOT EXISTS idx_memories_topic ON"
+                    " user_memories(topic);"
                 )
                 self.storage.conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_beliefs_type ON"
-                    " user_beliefs(belief_type);"
+                    "CREATE INDEX IF NOT EXISTS idx_memories_type ON"
+                    " user_memories(memory_type);"
                 )
-            logger.debug("user_beliefs table checked/created successfully.")
+            logger.debug("user_memories table checked/created successfully.")
         except Exception as e:
-            logger.error(f"Failed to create user_beliefs table: {e}")
+            logger.error(f"Failed to create user_memories table: {e}")
             raise
 
     def _run_migration(self):
@@ -143,56 +143,56 @@ class UserProfileManager:
             return  # No old file to migrate
 
         try:
-            # Check if the beliefs table is empty
+            # Check if the memories table is empty
             cursor = self.storage.conn.cursor()
-            cursor.execute("SELECT COUNT(id) FROM user_beliefs")
+            cursor.execute("SELECT COUNT(id) FROM user_memories")
             if cursor.fetchone()[0] > 0:
                 logger.info(
-                    "Beliefs table is not empty. Skipping migration from JSON."
+                    "memories table is not empty. Skipping migration from JSON."
                 )
                 return
 
             logger.info(
-                "Found user_profile.json and empty beliefs table. Starting"
+                "Found user_profile.json and empty memories table. Starting"
                 " migration..."
             )
             with open(self.profile_path, "r", encoding="utf-8") as f:
                 old_profile = json.load(f)
 
-            beliefs_to_add = []
-            for belief_type in ["key_beliefs", "extended_beliefs"]:
-                for topic, topic_beliefs in old_profile.get(
-                    belief_type, {}
+            memories_to_add = []
+            for memory_type in ["key_memories", "extended_memories"]:
+                for topic, topic_memories in old_profile.get(
+                    memory_type, {}
                 ).items():
-                    for belief in topic_beliefs:
-                        beliefs_to_add.append(
+                    for memory in topic_memories:
+                        memories_to_add.append(
                             (
-                                belief.get("id", str(uuid.uuid4())),
-                                belief_type,
-                                belief.get("topic", topic),
-                                belief.get("belief"),
-                                belief.get("relevance", 1.0),
-                                belief.get(
+                                memory.get("id", str(uuid.uuid4())),
+                                memory_type,
+                                memory.get("topic", topic),
+                                memory.get("memory"),
+                                memory.get("relevance", 1.0),
+                                memory.get(
                                     "last_updated",
                                     datetime.now(timezone.utc).isoformat(),
                                 ),
-                                json.dumps(belief.get("source_message_ids")),
-                                belief.get("confidence"),
-                                json.dumps(belief.get("metadata")),
+                                json.dumps(memory.get("source_message_ids")),
+                                memory.get("confidence"),
+                                json.dumps(memory.get("metadata")),
                             )
                         )
 
-            if beliefs_to_add:
+            if memories_to_add:
                 with self.storage.conn:
                     self.storage.conn.executemany(
                         """
-                        INSERT INTO user_beliefs (id, belief_type, topic, belief, relevance, last_updated, source_message_ids, confidence, metadata)
+                        INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids, confidence, metadata)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        beliefs_to_add,
+                        memories_to_add,
                     )
                 logger.info(
-                    f"Successfully migrated {len(beliefs_to_add)} beliefs from"
+                    f"Successfully migrated {len(memories_to_add)} memories from"
                     " JSON to SQLite."
                 )
 
@@ -211,23 +211,23 @@ class UserProfileManager:
         """Converts a sqlite3.Row to a dictionary and parses JSON fields."""
         if not row:
             return {}
-        belief = dict(row)
+        memory = dict(row)
         for key in ["source_message_ids", "metadata"]:
-            if belief.get(key) and isinstance(belief[key], str):
+            if memory.get(key) and isinstance(memory[key], str):
                 try:
-                    belief[key] = json.loads(belief[key])
+                    memory[key] = json.loads(memory[key])
                 except json.JSONDecodeError:
                     logger.warning(
-                        f"Could not decode JSON for key '{key}' in belief ID"
-                        f" {belief.get('id')}"
+                        f"Could not decode JSON for key '{key}' in memory ID"
+                        f" {memory.get('id')}"
                     )
-                    belief[key] = None
-        return belief
+                    memory[key] = None
+        return memory
 
     def _sync_profile_to_vector_store(self):
         import time
 
-        """Clears and rebuilds the belief vector index from the profile."""
+        """Clears and rebuilds the memory vector index from the profile."""
         if not self.vector_storage:
             logger.debug(
                 "Vector storage not available, skipping profile sync."
@@ -235,25 +235,25 @@ class UserProfileManager:
             return
 
         start_time = time.time()
-        logger.info("Syncing user profile beliefs to vector store...")
+        logger.info("Syncing user profile memories to vector store...")
         self.vector_storage.reset()  # Clear the collection
 
         cursor = self.storage.conn.cursor()
         cursor.execute(
-            "SELECT * FROM user_beliefs WHERE belief_type = 'extended_beliefs'"
+            "SELECT * FROM user_memories WHERE memory_type = 'extended_memories'"
         )
-        all_beliefs = [self._dict_from_row(row) for row in cursor.fetchall()]
+        all_memories = [self._dict_from_row(row) for row in cursor.fetchall()]
 
-        if not all_beliefs:
-            logger.info("No extended beliefs found in profile to index.")
+        if not all_memories:
+            logger.info("No extended memories found in profile to index.")
             return
 
         documents_to_add = []
-        for belief in all_beliefs:
-            content = belief.get("belief", "")
+        for memory in all_memories:
+            content = memory.get("memory", "")
             if not content:
                 continue
-            metadata = belief.copy()
+            metadata = memory.copy()
             documents_to_add.append(
                 {"page_content": content, "metadata": metadata}
             )
@@ -263,7 +263,7 @@ class UserProfileManager:
             duration = time.time() - start_time
             logger.info(
                 f"Successfully indexed {len(documents_to_add)} extended"
-                " beliefs in vector store. Operation took"
+                " memories in vector store. Operation took"
                 f" {duration:.2f} seconds."
             )
 
@@ -271,43 +271,43 @@ class UserProfileManager:
         self.storage.set_metadata("vector_db_needs_reset", "false")
         logger.info("Vector DB sync complete. Cleared reset flag.")
 
-    def get_key_beliefs(self) -> List[Dict]:
-        """Returns a flat list of all key beliefs from the database."""
+    def get_key_memories(self) -> List[Dict]:
+        """Returns a flat list of all key memories from the database."""
         cursor = self.storage.conn.cursor()
         cursor.execute(
-            "SELECT * FROM user_beliefs WHERE belief_type = 'key_beliefs'"
+            "SELECT * FROM user_memories WHERE memory_type = 'key_memories'"
             " ORDER BY relevance DESC"
         )
         return [self._dict_from_row(row) for row in cursor.fetchall()]
 
     def is_empty(self) -> bool:
-        """Checks if the user profile contains any beliefs."""
+        """Checks if the user profile contains any memories."""
         try:
             cursor = self.storage.conn.cursor()
             # We just need to know if at least one row exists.
-            cursor.execute("SELECT 1 FROM user_beliefs LIMIT 1")
+            cursor.execute("SELECT 1 FROM user_memories LIMIT 1")
             return cursor.fetchone() is None
         except Exception as e:
             logger.error(f"Failed to check if profile is empty: {e}")
             return False  # Safer to assume not empty on error
 
-    def get_relevant_beliefs(
+    def get_relevant_memories(
         self, query: str, top_k: int = 3, relevance_weight: float = 0.3
     ) -> List[Dict]:
         """
-        Finds beliefs relevant to the user's query using semantic vector
-        search, re-ranking results based on the belief's relevance score.
+        Finds memories relevant to the user's query using semantic vector
+        search, re-ranking results based on the memory's relevance score.
         """
         if not self.vector_storage:
             raise RuntimeError(
-                "Vector storage is required for belief retrieval."
+                "Vector storage is required for memory retrieval."
             )
 
         try:
             # Fetch more results initially to allow for re-ranking
             initial_results_count = top_k * 3
             logger.info(
-                "Performing semantic search for extended beliefs with"
+                "Performing semantic search for extended memories with"
                 f" query: '{query}'"
             )
             # The search result from Chroma includes distances (lower is better)
@@ -318,10 +318,10 @@ class UserProfileManager:
             if not results_with_distances:
                 return []
 
-            ranked_beliefs = []
+            ranked_memories = []
             for doc, score in results_with_distances:
-                belief = doc.get("metadata", {})
-                relevance = belief.get("relevance", 1.0)
+                memory = doc.get("metadata", {})
+                relevance = memory.get("relevance", 1.0)
                 # Normalize semantic score (distance) to be higher-is-better
                 # Assuming distance is between 0 and ~2. A simple inversion works.
                 semantic_score = 1 / (1 + score)
@@ -330,17 +330,17 @@ class UserProfileManager:
                 combined_score = (semantic_score * (1 - relevance_weight)) + (
                     relevance * relevance_weight
                 )
-                ranked_beliefs.append((belief, combined_score))
+                ranked_memories.append((memory, combined_score))
 
             # Sort by the new combined score, descending
-            ranked_beliefs.sort(key=lambda x: x[1], reverse=True)
+            ranked_memories.sort(key=lambda x: x[1], reverse=True)
 
-            # Return the top_k beliefs
-            return [belief for belief, score in ranked_beliefs[:top_k]]
+            # Return the top_k memories
+            return [memory for memory, score in ranked_memories[:top_k]]
 
         except Exception as e:
             logger.error(
-                f"Vector search for beliefs failed: {e}. Returning empty list."
+                f"Vector search for memories failed: {e}. Returning empty list."
             )
             return []
 
@@ -352,8 +352,8 @@ class UserProfileManager:
         last_timestamp = self.storage.get_metadata(
             "profile_last_processed_timestamp"
         )
-        # First, apply decay to all existing beliefs
-        self._decay_belief_relevance()
+        # First, apply decay to all existing memories
+        self._decay_memory_relevance()
 
         logger.info(
             "Starting profile update. Checking for messages since:"
@@ -394,7 +394,7 @@ class UserProfileManager:
             f"Processing {len(conversation_turns)} new conversation turns."
         )
         for user_msg, assistant_msg in conversation_turns:
-            self._extract_and_assimilate_belief(user_msg, assistant_msg)
+            self._extract_and_assimilate_memory(user_msg, assistant_msg)
 
         # After processing all turns, update the timestamp to the last message processed
         latest_timestamp = new_messages[-1].get("timestamp")
@@ -405,65 +405,65 @@ class UserProfileManager:
             f"Profile update complete. New timestamp: {latest_timestamp}"
         )
 
-    def _decay_belief_relevance(self, decay_factor: float = 0.95):
-        """Applies a decay factor to the relevance of all beliefs."""
+    def _decay_memory_relevance(self, decay_factor: float = 0.95):
+        """Applies a decay factor to the relevance of all memories."""
         logger.info(f"Applying relevance decay (factor: {decay_factor})...")
         try:
             with self.storage.conn:
                 cursor = self.storage.conn.execute(
-                    "UPDATE user_beliefs SET relevance = relevance * ?",
+                    "UPDATE user_memories SET relevance = relevance * ?",
                     (decay_factor,),
                 )
             if cursor.rowcount > 0:
                 logger.info(
-                    f"Decayed relevance for {cursor.rowcount} beliefs."
+                    f"Decayed relevance for {cursor.rowcount} memories."
                 )
         except Exception as e:
-            logger.error(f"Failed to decay belief relevance: {e}")
+            logger.error(f"Failed to decay memory relevance: {e}")
 
-    def _reinforce_belief(
-        self, belief_id: str, increment: float = 1.0
+    def _reinforce_memory(
+        self, memory_id: str, increment: float = 1.0
     ) -> bool:
-        """Finds a belief by ID and increases its relevance."""
+        """Finds a memory by ID and increases its relevance."""
         try:
             with self.storage.conn:
                 cursor = self.storage.conn.execute(
-                    "UPDATE user_beliefs SET relevance = relevance + ?,"
+                    "UPDATE user_memories SET relevance = relevance + ?,"
                     " last_updated = ? WHERE id = ?",
                     (
                         increment,
                         datetime.now(timezone.utc).isoformat(),
-                        belief_id,
+                        memory_id,
                     ),
                 )
             return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"Failed to reinforce belief {belief_id}: {e}")
+            logger.error(f"Failed to reinforce memory {memory_id}: {e}")
             return False
 
-    def _create_new_belief(
-        self, belief_data: Dict, user_message: Dict, assistant_message: Dict
+    def _create_new_memory(
+        self, memory_data: Dict, user_message: Dict, assistant_message: Dict
     ):
-        """Adds a new belief to the profile and vector store."""
-        target_section = belief_data.get("target", "extended_beliefs")
-        new_belief = belief_data.get("belief_data", {})
-        topic = new_belief.get("topic", "general")
-        belief_text = new_belief.get("belief")
+        """Adds a new memory to the profile and vector store."""
+        target_section = memory_data.get("target", "extended_memories")
+        new_memory = memory_data.get("memory_data", {})
+        topic = new_memory.get("topic", "general")
+        memory_text = new_memory.get("memory")
 
-        if not belief_text:
+        if not memory_text:
             logger.warning(
-                "Attempted to create a belief with no text. Skipping."
+                "Attempted to create a memory with no text. Skipping."
             )
             return
 
-        if target_section not in ["key_beliefs", "extended_beliefs"]:
+        if target_section not in ["key_memories", "extended_memories"]:
             logger.warning(
                 f"LLM returned invalid target section: '{target_section}'."
-                " Defaulting to extended_beliefs."
+                " Defaulting to extended_memories."
             )
-            target_section = "extended_beliefs"
+            target_section = "extended_memories"
 
-        belief_id = str(uuid.uuid4())
+        memory_id = str(uuid.uuid4())
         last_updated = datetime.now(timezone.utc).isoformat()
         source_ids = json.dumps(
             [
@@ -480,91 +480,91 @@ class UserProfileManager:
             with self.storage.conn:
                 self.storage.conn.execute(
                     """
-                    INSERT INTO user_beliefs (id, belief_type, topic, belief, relevance, last_updated, source_message_ids)
+                    INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        belief_id,
+                        memory_id,
                         target_section,
                         topic,
-                        belief_text,
+                        memory_text,
                         1.0,
                         last_updated,
                         source_ids,
                     ),
                 )
             logger.info(
-                f"Added new belief to '{target_section}' under topic: {topic}"
+                f"Added new memory to '{target_section}' under topic: {topic}"
             )
 
-            # Add to vector store if it's an extended belief
-            if target_section == "extended_beliefs" and self.vector_storage:
-                # We need the full belief object for metadata
-                full_belief_obj = {
-                    "id": belief_id,
-                    "belief_type": target_section,
+            # Add to vector store if it's an extended memory
+            if target_section == "extended_memories" and self.vector_storage:
+                # We need the full memory object for metadata
+                full_memory_obj = {
+                    "id": memory_id,
+                    "memory_type": target_section,
                     "topic": topic,
-                    "belief": belief_text,
+                    "memory": memory_text,
                     "relevance": 1.0,
                     "last_updated": last_updated,
                     "source_message_ids": json.loads(source_ids),
                 }
                 document_to_add = {
-                    "page_content": belief_text,
-                    "metadata": full_belief_obj,
+                    "page_content": memory_text,
+                    "metadata": full_memory_obj,
                 }
                 self.vector_storage.add_documents([document_to_add])
                 logger.info(
-                    f"Indexed new belief (ID: {belief_id}) in vector store."
+                    f"Indexed new memory (ID: {memory_id}) in vector store."
                 )
         except Exception as e:
-            logger.error(f"Failed to create new belief in database: {e}")
+            logger.error(f"Failed to create new memory in database: {e}")
 
-    def _extract_and_assimilate_belief(
+    def _extract_and_assimilate_memory(
         self, user_message: Dict, assistant_message: Dict
     ):
         """
-        Extracts a potential belief from a conversation turn, compares it
-        to existing beliefs, and decides whether to create a new belief,
+        Extracts a potential memory from a conversation turn, compares it
+        to existing memories, and decides whether to create a new memory,
         reinforce an existing one, or discard it.
         """
         decision_str = ""
         try:
-            # Step 1: Search for semantically similar existing beliefs using the user's message
-            similar_beliefs = []
+            # Step 1: Search for semantically similar existing memories using the user's message
+            similar_memories = []
             if self.vector_storage:
                 search_results = self.vector_storage.search_with_scores(
                     user_message["content"], limit=5
                 )
 
-                # Defensive check: Ensure beliefs from vector store exist in our DB (source of truth)
-                belief_ids_from_search = [
+                # Defensive check: Ensure memories from vector store exist in our DB (source of truth)
+                memory_ids_from_search = [
                     doc.get("metadata", {}).get("id")
                     for doc, score in search_results
                 ]
-                if belief_ids_from_search:
+                if memory_ids_from_search:
                     placeholders = ",".join(
-                        "?" for _ in belief_ids_from_search
+                        "?" for _ in memory_ids_from_search
                     )
                     cursor = self.storage.conn.cursor()
                     cursor.execute(
-                        "SELECT * FROM user_beliefs WHERE id IN"
+                        "SELECT * FROM user_memories WHERE id IN"
                         f" ({placeholders})",
-                        belief_ids_from_search,
+                        memory_ids_from_search,
                     )
-                    verified_beliefs = [
+                    verified_memories = [
                         self._dict_from_row(row) for row in cursor.fetchall()
                     ]
-                    if len(verified_beliefs) != len(belief_ids_from_search):
+                    if len(verified_memories) != len(memory_ids_from_search):
                         logger.warning(
-                            "Vector store returned beliefs that are not in the"
+                            "Vector store returned memories that are not in the"
                             " database. The index might be stale. Stale"
                             " results have been filtered out."
                         )
                         self.storage.set_metadata(
                             "vector_db_needs_reset", "true"
                         )
-                    similar_beliefs = verified_beliefs
+                    similar_memories = verified_memories
 
             # Step 2: Single LLM call for consolidated processing
             conversation_snippet = (
@@ -572,20 +572,20 @@ class UserProfileManager:
                 f"Assistant: {assistant_message['content']}"
             )
             processing_prompt = self.template_manager.render(
-                "framework.user_profile_manager.consolidated_belief_processing",
+                "framework.user_profile_manager.consolidated_memory_processing",
                 {
                     "conversation_snippet": conversation_snippet,
-                    "existing_beliefs": similar_beliefs,
+                    "existing_memories": similar_memories,
                 },
             )
             processing_history = [
                 {
                     "role": "system",
                     "content": (
-                        "You are an intelligent belief assimilation system."
+                        "You are an intelligent memory assimilation system."
                         " Your task is to analyze a conversation, compare it"
                         " against existing knowledge, and decide whether to"
-                        " create new beliefs, reinforce existing ones, or"
+                        " create new memories, reinforce existing ones, or"
                         " ignore the information. Respond in JSON format."
                     ),
                 },
@@ -599,28 +599,28 @@ class UserProfileManager:
             # Step 3: Act on the decision
             action = decision.get("action")
             if action == "reinforce":
-                belief_id = decision.get("belief_id")
-                if self._reinforce_belief(belief_id):
+                memory_id = decision.get("memory_id")
+                if self._reinforce_memory(memory_id):
                     logger.info(
-                        f"Reinforced existing belief (ID: {belief_id}) with"
+                        f"Reinforced existing memory (ID: {memory_id}) with"
                         " relevance +1.0"
                     )
                 else:
                     logger.warning(
-                        f"LLM chose to reinforce a belief (ID: {belief_id})"
+                        f"LLM chose to reinforce a memory (ID: {memory_id})"
                         " that could not be found."
                     )
 
             elif action == "create":
-                logger.info("Decision: Create a new belief.")
+                logger.info("Decision: Create a new memory.")
                 candidate_data = decision
-                self._create_new_belief(
+                self._create_new_memory(
                     candidate_data, user_message, assistant_message
                 )
 
             elif action == "ignore":
                 logger.info(
-                    "Decision: Ignore candidate belief as it is redundant or"
+                    "Decision: Ignore candidate memory as it is redundant or"
                     " irrelevant."
                 )
             else:
@@ -631,8 +631,8 @@ class UserProfileManager:
 
         except json.JSONDecodeError:
             logger.warning(
-                "LLM returned invalid JSON for belief processing:"
+                "LLM returned invalid JSON for memory processing:"
                 f" {decision_str}"
             )
         except Exception as e:
-            logger.error(f"Failed to assimilate belief from conversation: {e}")
+            logger.error(f"Failed to assimilate memory from conversation: {e}")

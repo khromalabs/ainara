@@ -89,13 +89,13 @@ class ChatManager:
         self.ndjson = ndjson
         self.new_summary = "-"
 
-        # --- Belief System Caching ---
-        self.key_beliefs_cache = []
-        self.session_relevant_beliefs = (
+        # --- memory System Caching ---
+        self.key_memories_cache = []
+        self.session_relevant_memories = (
             {}
         )  # Using dict for easy deduplication and metadata
-        self.MAX_SESSION_BELIEFS = (
-            10  # Max extended beliefs to keep in context
+        self.MAX_SESSION_memories = (
+            10  # Max extended memories to keep in context
         )
 
         # Load spaCy model for sentence segmentation
@@ -171,12 +171,12 @@ class ChatManager:
             self.summary_executor = ThreadPoolExecutor(max_workers=1)
             self.current_summary = None
 
-        # Pre-load key beliefs
+        # Pre-load key memories
         if self.user_profile_manager:
-            self.key_beliefs_cache = (
-                self.user_profile_manager.get_key_beliefs()
+            self.key_memories_cache = (
+                self.user_profile_manager.get_key_memories()
             )
-            logger.info(f"Cached {len(self.key_beliefs_cache)} key beliefs.")
+            logger.info(f"Cached {len(self.key_memories_cache)} key memories.")
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -884,46 +884,46 @@ class ChatManager:
                     ]
                 )
 
-                # 2. Get relevant extended beliefs based on recent conversation context
-                newly_relevant_beliefs = (
-                    self.user_profile_manager.get_relevant_beliefs(
+                # 2. Get relevant extended memories based on recent conversation context
+                newly_relevant_memories = (
+                    self.user_profile_manager.get_relevant_memories(
                         search_context, top_k=3
                     )
                 )
 
-                # 3. Update the session-relevant beliefs cache
-                for belief in newly_relevant_beliefs:
-                    self.session_relevant_beliefs[belief["id"]] = belief
+                # 3. Update the session-relevant memories cache
+                for memory in newly_relevant_memories:
+                    self.session_relevant_memories[memory["id"]] = memory
 
                 # 4. Evict oldest if cache exceeds max size
                 while (
-                    len(self.session_relevant_beliefs)
-                    > self.MAX_SESSION_BELIEFS
+                    len(self.session_relevant_memories)
+                    > self.MAX_SESSION_memories
                 ):
-                    oldest_id = next(iter(self.session_relevant_beliefs))
-                    del self.session_relevant_beliefs[oldest_id]
+                    oldest_id = next(iter(self.session_relevant_memories))
+                    del self.session_relevant_memories[oldest_id]
 
-                # 5. Combine key beliefs and session-relevant beliefs for injection
-                combined_beliefs = self.key_beliefs_cache + list(
-                    self.session_relevant_beliefs.values()
+                # 5. Combine key memories and session-relevant memories for injection
+                combined_memories = self.key_memories_cache + list(
+                    self.session_relevant_memories.values()
                 )
 
-                if combined_beliefs:
+                if combined_memories:
                     logger.info(
-                        f"Injecting {len(combined_beliefs)} beliefs"
-                        f" ({len(self.key_beliefs_cache)} key,"
-                        f" {len(self.session_relevant_beliefs)} session-relevant)"
+                        f"Injecting {len(combined_memories)} memories"
+                        f" ({len(self.key_memories_cache)} key,"
+                        f" {len(self.session_relevant_memories)} session-relevant)"
                         " into summary."
                     )
-                    beliefs_prompt = self.template_manager.render(
-                        "framework.chat_manager.user_beliefs_prompt",
-                        {"beliefs": combined_beliefs},
+                    memories_prompt = self.template_manager.render(
+                        "framework.chat_manager.user_memories_prompt",
+                        {"memories": combined_memories},
                     )
                     summary = self.chat_history[1]["content"]
                     summary_ext = (
-                        beliefs_prompt
+                        memories_prompt
                         if summary == "-"
-                        else f"{summary}\n\n{beliefs_prompt}"
+                        else f"{summary}\n\n{memories_prompt}"
                     )
                     summary_ext_tokens = self.llm._get_token_count(
                         summary_ext, "system"
@@ -931,7 +931,7 @@ class ChatManager:
                     self.chat_history[1]["content"] = summary_ext
                     self.chat_history[1]["tokens"] = summary_ext_tokens
                     logger.info(
-                        "Applied new summary [+beliefs]:"
+                        "Applied new summary [+memories]:"
                         f" {summary_ext[:2000]}..."
                     )
 
