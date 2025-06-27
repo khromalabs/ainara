@@ -245,6 +245,21 @@ class SQLiteStorage(StorageBackend):
         if msg.get("metadata"):
             msg["metadata"] = json.loads(msg["metadata"])
         return msg
+        
+    def get_metadata(self, key: str) -> Optional[str]:
+        """Get a value from the metadata table."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT value FROM db_metadata WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+    def set_metadata(self, key: str, value: str):
+        """Set a value in the metadata table."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO db_metadata (key, value) VALUES (?, ?)",
+                (key, value),
+            )
 
     def get_messages_since(
         self, timestamp: Optional[str] = None

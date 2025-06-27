@@ -40,6 +40,16 @@ class VectorStorageBackend(ABC):
         pass
 
     @abstractmethod
+    def search_with_scores(
+        self,
+        query: str,
+        limit: int = 5,
+        filter_dict: Optional[Dict[str, Any]] = None,
+    ) -> List[tuple[Dict[str, Any], float]]:
+        """Search for similar documents and return their scores."""
+        pass
+
+    @abstractmethod
     def delete(self, ids: List[str]) -> None:
         """Delete documents by their IDs."""
         pass

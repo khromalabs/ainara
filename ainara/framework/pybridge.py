@@ -37,6 +37,8 @@ from flask_cors import CORS
 from ainara import __version__
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
+from ainara.framework.chat_memory import ChatMemory
+from ainara.framework.user_profile_manager import UserProfileManager
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
@@ -241,12 +243,31 @@ def create_app():
 
     atexit.register(cleanup_on_shutdown)
 
+    # --- Initialize Core Managers ---
+    # Initialize ChatMemory if enabled
+    chat_memory = None
+    if config.get("memory.enabled", True):
+        chat_memory = ChatMemory()
+        logger.info("Chat memory initialized")
+
+    # Initialize UserProfileManager
+    user_profile_manager = None
+    if chat_memory:
+        user_profile_manager = UserProfileManager(llm=app.llm, chat_memory=chat_memory)
+        logger.info("User Profile Manager initialized")
+        # Perform initial consolidation at startup
+        logger.info("Starting initial user profile consolidation...")
+        user_profile_manager.process_new_messages_for_update()
+        logger.info("Initial user profile consolidation complete.")
+
     # Create chat_manager as app attribute so it's accessible to all routes
     app.chat_manager = ChatManager(
         llm=app.llm,
         tts=tts,
         flask_app=app,
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
+        chat_memory=chat_memory,
+        user_profile_manager=user_profile_manager,
     )
 
     @app.route("/health", methods=["GET"])

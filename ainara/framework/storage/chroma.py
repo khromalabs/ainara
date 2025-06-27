@@ -153,6 +153,42 @@ class ChromaVectorStorage(VectorStorageBackend):
                 })
         return formatted_results
 
+    def search_with_scores(
+        self,
+        query: str,
+        limit: int = 5,
+        filter_dict: Optional[Dict[str, Any]] = None,
+    ) -> List[tuple[Dict[str, Any], float]]:
+        """
+        Search for similar texts and return documents with their distance scores.
+
+        Args:
+            query: Search query
+            limit: Maximum number of results
+            filter_dict: Optional metadata filters for ChromaDB's 'where' clause
+
+        Returns:
+            List of tuples, where each tuple contains a result dictionary and its distance score.
+        """
+        query_embedding = self.embedding_model.encode([query]).tolist()
+
+        results = self.collection.query(
+            query_embeddings=query_embedding,
+            n_results=limit,
+            where=filter_dict if filter_dict else None,
+        )
+
+        # Convert to standard format
+        formatted_results_with_scores = []
+        # The result structure from chromadb is a dict of lists
+        if results and results["ids"]:
+            for i, doc_id in enumerate(results["ids"][0]):
+                metadata = results["metadatas"][0][i]
+                distance = results["distances"][0][i]
+                result_doc = {"metadata": metadata}
+                formatted_results_with_scores.append((result_doc, distance))
+        return formatted_results_with_scores
+
     def delete(self, ids: List[str]) -> None:
         """
         Delete documents by ID
