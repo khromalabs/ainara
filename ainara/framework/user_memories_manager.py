@@ -29,18 +29,25 @@ from ainara.framework.config import config
 from ainara.framework.llm.base import LLMBackend
 from ainara.framework.storage import get_vector_backend
 from ainara.framework.template_manager import TemplateManager
+from ainara.framework.utils import load_spacy_model
 
 logger = logging.getLogger(__name__)
 
 
-class UserProfileManager:
-    """Manages the user's semantic profile (memories, preferences, facts)."""
+class UserMemoriesManager:
+    """Manages the user's semantic memories (beliefs, preferences, facts)."""
 
     def __init__(self, llm: LLMBackend, chat_memory: ChatMemory):
         self.llm = llm
         self.chat_memory = chat_memory
         self.storage = chat_memory.storage
         self.template_manager = TemplateManager()
+        self.nlp = load_spacy_model()
+        if not self.nlp:
+            # spaCy is a critical dependency for substantive query analysis.
+            raise RuntimeError(
+                "Failed to load spaCy model, which is essential for UserMemoriesManager."
+            )
 
         # This path is only needed for the one-time migration
         self.profile_path = os.path.join(
@@ -49,6 +56,9 @@ class UserProfileManager:
 
         # Setup database table for memories
         self._create_memories_table()
+
+        # Check if we need to force a full rescan of chat history
+        self._check_and_force_rescan()
 
         # Run a one-time migration from the old JSON file if it exists
         self._run_migration()
@@ -207,6 +217,39 @@ class UserProfileManager:
         except Exception as e:
             logger.error(f"Error during profile migration from JSON: {e}")
 
+    def _check_and_force_rescan(self):
+        """
+        Checks if the memories table is empty but a processing timestamp
+        exists. This indicates a manual reset, so we clear the timestamp
+        to force a full rescan of chat history.
+        """
+        try:
+            # The table is guaranteed to exist at this point because
+            # _create_memories_table() has been called.
+            is_empty = self.is_empty()
+            last_timestamp = self.storage.get_metadata(
+                "profile_last_processed_timestamp"
+            )
+
+            if is_empty and last_timestamp:
+                logger.warning(
+                    "The 'user_memories' table is empty, but a last processed"
+                    " timestamp was found. This indicates a manual reset."
+                    " Forcing a full rescan of chat history."
+                )
+                # Instead of setting to None which violates the NOT NULL constraint,
+                # we delete the metadata key directly.
+                with self.storage.conn:
+                    self.storage.conn.execute(
+                        "DELETE FROM db_metadata WHERE key = ?",
+                        ("profile_last_processed_timestamp",),
+                    )
+                # Also flag the vector DB for a reset since it will be out of sync.
+                self.storage.set_metadata("vector_db_needs_reset", "true")
+        except Exception as e:
+            # If this check fails, it's safer to do nothing and log the error.
+            logger.error(f"Failed to check for forced rescan condition: {e}")
+
     def _dict_from_row(self, row: Any) -> Dict:
         """Converts a sqlite3.Row to a dictionary and parses JSON fields."""
         if not row:
@@ -240,12 +283,12 @@ class UserProfileManager:
 
         cursor = self.storage.conn.cursor()
         cursor.execute(
-            "SELECT * FROM user_memories WHERE memory_type = 'extended_memories'"
+            "SELECT * FROM user_memories"
         )
         all_memories = [self._dict_from_row(row) for row in cursor.fetchall()]
 
         if not all_memories:
-            logger.info("No extended memories found in profile to index.")
+            logger.info("No memories found in profile to index.")
             return
 
         documents_to_add = []
@@ -262,7 +305,7 @@ class UserProfileManager:
             self.vector_storage.add_documents(documents_to_add)
             duration = time.time() - start_time
             logger.info(
-                f"Successfully indexed {len(documents_to_add)} extended"
+                f"Successfully indexed {len(documents_to_add)}"
                 " memories in vector store. Operation took"
                 f" {duration:.2f} seconds."
             )
@@ -270,6 +313,19 @@ class UserProfileManager:
         # After a successful sync, clear the flag
         self.storage.set_metadata("vector_db_needs_reset", "false")
         logger.info("Vector DB sync complete. Cleared reset flag.")
+
+    def _is_query_substantive(self, query: str) -> bool:
+        """
+        Uses spaCy to determine if a query is substantive enough for semantic search.
+        A query is substantive if it contains at least one token that is not a
+        stopword, punctuation, or space.
+        """
+        doc = self.nlp(query)
+        for token in doc:
+            if not token.is_stop and not token.is_punct and not token.is_space:
+                return True
+        # If no such token was found, the query is not substantive
+        return False
 
     def get_key_memories(self) -> List[Dict]:
         """Returns a flat list of all key memories from the database."""
@@ -303,6 +359,11 @@ class UserProfileManager:
                 "Vector storage is required for memory retrieval."
             )
 
+        # Guard clause: Don't search for non-substantive queries.
+        if not self._is_query_substantive(query):
+            logger.info("Skipping memory retrieval for non-substantive query.")
+            return []
+
         try:
             # Fetch more results initially to allow for re-ranking
             initial_results_count = top_k * 3
@@ -311,8 +372,12 @@ class UserProfileManager:
                 f" query: '{query}'"
             )
             # The search result from Chroma includes distances (lower is better)
+            # We only search for extended_memories here, as key_memories are
+            # handled separately and injected into prompts differently.
             results_with_distances = self.vector_storage.search_with_scores(
-                query, limit=initial_results_count
+                query,
+                limit=initial_results_count,
+                filter_dict={"memory_type": "extended_memories"},
             )
 
             if not results_with_distances:
@@ -497,8 +562,8 @@ class UserProfileManager:
                 f"Added new memory to '{target_section}' under topic: {topic}"
             )
 
-            # Add to vector store if it's an extended memory
-            if target_section == "extended_memories" and self.vector_storage:
+            # Add to vector store regardless of type for de-duplication
+            if self.vector_storage:
                 # We need the full memory object for metadata
                 full_memory_obj = {
                     "id": memory_id,
@@ -524,115 +589,108 @@ class UserProfileManager:
         self, user_message: Dict, assistant_message: Dict
     ):
         """
-        Extracts a potential memory from a conversation turn, compares it
-        to existing memories, and decides whether to create a new memory,
-        reinforce an existing one, or discard it.
+        Extracts a potential memory from a conversation turn. If a candidate
+        memory is extracted, it is checked against existing memories for
+        duplicates before being created or used to reinforce an existing memory.
         """
-        decision_str = ""
+        # A high threshold to ensure we only reinforce true duplicates.
+        candidate_str = ""
+
+        # Define different thresholds for different memory types.
+        # Key memories are foundational, so we use a more lenient threshold to encourage consolidation.
+        # Extended memories are more specific, so we use a stricter threshold.
+        KEY_MEMORY_SIMILARITY_THRESHOLD = 0.85
+        EXTENDED_MEMORY_SIMILARITY_THRESHOLD = 0.95
+
         try:
-            # Step 1: Search for semantically similar existing memories using the user's message
-            similar_memories = []
-            if self.vector_storage:
-                search_results = self.vector_storage.search_with_scores(
-                    user_message["content"], limit=5
-                )
-
-                # Defensive check: Ensure memories from vector store exist in our DB (source of truth)
-                memory_ids_from_search = [
-                    doc.get("metadata", {}).get("id")
-                    for doc, score in search_results
-                ]
-                if memory_ids_from_search:
-                    placeholders = ",".join(
-                        "?" for _ in memory_ids_from_search
-                    )
-                    cursor = self.storage.conn.cursor()
-                    cursor.execute(
-                        "SELECT * FROM user_memories WHERE id IN"
-                        f" ({placeholders})",
-                        memory_ids_from_search,
-                    )
-                    verified_memories = [
-                        self._dict_from_row(row) for row in cursor.fetchall()
-                    ]
-                    if len(verified_memories) != len(memory_ids_from_search):
-                        logger.warning(
-                            "Vector store returned memories that are not in the"
-                            " database. The index might be stale. Stale"
-                            " results have been filtered out."
-                        )
-                        self.storage.set_metadata(
-                            "vector_db_needs_reset", "true"
-                        )
-                    similar_memories = verified_memories
-
-            # Step 2: Single LLM call for consolidated processing
+            # Step 1: Use the LLM to extract a potential memory candidate.
             conversation_snippet = (
                 f"User: {user_message['content']}\n"
                 f"Assistant: {assistant_message['content']}"
             )
-            processing_prompt = self.template_manager.render(
-                "framework.user_profile_manager.consolidated_memory_processing",
-                {
-                    "conversation_snippet": conversation_snippet,
-                    "existing_memories": similar_memories,
-                },
+            extraction_prompt = self.template_manager.render(
+                "framework.user_memories_manager.extract_memory_candidate",
+                {"conversation_snippet": conversation_snippet},
+            )
+            system_prompt = self.template_manager.render(
+                "framework.user_memories_manager.extract_memory_candidate_system"
             )
             processing_history = [
                 {
                     "role": "system",
-                    "content": (
-                        "You are an intelligent memory assimilation system."
-                        " Your task is to analyze a conversation, compare it"
-                        " against existing knowledge, and decide whether to"
-                        " create new memories, reinforce existing ones, or"
-                        " ignore the information. Respond in JSON format."
-                    ),
+                    "content": system_prompt,
                 },
-                {"role": "user", "content": processing_prompt},
+                {"role": "user", "content": extraction_prompt},
             ]
-            decision_str = self.llm.chat(
+            candidate_str = self.llm.chat(
                 chat_history=processing_history, stream=False
             )
-            decision = json.loads(decision_str)
+            candidate_memory = json.loads(candidate_str)
 
-            # Step 3: Act on the decision
-            action = decision.get("action")
-            if action == "reinforce":
-                memory_id = decision.get("memory_id")
-                if self._reinforce_memory(memory_id):
-                    logger.info(
-                        f"Reinforced existing memory (ID: {memory_id}) with"
-                        " relevance +1.0"
-                    )
-                else:
-                    logger.warning(
-                        f"LLM chose to reinforce a memory (ID: {memory_id})"
-                        " that could not be found."
-                    )
-
-            elif action == "create":
-                logger.info("Decision: Create a new memory.")
-                candidate_data = decision
-                self._create_new_memory(
-                    candidate_data, user_message, assistant_message
-                )
-
-            elif action == "ignore":
+            # Step 2: Validate the candidate memory.
+            if not candidate_memory or "memory" not in candidate_memory:
                 logger.info(
-                    "Decision: Ignore candidate memory as it is redundant or"
-                    " irrelevant."
+                    "LLM extracted no new memory from the conversation."
                 )
-            else:
-                logger.warning(
-                    f"Unknown action '{action}' from assimilation model."
-                    " Ignoring."
+                return
+
+            candidate_text = candidate_memory["memory"]
+            candidate_type = candidate_memory.get(
+                "memory_type", "extended_memories"
+            )
+            logger.info(
+                f"LLM proposed a new {candidate_type} candidate: {candidate_text}"
+            )
+
+            # Step 3: Check for duplicates before creating.
+            if self.vector_storage:
+                similarity_threshold = (
+                    KEY_MEMORY_SIMILARITY_THRESHOLD
+                    if candidate_type == "key_memories"
+                    else EXTENDED_MEMORY_SIMILARITY_THRESHOLD
                 )
+                # Search for memories semantically similar to the *candidate* memory.
+                search_results = self.vector_storage.search_with_scores(
+                    candidate_text, limit=1
+                )
+
+                if search_results:
+                    # The score is distance, so lower is more similar.
+                    # We convert it to a 0-1 similarity score.
+                    most_similar_doc, distance = search_results[0]
+                    similarity_score = 1 / (1 + distance)
+
+                    if similarity_score > similarity_threshold:
+                        existing_memory_id = most_similar_doc.get(
+                            "metadata", {}
+                        ).get("id")
+                        if existing_memory_id:
+                            logger.info(
+                                f"Candidate is a duplicate of memory"
+                                f" {existing_memory_id} (Threshold:"
+                                f" {similarity_threshold}, Similarity:"
+                                f" {similarity_score:.2f}). Reinforcing."
+                            )
+                            self._reinforce_memory(existing_memory_id)
+                            return  # Stop processing
+
+            # Step 4: If it's not a duplicate, create the new memory.
+            logger.info(
+                "Candidate is not a duplicate. Creating a new memory."
+            )
+            # The LLM now proposes the memory type. We read it and pass it on.
+            memory_data_for_creation = {
+                "target": candidate_type,
+                "memory_data": candidate_memory,
+            }
+            self._create_new_memory(
+                memory_data_for_creation, user_message, assistant_message
+            )
 
         except json.JSONDecodeError:
             logger.warning(
-                "LLM returned invalid JSON for memory processing:"
-                f" {decision_str}"
+                "LLM returned invalid JSON for memory extraction:"
+                f" {candidate_str}"
             )
         except Exception as e:
             logger.error(f"Failed to assimilate memory from conversation: {e}")

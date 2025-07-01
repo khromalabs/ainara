@@ -38,7 +38,7 @@ from ainara import __version__
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.user_profile_manager import UserProfileManager
+from ainara.framework.user_memories_manager import UserMemoriesManager
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
@@ -250,14 +250,14 @@ def create_app():
         chat_memory = ChatMemory()
         logger.info("Chat memory initialized")
 
-    # Initialize UserProfileManager
-    user_profile_manager = None
+    # Initialize UserMemoriesManager
+    user_memories_manager = None
     if chat_memory:
-        user_profile_manager = UserProfileManager(llm=app.llm, chat_memory=chat_memory)
-        logger.info("User Profile Manager initialized")
+        user_memories_manager = UserMemoriesManager(llm=app.llm, chat_memory=chat_memory)
+        logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
         logger.info("Starting initial user profile consolidation...")
-        user_profile_manager.process_new_messages_for_update()
+        user_memories_manager.process_new_messages_for_update()
         logger.info("Initial user profile consolidation complete.")
 
     # Create chat_manager as app attribute so it's accessible to all routes
@@ -267,7 +267,7 @@ def create_app():
         flask_app=app,
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
         chat_memory=chat_memory,
-        user_profile_manager=user_profile_manager,
+        user_memories_manager=user_memories_manager,
     )
 
     @app.route("/health", methods=["GET"])

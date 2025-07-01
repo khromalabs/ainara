@@ -38,7 +38,7 @@ from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.user_profile_manager import UserProfileManager
+from ainara.framework.user_memories_manager import UserMemoriesManager
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -76,7 +76,7 @@ class ChatManager:
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
         chat_memory: Optional[ChatMemory] = None,
-        user_profile_manager: Optional[UserProfileManager] = None,
+        user_memories_manager: Optional[UserMemoriesManager] = None,
         capabilities: Optional[dict] = None,
     ):
         self.app = flask_app
@@ -94,7 +94,7 @@ class ChatManager:
         self.session_relevant_memories = (
             {}
         )  # Using dict for easy deduplication and metadata
-        self.MAX_SESSION_memories = (
+        self.MAX_SESSION_MEMORIES = (
             10  # Max extended memories to keep in context
         )
 
@@ -106,7 +106,7 @@ class ChatManager:
 
         # Initialize chat memory
         self.chat_memory = chat_memory
-        self.user_profile_manager = user_profile_manager
+        self.user_memories_manager = user_memories_manager
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
         # Render the system message template
@@ -144,8 +144,8 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         is_new_profile = False
-        if self.user_profile_manager:
-            if self.user_profile_manager.is_empty():
+        if self.user_memories_manager:
+            if self.user_memories_manager.is_empty():
                 is_new_profile = True
                 logger.info(
                     "User profile is empty. Will display onboarding message."
@@ -172,9 +172,9 @@ class ChatManager:
             self.current_summary = None
 
         # Pre-load key memories
-        if self.user_profile_manager:
+        if self.user_memories_manager:
             self.key_memories_cache = (
-                self.user_profile_manager.get_key_memories()
+                self.user_memories_manager.get_key_memories()
             )
             logger.info(f"Cached {len(self.key_memories_cache)} key memories.")
 
@@ -872,7 +872,7 @@ class ChatManager:
 
             # --- User Profile Injection ---
             turn_chat_history = self.chat_history
-            if self.user_profile_manager:
+            if self.user_memories_manager:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
                     -4:
@@ -886,7 +886,7 @@ class ChatManager:
 
                 # 2. Get relevant extended memories based on recent conversation context
                 newly_relevant_memories = (
-                    self.user_profile_manager.get_relevant_memories(
+                    self.user_memories_manager.get_relevant_memories(
                         search_context, top_k=3
                     )
                 )
@@ -898,7 +898,7 @@ class ChatManager:
                 # 4. Evict oldest if cache exceeds max size
                 while (
                     len(self.session_relevant_memories)
-                    > self.MAX_SESSION_memories
+                    > self.MAX_SESSION_MEMORIES
                 ):
                     oldest_id = next(iter(self.session_relevant_memories))
                     del self.session_relevant_memories[oldest_id]
