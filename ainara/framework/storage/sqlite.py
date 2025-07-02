@@ -36,7 +36,7 @@ class SQLiteStorage(StorageBackend):
     def __init__(
         self,
         db_path: str = None,
-        context_id: str = "persona:default",
+        context_id: str = "persona-default",
         **kwargs,
     ):
         """
@@ -245,7 +245,7 @@ class SQLiteStorage(StorageBackend):
         if msg.get("metadata"):
             msg["metadata"] = json.loads(msg["metadata"])
         return msg
-        
+
     def get_metadata(self, key: str) -> Optional[str]:
         """Get a value from the metadata table."""
         cursor = self.conn.cursor()
@@ -291,3 +291,45 @@ class SQLiteStorage(StorageBackend):
         """Close any resources"""
         if self.conn:
             self.conn.close()
+
+    def add_historical_messages(self, messages: List[Dict[str, Any]]):
+        """
+        Adds a batch of historical messages to the database.
+        Each message in the list should be a dictionary with 'role', 'content',
+        'timestamp', and 'metadata'.
+        """
+        if not messages:
+            return
+
+        messages_to_insert = []
+        for msg in messages:
+            message_id = str(uuid.uuid4())
+            # Per requirements, context_id is fixed and user is None
+            context_id = self.context_id
+            user = None
+            timestamp = msg.get("timestamp")
+            role = msg.get("role")
+            content = msg.get("content")
+            metadata = msg.get("metadata", {})
+
+            if not all([timestamp, role, content]):
+                logger.warning(
+                    f"Skipping historical message due to missing data: {msg}"
+                )
+                continue
+
+            json_metadata = json.dumps(metadata) if metadata else "{}"
+
+            messages_to_insert.append(
+                (message_id, context_id, timestamp, role, content, user, json_metadata)
+            )
+
+        if messages_to_insert:
+            with self.conn:
+                self.conn.executemany(
+                    "INSERT INTO messages (id, context_id, timestamp, role, content, user, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    messages_to_insert,
+                )
+            logger.info(
+                f"Inserted {len(messages_to_insert)} historical messages into the database."
+            )
