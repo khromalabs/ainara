@@ -33,6 +33,10 @@ from ainara.framework.utils import load_spacy_model
 
 logger = logging.getLogger(__name__)
 
+# The minimum relevance score a memory must have to be retrieved for live conversation.
+# This acts as a low-pass filter to prune irrelevant memories from active recall.
+MIN_RELEVANCE_THRESHOLD = 0.2
+
 
 class UserMemoriesManager:
     """Manages the user's semantic memories (beliefs, preferences, facts)."""
@@ -129,7 +133,6 @@ class UserMemoriesManager:
                         relevance REAL NOT NULL DEFAULT 1.0,
                         last_updated TEXT NOT NULL,
                         source_message_ids TEXT,
-                        confidence REAL,
                         metadata TEXT
                     )
                     """
@@ -187,7 +190,6 @@ class UserMemoriesManager:
                                     datetime.now(timezone.utc).isoformat(),
                                 ),
                                 json.dumps(memory.get("source_message_ids")),
-                                memory.get("confidence"),
                                 json.dumps(memory.get("metadata")),
                             )
                         )
@@ -196,8 +198,8 @@ class UserMemoriesManager:
                 with self.storage.conn:
                     self.storage.conn.executemany(
                         """
-                        INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids, confidence, metadata)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         memories_to_add,
                     )
@@ -331,8 +333,9 @@ class UserMemoriesManager:
         """Returns a flat list of all key memories from the database."""
         cursor = self.storage.conn.cursor()
         cursor.execute(
-            "SELECT * FROM user_memories WHERE memory_type = 'key_memories'"
-            " ORDER BY relevance DESC"
+            "SELECT * FROM user_memories WHERE memory_type = 'key_memories' AND relevance >= ?"
+            " ORDER BY relevance DESC",
+            (MIN_RELEVANCE_THRESHOLD,),
         )
         return [self._dict_from_row(row) for row in cursor.fetchall()]
 
@@ -377,7 +380,10 @@ class UserMemoriesManager:
             results_with_distances = self.vector_storage.search_with_scores(
                 query,
                 limit=initial_results_count,
-                filter_dict={"memory_type": "extended_memories"},
+                filter_dict={
+                    "memory_type": "extended_memories",
+                    "relevance": {"$gte": MIN_RELEVANCE_THRESHOLD},
+                },
             )
 
             if not results_with_distances:
@@ -470,7 +476,7 @@ class UserMemoriesManager:
             f"Profile update complete. New timestamp: {latest_timestamp}"
         )
 
-    def _decay_memory_relevance(self, decay_factor: float = 0.95):
+    def _decay_memory_relevance(self, decay_factor: float = 0.98):
         """Applies a decay factor to the relevance of all memories."""
         logger.info(f"Applying relevance decay (factor: {decay_factor})...")
         try:

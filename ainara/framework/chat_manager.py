@@ -786,8 +786,8 @@ class ChatManager:
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
-        user_message_id = None
-        assistant_message_id = None
+        # user_message_id = None
+        # assistant_message_id = None
         """Main chat completion function
 
         Args:
@@ -830,8 +830,8 @@ class ChatManager:
 
         processed_answer = ""
         try:
-            if self.chat_memory:
-                user_message_id = self.chat_memory.add_entry(question, "user")
+            # if self.chat_memory:
+            #     user_message_id = self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
             if (
@@ -861,10 +861,16 @@ class ChatManager:
 
             # Prepare combined system prompt content
             final_system_content = self.system_message
-            if self.summary_enabled and self.current_summary and self.current_summary != "-":
-                final_system_content += f"\n\n--- Conversation Summary ---\n{self.current_summary}"
+            if (
+                self.summary_enabled
+                and self.current_summary
+                and self.current_summary != "-"
+            ):
+                final_system_content += (
+                    f"\n\n--- Conversation Summary ---\n{self.current_summary}"
+                )
 
-            # --- User Profile Injection ---            
+            # --- User Profile Injection ---
             if self.user_memories_manager:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
@@ -902,15 +908,25 @@ class ChatManager:
                 )
 
                 if combined_memories:
+                    # Pre-process memories to format the relevance score for display
+                    processed_memories_for_template = []
+                    for mem in combined_memories:
+                        processed_mem = mem.copy()
+                        processed_mem["relevance_score"] = (
+                            f"{processed_mem.get('relevance', 0.0):.2f}"
+                        )
+                        processed_memories_for_template.append(processed_mem)
+
                     logger.info(
-                        f"Injecting {len(combined_memories)} memories"
+                        "Injecting"
+                        f" {len(processed_memories_for_template)} memories"
                         f" ({len(self.key_memories_cache)} key,"
                         f" {len(self.session_relevant_memories)} session-relevant)"
                         " into summary."
                     )
                     memories_prompt = self.template_manager.render(
                         "framework.chat_manager.user_memories_prompt",
-                        {"memories": combined_memories},
+                        {"memories": processed_memories_for_template},
                     )
                     final_system_content += f"\n\n{memories_prompt}"
 
@@ -919,9 +935,7 @@ class ChatManager:
             self.chat_history[0]["tokens"] = self.llm._get_token_count(
                 final_system_content, "system"
             )
-            logger.info(
-                "Updated system prompt with summary and memories."
-            )
+            logger.info("Updated system prompt with summary and memories.")
 
             # Trim context *after* injecting memories to ensure we are within limits
             self.trim_context()
@@ -1056,20 +1070,20 @@ class ChatManager:
                 )
 
                 # Log assistant response to chat memory
-                if self.chat_memory:
-                    assistant_message_id = self.chat_memory.add_entry(
-                        processed_answer, "assistant"
-                    )
+                # if self.chat_memory:
+                #     assistant_message_id = self.chat_memory.add_entry(
+                #         processed_answer, "assistant"
+                #     )
             else:
                 # If there's no processed answer, add a placeholder
                 logger.warning("No answer from the LLM, adding placeholder")
                 self.llm.add_msg(
                     "No response generated", self.chat_history, "assistant"
                 )
-                if self.chat_memory:
-                    assistant_message_id = self.chat_memory.add_entry(
-                        "No response generated", "assistant"
-                    )
+                # if self.chat_memory:
+                #     assistant_message_id = self.chat_memory.add_entry(
+                #         "No response generated", "assistant"
+                #     )
 
             # Stop loading animation
             if stream == "cli":
