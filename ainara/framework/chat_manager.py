@@ -162,14 +162,13 @@ class ChatManager:
         )
         self.llm.add_msg(self.system_message, self.chat_history, "system")
         if self.summary_enabled:
-            self.llm.add_msg(self.new_summary, self.chat_history, "system")
             # Summary generation fields
             self.trimmed_messages_buffer = []
             # Lock specifically for buffer operations
             self.buffer_lock = threading.Lock()
             self.summary_in_progress = False
             self.summary_executor = ThreadPoolExecutor(max_workers=1)
-            self.current_summary = None
+            self.current_summary = "-"
 
         # Pre-load key memories
         if self.user_memories_manager:
@@ -506,8 +505,8 @@ class ChatManager:
         }
 
         # If we already have a summary, include it to maintain continuity
-        current_summary = self.chat_history[1]["content"]
-        if current_summary:
+        current_summary = self.current_summary
+        if current_summary and current_summary != "-":
             template_context["current_summary"] = current_summary
             prompt = self.template_manager.render(
                 "framework.chat_manager.update_summary", template_context
@@ -624,8 +623,7 @@ class ChatManager:
         )
 
         system_message = self.chat_history[0]
-        summary_message = self.chat_history[1]
-        system_tokens = system_message["tokens"] + summary_message["tokens"]
+        system_tokens = system_message["tokens"]
         available_tokens = max_tokens - system_tokens
 
         logger.info(f"System message uses {system_tokens} tokens")
@@ -731,7 +729,6 @@ class ChatManager:
         # Rebuild chat history with system message and kept exchanges
         new_history = []
         new_history.append(system_message)
-        new_history.append(summary_message)
         new_history.extend(kept_exchanges)
         logger.info(f"Added {len(kept_exchanges)} messages to new history")
 
@@ -848,30 +845,26 @@ class ChatManager:
                 )
 
             self.llm.add_msg(question, self.chat_history, "user")
+
+            # --- Summary and Memory Injection ---
+            turn_chat_history = self.chat_history
+
             # Atomically check and apply any new summary
             if self.summary_enabled:
                 with self.buffer_lock:  # Use the existing lock for consistency
                     if self.new_summary:
-                        new_summary_copy = self.new_summary
+                        self.current_summary = self.new_summary
                         self.new_summary = (  # Clear it while holding the lock
                             "-"
                         )
                         logger.info("Retrieved new summary for application")
 
-            # Token counting can happen outside the lock
-            if "new_summary_copy" in locals():
-                new_summary_tokens = self.llm._get_token_count(
-                    new_summary_copy, "system"
-                )
-                self.chat_history[1]["content"] = new_summary_copy
-                self.chat_history[1]["tokens"] = new_summary_tokens
-                logger.info(
-                    f"Applied new summary: {new_summary_copy[:2000]}..."
-                )
-            self.trim_context()
+            # Prepare combined system prompt content
+            final_system_content = self.system_message
+            if self.summary_enabled and self.current_summary and self.current_summary != "-":
+                final_system_content += f"\n\n--- Conversation Summary ---\n{self.current_summary}"
 
-            # --- User Profile Injection ---
-            turn_chat_history = self.chat_history
+            # --- User Profile Injection ---            
             if self.user_memories_manager:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
@@ -919,21 +912,19 @@ class ChatManager:
                         "framework.chat_manager.user_memories_prompt",
                         {"memories": combined_memories},
                     )
-                    summary = self.chat_history[1]["content"]
-                    summary_ext = (
-                        memories_prompt
-                        if summary == "-"
-                        else f"{summary}\n\n{memories_prompt}"
-                    )
-                    summary_ext_tokens = self.llm._get_token_count(
-                        summary_ext, "system"
-                    )
-                    self.chat_history[1]["content"] = summary_ext
-                    self.chat_history[1]["tokens"] = summary_ext_tokens
-                    logger.info(
-                        "Applied new summary [+memories]:"
-                        f" {summary_ext[:2000]}..."
-                    )
+                    final_system_content += f"\n\n{memories_prompt}"
+
+            # Update the single system message
+            self.chat_history[0]["content"] = final_system_content
+            self.chat_history[0]["tokens"] = self.llm._get_token_count(
+                final_system_content, "system"
+            )
+            logger.info(
+                "Updated system prompt with summary and memories."
+            )
+
+            # Trim context *after* injecting memories to ensure we are within limits
+            self.trim_context()
 
             # --- LLM Call ---
             llm_response_stream = self.llm.chat(
