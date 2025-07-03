@@ -16,13 +16,15 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+# Implementation of the "Generatively Reinforced Evolving Embeddings Network"
+# (GREEN) Memories Algorithm
 
 import json
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
@@ -329,14 +331,23 @@ class UserMemoriesManager:
         # If no such token was found, the query is not substantive
         return False
 
-    def get_key_memories(self) -> List[Dict]:
-        """Returns a flat list of all key memories from the database."""
-        cursor = self.storage.conn.cursor()
-        cursor.execute(
+    def get_key_memories(self, limit: Optional[int] = None) -> List[Dict]:
+        """
+        Returns a flat list of key memories from the database, optionally limited.
+        Key memories are sorted by relevance in descending order.
+        """
+        query = (
             "SELECT * FROM user_memories WHERE memory_type = 'key_memories' AND relevance >= ?"
-            " ORDER BY relevance DESC",
-            (MIN_RELEVANCE_THRESHOLD,),
+            " ORDER BY relevance DESC"
         )
+        params = (MIN_RELEVANCE_THRESHOLD,)
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params += (limit,)
+
+        cursor = self.storage.conn.cursor()
+        cursor.execute(query, params)
         return [self._dict_from_row(row) for row in cursor.fetchall()]
 
     def is_empty(self) -> bool:
@@ -351,7 +362,11 @@ class UserMemoriesManager:
             return False  # Safer to assume not empty on error
 
     def get_relevant_memories(
-        self, query: str, top_k: int = 3, relevance_weight: float = 0.3
+        self,
+        query: str,
+        top_k: int = 3,
+        relevance_weight: float = 0.3,
+        exclude_ids: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
         Finds memories relevant to the user's query using semantic vector
@@ -374,16 +389,18 @@ class UserMemoriesManager:
                 "Performing semantic search for extended memories with"
                 f" query: '{query}'"
             )
-            # The search result from Chroma includes distances (lower is better)
-            # We only search for extended_memories here, as key_memories are
-            # handled separately and injected into prompts differently.
+            # Build the filter dynamically.
+            # This now searches both key_memories and extended_memories.
+            filter_dict = {"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}
+
+            # Exclude IDs of memories that are already in the context.
+            if exclude_ids:
+                filter_dict["id"] = {"$nin": exclude_ids}
+
             results_with_distances = self.vector_storage.search_with_scores(
                 query,
                 limit=initial_results_count,
-                filter_dict={
-                    "memory_type": "extended_memories",
-                    "relevance": {"$gte": MIN_RELEVANCE_THRESHOLD},
-                },
+                filter_dict=filter_dict,
             )
 
             if not results_with_distances:

@@ -172,10 +172,18 @@ class ChatManager:
 
         # Pre-load key memories
         if self.user_memories_manager:
-            self.key_memories_cache = (
-                self.user_memories_manager.get_key_memories()
+            # Limit the number of key memories permanently cached in the context
+            top_k_key_memories = config.get(
+                "user_profile.top_k_key_memories", 5
             )
-            logger.info(f"Cached {len(self.key_memories_cache)} key memories.")
+            self.key_memories_cache = (
+                self.user_memories_manager.get_key_memories(
+                    limit=top_k_key_memories
+                )
+            )
+            logger.info(
+                f"Cached {len(self.key_memories_cache)} top key memories."
+            )
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -883,10 +891,16 @@ class ChatManager:
                     ]
                 )
 
-                # 2. Get relevant extended memories based on recent conversation context
+                # 2. Get relevant memories (both key and extended) based on context,
+                #    excluding the ones already cached.
+                cached_memory_ids = [
+                    mem["id"] for mem in self.key_memories_cache
+                ]
                 newly_relevant_memories = (
                     self.user_memories_manager.get_relevant_memories(
-                        search_context, top_k=3
+                        search_context,
+                        top_k=3,
+                        exclude_ids=cached_memory_ids,
                     )
                 )
 
