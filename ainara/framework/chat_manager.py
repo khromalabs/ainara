@@ -838,8 +838,8 @@ class ChatManager:
 
         processed_answer = ""
         try:
-            # if self.chat_memory:
-            #     user_message_id = self.chat_memory.add_entry(question, "user")
+            if self.chat_memory:
+                self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
             if (
@@ -1084,20 +1084,20 @@ class ChatManager:
                 )
 
                 # Log assistant response to chat memory
-                # if self.chat_memory:
-                #     assistant_message_id = self.chat_memory.add_entry(
-                #         processed_answer, "assistant"
-                #     )
+                if self.chat_memory:
+                    self.chat_memory.add_entry(
+                        processed_answer, "assistant"
+                    )
             else:
                 # If there's no processed answer, add a placeholder
                 logger.warning("No answer from the LLM, adding placeholder")
                 self.llm.add_msg(
                     "No response generated", self.chat_history, "assistant"
                 )
-                # if self.chat_memory:
-                #     assistant_message_id = self.chat_memory.add_entry(
-                #         "No response generated", "assistant"
-                #     )
+                if self.chat_memory:
+                    self.chat_memory.add_entry(
+                        "No response generated", "assistant"
+                    )
 
             # Stop loading animation
             if stream == "cli":

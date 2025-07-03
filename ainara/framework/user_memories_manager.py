@@ -493,7 +493,7 @@ class UserMemoriesManager:
             f"Profile update complete. New timestamp: {latest_timestamp}"
         )
 
-    def _decay_memory_relevance(self, decay_factor: float = 0.98):
+    def _decay_memory_relevance(self, decay_factor: float = 0.995):
         """Applies a decay factor to the relevance of all memories."""
         logger.info(f"Applying relevance decay (factor: {decay_factor})...")
         try:
