@@ -89,15 +89,6 @@ class ChatManager:
         self.ndjson = ndjson
         self.new_summary = "-"
 
-        # --- memory System Caching ---
-        self.key_memories_cache = []
-        self.session_relevant_memories = (
-            {}
-        )  # Using dict for easy deduplication and metadata
-        self.MAX_SESSION_MEMORIES = (
-            10  # Max extended memories to keep in context
-        )
-
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
 
@@ -190,18 +181,6 @@ class ChatManager:
             self.buffer_lock = threading.Lock()
             self.summary_in_progress = False
             self.current_summary = "-"
-
-        # Pre-load key memories
-        # Limit the number of key memories permanently cached in the context
-        top_k_key_memories = config.get(
-            "memories.top_k_key_memories", 5
-        )
-        self.key_memories_cache = self.user_memories_manager.get_key_memories(
-            limit=top_k_key_memories
-        )
-        logger.info(
-            f"Cached {len(self.key_memories_cache)} top key memories."
-        )
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -941,40 +920,20 @@ class ChatManager:
                     ]
                 )
 
-                # 2. Get relevant memories (both key and extended) based on context,
-                #    excluding the ones already cached.
-                cached_memory_ids = [
-                    mem["id"] for mem in self.key_memories_cache
-                ]
-                newly_relevant_memories = (
+                logger.info(f"search_context: {search_context}")
+
+                # Get relevant memories based on context
+                relevant_memories = (
                     self.user_memories_manager.get_relevant_memories(
                         search_context,
-                        top_k=3,
-                        exclude_ids=cached_memory_ids,
+                        top_k=5,  # Increased from 3 to compensate for removing static cache
                     )
                 )
 
-                # 3. Update the session-relevant memories cache
-                for memory in newly_relevant_memories:
-                    self.session_relevant_memories[memory["id"]] = memory
-
-                # 4. Evict oldest if cache exceeds max size
-                while (
-                    len(self.session_relevant_memories)
-                    > self.MAX_SESSION_MEMORIES
-                ):
-                    oldest_id = next(iter(self.session_relevant_memories))
-                    del self.session_relevant_memories[oldest_id]
-
-                # 5. Combine key memories and session-relevant memories for injection
-                combined_memories = self.key_memories_cache + list(
-                    self.session_relevant_memories.values()
-                )
-
-                if combined_memories:
+                if relevant_memories:
                     # Pre-process memories to format the relevance score for display
                     processed_memories_for_template = []
-                    for mem in combined_memories:
+                    for mem in relevant_memories:
                         processed_mem = mem.copy()
                         processed_mem["relevance_score"] = (
                             f"{processed_mem.get('relevance', 0.0):.2f}"
@@ -982,17 +941,15 @@ class ChatManager:
                         processed_memories_for_template.append(processed_mem)
 
                     logger.info(
-                        "Injecting"
-                        f" {len(processed_memories_for_template)} memories"
-                        f" ({len(self.key_memories_cache)} key,"
-                        f" {len(self.session_relevant_memories)} session-relevant)"
-                        " into summary."
+                        f"Injecting {len(processed_memories_for_template)} dynamically retrieved memories into context."
                     )
                     memories_prompt = self.template_manager.render(
                         "framework.chat_manager.user_memories_prompt",
                         {"memories": processed_memories_for_template},
                     )
                     final_system_content += f"\n\n{memories_prompt}"
+                else:
+                    logger.info("No relevant memories found to be injected.")
 
             # Update the single system message
             self.chat_history[0]["content"] = final_system_content
@@ -1190,23 +1147,6 @@ class ChatManager:
 
     def prepare_chat_history_for_skill(self) -> list:
         """Prepare chat history in a format suitable for skills"""
-        # If we have chat memory, use recent entries from it
-        if self.chat_memory:
-            recent_entries = self.chat_memory.get_recent_entries(
-                20
-            )  # Get more entries from memory
-            formatted_history = []
-
-            for entry in recent_entries:
-                role = entry["metadata"].get("role")
-                if role in ["user", "assistant"]:
-                    formatted_history.append(
-                        {"role": role, "content": entry["content"]}
-                    )
-
-            return formatted_history
-
-        # Otherwise, fall back to the existing implementation
         formatted_history = []
         for msg in self.chat_history:
             # Only include user and assistant messages, skip system messages

@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 # This acts as a low-pass filter to prune irrelevant memories from active recall.
 MIN_RELEVANCE_THRESHOLD = 0.2
 
+# A multiplier to boost the importance of key_memories during ranking.
+# This ensures they are more likely to be selected over extended_memories.
+KEY_MEMORY_BOOST = 1.5
+
 
 class UserMemoriesManager:
     """Manages the user's semantic memories (beliefs, preferences, facts)."""
@@ -409,12 +413,19 @@ class UserMemoriesManager:
             ranked_memories = []
             for doc, score in results_with_distances:
                 memory = doc.get("metadata", {})
+                memory_type = memory.get("memory_type")
                 relevance = memory.get("relevance", 1.0)
+
+                # Apply a boost to key memories to increase their chance of being selected
+                if memory_type == "key_memories":
+                    relevance *= KEY_MEMORY_BOOST
+
                 # Normalize semantic score (distance) to be higher-is-better
                 # Assuming distance is between 0 and ~2. A simple inversion works.
                 semantic_score = 1 / (1 + score)
 
                 # Combine scores
+                # The boosted relevance score for key memories will give them a significant advantage here.
                 combined_score = (semantic_score * (1 - relevance_weight)) + (
                     relevance * relevance_weight
                 )

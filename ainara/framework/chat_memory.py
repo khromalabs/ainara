@@ -146,6 +146,9 @@ class ChatMemory:
         # Add the source type to the metadata
         entry_metadata["source_type"] = source_type
 
+        # Add role to metadata for consistency across backends
+        entry_metadata["role"] = role
+
         # Add a timestamp if one isn't already present. This is the authoritative timestamp.
         if "timestamp" not in entry_metadata:
             entry_metadata["timestamp"] = datetime.now(
@@ -170,9 +173,7 @@ class ChatMemory:
         if self.vector_storage:
             try:
                 vector_metadata = entry_metadata.copy()
-                vector_metadata.update(
-                    {"message_id": message_id, "role": role}
-                )
+                vector_metadata["message_id"] = message_id
 
                 self.vector_storage.add_text(
                     text=content, metadata=vector_metadata
