@@ -432,6 +432,22 @@ class UserMemoriesManager:
             )
             return []
 
+    def get_turn_counter(self) -> int:
+        """Retrieves the persisted turn counter for memory decay."""
+        value = self.storage.get_metadata("profile_decay_turn_counter")
+        if value:
+            logger.info(f"Loaded persisted turn counter: {value}")
+            return int(value)
+        return 0
+
+    def save_turn_counter(self, count: int):
+        """Saves the turn counter for memory decay."""
+        self.storage.set_metadata("profile_decay_turn_counter", str(count))
+
+    def reset_turn_counter(self):
+        """Resets the persisted turn counter to 0."""
+        self.storage.set_metadata("profile_decay_turn_counter", "0")
+
     def process_new_messages_for_update(self):
         """
         Fetches all new messages since the last update, processes them in
@@ -440,9 +456,6 @@ class UserMemoriesManager:
         last_timestamp = self.storage.get_metadata(
             "profile_last_processed_timestamp"
         )
-        # First, apply decay to all existing memories
-        self._decay_memory_relevance()
-
         logger.info(
             "Starting profile update. Checking for messages since:"
             f" {last_timestamp}"
@@ -492,6 +505,11 @@ class UserMemoriesManager:
         logger.info(
             f"Profile update complete. New timestamp: {latest_timestamp}"
         )
+
+    def decay_all_memories(self, decay_factor: float = 0.995):
+        """Applies a decay factor to the relevance of all memories."""
+        # This is a public wrapper for the decay functionality.
+        self._decay_memory_relevance(decay_factor)
 
     def _decay_memory_relevance(self, decay_factor: float = 0.995):
         """Applies a decay factor to the relevance of all memories."""

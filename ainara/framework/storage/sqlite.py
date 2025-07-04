@@ -55,6 +55,7 @@ class SQLiteStorage(StorageBackend):
 
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL;")
         self._create_table()
 
         cursor = self.conn.cursor()

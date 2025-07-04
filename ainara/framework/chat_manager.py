@@ -72,11 +72,11 @@ class ChatManager:
         self,
         llm,
         orakle_servers: List[str],
+        user_memories_manager: UserMemoriesManager,
         flask_app=None,
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
         chat_memory: Optional[ChatMemory] = None,
-        user_memories_manager: Optional[UserMemoriesManager] = None,
         capabilities: Optional[dict] = None,
     ):
         self.app = flask_app
@@ -108,6 +108,15 @@ class ChatManager:
         self.chat_memory = chat_memory
         self.user_memories_manager = user_memories_manager
         self.summary_enabled = config.get("memory.summary_enabled", True)
+
+        # --- Memory Decay Tracking (persisted between sessions) ---
+        self.memory_decay_interval = config.get("memories.decay_interval_turns", 10)
+        if self.memory_decay_interval > 0:
+            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.decay_in_progress = False
+            self.decay_lock = threading.Lock()
+        else:
+            self.turn_counter = 0
 
         # Render the system message template
         current_date = datetime.now().date()
@@ -144,12 +153,11 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         is_new_profile = False
-        if self.user_memories_manager:
-            if self.user_memories_manager.is_empty():
-                is_new_profile = True
-                logger.info(
-                    "User profile is empty. Will display onboarding message."
-                )
+        if self.user_memories_manager.is_empty():
+            is_new_profile = True
+            logger.info(
+                "User profile is empty. Will display onboarding message."
+            )
 
         # Update system message with skills descriptions
         self.system_message = self.template_manager.render(
@@ -161,29 +169,39 @@ class ChatManager:
             },
         )
         self.llm.add_msg(self.system_message, self.chat_history, "system")
+
+        # Initialize executor if either summary or decay is enabled
+        self.summary_executor = None
+        if self.summary_enabled:
+            self.summary_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="SummaryThread"
+            )
+
+        self.decay_executor = None
+        if self.memory_decay_interval > 0:
+            self.decay_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="DecayThread"
+            )
+
         if self.summary_enabled:
             # Summary generation fields
             self.trimmed_messages_buffer = []
             # Lock specifically for buffer operations
             self.buffer_lock = threading.Lock()
             self.summary_in_progress = False
-            self.summary_executor = ThreadPoolExecutor(max_workers=1)
             self.current_summary = "-"
 
         # Pre-load key memories
-        if self.user_memories_manager:
-            # Limit the number of key memories permanently cached in the context
-            top_k_key_memories = config.get(
-                "user_profile.top_k_key_memories", 5
-            )
-            self.key_memories_cache = (
-                self.user_memories_manager.get_key_memories(
-                    limit=top_k_key_memories
-                )
-            )
-            logger.info(
-                f"Cached {len(self.key_memories_cache)} top key memories."
-            )
+        # Limit the number of key memories permanently cached in the context
+        top_k_key_memories = config.get(
+            "memories.top_k_key_memories", 5
+        )
+        self.key_memories_cache = self.user_memories_manager.get_key_memories(
+            limit=top_k_key_memories
+        )
+        logger.info(
+            f"Cached {len(self.key_memories_cache)} top key memories."
+        )
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -606,6 +624,38 @@ class ChatManager:
 
         # Submit the task to our executor
         self.summary_executor.submit(_background_summary_task)
+
+    def shutdown(self):
+        """Saves persistent state and gracefully shuts down background threads."""
+        logger.info("Shutting down thread executors")
+        # Shutdown the thread executors
+        if self.summary_executor:
+            self.summary_executor.shutdown(wait=True)
+        if self.decay_executor:
+            self.decay_executor.shutdown(wait=True)
+
+    def _trigger_memory_decay_in_background(self):
+        """Trigger background task to decay memory relevance."""
+        with self.decay_lock:
+            if self.decay_in_progress:
+                logger.debug("Memory decay task already in progress. Skipping.")
+                return
+            self.decay_in_progress = True
+            logger.info("Submitting memory decay task to background executor.")
+
+        self.decay_executor.submit(self._background_decay_task)
+
+    def _background_decay_task(self):
+        """Background worker to decay memory relevance."""
+        try:
+            logger.info("Background task started: Decaying memory relevance.")
+            self.user_memories_manager.decay_all_memories()
+            logger.info("Background task finished: Memory decay complete.")
+        except Exception as e:
+            logger.error(f"Error in background memory decay task: {e}")
+        finally:
+            with self.decay_lock:
+                self.decay_in_progress = False
 
     def trim_context(self, max_tokens=None):
         """
@@ -1109,6 +1159,18 @@ class ChatManager:
             # Trigger background summary generation
             if self.summary_enabled:
                 self._update_summary_in_background()
+
+            # --- Memory Decay ---
+            if self.memory_decay_interval > 0:
+                self.turn_counter += 1
+                if self.turn_counter >= self.memory_decay_interval:
+                    logger.info(f"decay turn counter {self.turn_counter} over "
+                                "limit, triggering decay")
+                    self._trigger_memory_decay_in_background()
+                    self.user_memories_manager.reset_turn_counter()
+                    self.turn_counter = 0  # Reset in-memory counter
+                logger.info(f"Saving turn counter state: {self.turn_counter}")
+                self.user_memories_manager.save_turn_counter(self.turn_counter)
 
             # For non-streaming mode, return the processed answer
             if not stream:
