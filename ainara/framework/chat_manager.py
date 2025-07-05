@@ -77,6 +77,7 @@ class ChatManager:
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
         chat_memory: Optional[ChatMemory] = None,
+        user_profile_summary: Optional[str] = None,
         capabilities: Optional[dict] = None,
     ):
         self.app = flask_app
@@ -98,6 +99,7 @@ class ChatManager:
         # Initialize chat memory
         self.chat_memory = chat_memory
         self.user_memories_manager = user_memories_manager
+        self.user_profile_summary = user_profile_summary
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
         # --- Memory Decay Tracking (persisted between sessions) ---
@@ -906,6 +908,10 @@ class ChatManager:
                 final_system_content += (
                     f"\n\n--- Conversation Summary ---\n{self.current_summary}"
                 )
+
+            # --- User Profile Injection (from cached summary) ---
+            if self.user_profile_summary:
+                final_system_content += f"\n\n--- User Profile ---\n{self.user_profile_summary}"
 
             # --- User Profile Injection ---
             if self.user_memories_manager:

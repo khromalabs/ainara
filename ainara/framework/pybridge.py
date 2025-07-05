@@ -252,13 +252,20 @@ def create_app():
 
     # Initialize UserMemoriesManager
     user_memories_manager = None
+    user_profile_summary = None
     if chat_memory:
         user_memories_manager = UserMemoriesManager(llm=app.llm, chat_memory=chat_memory)
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
-        logger.info("Starting initial user profile consolidation...")
+        logger.info("Processing new messages for user profile...")
         user_memories_manager.process_new_messages_for_update()
-        logger.info("Initial user profile consolidation complete.")
+        logger.info("Message processing complete.")
+
+        # Generate the narrative user profile summary
+        logger.info("Generating cached user profile summary for this session...")
+        user_profile_summary = user_memories_manager.generate_user_profile_summary()
+        if user_profile_summary:
+            logger.info("User profile summary generated successfully.")
 
     # Create chat_manager as app attribute so it's accessible to all routes
     app.chat_manager = ChatManager(
@@ -268,6 +275,7 @@ def create_app():
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
         chat_memory=chat_memory,
         user_memories_manager=user_memories_manager,
+        user_profile_summary=user_profile_summary,
     )
 
     @app.route("/health", methods=["GET"])

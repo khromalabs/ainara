@@ -57,7 +57,8 @@ class UserMemoriesManager:
         if not self.nlp:
             # spaCy is a critical dependency for substantive query analysis.
             raise RuntimeError(
-                "Failed to load spaCy model, which is essential for UserMemoriesManager."
+                "Failed to load spaCy model, which is essential for"
+                " UserMemoriesManager."
             )
 
         # This path is only needed for the one-time migration
@@ -168,7 +169,8 @@ class UserMemoriesManager:
             cursor.execute("SELECT COUNT(id) FROM user_memories")
             if cursor.fetchone()[0] > 0:
                 logger.info(
-                    "memories table is not empty. Skipping migration from JSON."
+                    "memories table is not empty. Skipping migration from"
+                    " JSON."
                 )
                 return
 
@@ -211,8 +213,8 @@ class UserMemoriesManager:
                         memories_to_add,
                     )
                 logger.info(
-                    f"Successfully migrated {len(memories_to_add)} memories from"
-                    " JSON to SQLite."
+                    f"Successfully migrated {len(memories_to_add)} memories"
+                    " from JSON to SQLite."
                 )
 
             # Rename the old file to prevent re-migration
@@ -291,9 +293,7 @@ class UserMemoriesManager:
         self.vector_storage.reset()  # Clear the collection
 
         cursor = self.storage.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM user_memories"
-        )
+        cursor.execute("SELECT * FROM user_memories")
         all_memories = [self._dict_from_row(row) for row in cursor.fetchall()]
 
         if not all_memories:
@@ -331,13 +331,16 @@ class UserMemoriesManager:
         or conversational filler.
         """
         # The query can be a multi-line context string. We only care about the last line.
-        last_line = query.strip().split('\n')[-1]
+        last_line = query.strip().split("\n")[-1]
         # Strip any "role: " prefix (e.g., "user: ") from the last line.
         actual_query = last_line.split(":", 1)[-1].strip()
 
         doc = self.nlp(actual_query)
-        logger.info(f"Substantive check on query: '{actual_query}' (from last line: '{last_line}')")
-        
+        logger.info(
+            f"Substantive check on query: '{actual_query}' (from last line:"
+            f" '{last_line}')"
+        )
+
         # Define parts of speech that we consider substantive for a query.
         substantive_pos = {"NOUN", "PROPN", "VERB", "ADJ"}
         for token in doc:
@@ -352,14 +355,60 @@ class UserMemoriesManager:
         logger.info("No substantive tokens found. Returning False.")
         return False
 
+    def generate_user_profile_summary(self, top_k: int = 50) -> Optional[str]:
+        """
+        Generates a narrative summary of the user's profile using the LLM.
+
+        This method fetches the most relevant key memories and asks the LLM to
+        synthesize them into a coherent paragraph, prioritizing information
+        based on relevance scores to resolve conflicts.
+
+        Args:
+            top_k: The number of top key memories to use for the summary.
+
+        Returns:
+            A string containing the narrative user profile, or None if no
+            memories exist.
+        """
+        logger.info(
+            f"Generating narrative user profile from top {top_k} key"
+            " memories..."
+        )
+        key_memories = self.get_key_memories(limit=top_k)
+
+        if not key_memories:
+            logger.info("No key memories found to generate a profile summary.")
+            return None
+
+        # Prepare the memories for the prompt, including relevance scores
+        formatted_memories = [
+            f"- {mem['memory']} (Relevance: {mem['relevance']:.2f})"
+            for mem in key_memories
+        ]
+        memories_text = "\n".join(formatted_memories)
+
+        user_prompt = self.template_manager.render(
+            "framework.user_memories_manager.generate_user_profile",
+            {"memories_text": memories_text},
+        )
+
+        profile_summary = self.llm.chat(
+            chat_history=[{"role": "user", "content": user_prompt}],
+            stream=False,
+        )
+        logger.info(
+            f"Generated user profile summary: {profile_summary[:150]}..."
+        )
+        return profile_summary
+
     def get_key_memories(self, limit: Optional[int] = None) -> List[Dict]:
         """
         Returns a flat list of key memories from the database, optionally limited.
         Key memories are sorted by relevance in descending order.
         """
         query = (
-            "SELECT * FROM user_memories WHERE memory_type = 'key_memories' AND relevance >= ?"
-            " ORDER BY relevance DESC"
+            "SELECT * FROM user_memories WHERE memory_type = 'key_memories'"
+            " AND relevance >= ? ORDER BY relevance DESC"
         )
         params = (MIN_RELEVANCE_THRESHOLD,)
 
@@ -393,46 +442,37 @@ class UserMemoriesManager:
         Finds memories relevant to the user's query using a hybrid approach.
         It combines the most important 'key memories' (reflex) with memories
         found via semantic search (contextual).
+        NOTE: This implementation focuses purely on contextual semantic search,
+        as the high-level "reflex" memories are now compiled into a narrative
+        profile at startup and injected into the system prompt.
         """
         if not self.vector_storage:
             raise RuntimeError(
                 "Vector storage is required for memory retrieval."
             )
 
-        if exclude_ids is None:
-            exclude_ids = []
-
-        final_memories = []
-
-        # Step 1: 50% "Reflex" memories - top key memories by static relevance
-        key_memories_k = top_k // 2
-        if key_memories_k > 0:
-            reflex_candidates = [
-                m for m in self.all_key_memories if m.get("id") not in exclude_ids
-            ]
-            reflex_memories = reflex_candidates[:key_memories_k]
-            final_memories.extend(reflex_memories)
-            exclude_ids.extend([m.get("id") for m in reflex_memories])
-
-        # Step 2: 50% "Contextual" memories - semantic search
-        semantic_memories_k = top_k - len(final_memories)
-        if semantic_memories_k <= 0 or not self._is_query_substantive(query):
-            logger.info("Skipping contextual memory retrieval.")
-            return final_memories
+        if not self._is_query_substantive(query):
+            logger.info(
+                "Query is not substantive, skipping contextual memory"
+                " retrieval."
+            )
+            return []
 
         try:
             # Fetch more results initially to allow for re-ranking
-            initial_results_count = semantic_memories_k * 3
+            initial_results_count = top_k * 3
             logger.info(
-                f"Performing semantic search for {semantic_memories_k} contextual"
+                f"Performing semantic search for {top_k} contextual"
                 f" memories with query: '{query}'"
             )
 
             # Build the filter dynamically to support multiple conditions.
-            filter_conditions = [{"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}]
+            filter_conditions = [
+                {"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}
+            ]
 
             # Exclude IDs from reflex memories and any initially passed IDs.
-            if exclude_ids:
+            if exclude_ids is not None and exclude_ids:
                 filter_conditions.append({"id": {"$nin": exclude_ids}})
 
             # ChromaDB requires a logical operator ($and, $or) to combine multiple filters.
@@ -444,7 +484,7 @@ class UserMemoriesManager:
             )
 
             if not results_with_distances:
-                return final_memories
+                return []
 
             ranked_memories = []
             for doc, score in results_with_distances:
@@ -465,20 +505,17 @@ class UserMemoriesManager:
             ranked_memories.sort(key=lambda x: x[1], reverse=True)
 
             semantic_memories = [
-                memory
-                for memory, score in ranked_memories[:semantic_memories_k]
+                memory for memory, score in ranked_memories[:top_k]
             ]
             logger.info(f"semantic_memories: {semantic_memories}")
-            final_memories.extend(semantic_memories)
-
-            return final_memories
+            return semantic_memories
 
         except Exception as e:
             logger.error(
-                f"Vector search for memories failed: {e}. Returning reflex"
-                " memories only."
+                f"Vector search for memories failed: {e}. Returning empty"
+                " list."
             )
-            return final_memories
+            return []
 
     def get_turn_counter(self) -> int:
         """Retrieves the persisted turn counter for memory decay."""
@@ -728,7 +765,8 @@ class UserMemoriesManager:
                 "memory_type", "extended_memories"
             )
             logger.info(
-                f"LLM proposed a new {candidate_type} candidate: {candidate_text}"
+                f"LLM proposed a new {candidate_type} candidate:"
+                f" {candidate_text}"
             )
 
             # Step 3: Check for duplicates before creating.
@@ -755,7 +793,7 @@ class UserMemoriesManager:
                         ).get("id")
                         if existing_memory_id:
                             logger.info(
-                                f"Candidate is a duplicate of memory"
+                                "Candidate is a duplicate of memory"
                                 f" {existing_memory_id} (Threshold:"
                                 f" {similarity_threshold}, Similarity:"
                                 f" {similarity_score:.2f}). Reinforcing."
@@ -764,9 +802,7 @@ class UserMemoriesManager:
                             return  # Stop processing
 
             # Step 4: If it's not a duplicate, create the new memory.
-            logger.info(
-                "Candidate is not a duplicate. Creating a new memory."
-            )
+            logger.info("Candidate is not a duplicate. Creating a new memory.")
             # The LLM now proposes the memory type. We read it and pass it on.
             memory_data_for_creation = {
                 "target": candidate_type,
