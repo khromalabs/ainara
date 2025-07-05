@@ -926,7 +926,7 @@ class ChatManager:
                 relevant_memories = (
                     self.user_memories_manager.get_relevant_memories(
                         search_context,
-                        top_k=5,  # Increased from 3 to compensate for removing static cache
+                        top_k=10,  # Increased from 3 to compensate for removing static cache
                     )
                 )
 

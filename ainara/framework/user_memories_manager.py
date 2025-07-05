@@ -53,6 +53,7 @@ class UserMemoriesManager:
         self.storage = chat_memory.storage
         self.template_manager = TemplateManager()
         self.nlp = load_spacy_model()
+        self.all_key_memories = self.get_key_memories()
         if not self.nlp:
             # spaCy is a critical dependency for substantive query analysis.
             raise RuntimeError(
@@ -325,14 +326,30 @@ class UserMemoriesManager:
     def _is_query_substantive(self, query: str) -> bool:
         """
         Uses spaCy to determine if a query is substantive enough for semantic search.
-        A query is substantive if it contains at least one token that is not a
-        stopword, punctuation, or space.
+        A query is substantive if it contains at least one token that is a noun,
+        proper noun, verb, or adjective. This helps filter out simple greetings
+        or conversational filler.
         """
-        doc = self.nlp(query)
+        # The query can be a multi-line context string. We only care about the last line.
+        last_line = query.strip().split('\n')[-1]
+        # Strip any "role: " prefix (e.g., "user: ") from the last line.
+        actual_query = last_line.split(":", 1)[-1].strip()
+
+        doc = self.nlp(actual_query)
+        logger.info(f"Substantive check on query: '{actual_query}' (from last line: '{last_line}')")
+        
+        # Define parts of speech that we consider substantive for a query.
+        substantive_pos = {"NOUN", "PROPN", "VERB", "ADJ"}
         for token in doc:
-            if not token.is_stop and not token.is_punct and not token.is_space:
+            logger.debug(f"  - Token: '{token.text}', POS: {token.pos_}")
+            if token.pos_ in substantive_pos:
+                logger.info(
+                    f"Found substantive token '{token.text}' ({token.pos_})."
+                    " Returning True."
+                )
                 return True
-        # If no such token was found, the query is not substantive
+        # If no such token was found, the query is not substantive.
+        logger.info("No substantive tokens found. Returning False.")
         return False
 
     def get_key_memories(self, limit: Optional[int] = None) -> List[Dict]:
@@ -368,39 +385,58 @@ class UserMemoriesManager:
     def get_relevant_memories(
         self,
         query: str,
-        top_k: int = 3,
+        top_k: int = 6,
         relevance_weight: float = 0.3,
         exclude_ids: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
-        Finds memories relevant to the user's query using semantic vector
-        search, re-ranking results based on the memory's relevance score.
+        Finds memories relevant to the user's query using a hybrid approach.
+        It combines the most important 'key memories' (reflex) with memories
+        found via semantic search (contextual).
         """
         if not self.vector_storage:
             raise RuntimeError(
                 "Vector storage is required for memory retrieval."
             )
 
-        # Guard clause: Don't search for non-substantive queries.
-        if not self._is_query_substantive(query):
-            logger.info("Skipping memory retrieval for non-substantive query.")
-            return []
+        if exclude_ids is None:
+            exclude_ids = []
+
+        final_memories = []
+
+        # Step 1: 50% "Reflex" memories - top key memories by static relevance
+        key_memories_k = top_k // 2
+        if key_memories_k > 0:
+            reflex_candidates = [
+                m for m in self.all_key_memories if m.get("id") not in exclude_ids
+            ]
+            reflex_memories = reflex_candidates[:key_memories_k]
+            final_memories.extend(reflex_memories)
+            exclude_ids.extend([m.get("id") for m in reflex_memories])
+
+        # Step 2: 50% "Contextual" memories - semantic search
+        semantic_memories_k = top_k - len(final_memories)
+        if semantic_memories_k <= 0 or not self._is_query_substantive(query):
+            logger.info("Skipping contextual memory retrieval.")
+            return final_memories
 
         try:
             # Fetch more results initially to allow for re-ranking
-            initial_results_count = top_k * 3
+            initial_results_count = semantic_memories_k * 3
             logger.info(
-                "Performing semantic search for extended memories with"
-                f" query: '{query}'"
+                f"Performing semantic search for {semantic_memories_k} contextual"
+                f" memories with query: '{query}'"
             )
-            # Build the filter dynamically.
-            # This now searches both key_memories and extended_memories.
-            filter_dict = {"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}
 
-            # Exclude IDs of memories that are already in the context.
+            # Build the filter dynamically to support multiple conditions.
+            filter_conditions = [{"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}]
+
+            # Exclude IDs from reflex memories and any initially passed IDs.
             if exclude_ids:
-                filter_dict["id"] = {"$nin": exclude_ids}
+                filter_conditions.append({"id": {"$nin": exclude_ids}})
 
+            # ChromaDB requires a logical operator ($and, $or) to combine multiple filters.
+            filter_dict = {"$and": filter_conditions}
             results_with_distances = self.vector_storage.search_with_scores(
                 query,
                 limit=initial_results_count,
@@ -408,7 +444,7 @@ class UserMemoriesManager:
             )
 
             if not results_with_distances:
-                return []
+                return final_memories
 
             ranked_memories = []
             for doc, score in results_with_distances:
@@ -416,32 +452,33 @@ class UserMemoriesManager:
                 memory_type = memory.get("memory_type")
                 relevance = memory.get("relevance", 1.0)
 
-                # Apply a boost to key memories to increase their chance of being selected
                 if memory_type == "key_memories":
                     relevance *= KEY_MEMORY_BOOST
 
-                # Normalize semantic score (distance) to be higher-is-better
-                # Assuming distance is between 0 and ~2. A simple inversion works.
                 semantic_score = 1 / (1 + score)
 
-                # Combine scores
-                # The boosted relevance score for key memories will give them a significant advantage here.
                 combined_score = (semantic_score * (1 - relevance_weight)) + (
                     relevance * relevance_weight
                 )
                 ranked_memories.append((memory, combined_score))
 
-            # Sort by the new combined score, descending
             ranked_memories.sort(key=lambda x: x[1], reverse=True)
 
-            # Return the top_k memories
-            return [memory for memory, score in ranked_memories[:top_k]]
+            semantic_memories = [
+                memory
+                for memory, score in ranked_memories[:semantic_memories_k]
+            ]
+            logger.info(f"semantic_memories: {semantic_memories}")
+            final_memories.extend(semantic_memories)
+
+            return final_memories
 
         except Exception as e:
             logger.error(
-                f"Vector search for memories failed: {e}. Returning empty list."
+                f"Vector search for memories failed: {e}. Returning reflex"
+                " memories only."
             )
-            return []
+            return final_memories
 
     def get_turn_counter(self) -> int:
         """Retrieves the persisted turn counter for memory decay."""
