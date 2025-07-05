@@ -401,7 +401,11 @@ class UserMemoriesManager:
         )
         return profile_summary
 
-    def get_key_memories(self, limit: Optional[int] = None) -> List[Dict]:
+    def get_key_memories(
+        self,
+        limit: Optional[int] = None,
+        low_pass_filter: Optional[bool] = True,
+    ) -> List[Dict]:
         """
         Returns a flat list of key memories from the database, optionally limited.
         Key memories are sorted by relevance in descending order.
@@ -410,7 +414,10 @@ class UserMemoriesManager:
             "SELECT * FROM user_memories WHERE memory_type = 'key_memories'"
             " AND relevance >= ? ORDER BY relevance DESC"
         )
-        params = (MIN_RELEVANCE_THRESHOLD,)
+        if low_pass_filter:
+            params = (MIN_RELEVANCE_THRESHOLD,)
+        else:
+            params = ()
 
         if limit is not None:
             query += " LIMIT ?"
@@ -468,15 +475,22 @@ class UserMemoriesManager:
 
             # Build the filter dynamically to support multiple conditions.
             filter_conditions = [
-                {"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}
+                # Don't apply by now the low-pass filter in the context memories
+                # {"relevance": {"$gte": MIN_RELEVANCE_THRESHOLD}}
             ]
 
             # Exclude IDs from reflex memories and any initially passed IDs.
             if exclude_ids is not None and exclude_ids:
                 filter_conditions.append({"id": {"$nin": exclude_ids}})
 
-            # ChromaDB requires a logical operator ($and, $or) to combine multiple filters.
-            filter_dict = {"$and": filter_conditions}
+            # ChromaDB requires a logical operator ($and, $or) for multiple filters.
+            if len(filter_conditions) > 1:
+                filter_dict = {"$and": filter_conditions}
+            elif filter_conditions:
+                filter_dict = filter_conditions[0]
+            else:
+                filter_dict = None
+
             results_with_distances = self.vector_storage.search_with_scores(
                 query,
                 limit=initial_results_count,

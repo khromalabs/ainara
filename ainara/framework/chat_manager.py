@@ -913,7 +913,7 @@ class ChatManager:
             if self.user_profile_summary:
                 final_system_content += f"\n\n--- User Profile ---\n{self.user_profile_summary}"
 
-            # --- User Profile Injection ---
+            # --- Context Memories ---
             if self.user_memories_manager:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
@@ -935,6 +935,7 @@ class ChatManager:
                         top_k=10,  # Increased from 3 to compensate for removing static cache
                     )
                 )
+                # logger.info(f"relevant_memories: {relevant_memories}")
 
                 if relevant_memories:
                     # Pre-process memories to format the relevance score for display
@@ -949,11 +950,12 @@ class ChatManager:
                     logger.info(
                         f"Injecting {len(processed_memories_for_template)} dynamically retrieved memories into context."
                     )
-                    memories_prompt = self.template_manager.render(
+                    context_memories_prompt = self.template_manager.render(
                         "framework.chat_manager.user_memories_prompt",
                         {"memories": processed_memories_for_template},
                     )
-                    final_system_content += f"\n\n{memories_prompt}"
+                    final_system_content += f"\n\n{context_memories_prompt}"
+                    # logger.info(f"context_memories_prompt: {context_memories_prompt}")
                 else:
                     logger.info("No relevant memories found to be injected.")
 
