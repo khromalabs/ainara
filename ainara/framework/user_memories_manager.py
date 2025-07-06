@@ -47,11 +47,14 @@ KEY_MEMORY_BOOST = 1.5
 class UserMemoriesManager:
     """Manages the user's semantic memories (beliefs, preferences, facts)."""
 
-    def __init__(self, llm: LLMBackend, chat_memory: ChatMemory):
+    def __init__(
+        self, llm: LLMBackend, chat_memory: ChatMemory, context_window: Optional[int] = None
+    ):
         self.llm = llm
         self.chat_memory = chat_memory
         self.storage = chat_memory.storage
         self.template_manager = TemplateManager()
+        self.context_window = context_window or 8192  # Default to 8k if not provided
         self.nlp = load_spacy_model()
         self.all_key_memories = self.get_key_memories()
         if not self.nlp:
@@ -355,7 +358,7 @@ class UserMemoriesManager:
         logger.info("No substantive tokens found. Returning False.")
         return False
 
-    def generate_user_profile_summary(self, top_k: int = 50) -> Optional[str]:
+    def generate_user_profile_summary(self, top_k: Optional[int] = None) -> Optional[str]:
         """
         Generates a narrative summary of the user's profile using the LLM.
 
@@ -370,6 +373,18 @@ class UserMemoriesManager:
             A string containing the narrative user profile, or None if no
             memories exist.
         """
+        if top_k is None:
+            # Dynamically set top_k for profile summary based on context window
+            if self.context_window <= 8192:
+                top_k = 25
+            elif self.context_window <= 32768:
+                top_k = 50
+            else:
+                top_k = 75
+            logger.info(
+                f"Context window is {self.context_window}, dynamically setting top_k for"
+                f" profile summary to {top_k}"
+            )
         logger.info(
             f"Generating narrative user profile from top {top_k} key"
             " memories..."
@@ -441,7 +456,7 @@ class UserMemoriesManager:
     def get_relevant_memories(
         self,
         query: str,
-        top_k: int = 6,
+        top_k: Optional[int] = None,
         relevance_weight: float = 0.3,
         exclude_ids: Optional[List[str]] = None,
     ) -> List[Dict]:
@@ -464,6 +479,19 @@ class UserMemoriesManager:
                 " retrieval."
             )
             return []
+
+        if top_k is None:
+            # Dynamically determine top_k for memories based on context window
+            if self.context_window <= 8192:
+                top_k = 3
+            elif self.context_window <= 32768:
+                top_k = 6
+            else:
+                top_k = 12  # More for very large contexts
+            logger.info(
+                f"Context window is {self.context_window}, dynamically setting top_k for"
+                f" memories to {top_k}"
+            )
 
         try:
             # Fetch more results initially to allow for re-ranking
@@ -521,7 +549,7 @@ class UserMemoriesManager:
             semantic_memories = [
                 memory for memory, score in ranked_memories[:top_k]
             ]
-            logger.info(f"semantic_memories: {semantic_memories}")
+            # logger.info(f"semantic_memories: {semantic_memories}")
             return semantic_memories
 
         except Exception as e:

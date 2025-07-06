@@ -254,7 +254,11 @@ def create_app():
     user_memories_manager = None
     user_profile_summary = None
     if chat_memory:
-        user_memories_manager = UserMemoriesManager(llm=app.llm, chat_memory=chat_memory)
+        user_memories_manager = UserMemoriesManager(
+            llm=app.llm,
+            chat_memory=chat_memory,
+            context_window=app.llm.get_context_window(),
+        )
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
         logger.info("Processing new messages for user profile...")
@@ -262,8 +266,9 @@ def create_app():
         logger.info("Message processing complete.")
 
         # Generate the narrative user profile summary
-        logger.info("Generating cached user profile summary for this session...")
-        user_profile_summary = user_memories_manager.generate_user_profile_summary()
+        user_profile_summary = (
+            user_memories_manager.generate_user_profile_summary()
+        )
         if user_profile_summary:
             logger.info("User profile summary generated successfully.")
 

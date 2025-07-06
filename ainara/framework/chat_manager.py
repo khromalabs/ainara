@@ -911,7 +911,8 @@ class ChatManager:
 
             # --- User Profile Injection (from cached summary) ---
             if self.user_profile_summary:
-                final_system_content += f"\n\n--- User Profile ---\n{self.user_profile_summary}"
+                # final_system_content += f"\n\n--- Next paragraph contains key information about the user, possibly including the user's name, which I MUST take into account:\n{self.user_profile_summary}"
+                final_system_content += f"\n\n--- IMPORTANT: The following is key information about the user you are talking to. You MUST use this information, such as their name, to personalize your responses. ---\n{self.user_profile_summary}"
 
             # --- Context Memories ---
             if self.user_memories_manager:
@@ -928,12 +929,9 @@ class ChatManager:
 
                 logger.info(f"search_context: {search_context}")
 
-                # Get relevant memories based on context
                 relevant_memories = (
                     self.user_memories_manager.get_relevant_memories(
-                        search_context,
-                        top_k=10,  # Increased from 3 to compensate for removing static cache
-                    )
+                        search_context)
                 )
                 # logger.info(f"relevant_memories: {relevant_memories}")
 
