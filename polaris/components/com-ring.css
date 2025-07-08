@@ -258,3 +258,24 @@ body {
     overflow: auto;
     border: 10px solid red;
 }
+
+/* No-Memory "Incognito" Mode Styles */
+.ring-container.no-memory .ring-circle {
+    border-color: #DBADFF; /* Lighter incognito purple */
+    box-shadow: 0 0 25px rgba(219, 173, 255, 0.7),
+                inset 0 0 25px rgba(219, 173, 255, 0.7);
+}
+
+.ring-container.no-memory .ring-circle.tts-active {
+    border-color: #DBADFF;
+    box-shadow: 0 0 10px rgba(219, 173, 255, 0.7),
+                0 0 20px rgba(219, 173, 255, 0.5),
+                0 0 30px rgba(219, 173, 255, 0.4),
+                inset 0 0 10px rgba(219, 173, 255, 0.7),
+                inset 0 0 25px rgba(219, 173, 255, 0.5),
+                inset 0 0 30px rgba(219, 173, 255, 0.4);
+}
+
+.ring-container.no-memory.recording-active::before {
+    border-color: rgba(219, 173, 255, 0.8);
+}

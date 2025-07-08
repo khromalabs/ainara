@@ -100,16 +100,16 @@ class ChatManager:
         self.chat_memory = chat_memory
         self.user_memories_manager = user_memories_manager
         self.user_profile_summary = user_profile_summary
+        self.memory_enabled = config.get("memory.enabled", False)
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
         # --- Memory Decay Tracking (persisted between sessions) ---
         self.memory_decay_interval = config.get("memories.decay_interval_turns", 10)
-        if self.memory_decay_interval > 0:
+        self.turn_counter = 0
+        self.decay_in_progress = False
+        self.decay_lock = threading.Lock()
+        if self.memory_enabled and self.user_memories_manager and self.memory_decay_interval > 0:
             self.turn_counter = self.user_memories_manager.get_turn_counter()
-            self.decay_in_progress = False
-            self.decay_lock = threading.Lock()
-        else:
-            self.turn_counter = 0
 
         # Render the system message template
         current_date = datetime.now().date()
@@ -146,7 +146,7 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         is_new_profile = False
-        if self.user_memories_manager.is_empty():
+        if self.user_memories_manager and self.user_memories_manager.is_empty():
             is_new_profile = True
             logger.info(
                 "User profile is empty. Will display onboarding message."
@@ -171,7 +171,7 @@ class ChatManager:
             )
 
         self.decay_executor = None
-        if self.memory_decay_interval > 0:
+        if self.memory_enabled and self.user_memories_manager and self.memory_decay_interval > 0:
             self.decay_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="DecayThread"
             )
@@ -183,6 +183,43 @@ class ChatManager:
             self.buffer_lock = threading.Lock()
             self.summary_in_progress = False
             self.current_summary = "-"
+
+    def _initialize_memory_if_needed(self):
+        """Initializes memory components if they haven't been already."""
+        if self.chat_memory is None:
+            logger.info("Initializing ChatMemory on-demand...")
+            self.chat_memory = ChatMemory()
+            logger.info("Chat memory initialized.")
+
+        if self.user_memories_manager is None:
+            logger.info("Initializing UserMemoriesManager on-demand...")
+            self.user_memories_manager = UserMemoriesManager(
+                llm=self.llm,
+                chat_memory=self.chat_memory,
+                context_window=self.llm.get_context_window(),
+            )
+            logger.info("User Memories Manager initialized.")
+            # Perform initial consolidation
+            logger.info("Processing existing messages for user profile...")
+            self.user_memories_manager.process_new_messages_for_update()
+            logger.info("Message processing complete.")
+
+        # Always regenerate summary when enabling memory
+        if self.user_memories_manager:
+            self.user_profile_summary = (
+                self.user_memories_manager.generate_user_profile_summary()
+            )
+            if self.user_profile_summary:
+                logger.info("User profile summary generated/updated.")
+
+        # Initialize decay components if needed
+        if self.memory_decay_interval > 0 and self.decay_executor is None:
+            logger.info("Initializing Memory Decay executor on-demand...")
+            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.decay_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="DecayThread"
+            )
+            logger.info("Memory Decay executor initialized.")
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -822,6 +859,84 @@ class ChatManager:
             print(doc_content)
             print("---------------------------------")
 
+    def _handle_memory_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles /memory and /nomemory commands, updating the config."""
+        response = ""
+        command_lower = command.strip().lower()
+        state_changed = False
+        new_state = self.memory_enabled
+
+        if command_lower == "/memory":
+            if not self.memory_enabled:
+                self.memory_enabled = True
+                if "memory" not in config.config:
+                    config.config["memory"] = {}
+                config.config["memory"]["enabled"] = True
+                config.save()
+                self._initialize_memory_if_needed()
+                response = "Memory enabled"
+                state_changed = True
+                new_state = True
+            else:
+                response = "Memory is already enabled."
+        elif command_lower == "/nomemory":
+            if self.memory_enabled:
+                self.memory_enabled = False
+                if "memory" not in config.config:
+                    config.config["memory"] = {}
+                config.config["memory"]["enabled"] = False
+                config.save()
+                response = "Memory disabled"
+                state_changed = True
+                new_state = False
+            else:
+                response = "Memory disabled"
+
+        if stream is None:
+            return response
+
+        def generator():
+            if stream == "cli":
+                print(response)
+                return
+
+            if state_changed:
+                yield ndjson("ui", "setMemoryState", {"enabled": new_state})
+            yield ndjson("signal", "infoMessage", {"message": response})
+
+        return generator()
+
+    def _handle_test_doc_view_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testdocview command for all stream types."""
+        if stream:  # cli or json
+            return self._handle_test_doc_view_stream(command, stream)
+        else:  # no stream
+            parts = command.strip().split(" ", 1)
+            if len(parts) < 2 or "," not in parts[1]:
+                return "Usage: /testdocview <format>,<content>"
+
+            command_body = parts[1]
+            doc_format, doc_content = command_body.split(",", 1)
+            return f'<doc format="{doc_format}">{doc_content}</doc>'
+
+    def _handle_command(self, question: str, stream: Optional[Literal["cli", "json"]]):
+        """Checks for and handles special commands."""
+        command = question.strip()
+        if not command.startswith("/"):
+            return None
+
+        if command.lower() in ["/memory", "/nomemory"]:
+            return self._handle_memory_command(command, stream)
+
+        if command.lower().startswith("/testdocview"):
+            return self._handle_test_doc_view_command(command, stream)
+
+        return None
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -841,19 +956,12 @@ class ChatManager:
         if isinstance(stream, bool):
             stream = "cli" if stream else None
 
-        # Handle /testdocview command for debugging
-        if question.strip().startswith("/testdocview"):
-            if stream:  # cli or json
-                yield from self._handle_test_doc_view_stream(question, stream)
-                return
-            else:  # no stream
-                parts = question.strip().split(" ", 1)
-                if len(parts) < 2 or "," not in parts[1]:
-                    return "Usage: /testdocview <format>,<content>"
-
-                command_body = parts[1]
-                doc_format, doc_content = command_body.split(",", 1)
-                return f'<doc format="{doc_format}">{doc_content}</doc>'
+        # Handle special commands
+        command_response = self._handle_command(question, stream)
+        if command_response is not None:
+            # Delegate to the command's generator and then stop execution
+            yield from command_response
+            return
 
         # Check if spaCy model is available
         if not self.nlp:
@@ -869,7 +977,7 @@ class ChatManager:
 
         processed_answer = ""
         try:
-            if self.chat_memory:
+            if self.memory_enabled and self.chat_memory:
                 self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
@@ -910,12 +1018,12 @@ class ChatManager:
                 )
 
             # --- User Profile Injection (from cached summary) ---
-            if self.user_profile_summary:
+            if self.memory_enabled and self.user_profile_summary:
                 # final_system_content += f"\n\n--- Next paragraph contains key information about the user, possibly including the user's name, which I MUST take into account:\n{self.user_profile_summary}"
                 final_system_content += f"\n\n--- IMPORTANT: The following is key information about the user you are talking to. You MUST use this information, such as their name, to personalize your responses. ---\n{self.user_profile_summary}"
 
             # --- Context Memories ---
-            if self.user_memories_manager:
+            if self.memory_enabled and self.user_memories_manager:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
                     -4:
@@ -927,7 +1035,7 @@ class ChatManager:
                     ]
                 )
 
-                logger.info(f"search_context: {search_context}")
+                # logger.info(f"search_context: {search_context}")
 
                 relevant_memories = (
                     self.user_memories_manager.get_relevant_memories(
@@ -1097,7 +1205,7 @@ class ChatManager:
                 )
 
                 # Log assistant response to chat memory
-                if self.chat_memory:
+                if self.memory_enabled and self.chat_memory:
                     self.chat_memory.add_entry(
                         processed_answer, "assistant"
                     )
@@ -1107,7 +1215,7 @@ class ChatManager:
                 self.llm.add_msg(
                     "No response generated", self.chat_history, "assistant"
                 )
-                if self.chat_memory:
+                if self.memory_enabled and self.chat_memory:
                     self.chat_memory.add_entry(
                         "No response generated", "assistant"
                     )
@@ -1124,7 +1232,7 @@ class ChatManager:
                 self._update_summary_in_background()
 
             # --- Memory Decay ---
-            if self.memory_decay_interval > 0:
+            if self.memory_enabled and self.memory_decay_interval > 0:
                 self.turn_counter += 1
                 if self.turn_counter >= self.memory_decay_interval:
                     logger.info(f"decay turn counter {self.turn_counter} over "
@@ -1133,7 +1241,8 @@ class ChatManager:
                     self.user_memories_manager.reset_turn_counter()
                     self.turn_counter = 0  # Reset in-memory counter
                 logger.info(f"Saving turn counter state: {self.turn_counter}")
-                self.user_memories_manager.save_turn_counter(self.turn_counter)
+                if self.user_memories_manager:
+                    self.user_memories_manager.save_turn_counter(self.turn_counter)
 
             # For non-streaming mode, return the processed answer
             if not stream:

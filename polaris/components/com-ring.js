@@ -35,6 +35,7 @@
 
 const WhisperSTT = require('../services/stt/whisper');
 const ConfigManager = require('../utils/config');
+const ConfigHelper = require('../utils/ConfigHelper');
 const BaseComponent = require('./base');
 const electron = require('electron');
 
@@ -49,6 +50,7 @@ class ComRing extends BaseComponent {
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
             this.text = null;
+            this.memoryEnabled = null;
 
             // Add tracking for animations and message queue
             this.pendingAnimations = new Map();  // Track pending animations by message ID
@@ -155,7 +157,7 @@ class ComRing extends BaseComponent {
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 await this.connectedCallback(recursion)
             } else {
-                this.showError(error);
+                this.showInfo(error, true);
                 throw error;
             }
         }
@@ -192,6 +194,15 @@ class ComRing extends BaseComponent {
         console.log('ComRing: Cleanup complete');
     }
 
+    setMemoryState(enabled) {
+        this.memoryEnabled = enabled;
+        if (enabled) {
+            this.ringContainer.classList.remove('no-memory');
+        } else {
+            this.ringContainer.classList.add('no-memory');
+        }
+    }
+
     initializeEventListeners() {
         console.log('ComRing: Initializing event listeners');
         console.log('ComRing: Setting up IPC event listeners');
@@ -202,7 +213,6 @@ class ComRing extends BaseComponent {
             mainKey: this.mainKey
         });
 
-
         try {
             console.log('ComRing: Successfully imported electron and got ipcRenderer');
         } catch (error) {
@@ -211,9 +221,20 @@ class ComRing extends BaseComponent {
         }
 
         // Add window visibility listeners
-        ipcRenderer.on('window-show', () => {
+        ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
+            // Force-sync memory state from config to fix color issue on show
+            if (this.memoryEnabled === null) {
+                let backendConfig = await ConfigHelper.fetchBackendConfig();
+                this.memoryEnabled = backendConfig?.memory?.enabled || false;
+            }
+            this.setMemoryState(this.memoryEnabled);
+        });
+
+        ipcRenderer.on('set-memory-state', (event, enabled) => {
+            console.log('ComRing: Received set-memory-state event');
+            this.setMemoryState(enabled);
         });
 
         function truncateMiddle(str, maxLength) {
@@ -455,7 +476,7 @@ class ComRing extends BaseComponent {
                 this.circle.classList.add('faded');
             }
         } catch (error) {
-            await this.showError('LLM Processing Error in message "' + message + '": ' + error.message)
+            await this.showInfo('LLM Processing Error in message "' + message + '": ' + error.message, true)
             ipcRenderer.send('llm-error', error.message);
         }
         this.state.isAwaitingResponse = false;
@@ -474,6 +495,10 @@ class ComRing extends BaseComponent {
 
     async startRecording() {
         if (this.state.isRecording || !this.isWindowVisible) return;
+
+        // // Force-sync memory state from config to fix color issue
+        // const memoryEnabled = this.config.get('memory.enabled', false);
+        // this.setMemoryState(memoryEnabled);
 
         this.ignoreIncomingEvents = false;
         this.state.isRecording = true;
@@ -726,7 +751,7 @@ class ComRing extends BaseComponent {
             }
         } catch (error) {
             // await this.showError(event.content.message + " " + error);
-            await this.showError(error);
+            await this.showInfo(error, true);
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
@@ -735,53 +760,69 @@ class ComRing extends BaseComponent {
     }
 
     // TODO extend the queued approach used to show errors to display all messages
-    async showError(error) {
+    async showInfo(info, isError = false) {
         let callstack = null;
         try {
             throw new Error('Stack Trace');
         } catch (e) {
             callstack = e.stack;
         }
-        console.error('Error:', error, callstack);
-        ipcRenderer.send('chat-error', error.toString());
-
-        // Create error queue if it doesn't exist
-        if (!this.errorQueue) {
-            this.errorQueue = [];
-            this.errorQueueIndex = 0;
-            this.isShowingError = false;
+        console.error('Info:', info, callstack);
+        if (isError) {
+            ipcRenderer.send('chat-error', info.toString());
         }
 
-        // Add error to queue
-        this.errorQueueIndex++;
-        this.errorQueue.push("Error #" + this.errorQueueIndex + ": " + error.toString());
+        // Create error queue if it doesn't exist
+        if (!this.infoQueue) {
+            this.infoQueue = [];
+            this.infoQueueIndex = 0;
+            this.isShowingInfo = false;
+        }
+
+        // Add info to queue
+        this.infoQueueIndex++;
+        if (isError) {
+            this.infoQueue.push(
+                "Error #" +
+                this.infoQueueIndex +
+                ": " +
+                info.toString()
+            );
+        } else {
+            this.infoQueue.push(info.toString());
+        }
 
         // Start processing the queue if not already doing so
-        if (!this.isShowingError) {
-            this.processErrorQueue();
+        if (!this.isShowingInfo) {
+            this.processInfoQueue();
         }
     }
 
-    async processErrorQueue() {
+    async processInfoQueue() {
         // If queue is empty or already showing an error, return
-        if (this.errorQueue.length === 0 || this.isShowingError) {
+        if (this.infoQueue.length === 0 || this.isShowingInfo) {
             return;
         }
 
         // Set flag to indicate we're showing an error
-        this.isShowingError = true;
+        this.isShowingInfo = true;
 
         // Get the next error from the queue
-        const errorMessage = this.errorQueue.shift();
+        const infoMessage = this.infoQueue.shift();
+        let isError = infoMessage.startsWith("Error #")
 
-        // Show the error
+        // Show the info message/error
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
-        sttStatus.innerHTML = errorMessage;
-        sttStatus.classList.add('active3');
+        sttStatus.innerHTML = infoMessage;
+        if (isError) {
+            sttStatus.classList.add('active3');
+        } else {
+            sttStatus.classList.add('active2');
+        }
 
         // Keep the message visible by refreshing it periodically
         const refreshInterval = 1000; // 1 second
-        const totalDuration = 8100;   // 5 seconds total
+        const totalDuration = 5000;   // 5 seconds total
         const refreshCount = Math.floor(totalDuration / refreshInterval);
 
         // Use a single interval instead of multiple timeouts
@@ -790,18 +831,26 @@ class ComRing extends BaseComponent {
             count++;
             // Refresh the message
             const sttStatus = this.shadowRoot.querySelector('.stt-status');
-            sttStatus.innerHTML = errorMessage;
-            sttStatus.classList.add('active3');
+            sttStatus.innerHTML = infoMessage;
+            if (isError) {
+                sttStatus.classList.add('active3');
+            } else {
+                sttStatus.classList.add('active2');
+            }
 
             // If we've reached the desired duration, clean up
             if (count >= refreshCount) {
                 clearInterval(intervalId);
-                sttStatus.classList.remove('active3');
+                if (isError) {
+                    sttStatus.classList.remove('active3');
+                } else {
+                    sttStatus.classList.remove('active2');
+                }
                 sttStatus.textContent = '';
-                this.isShowingError = false;
+                this.isShowingInfo = false;
 
                 // Process next error in queue if any
-                setTimeout(() => this.processErrorQueue(), 100);
+                setTimeout(() => this.processInfoQueue(), 100);
             }
         }, refreshInterval);
     }
@@ -1302,6 +1351,12 @@ class ComRing extends BaseComponent {
                 }
                 break;
 
+            case 'setMemoryState':
+                if (event.type === 'ui') {
+                    this.setMemoryState(event.content.enabled);
+                }
+                break;
+
             case 'command':
                 if (event.type === 'signal') {
                     const command = event.content.name;
@@ -1342,9 +1397,15 @@ class ComRing extends BaseComponent {
                 }
                 break;
 
+            case 'infoMessage':
+                if (event.type === 'signal') {
+                    await this.showInfo(event.content.message);
+                }
+                break;
+
             case 'error':
                 if (event.type === 'signal') {
-                    await this.showError(event.content.message);
+                    await this.showInfo(event.content.message, true);
                     ipcRenderer.send('chat-error', event.content.message);
                 }
                 break;

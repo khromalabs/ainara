@@ -201,6 +201,11 @@ class ConfigManager:
 
     def get(self, key_path: str, default=None):
         """Get a config value using dot notation"""
+        # Check if the config file has been modified and reload if necessary
+        if self.needs_load():
+            print("INFO: Configuration file has changed, reloading.")
+            self.load_config()
+
         keys = key_path.split(".")
         value = self.config
 

@@ -18,6 +18,7 @@
 
 const BaseWindow = require('./BaseWindow');
 const Logger = require('../utils/logger');
+const ConfigHelper = require('../utils/ConfigHelper');
 
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
@@ -123,6 +124,12 @@ class ComRingWindow extends BaseWindow {
             this.window.focus();
             this.window.webContents.send('exit-typing-mode');
             Logger.log('ComRingWindow: Focusing window');
+        });
+
+        this.window.webContents.on('did-finish-load', async () => {
+            this.backendConfig = await ConfigHelper.fetchBackendConfig();
+            const memoryEnabled = this.backendConfig?.memory?.enabled || false;
+            this.window.webContents.send('set-memory-state', memoryEnabled);
         });
 
         // Add ComRing specific IPC handlers
