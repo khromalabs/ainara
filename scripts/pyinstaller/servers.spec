@@ -25,6 +25,7 @@ package_data_entries = [
     ]),
     ('en_core_web_sm', ['.']),
     ('newspaper', ['.']),
+    ('chromadb', ['.']),
 ]
 
 # Generate datas array from package data directories
