@@ -631,8 +631,7 @@ tokenizers==0.21.1
     #   faster-whisper
     #   litellm
     #   transformers
-# torch==2.6.0
-torch==2.6.0+cpu
+torch==2.6.0
     # via
     #   -r requirements.in
     #   sentence-transformers
