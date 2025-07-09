@@ -173,7 +173,7 @@ common_imports = [
 ]
 
 # Add all the transformers models to common imports
-common_imports += collect_submodules('transformers.models')
+common_imports += collect_submodules('transformers')
 
 # Orakle-specific data and imports
 orakle_datas = [
