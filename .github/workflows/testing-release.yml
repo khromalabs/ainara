@@ -12,10 +12,10 @@ jobs:
     strategy:
       matrix:
         include:
-        - os: macos-latest
+        - os: macos-14
           python-version: '3.12'
         - os: windows-latest
-          python-version: '3.11' # Use Python 3.11 for Windows
+          python-version: '3.12' # Use Python 3.11 for Windows
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
@@ -135,7 +135,7 @@ jobs:
         VERSION_PART="${TAG_NAME#*-}"
         # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
         OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
-        
+
         # Add architecture detection
         if [[ "${{ matrix.os }}" == "macos-14" ]]; then
           ARCH="arm64"
