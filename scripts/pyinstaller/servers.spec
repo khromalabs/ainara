@@ -102,6 +102,13 @@ else:  # Linux
     if os.path.exists(piper_bin_dir):
         binaries.append((piper_bin_dir, 'resources/bin/linux'))
 
+# Define platform-specific excludes for packages that should not be bundled
+# on certain operating systems, even if they are present in the environment.
+platform_excludes = []
+if system == "Windows":
+    platform_excludes.append('uvloop')
+    platform_excludes.append('triton')
+
 # Common data files for both executables
 common_datas = [
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
@@ -316,7 +323,7 @@ a_orakle = Analysis(
     #module_collection_mode={
     #    'transformers': 'py',
     #},
-    excludes=[],
+    excludes=platform_excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -336,7 +343,7 @@ a_pybridge = Analysis(
     #module_collection_mode={
     #    'transformers': 'py',
     #},
-    excludes=[],
+    excludes=platform_excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
