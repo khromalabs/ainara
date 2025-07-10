@@ -56,7 +56,6 @@ class UserMemoriesManager:
         self.template_manager = TemplateManager()
         self.context_window = context_window or 8192  # Default to 8k if not provided
         self.nlp = load_spacy_model()
-        self.all_key_memories = self.get_key_memories()
         if not self.nlp:
             # spaCy is a critical dependency for substantive query analysis.
             raise RuntimeError(
@@ -69,14 +68,15 @@ class UserMemoriesManager:
             config.get("data.directory"), "user_profile.json"
         )
 
-        # Setup database table for memories
+        # Setup database / load key memories
         self._create_memories_table()
+        self.all_key_memories = self.get_key_memories()
 
         # Check if we need to force a full rescan of chat history
         self._check_and_force_rescan()
 
-        # Run a one-time migration from the old JSON file if it exists
-        self._run_migration()
+        # # Run a one-time migration from the old JSON file if it exists
+        # self._run_migration()
 
         # Initialize vector storage for memories
         vector_type = config.get(
@@ -161,75 +161,75 @@ class UserMemoriesManager:
             logger.error(f"Failed to create user_memories table: {e}")
             raise
 
-    def _run_migration(self):
-        """Migrates data from user_profile.json to the database if needed."""
-        if not os.path.exists(self.profile_path):
-            return  # No old file to migrate
-
-        try:
-            # Check if the memories table is empty
-            cursor = self.storage.conn.cursor()
-            cursor.execute("SELECT COUNT(id) FROM user_memories")
-            if cursor.fetchone()[0] > 0:
-                logger.info(
-                    "memories table is not empty. Skipping migration from"
-                    " JSON."
-                )
-                return
-
-            logger.info(
-                "Found user_profile.json and empty memories table. Starting"
-                " migration..."
-            )
-            with open(self.profile_path, "r", encoding="utf-8") as f:
-                old_profile = json.load(f)
-
-            memories_to_add = []
-            for memory_type in ["key_memories", "extended_memories"]:
-                for topic, topic_memories in old_profile.get(
-                    memory_type, {}
-                ).items():
-                    for memory in topic_memories:
-                        memories_to_add.append(
-                            (
-                                memory.get("id", str(uuid.uuid4())),
-                                memory_type,
-                                memory.get("topic", topic),
-                                memory.get("memory"),
-                                memory.get("relevance", 1.0),
-                                memory.get(
-                                    "last_updated",
-                                    datetime.now(timezone.utc).isoformat(),
-                                ),
-                                json.dumps(memory.get("source_message_ids")),
-                                json.dumps(memory.get("metadata")),
-                            )
-                        )
-
-            if memories_to_add:
-                with self.storage.conn:
-                    self.storage.conn.executemany(
-                        """
-                        INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids, metadata)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        memories_to_add,
-                    )
-                logger.info(
-                    f"Successfully migrated {len(memories_to_add)} memories"
-                    " from JSON to SQLite."
-                )
-
-            # Rename the old file to prevent re-migration
-            os.rename(self.profile_path, f"{self.profile_path}.migrated")
-            logger.info(f"Renamed {self.profile_path} to avoid re-migration.")
-            self.storage.set_metadata("vector_db_needs_reset", "true")
-            logger.info(
-                "Flagged vector DB for reset on next startup due to migration."
-            )
-
-        except Exception as e:
-            logger.error(f"Error during profile migration from JSON: {e}")
+    # def _run_migration(self):
+    #     """Migrates data from user_profile.json to the database if needed."""
+    #     if not os.path.exists(self.profile_path):
+    #         return  # No old file to migrate
+    #
+    #     try:
+    #         # Check if the memories table is empty
+    #         cursor = self.storage.conn.cursor()
+    #         cursor.execute("SELECT COUNT(id) FROM user_memories")
+    #         if cursor.fetchone()[0] > 0:
+    #             logger.info(
+    #                 "memories table is not empty. Skipping migration from"
+    #                 " JSON."
+    #             )
+    #             return
+    #
+    #         logger.info(
+    #             "Found user_profile.json and empty memories table. Starting"
+    #             " migration..."
+    #         )
+    #         with open(self.profile_path, "r", encoding="utf-8") as f:
+    #             old_profile = json.load(f)
+    #
+    #         memories_to_add = []
+    #         for memory_type in ["key_memories", "extended_memories"]:
+    #             for topic, topic_memories in old_profile.get(
+    #                 memory_type, {}
+    #             ).items():
+    #                 for memory in topic_memories:
+    #                     memories_to_add.append(
+    #                         (
+    #                             memory.get("id", str(uuid.uuid4())),
+    #                             memory_type,
+    #                             memory.get("topic", topic),
+    #                             memory.get("memory"),
+    #                             memory.get("relevance", 1.0),
+    #                             memory.get(
+    #                                 "last_updated",
+    #                                 datetime.now(timezone.utc).isoformat(),
+    #                             ),
+    #                             json.dumps(memory.get("source_message_ids")),
+    #                             json.dumps(memory.get("metadata")),
+    #                         )
+    #                     )
+    #
+    #         if memories_to_add:
+    #             with self.storage.conn:
+    #                 self.storage.conn.executemany(
+    #                     """
+    #                     INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids, metadata)
+    #                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    #                     """,
+    #                     memories_to_add,
+    #                 )
+    #             logger.info(
+    #                 f"Successfully migrated {len(memories_to_add)} memories"
+    #                 " from JSON to SQLite."
+    #             )
+    #
+    #         # Rename the old file to prevent re-migration
+    #         os.rename(self.profile_path, f"{self.profile_path}.migrated")
+    #         logger.info(f"Renamed {self.profile_path} to avoid re-migration.")
+    #         self.storage.set_metadata("vector_db_needs_reset", "true")
+    #         logger.info(
+    #             "Flagged vector DB for reset on next startup due to migration."
+    #         )
+    #
+    #     except Exception as e:
+    #         logger.error(f"Error during profile migration from JSON: {e}")
 
     def _check_and_force_rescan(self):
         """

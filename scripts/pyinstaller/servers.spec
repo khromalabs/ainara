@@ -202,48 +202,61 @@ with open(os.path.join(SPECPATH, 'runtime_hook.py'), 'w') as f:
 import os
 import sys
 import logging
-import platform
+from pathlib import Path
 
-# Set up logging to a file
-# Use a writable location for logs
-# --- Platform-specific log directory ---
-home_dir = os.path.expanduser('~')
-app_name = 'ainara'
-log_dir = '' # Initialize log_dir
+# It's crucial to add the bundled 'ainara' package to the path
+# so we can import our own utilities.
+# sys._MEIPASS is the root of the bundled app.
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    sys.path.insert(0, sys._MEIPASS)
 
-system = platform.system()
-if system == "Windows":
-    appdata = os.getenv('APPDATA')
-    if appdata:
-        log_dir = os.path.join(appdata, app_name, 'logs')
-    else: # Fallback if APPDATA isn't set (unlikely)
-        log_dir = os.path.join(home_dir, '.' + app_name, 'logs')
-elif system == "Darwin": # macOS
-    log_dir = os.path.join(home_dir, 'Library', 'Application Support', app_name, 'logs')
-else: # Linux and other Unix-like
-    log_dir = os.path.join(home_dir, '.' + app_name, 'logs')
+from ainara.framework.platform_utils import get_default_log_dir, get_default_cache_dir
 
-# Ensure the directory exists
+# --- Set up logging to a file ---
+# Use a writable location for logs, respecting environment variables first.
+log_dir_str = os.environ.get("AINARA_LOGS")
+if log_dir_str:
+    log_dir = Path(os.path.expanduser(log_dir_str))
+else:
+    log_dir = get_default_log_dir()
+
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, 'pyinstaller_debug.log')
+log_file = log_dir / 'pyinstaller_debug.log'
 
 logging.basicConfig(
-    filename=log_file,
+    filename=str(log_file),
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('PyInstallerDebug')
 
 # Log system information
+logger.info("--- PyInstaller Runtime Hook Start ---")
 logger.info(f"Python executable: {sys.executable}")
 logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"sys.path: {sys.path}")
+logger.info(f"Log directory: {log_dir}")
 
-# Add the directory containing the executable to sys.path
-sys.path.insert(0, os.path.dirname(sys.executable))
+# --- Set up a reliable cache directory for transformers ---
+# Priority: TRANSFORMERS_CACHE > AINARA_CACHE > Ainara platform default.
+# If TRANSFORMERS_CACHE is already set, we respect it and do nothing.
+if 'TRANSFORMERS_CACHE' not in os.environ:
+    cache_dir_str = os.environ.get("AINARA_CACHE")
+    if cache_dir_str:
+        cache_dir = Path(os.path.expanduser(cache_dir_str))
+    else:
+        cache_dir = get_default_cache_dir()
 
-# Add the parent directory of the executable to sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(sys.executable)))
+    transformers_cache_dir = cache_dir / 'transformers'
+    os.makedirs(transformers_cache_dir, exist_ok=True)
+
+    # Set the environment variable for huggingface libraries
+    os.environ['TRANSFORMERS_CACHE'] = str(transformers_cache_dir)
+    logger.info(f"Set TRANSFORMERS_CACHE to: {os.environ['TRANSFORMERS_CACHE']}")
+else:
+    logger.info(f"TRANSFORMERS_CACHE already set to: {os.environ['TRANSFORMERS_CACHE']}. Hook will not override it.")
+
+logger.info("--- PyInstaller Runtime Hook End ---")
 """)
 
 # Analysis for Orakle
