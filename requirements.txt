@@ -646,8 +646,8 @@ tqdm==4.67.1
     #   spacy
     #   transformers
 transformers==4.51.3
-    # via sentence-transformers
-triton==3.2.0
+#     # via sentence-transformers (GPU related)
+# triton==3.2.0
     # via torch
 tweepy==4.15.0
     # via -r requirements.in
