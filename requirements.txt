@@ -552,8 +552,8 @@ scipy==1.15.2
     #   scikit-learn
     #   sentence-transformers
 sentence-transformers==3.4.1
-    # via -r requirements.in
-setproctitle==1.3.4
+#     # via -r requirements.in
+# setproctitle==1.3.4
     # via -r requirements.in
 sgmllib3k==1.0.0
     # via feedparser
@@ -679,10 +679,10 @@ urllib3==2.4.0
     #   requests
 uvicorn==0.34.1
 # uvicorn[standard]==0.34.1
-    # via
-    #   chromadb
-    #   mcp
-uvloop==0.21.0
+#     # via
+#     #   chromadb
+#     #   mcp
+# uvloop==0.21.0
     # via uvicorn
 validators==0.34.0
     # via -r requirements.in
