@@ -3,7 +3,7 @@ import os
 import sys
 import importlib
 import platform
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -25,7 +25,6 @@ package_data_entries = [
     ]),
     ('en_core_web_sm', ['.']),
     ('newspaper', ['.']),
-    ('chromadb', ['.']),
 ]
 
 # Generate datas array from package data directories
@@ -47,6 +46,21 @@ for pkg, paths in package_data_entries:
                 )
     except (ImportError, AttributeError):
         print(f"Warning: Package {pkg} not found, skipping")
+
+# Collect data files for complex packages using PyInstaller's utility.
+# This is more robust than manually specifying paths.
+datas_from_hooks = []
+packages_to_collect_data_from = [
+    'chromadb',
+    'onnxruntime',
+    'tokenizers',
+    'chroma-hnswlib'
+]
+for pkg_name in packages_to_collect_data_from:
+    try:
+        datas_from_hooks.extend(collect_data_files(pkg_name))
+    except Exception as e:
+        print(f"Warning: Could not collect data files for {pkg_name}: {e}")
 
 # Add platform-specific binaries and TTS models
 binaries = []
@@ -95,7 +109,8 @@ common_datas = [
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
     *datas,
-    *package_datas
+    *package_datas,
+    *datas_from_hooks
 ]
 
 # Common hidden imports for both executables
@@ -108,25 +123,19 @@ common_imports = [
     'asgiref',
     'tiktoken_ext.openai_public',
     'tiktoken_ext',
-    'yaml',
+    'PyYAML', # The package name for 'yaml'
     'json',
     'numpy',
     'pyperclip',
-    'newsapi_python',
+    'feedparser',
+    'tldextract',
 
-    # LangChain related
-    'langchain',
-    'langchain.llms',
-    'langchain.chains',
-    'langchain.embeddings',
-    'langchain.vectorstores',
-    'langchain.text_splitter',
-    'langchain.document_loaders',
-    'langchain_community',
-    'langchain_community.vectorstores',
-    'langchain_community.embeddings',
+    # LLM Backends
+    'litellm',
+    'ollama',
 
     # Audio processing
+    'av',
     'faster_whisper',
     'sounddevice',
     'soundfile',
@@ -138,21 +147,46 @@ common_imports = [
     'googleapiclient',
     'googleapiclient.discovery',
     'tiktoken',
-	'newspaper',
 
     # ML/AI related
     'transformers',
+    'tokenizers',
     'sentence_transformers',
     'torch',
+    # ChromaDB and its full set of dependencies.
+    # Even for local/in-process usage, it can dynamically import many of these.
     'chromadb',
-    'litellm',
+    'hnswlib',      # Import name for chroma-hnswlib
+    'pydantic',
+    'tenacity',
+    'overrides',
+    'onnxruntime',
+    'onnxruntime.capi.onnxruntime_internal',
+    'fastapi',
+    'uvicorn',
+    'posthog',
+    'pypika',       # Import name for PyPika
+    'tqdm',
+    'importlib_resources',
+    'grpcio',
+    'bcrypt',
+    'kubernetes',
+    'mmh3',
+    'orjson',
+    'typer',
+    'rich',
+    'httpx',
+
+    # Dependencies for MCP
+    'mcp',
 
     # Search engines
     'newsapi_python',
-    'newspaper',
+    'newspaper3k', # The package name for 'newspaper'
     'tweepy',
 
     # Text processing
+    'lxml_html_clean',
     'nltk',
     'textblob',
     'emoji',
@@ -162,6 +196,10 @@ common_imports = [
 
     # Framework modules
     'ainara.framework',
+    # System utilities
+    'psutil',
+    'setproctitle',
+
     'ainara.framework.llm',
     'ainara.framework.matcher',
     'ainara.framework.storage',
@@ -174,6 +212,10 @@ common_imports = [
 
 # Add all the transformers models to common imports
 common_imports += collect_submodules('transformers')
+common_imports += collect_submodules('chromadb')
+# Add all opentelemetry modules, a complex dependency of chromadb
+common_imports += collect_submodules('opentelemetry')
+collect_submodules('sentence_transformers')
 
 # Orakle-specific data and imports
 orakle_datas = [
@@ -184,6 +226,8 @@ orakle_imports = [
     'ainara.orakle.skills',
     'ainara.orakle.skills.crypto',
     'ainara.orakle.skills.finance',
+    'ainara.orakle.skills.html',
+    'ainara.orakle.skills.inference',
     'ainara.orakle.skills.messaging',
     'ainara.orakle.skills.search',
     'ainara.orakle.skills.sentiment',

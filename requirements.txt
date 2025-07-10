@@ -103,11 +103,6 @@ cymem==2.0.11
     #   preshed
     #   spacy
     #   thinc
-deprecated==1.2.18
-    # via
-    #   opentelemetry-api
-    #   opentelemetry-exporter-otlp-proto-grpc
-    #   opentelemetry-semantic-conventions
 distro==1.9.0
     # via
     #   openai
@@ -164,7 +159,7 @@ googleapis-common-protos==1.70.0
     # via
     #   google-api-core
     #   opentelemetry-exporter-otlp-proto-grpc
-grpcio==1.71.0
+grpcio==1.73.1
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -228,11 +223,11 @@ joblib==1.4.2
     # via
     #   nltk
     #   scikit-learn
-jsonschema==4.23.0
+jsonschema==4.24.0
     # via litellm
-jsonschema-specifications==2024.10.1
+jsonschema-specifications==2025.4.1
     # via jsonschema
-kubernetes==32.0.1
+kubernetes==33.1.0
     # via chromadb
 langcodes==3.5.0
     # via spacy
@@ -240,7 +235,7 @@ language-data==1.3.0
     # via langcodes
 litellm==1.58.4
     # via -r requirements.in
-lxml==5.3.2
+lxml==6.0.0
     # via
     #   lxml-html-clean
     #   newspaper3k
@@ -260,8 +255,6 @@ mdurl==0.1.2
     # via markdown-it-py
 mmh3==5.1.0
     # via chromadb
-monotonic==1.6
-    # via posthog
 mpmath==1.3.0
     # via sympy
 multidict==6.4.3
@@ -287,20 +280,20 @@ nltk==3.9.1
 normalise==0.1.8
     # via -r requirements.in
 numpy==2.2.4
-#     # via
-#     #   -r requirements.in
-#     #   blis
-#     #   chroma-hnswlib
-#     #   chromadb
-#     #   ctranslate2
-#     #   normalise
-#     #   onnxruntime
-#     #   scikit-learn
-#     #   scipy
-#     #   soundfile
-#     #   spacy
-#     #   thinc
-#     #   transformers
+    # via
+    #   -r requirements.in
+    #   blis
+    #   chroma-hnswlib
+    #   chromadb
+    #   ctranslate2
+    #   normalise
+    #   onnxruntime
+    #   scikit-learn
+    #   scipy
+    #   soundfile
+    #   spacy
+    #   thinc
+    #   transformers
 # nvidia-cublas-cu12==12.4.5.8
 #     # via
 #     #   nvidia-cudnn-cu12
@@ -334,7 +327,7 @@ numpy==2.2.4
 #     #   nvidia-cusparse-cu12
 #     #   torch
 # nvidia-nvtx-cu12==12.4.127
-#     # via torch
+    # via torch
 oauthlib==3.2.2
     # via
     #   kubernetes
@@ -348,7 +341,7 @@ onnxruntime==1.21.0
     #   faster-whisper
 openai==1.74.0
     # via litellm
-opentelemetry-api==1.32.0
+opentelemetry-api==1.34.1
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -357,37 +350,37 @@ opentelemetry-api==1.32.0
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-exporter-otlp-proto-common==1.32.0
+opentelemetry-exporter-otlp-proto-common==1.34.1
     # via opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-exporter-otlp-proto-grpc==1.32.0
+opentelemetry-exporter-otlp-proto-grpc==1.34.1
     # via chromadb
-opentelemetry-instrumentation==0.53b0
+opentelemetry-instrumentation==0.55b1
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-asgi==0.53b0
+opentelemetry-instrumentation-asgi==0.55b1
     # via opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-fastapi==0.53b0
+opentelemetry-instrumentation-fastapi==0.55b1
     # via chromadb
-opentelemetry-proto==1.32.0
+opentelemetry-proto==1.34.1
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-sdk==1.32.0
+opentelemetry-sdk==1.34.1
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-semantic-conventions==0.53b0
+opentelemetry-semantic-conventions==0.55b1
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-sdk
-opentelemetry-util-http==0.53b0
+opentelemetry-util-http==0.55b1
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
-orjson==3.10.16
+orjson==3.10.18
     # via chromadb
 overrides==7.7.0
     # via chromadb
@@ -410,7 +403,7 @@ pillow==11.2.1
     #   sentence-transformers
 pluggy==1.5.0
     # via pytest
-posthog==3.24.1
+posthog==6.0.4
     # via chromadb
 preshed==3.0.9
     # via
@@ -424,7 +417,7 @@ propcache==0.3.1
     #   yarl
 proto-plus==1.26.1
     # via google-api-core
-protobuf==5.29.4
+protobuf==5.29.5
     # via
     #   google-api-core
     #   googleapis-common-protos
@@ -505,7 +498,7 @@ referencing==0.36.2
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2024.11.6
+regex==2024.7.24
     # via
     #   nltk
     #   tiktoken
@@ -559,8 +552,8 @@ scipy==1.15.2
     #   scikit-learn
     #   sentence-transformers
 sentence-transformers==3.4.1
-#     # via -r requirements.in
-# setproctitle==1.3.4; sys_platform != "win32"
+    # via -r requirements.in
+setproctitle==1.3.4
     # via -r requirements.in
 sgmllib3k==1.0.0
     # via feedparser
@@ -646,8 +639,8 @@ tqdm==4.67.1
     #   spacy
     #   transformers
 transformers==4.51.3
-#     # via sentence-transformers (GPU related)
-# triton==3.2.0; sys_platform == "linux"
+    # via sentence-transformers
+triton==3.2.0
     # via torch
 tweepy==4.15.0
     # via -r requirements.in
@@ -665,7 +658,11 @@ typing-extensions==4.13.2
     #   fastapi
     #   huggingface-hub
     #   openai
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+    #   posthog
     #   pydantic
     #   pydantic-core
     #   referencing
@@ -681,10 +678,10 @@ urllib3==2.4.0
     #   kubernetes
     #   requests
 uvicorn[standard]==0.34.1
-#     # via
-#     #   chromadb
-#     #   mcp
-# uvloop==0.21.0; sys_platform != "win32"
+    # via
+    #   chromadb
+    #   mcp
+uvloop==0.21.0
     # via uvicorn
 validators==0.34.0
     # via -r requirements.in
@@ -693,7 +690,7 @@ wasabi==1.1.3
     #   spacy
     #   thinc
     #   weasel
-watchfiles==1.0.5
+watchfiles==1.1.0
     # via uvicorn
 wcwidth==0.2.13
     # via prompt-toolkit
@@ -707,7 +704,6 @@ werkzeug==3.1.3
     # via flask
 wrapt==1.17.2
     # via
-    #   deprecated
     #   opentelemetry-instrumentation
     #   smart-open
 yarl==1.19.0
