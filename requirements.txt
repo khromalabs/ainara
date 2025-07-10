@@ -640,8 +640,8 @@ tqdm==4.67.1
     #   transformers
 transformers==4.51.3
     # via sentence-transformers
-triton==3.2.0
-    # via torch
+# triton==3.2.0
+#     # via torch
 tweepy==4.15.0
     # via -r requirements.in
 typer==0.15.2
@@ -677,7 +677,8 @@ urllib3==2.4.0
     # via
     #   kubernetes
     #   requests
-uvicorn[standard]==0.34.1
+uvicorn==0.34.1
+# uvicorn[standard]==0.34.1
     # via
     #   chromadb
     #   mcp
