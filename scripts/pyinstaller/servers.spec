@@ -195,6 +195,17 @@ common_imports = [
     # Even for local/in-process usage, it can dynamically import many of these.
     'chromadb',
     'hnswlib',      # Import name for chroma-hnswlib
+    # The following are hidden imports for ChromaDB needed for PyInstaller
+    # due to its dynamic loading. This prevents a series of ModuleNotFoundErrors.
+    # See: https://github.com/chroma-core/chroma/issues/4092
+    'chromadb.telemetry.product.posthog',
+    'chromadb.api.segment',
+    'chromadb.db.impl.sqlite',
+    'chromadb.segment.impl.manager.local',
+    'chromadb.segment.impl.metadata.sqlite',
+    'chromadb.execution.executor.local',
+    'chromadb.quota.simple_quota_enforcer',
+    'analytics',  # A dependency of posthog, sometimes missed by PyInstaller
     'pydantic',
     'tenacity',
     'overrides',
