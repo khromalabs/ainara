@@ -56,6 +56,37 @@ packages_to_collect_data_from = [
     'tokenizers',
     'chroma-hnswlib'
 ]
+
+# Define rules for platform-specific data files that need special handling.
+# This is more modular than if/else blocks scattered in the script.
+# - collection_name: The name used in packages_to_collect_data_from.
+# - pkg_name: The actual importable package name to find the path.
+# - dest_path: The target path and filename inside the bundle.
+# - os: A list of platforms this rule applies to (e.g., ['Windows', 'Darwin']). Use None for all.
+platform_specific_data_rules = [
+    {
+        'collection_name': 'chroma-hnswlib',
+        'pkg_name': 'hnswlib',
+        'dest_path': os.path.join('hnswlib', 'hnswlib.pyd'),
+        'os': ['Windows'] # Note: For macOS, you'd likely need a separate rule with a '.so' dest_path.
+    },
+]
+
+# Process the platform-specific rules
+for rule in platform_specific_data_rules:
+    # A rule applies if its 'os' key is not set (None) or if the current platform is in its 'os' list.
+    applies = rule.get('os') is None or platform.system() in rule.get('os', [])
+    if applies and rule['collection_name'] in packages_to_collect_data_from:
+        try:
+            spec = importlib.util.find_spec(rule['pkg_name'])
+            if spec and spec.origin:
+                datas_from_hooks.append((spec.origin, rule['dest_path']))
+                # Remove from the standard collection list to avoid duplication
+                packages_to_collect_data_from.remove(rule['collection_name'])
+        except (ImportError, AttributeError):
+            print(f"Warning: Could not apply rule for {rule['pkg_name']}, skipping.")
+
+# Collect data files for the remaining packages using PyInstaller's utility.
 for pkg_name in packages_to_collect_data_from:
     try:
         datas_from_hooks.extend(collect_data_files(pkg_name))
