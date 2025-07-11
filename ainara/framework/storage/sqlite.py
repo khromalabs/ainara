@@ -36,7 +36,7 @@ class SQLiteStorage(StorageBackend):
     def __init__(
         self,
         db_path: str = None,
-        context_id: str = "persona-default",
+        context_id: str = "persona:default",
         **kwargs,
     ):
         """

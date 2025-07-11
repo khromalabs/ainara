@@ -153,8 +153,7 @@ def create_app():
 
     chroma_deps = [
         ('chromadb', 'import chromadb'),
-        ('chroma-hnswlib', 'import chroma_hnswlib'),
-        ('hnswlib', 'import hnswlib'),
+        ('chromadb-hnswlib', 'import hnswlib'),
         ('onnxruntime', 'import onnxruntime'),
         ('onnxruntime.capi', 'from onnxruntime import capi as onnx_capi'),  # Check binary extension
     ]

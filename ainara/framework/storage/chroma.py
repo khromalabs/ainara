@@ -17,16 +17,17 @@
 # Lesser General Public License for more details.
 
 
+import logging
 import os
 import uuid
-import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from .vector_base import VectorStorageBackend
 
 try:
     import chromadb
     from sentence_transformers import SentenceTransformer
+
     VECTOR_DB_AVAILABLE = True
 except ImportError:
     VECTOR_DB_AVAILABLE = False
@@ -42,7 +43,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         vector_db_path: str = None,
         embedding_model: str = "sentence-transformers/all-mpnet-base-v2",
         collection_name: str = "persona:default",
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize ChromaDB vector storage
@@ -54,7 +55,8 @@ class ChromaVectorStorage(VectorStorageBackend):
         """
         if not VECTOR_DB_AVAILABLE:
             raise ImportError(
-                "Vector storage dependencies not installed. Run: pip install chromadb sentence-transformers"
+                "Vector storage dependencies not installed. Run: pip install"
+                " chromadb sentence-transformers"
             )
 
         self.vector_db_path = vector_db_path
@@ -66,12 +68,18 @@ class ChromaVectorStorage(VectorStorageBackend):
         self.embedding_model = SentenceTransformer(embedding_model)
 
         # Initialize ChromaDB client and collection
-        self.client = chromadb.PersistentClient(path=vector_db_path)
+        self.client = chromadb.PersistentClient(
+            path=vector_db_path,
+            settings=chromadb.Settings(anonymized_telemetry=False),
+        )
         self.collection = self.client.get_or_create_collection(
             name=collection_name
         )
 
-        logger.info(f"Vector storage initialized at {vector_db_path} with collection {collection_name}")
+        logger.info(
+            f"Vector storage initialized at {vector_db_path} with collection"
+            f" {collection_name}"
+        )
 
     def add_text(self, text: str, metadata: Dict[str, Any]) -> str:
         """Add a single text to vector database"""
@@ -107,7 +115,7 @@ class ChromaVectorStorage(VectorStorageBackend):
             embeddings=self.embedding_model.encode(texts).tolist(),
             documents=texts,
             metadatas=metadatas,
-            ids=ids
+            ids=ids,
         )
 
         return ids
@@ -143,14 +151,18 @@ class ChromaVectorStorage(VectorStorageBackend):
         if results and results["ids"]:
             for i, doc_id in enumerate(results["ids"][0]):
                 metadata = results["metadatas"][0][i]
-                formatted_results.append({
-                    "id": doc_id,
-                    "timestamp": metadata.get("timestamp", "unknown"),
-                    "role": metadata.get("role", "unknown"),
-                    "content": results["documents"][0][i],
-                    "metadata": metadata,
-                    "similarity": 1 - results["distances"][0][i] # Convert distance to similarity score
-                })
+                formatted_results.append(
+                    {
+                        "id": doc_id,
+                        "timestamp": metadata.get("timestamp", "unknown"),
+                        "role": metadata.get("role", "unknown"),
+                        "content": results["documents"][0][i],
+                        "metadata": metadata,
+                        "similarity": (
+                            1 - results["distances"][0][i]
+                        ),  # Convert distance to similarity score
+                    }
+                )
         return formatted_results
 
     def search_with_scores(

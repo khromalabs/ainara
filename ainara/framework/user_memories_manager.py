@@ -117,12 +117,15 @@ class UserMemoriesManager:
                 self._sync_profile_to_vector_store()
             else:
                 logger.info("Vector DB is consistent. Skipping startup sync.")
-        except ImportError:
+        except ImportError as e:
+            import traceback
             logger.warning(
                 f"Vector storage backend '{vector_type}' dependencies not"
                 " found. User profile search will fall back to keyword"
                 " matching."
             )
+            logger.error(f"ImportError details: {e}")
+            logger.error(traceback.format_exc())
             self.vector_storage = None
         except Exception as e:
             logger.error(

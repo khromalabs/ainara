@@ -56,7 +56,7 @@ class ChatMemory:
 
         # Generate context_id from the context dictionary
         self.context = context
-        context_id = "_".join(f"{k}-{v}" for k, v in sorted(context.items()))
+        context_id = "_".join(f"{k}:{v}" for k, v in sorted(context.items()))
 
         # Use provided backend or create one from config
         if storage_backend:
@@ -269,7 +269,7 @@ class ChatMemory:
         """
         # Generate new context_id
         new_context_id = "_".join(
-            f"{k}-{v}" for k, v in sorted(new_context.items())
+            f"{k}:{v}" for k, v in sorted(new_context.items())
         )
 
         # Import global config

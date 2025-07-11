@@ -21,7 +21,7 @@ import os
 from typing import Generator, List, Optional, Tuple, Union
 
 import pkg_resources
-from litellm import acompletion, completion, get_max_tokens, token_counter
+import litellm
 
 from ainara.framework.config import ConfigManager
 
@@ -32,10 +32,11 @@ class LiteLLM(LLMBackend):
     """LiteLLM implementation of LLM backend"""
 
     def __init__(self, provider_config: dict = None):
+        litellm.telemetry = False
         self.global_config = ConfigManager() # For fallback or general settings
         super().__init__(self.global_config) # Base class might need global config
-        self.completion = completion
-        self.acompletion = acompletion
+        self.completion = litellm.completion
+        self.acompletion = litellm.acompletion
 
         try:
             if provider_config and "model" in provider_config:
@@ -77,7 +78,7 @@ class LiteLLM(LLMBackend):
                 self.logger.info(f"No context_window configured for {model_name} in provider settings.")
 
             # Otherwise try to get it from LiteLLM
-            max_tokens = get_max_tokens(model_name)
+            max_tokens = litellm.get_max_tokens(model_name)
             self.logger.info(
                 f"Using LiteLLM-provided context window for {model_name}:"
                 f" {max_tokens} tokens"
@@ -212,7 +213,7 @@ class LiteLLM(LLMBackend):
             return 0
 
         try:
-            count = token_counter(
+            count = litellm.token_counter(
                 model=self.provider["model"],
                 messages=[{"role": role, "content": text}],
             )
