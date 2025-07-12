@@ -42,7 +42,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         self,
         vector_db_path: str = None,
         embedding_model: str = "sentence-transformers/all-mpnet-base-v2",
-        collection_name: str = "persona:default",
+        collection_name: str = "persona-default",
         **kwargs,
     ):
         """

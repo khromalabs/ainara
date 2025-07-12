@@ -27,7 +27,7 @@ import logging
 import os
 # import pprint
 import shutil
-# import sys
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -143,36 +143,36 @@ def create_app():
     llm = create_llm_backend(config.get("llm", {}))
     app.llm = llm
 
-    # --- DEBUG: ChromaDB Dependency Check ---
-    import sys
-    import traceback
-    logger.info("Starting ChromaDB dependency debug check...")
-    logger.info(f"Platform: {sys.platform}, Frozen: {getattr(sys, 'frozen', False)}")
-    if getattr(sys, 'frozen', False):
-        logger.info(f"MEIPASS path: {sys._MEIPASS}")
-
-    chroma_deps = [
-        ('chromadb', 'import chromadb'),
-        ('chromadb-hnswlib', 'import hnswlib'),
-        ('onnxruntime', 'import onnxruntime'),
-        ('onnxruntime.capi', 'from onnxruntime import capi as onnx_capi'),  # Check binary extension
-    ]
-
-    for dep, import_stmt in chroma_deps:
-        try:
-            exec(import_stmt)
-            logger.info(f"SUCCESS: Imported {dep}")
-            # Check for a key file in MEIPASS (e.g., hnswlib binary)
-            if dep == 'hnswlib' and getattr(sys, 'frozen', False):
-                hnswlib_path = os.path.join(sys._MEIPASS, 'hnswlib', 'hnswlib.pyd')  # Adjust for Windows .pyd
-                if os.path.exists(hnswlib_path):
-                    logger.info(f"SUCCESS: Found hnswlib binary at {hnswlib_path}")
-                else:
-                    logger.info(f"WARNING: hnswlib binary not found at {hnswlib_path}")
-        except Exception as e:
-            logger.info(f"FAILURE: {dep} - {str(e)}\n{traceback.format_exc()}")
-    logger.info("ChromaDB dependency debug check complete.")
-    # --- END DEBUG ---
+    # # --- DEBUG: ChromaDB Dependency Check ---
+    # import sys
+    # import traceback
+    # logger.info("Starting ChromaDB dependency debug check...")
+    # logger.info(f"Platform: {sys.platform}, Frozen: {getattr(sys, 'frozen', False)}")
+    # if getattr(sys, 'frozen', False):
+    #     logger.info(f"MEIPASS path: {sys._MEIPASS}")
+    #
+    # chroma_deps = [
+    #     ('chromadb', 'import chromadb'),
+    #     ('chromadb-hnswlib', 'import hnswlib'),
+    #     ('onnxruntime', 'import onnxruntime'),
+    #     ('onnxruntime.capi', 'from onnxruntime import capi as onnx_capi'),  # Check binary extension
+    # ]
+    #
+    # for dep, import_stmt in chroma_deps:
+    #     try:
+    #         exec(import_stmt)
+    #         logger.info(f"SUCCESS: Imported {dep}")
+    #         # Check for a key file in MEIPASS (e.g., hnswlib binary)
+    #         if dep == 'hnswlib' and getattr(sys, 'frozen', False):
+    #             hnswlib_path = os.path.join(sys._MEIPASS, 'hnswlib', 'hnswlib.pyd')  # Adjust for Windows .pyd
+    #             if os.path.exists(hnswlib_path):
+    #                 logger.info(f"SUCCESS: Found hnswlib binary at {hnswlib_path}")
+    #             else:
+    #                 logger.info(f"WARNING: hnswlib binary not found at {hnswlib_path}")
+    #     except Exception as e:
+    #         logger.info(f"FAILURE: {dep} - {str(e)}\n{traceback.format_exc()}")
+    # logger.info("ChromaDB dependency debug check complete.")
+    # # --- END DEBUG ---
 
     # Get audio buffer size from config
     AUDIO_BUFFER_SIZE_MB = config.get("audio.buffer_size_mb", 10)

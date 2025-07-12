@@ -89,7 +89,6 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
-        self.first_prompt_generation = True
 
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
@@ -105,11 +104,17 @@ class ChatManager:
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
         # --- Memory Decay Tracking (persisted between sessions) ---
-        self.memory_decay_interval = config.get("memories.decay_interval_turns", 10)
+        self.memory_decay_interval = config.get(
+            "memories.decay_interval_turns", 10
+        )
         self.turn_counter = 0
         self.decay_in_progress = False
         self.decay_lock = threading.Lock()
-        if self.memory_enabled and self.user_memories_manager and self.memory_decay_interval > 0:
+        if (
+            self.memory_enabled
+            and self.user_memories_manager
+            and self.memory_decay_interval > 0
+        ):
             self.turn_counter = self.user_memories_manager.get_turn_counter()
 
         # Render the system message template
@@ -146,12 +151,20 @@ class ChatManager:
             skills_description_list += "\n - " + skill["description"]
 
         # Check if the user profile is new to show an onboarding message
-        is_new_profile = False
-        if self.user_memories_manager and self.user_memories_manager.is_empty():
+        user_memories_empty = (
+            self.user_memories_manager
+            and self.user_memories_manager.is_empty()
+        )
+        has_prior_user_messages = any(
+            msg.get("role") == "user" for msg in self.chat_history[:-1]
+        )  # Check all but the current one
+        if has_prior_user_messages and user_memories_empty:
             is_new_profile = True
             logger.info(
                 "User profile is empty. Will display onboarding message."
             )
+        else:
+            is_new_profile = False
 
         # Update system message with skills descriptions
         self.system_message = self.template_manager.render(
@@ -159,11 +172,10 @@ class ChatManager:
             {
                 "skills_description_list": skills_description_list,
                 "current_date": current_date,
-                "is_new_profile": is_new_profile and self.first_prompt_generation
+                "is_new_profile": is_new_profile,
             },
         )
         self.llm.add_msg(self.system_message, self.chat_history, "system")
-        self.first_prompt_generation = False
 
         # Initialize executor if either summary or decay is enabled
         self.summary_executor = None
@@ -173,7 +185,11 @@ class ChatManager:
             )
 
         self.decay_executor = None
-        if self.memory_enabled and self.user_memories_manager and self.memory_decay_interval > 0:
+        if (
+            self.memory_enabled
+            and self.user_memories_manager
+            and self.memory_decay_interval > 0
+        ):
             self.decay_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="DecayThread"
             )
@@ -658,7 +674,9 @@ class ChatManager:
         """Trigger background task to decay memory relevance."""
         with self.decay_lock:
             if self.decay_in_progress:
-                logger.debug("Memory decay task already in progress. Skipping.")
+                logger.debug(
+                    "Memory decay task already in progress. Skipping."
+                )
                 return
             self.decay_in_progress = True
             logger.info("Submitting memory decay task to background executor.")
@@ -925,7 +943,9 @@ class ChatManager:
             doc_format, doc_content = command_body.split(",", 1)
             return f'<doc format="{doc_format}">{doc_content}</doc>'
 
-    def _handle_command(self, question: str, stream: Optional[Literal["cli", "json"]]):
+    def _handle_command(
+        self, question: str, stream: Optional[Literal["cli", "json"]]
+    ):
         """Checks for and handles special commands."""
         command = question.strip()
         if not command.startswith("/"):
@@ -1022,7 +1042,12 @@ class ChatManager:
             # --- User Profile Injection (from cached summary) ---
             if self.memory_enabled and self.user_profile_summary:
                 # final_system_content += f"\n\n--- Next paragraph contains key information about the user, possibly including the user's name, which I MUST take into account:\n{self.user_profile_summary}"
-                final_system_content += f"\n\n--- IMPORTANT: The following is key information about the user you are talking to. You MUST use this information, such as their name, to personalize your responses. ---\n{self.user_profile_summary}"
+                final_system_content += (
+                    "\n\n--- IMPORTANT: The following is key information"
+                    " about the user you are talking to. You MUST use this"
+                    " information, such as their name, to personalize your"
+                    f" responses. ---\n{self.user_profile_summary}"
+                )
 
             # --- Context Memories ---
             if self.memory_enabled and self.user_memories_manager:
@@ -1041,7 +1066,8 @@ class ChatManager:
 
                 relevant_memories = (
                     self.user_memories_manager.get_relevant_memories(
-                        search_context)
+                        search_context
+                    )
                 )
                 # logger.info(f"relevant_memories: {relevant_memories}")
 
@@ -1056,7 +1082,9 @@ class ChatManager:
                         processed_memories_for_template.append(processed_mem)
 
                     logger.info(
-                        f"Injecting {len(processed_memories_for_template)} dynamically retrieved memories into context."
+                        "Injecting"
+                        f" {len(processed_memories_for_template)} dynamically"
+                        " retrieved memories into context."
                     )
                     context_memories_prompt = self.template_manager.render(
                         "framework.chat_manager.user_memories_prompt",
@@ -1208,9 +1236,7 @@ class ChatManager:
 
                 # Log assistant response to chat memory
                 if self.memory_enabled and self.chat_memory:
-                    self.chat_memory.add_entry(
-                        processed_answer, "assistant"
-                    )
+                    self.chat_memory.add_entry(processed_answer, "assistant")
             else:
                 # If there's no processed answer, add a placeholder
                 logger.warning("No answer from the LLM, adding placeholder")
@@ -1237,14 +1263,18 @@ class ChatManager:
             if self.memory_enabled and self.memory_decay_interval > 0:
                 self.turn_counter += 1
                 if self.turn_counter >= self.memory_decay_interval:
-                    logger.info(f"decay turn counter {self.turn_counter} over "
-                                "limit, triggering decay")
+                    logger.info(
+                        f"decay turn counter {self.turn_counter} over "
+                        "limit, triggering decay"
+                    )
                     self._trigger_memory_decay_in_background()
                     self.user_memories_manager.reset_turn_counter()
                     self.turn_counter = 0  # Reset in-memory counter
                 logger.info(f"Saving turn counter state: {self.turn_counter}")
                 if self.user_memories_manager:
-                    self.user_memories_manager.save_turn_counter(self.turn_counter)
+                    self.user_memories_manager.save_turn_counter(
+                        self.turn_counter
+                    )
 
             # For non-streaming mode, return the processed answer
             if not stream:
