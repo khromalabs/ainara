@@ -221,6 +221,10 @@ class ChromaVectorStorage(VectorStorageBackend):
         )
         logger.info(f"Collection {self.collection_name} has been reset.")
 
+    def count(self) -> int:
+        """Returns the total number of documents in the collection."""
+        return self.collection.count()
+
     def close(self):
         """Close vector database"""
         # The PersistentClient in ChromaDB handles persistence automatically.

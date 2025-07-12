@@ -110,13 +110,28 @@ class UserMemoriesManager:
             logger.info(
                 f"Using {vector_type} vector backend for user profile memories"
             )
-            # Sync profile to vector store on startup only if needed
+            # Sync profile to vector store on startup if needed.
+            # First, check the explicit flag.
             needs_reset = self.storage.get_metadata("vector_db_needs_reset")
-            if needs_reset == "true":
-                logger.info("Vector DB needs reset. Starting full sync...")
+
+            # Second, check for count mismatch to detect manual deletion or corruption.
+            # This assumes a `count()` method is added to the vector storage backend.
+            with self.storage.conn:
+                sqlite_count = self.storage.conn.execute("SELECT COUNT(id) FROM user_memories").fetchone()[0]
+            vector_count = self.vector_storage.count()
+
+            if needs_reset == "true" or sqlite_count != vector_count:
+                if needs_reset == "true":
+                    logger.info("Vector DB needs reset due to explicit flag. Starting full sync...")
+                else:
+                    logger.warning(
+                        f"Mismatch detected between SQLite ({sqlite_count} memories) and "
+                        f"Vector DB ({vector_count} memories). This can happen after a manual "
+                        "deletion. Triggering re-sync."
+                    )
                 self._sync_profile_to_vector_store()
             else:
-                logger.info("Vector DB is consistent. Skipping startup sync.")
+                logger.info(f"Vector DB is consistent with SQLite ({sqlite_count} memories). Skipping startup sync.")
         except ImportError as e:
             import traceback
             logger.warning(

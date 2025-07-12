@@ -58,3 +58,8 @@ class VectorStorageBackend(ABC):
     def reset(self) -> None:
         """Delete all data from the storage."""
         pass
+
+    @abstractmethod
+    def count(self) -> int:
+        """Returns the total number of documents in the vector store."""
+        pass
