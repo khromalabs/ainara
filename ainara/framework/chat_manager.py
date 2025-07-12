@@ -89,6 +89,7 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
+        self.first_prompt_generation = False
 
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
@@ -158,10 +159,11 @@ class ChatManager:
             {
                 "skills_description_list": skills_description_list,
                 "current_date": current_date,
-                "is_new_profile": is_new_profile,
+                "is_new_profile": is_new_profile and self.first_prompt_generation
             },
         )
         self.llm.add_msg(self.system_message, self.chat_history, "system")
+        self.first_prompt_generation = False
 
         # Initialize executor if either summary or decay is enabled
         self.summary_executor = None
