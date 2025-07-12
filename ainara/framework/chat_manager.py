@@ -89,7 +89,7 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
-        self.first_prompt_generation = False
+        self.first_prompt_generation = True
 
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
