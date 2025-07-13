@@ -1,31 +1,18 @@
 # Ainara AI Companion Framework
 
-<p align="center">
-  <img src="./assets/ainara_logo.png" alt="Ainara logo" width="150">
-</p>
-
-<p align="center">
-  <strong>An open-source framework for building a truly personal AI companion, powered by a decentralized skill economy.</strong>
-  <br/><br/>
-  <!-- TODO: Add badges like these once you have them set up -->
-  <!-- <img src="https://img.shields.io/github/stars/yourusername/ainara?style=social" alt="GitHub Stars"> -->
-  <!-- <img src="https://img.shields.io/discord/YOUR_DISCORD_ID?logo=discord&label=Discord" alt="Discord"> -->
-</p>
-
-<!-- TODO: Create and add a GIF showing Polaris in action. This is a very powerful hook. -->
-<!-- 
-<p align="center">
-  <img src="https://path-to-your/demo.gif" alt="Ainara Polaris Demo">
-</p>
--->
+![Ainara logo](./assets/ainara_logo.png)
 
 **Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 
-Ainara is a (work-in-progress) modular AI assistant framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
+
+
+Ainara is a (work-in-progress) modular AI companion framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
 
 It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools can be both locally in the user's system, using the Orakle server approach developed by this project, or be accessed remotelly. For this purpose Ainara is compatible now with the MCP protocol as well. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
 
-All interaction data remains private on the user's system.
+Finally, this project aims to create a truly AI companion experience. Conversations will not be session-based; user interactions with the LLM will be recorded permanently as a continuous conversation (though users can choose to exclude specific parts). [TODO]
+
+All interaction data will remain private on the user's system.
 
 ## Demonstration video
 
@@ -165,25 +152,12 @@ These environment variables are optional and only needed if you want to override
 
 Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:rgomez@khromalabs.org))
 
-## Our Vision: An Open OS for AI
+## $AINARA Token
 
-Our ultimate goal is to create an open, community-driven AI companion that achieves for emerging AI tools what Linux did for Unix: a widely adopted, powerful, and endlessly customizable assistant that empowers users and developers alike.
+The Ainara Project now has its own Solana cryptocurrency token, CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump
 
-To make this vision self-sustaining, we are building a decentralized economy around the project.
-
-## The $AINARA Token Economy
-
-The Ainara Framework is powered by the `$AINARA` token, the native utility token for the ecosystem. It's designed to facilitate a new economy of AI-Driven (AID) Apps, where developers can monetize their skills and users can access a marketplace of powerful tools.
-
-This creates a self-sustaining flywheel:
-1.  **Developers** build and publish useful AI skills.
-2.  **Users** use `$AINARA` to access these skills.
-3.  **Protocol fees** from transactions are used to buy back and burn tokens, reducing supply and rewarding all participants.
-
-This economic model ensures the project's long-term growth and decentralization. To learn more about the protocol, token utility, and our roadmap, please read our detailed plan:
-
-➡️ **[Read the $AINARA Tokenomics](./TOKENOMICS.md)**
+While the project will always remain open-source and aims to be a universal AI assistant tool, the officially developed _skills_ (allowing AI to interact with the external world through Ainara's Orakle server) will primarily focus on cryptocurrency integrations. The project's official token will serve as the payment method for all related services.
 
 ## Contributing
 
-Everyone's invited to join this project - developers, designers, sponsors, testers, and more! If our vision resonates with you, please consider starring the repo, trying out the software, or joining our community.
+Everyone's invited to join this project - developers, designers, sponsors, testers, and more! My ultimate goal would be to create an open, community-driven AI companion/assistant that achieves for the emerging open source AI tools what Linux did for Unix: a widely adopted, powerful, and endlessly customizable assistant that empowers users and developers alike.
