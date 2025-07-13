@@ -3,7 +3,7 @@ import os
 import sys
 import importlib
 import platform
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -24,6 +24,7 @@ package_data_entries = [
         'model_prices_and_context_window_backup.json'
     ]),
     ('en_core_web_sm', ['.']),
+    ('newspaper', ['.']),
 ]
 
 # Generate datas array from package data directories
@@ -45,6 +46,52 @@ for pkg, paths in package_data_entries:
                 )
     except (ImportError, AttributeError):
         print(f"Warning: Package {pkg} not found, skipping")
+
+# Collect data files for complex packages using PyInstaller's utility.
+# This is more robust than manually specifying paths.
+datas_from_hooks = []
+packages_to_collect_data_from = [
+    'chromadb',
+    'onnxruntime',
+    'tokenizers',
+    'chroma-hnswlib'
+]
+
+# Define rules for platform-specific data files that need special handling.
+# This is more modular than if/else blocks scattered in the script.
+# - collection_name: The name used in packages_to_collect_data_from.
+# - pkg_name: The actual importable package name to find the path.
+# - dest_path: The target path and filename inside the bundle.
+# - os: A list of platforms this rule applies to (e.g., ['Windows', 'Darwin']). Use None for all.
+platform_specific_data_rules = [
+    {
+        'collection_name': 'chroma-hnswlib',
+        'pkg_name': 'hnswlib',
+        'dest_path': os.path.join('hnswlib', 'hnswlib.pyd'),
+        'os': ['Windows'] # Note: For macOS, you'd likely need a separate rule with a '.so' dest_path.
+    },
+]
+
+# Process the platform-specific rules
+for rule in platform_specific_data_rules:
+    # A rule applies if its 'os' key is not set (None) or if the current platform is in its 'os' list.
+    applies = rule.get('os') is None or platform.system() in rule.get('os', [])
+    if applies and rule['collection_name'] in packages_to_collect_data_from:
+        try:
+            spec = importlib.util.find_spec(rule['pkg_name'])
+            if spec and spec.origin:
+                datas_from_hooks.append((spec.origin, rule['dest_path']))
+                # Remove from the standard collection list to avoid duplication
+                packages_to_collect_data_from.remove(rule['collection_name'])
+        except (ImportError, AttributeError):
+            print(f"Warning: Could not apply rule for {rule['pkg_name']}, skipping.")
+
+# Collect data files for the remaining packages using PyInstaller's utility.
+for pkg_name in packages_to_collect_data_from:
+    try:
+        datas_from_hooks.extend(collect_data_files(pkg_name))
+    except Exception as e:
+        print(f"Warning: Could not collect data files for {pkg_name}: {e}")
 
 # Add platform-specific binaries and TTS models
 binaries = []
@@ -86,6 +133,13 @@ else:  # Linux
     if os.path.exists(piper_bin_dir):
         binaries.append((piper_bin_dir, 'resources/bin/linux'))
 
+# Define platform-specific excludes for packages that should not be bundled
+# on certain operating systems, even if they are present in the environment.
+platform_excludes = []
+if system == "Windows":
+    platform_excludes.append('uvloop')
+    platform_excludes.append('triton')
+
 # Common data files for both executables
 common_datas = [
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
@@ -93,7 +147,8 @@ common_datas = [
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
     *datas,
-    *package_datas
+    *package_datas,
+    *datas_from_hooks
 ]
 
 # Common hidden imports for both executables
@@ -106,25 +161,19 @@ common_imports = [
     'asgiref',
     'tiktoken_ext.openai_public',
     'tiktoken_ext',
-    'yaml',
+    'PyYAML', # The package name for 'yaml'
     'json',
     'numpy',
     'pyperclip',
-    'newsapi_python',
+    'feedparser',
+    'tldextract',
 
-    # LangChain related
-    'langchain',
-    'langchain.llms',
-    'langchain.chains',
-    'langchain.embeddings',
-    'langchain.vectorstores',
-    'langchain.text_splitter',
-    'langchain.document_loaders',
-    'langchain_community',
-    'langchain_community.vectorstores',
-    'langchain_community.embeddings',
+    # LLM Backends
+    'litellm',
+    'ollama',
 
     # Audio processing
+    'av',
     'faster_whisper',
     'sounddevice',
     'soundfile',
@@ -139,17 +188,54 @@ common_imports = [
 
     # ML/AI related
     'transformers',
+    'tokenizers',
     'sentence_transformers',
     'torch',
+    # ChromaDB and its full set of dependencies.
+    # Even for local/in-process usage, it can dynamically import many of these.
     'chromadb',
-    'litellm',
+    'hnswlib',      # Import name for chroma-hnswlib
+    # The following are hidden imports for ChromaDB needed for PyInstaller
+    # due to its dynamic loading. This prevents a series of ModuleNotFoundErrors.
+    # See: https://github.com/chroma-core/chroma/issues/4092
+    'chromadb.telemetry.product.posthog',
+    'chromadb.api.segment',
+    'chromadb.db.impl.sqlite',
+    'chromadb.segment.impl.manager.local',
+    'chromadb.segment.impl.metadata.sqlite',
+    'chromadb.execution.executor.local',
+    'chromadb.quota.simple_quota_enforcer',
+    'analytics',  # A dependency of posthog, sometimes missed by PyInstaller
+    'pydantic',
+    'tenacity',
+    'overrides',
+    'onnxruntime',
+    'onnxruntime.capi.onnxruntime_internal',
+    'fastapi',
+    'uvicorn',
+    'posthog',
+    'pypika',       # Import name for PyPika
+    'tqdm',
+    'importlib_resources',
+    'grpcio',
+    'bcrypt',
+    'kubernetes',
+    'mmh3',
+    'orjson',
+    'typer',
+    'rich',
+    'httpx',
+
+    # Dependencies for MCP
+    'mcp',
 
     # Search engines
     'newsapi_python',
-    'newspaper',
+    'newspaper3k', # The package name for 'newspaper'
     'tweepy',
 
     # Text processing
+    'lxml_html_clean',
     'nltk',
     'textblob',
     'emoji',
@@ -159,6 +245,10 @@ common_imports = [
 
     # Framework modules
     'ainara.framework',
+    # System utilities
+    'psutil',
+    'setproctitle',
+
     'ainara.framework.llm',
     'ainara.framework.matcher',
     'ainara.framework.storage',
@@ -170,7 +260,11 @@ common_imports = [
 ]
 
 # Add all the transformers models to common imports
-common_imports += collect_submodules('transformers.models')
+common_imports += collect_submodules('transformers')
+common_imports += collect_submodules('chromadb')
+# Add all opentelemetry modules, a complex dependency of chromadb
+common_imports += collect_submodules('opentelemetry')
+collect_submodules('sentence_transformers')
 
 # Orakle-specific data and imports
 orakle_datas = [
@@ -181,6 +275,8 @@ orakle_imports = [
     'ainara.orakle.skills',
     'ainara.orakle.skills.crypto',
     'ainara.orakle.skills.finance',
+    'ainara.orakle.skills.html',
+    'ainara.orakle.skills.inference',
     'ainara.orakle.skills.messaging',
     'ainara.orakle.skills.search',
     'ainara.orakle.skills.sentiment',
@@ -199,48 +295,61 @@ with open(os.path.join(SPECPATH, 'runtime_hook.py'), 'w') as f:
 import os
 import sys
 import logging
-import platform
+from pathlib import Path
 
-# Set up logging to a file
-# Use a writable location for logs
-# --- Platform-specific log directory ---
-home_dir = os.path.expanduser('~')
-app_name = 'ainara'
-log_dir = '' # Initialize log_dir
+# It's crucial to add the bundled 'ainara' package to the path
+# so we can import our own utilities.
+# sys._MEIPASS is the root of the bundled app.
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    sys.path.insert(0, sys._MEIPASS)
 
-system = platform.system()
-if system == "Windows":
-    appdata = os.getenv('APPDATA')
-    if appdata:
-        log_dir = os.path.join(appdata, app_name, 'logs')
-    else: # Fallback if APPDATA isn't set (unlikely)
-        log_dir = os.path.join(home_dir, '.' + app_name, 'logs')
-elif system == "Darwin": # macOS
-    log_dir = os.path.join(home_dir, 'Library', 'Application Support', app_name, 'logs')
-else: # Linux and other Unix-like
-    log_dir = os.path.join(home_dir, '.' + app_name, 'logs')
+from ainara.framework.platform_utils import get_default_log_dir, get_default_cache_dir
 
-# Ensure the directory exists
+# --- Set up logging to a file ---
+# Use a writable location for logs, respecting environment variables first.
+log_dir_str = os.environ.get("AINARA_LOGS")
+if log_dir_str:
+    log_dir = Path(os.path.expanduser(log_dir_str))
+else:
+    log_dir = get_default_log_dir()
+
 os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, 'pyinstaller_debug.log')
+log_file = log_dir / 'pyinstaller_debug.log'
 
 logging.basicConfig(
-    filename=log_file,
+    filename=str(log_file),
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('PyInstallerDebug')
 
 # Log system information
+logger.info("--- PyInstaller Runtime Hook Start ---")
 logger.info(f"Python executable: {sys.executable}")
 logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"sys.path: {sys.path}")
+logger.info(f"Log directory: {log_dir}")
 
-# Add the directory containing the executable to sys.path
-sys.path.insert(0, os.path.dirname(sys.executable))
+# --- Set up a reliable cache directory for transformers ---
+# Priority: TRANSFORMERS_CACHE > AINARA_CACHE > Ainara platform default.
+# If TRANSFORMERS_CACHE is already set, we respect it and do nothing.
+if 'TRANSFORMERS_CACHE' not in os.environ:
+    cache_dir_str = os.environ.get("AINARA_CACHE")
+    if cache_dir_str:
+        cache_dir = Path(os.path.expanduser(cache_dir_str))
+    else:
+        cache_dir = get_default_cache_dir()
 
-# Add the parent directory of the executable to sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(sys.executable)))
+    transformers_cache_dir = cache_dir / 'transformers'
+    os.makedirs(transformers_cache_dir, exist_ok=True)
+
+    # Set the environment variable for huggingface libraries
+    os.environ['TRANSFORMERS_CACHE'] = str(transformers_cache_dir)
+    logger.info(f"Set TRANSFORMERS_CACHE to: {os.environ['TRANSFORMERS_CACHE']}")
+else:
+    logger.info(f"TRANSFORMERS_CACHE already set to: {os.environ['TRANSFORMERS_CACHE']}. Hook will not override it.")
+
+logger.info("--- PyInstaller Runtime Hook End ---")
 """)
 
 # Analysis for Orakle
@@ -256,7 +365,7 @@ a_orakle = Analysis(
     #module_collection_mode={
     #    'transformers': 'py',
     #},
-    excludes=[],
+    excludes=platform_excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -276,7 +385,7 @@ a_pybridge = Analysis(
     #module_collection_mode={
     #    'transformers': 'py',
     #},
-    excludes=[],
+    excludes=platform_excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

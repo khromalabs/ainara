@@ -28,8 +28,6 @@ from flask_cors import CORS
 from ainara.framework.capabilities_manager import CapabilitiesManager
 from ainara.framework.config import config  # Use the global config instance
 from ainara.framework.logging_setup import logging_manager
-from ainara.framework.mcp_client_manager import \
-    MCP_AVAILABLE  # Check MCP availability
 from ainara.orakle import __version__
 
 
@@ -93,9 +91,9 @@ def health_check():
     """Comprehensive health check endpoint"""
     start_time = time.time()
 
-    # Get memory configuration
-    memory_config = config.get("memory", {})
-    memory_enabled = memory_config.get("enabled", False)
+    # # Get memory configuration
+    # memory_config = config.get("memory", {})
+    # memory_enabled = memory_config.get("enabled", False)
 
     status = {
         "status": "ok",
@@ -108,15 +106,16 @@ def health_check():
             "logging": logging_manager is not None,
         },
         "dependencies": {
-            "mcp_sdk_available": MCP_AVAILABLE,
         },
     }
 
-    # Only include storage check if memory is enabled
-    if memory_enabled:
-        status["dependencies"][
-            "storage_available"
-        ] = False  # Should implement actual storage check
+    # # Only include storage check if memory is enabled
+    # if memory_enabled:
+    #     # Check if chat_memory was successfully initialized in ChatManager
+    #     status["dependencies"]["storage_available"] = (
+    #         hasattr(app.chat_manager, "chat_memory")
+    #         and app.chat_manager.chat_memory is not None
+    #     )
 
     # Check if all essential services are available
     all_services_ok = all(status["services"].values())
@@ -238,7 +237,7 @@ if __name__ == "__main__":
     logger.info(f"Internet connection available at startup: {is_online}")
 
     logger.info(f"Starting Orakle development server on port {args.port}")
-    logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
+    # logger.info(f"MCP SDK Available: {MCP_AVAILABLE}")
 
     # Set up profiling if enabled (needs to be before create_app if it profiles app creation)
     if args.profile:

@@ -35,6 +35,7 @@
 
 const WhisperSTT = require('../services/stt/whisper');
 const ConfigManager = require('../utils/config');
+const ConfigHelper = require('../utils/ConfigHelper');
 const BaseComponent = require('./base');
 const electron = require('electron');
 
@@ -49,6 +50,7 @@ class ComRing extends BaseComponent {
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
             this.text = null;
+            this.memoryEnabled = null;
 
             // Add tracking for animations and message queue
             this.pendingAnimations = new Map();  // Track pending animations by message ID
@@ -63,12 +65,16 @@ class ComRing extends BaseComponent {
             this.pybridgeEndpoint = this.config.get('pybridge.api_url', 'http://127.0.0.1:8101');
             this.pybridgeEndpoints = {
                 chat: `${this.pybridgeEndpoint}/framework/chat`,
+                history: `${this.pybridgeEndpoint}/framework/chat/history`,
             };
 
             this.isWindowVisible = false;
             this.isProcessingUserMessage = false;
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
+            this.currentView = 'ring';
+            this.docFormat = 'text';
+
             this.state = {
                 keyPressed: false,
                 isRecording: false,
@@ -77,6 +83,7 @@ class ComRing extends BaseComponent {
                 volume: this.config.get('ring.volume', 0)
             };
             console.log('ComRing: State initialized');
+            this.historyDate = null;
 
             // Setup keyboard shortcut configuration
             this.triggerKey = this.config.get('shortcuts.trigger', 'Space');
@@ -128,6 +135,11 @@ class ComRing extends BaseComponent {
                 this.shadowRoot.querySelector('.inner-circle'),
                 'inner-circle element not found'
             );
+            this.ringContainer = this.assert(
+                this.shadowRoot.querySelector('.ring-container'),
+                'ring-container element not found'
+            );
+            this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
 
             this.audioContext = null;
             this.mediaStream = null;
@@ -145,7 +157,7 @@ class ComRing extends BaseComponent {
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 await this.connectedCallback(recursion)
             } else {
-                this.showError(error);
+                this.showInfo(error, true);
                 throw error;
             }
         }
@@ -182,6 +194,15 @@ class ComRing extends BaseComponent {
         console.log('ComRing: Cleanup complete');
     }
 
+    setMemoryState(enabled) {
+        this.memoryEnabled = enabled;
+        if (enabled) {
+            this.ringContainer.classList.remove('no-memory');
+        } else {
+            this.ringContainer.classList.add('no-memory');
+        }
+    }
+
     initializeEventListeners() {
         console.log('ComRing: Initializing event listeners');
         console.log('ComRing: Setting up IPC event listeners');
@@ -192,7 +213,6 @@ class ComRing extends BaseComponent {
             mainKey: this.mainKey
         });
 
-
         try {
             console.log('ComRing: Successfully imported electron and got ipcRenderer');
         } catch (error) {
@@ -201,9 +221,20 @@ class ComRing extends BaseComponent {
         }
 
         // Add window visibility listeners
-        ipcRenderer.on('window-show', () => {
+        ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
+            // Force-sync memory state from config to fix color issue on show
+            if (this.memoryEnabled === null) {
+                let backendConfig = await ConfigHelper.fetchBackendConfig();
+                this.memoryEnabled = backendConfig?.memory?.enabled || false;
+            }
+            this.setMemoryState(this.memoryEnabled);
+        });
+
+        ipcRenderer.on('set-memory-state', (event, enabled) => {
+            console.log('ComRing: Received set-memory-state event');
+            this.setMemoryState(enabled);
         });
 
         function truncateMiddle(str, maxLength) {
@@ -226,7 +257,7 @@ class ComRing extends BaseComponent {
             if (this.isWindowVisible) {
                 // Show provider change notification
                 const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                sttStatus.innerHTML = `Switched LLM model to:<br>${truncateMiddle(providerName, 44)}`;
+                sttStatus.innerHTML = `Switched LLM model to:<br><i>${truncateMiddle(providerName, 44)}</i>`;
                 sttStatus.classList.add('active2');
 
                 // Hide the message after 3 seconds
@@ -255,13 +286,32 @@ class ComRing extends BaseComponent {
         });
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
-            if (!this.isProcessingUserMessage) {
-                this.isProcessingUserMessage = true;
-                await this.processUserMessage(message, true);
-                this.isProcessingUserMessage = false;
-            } else {
+            if (this.isProcessingUserMessage) {
                 console.log("process-typed-message: Avoiding concurrent entry");
+                return;
             }
+            this.isProcessingUserMessage = true;
+
+            if (message.trim() === '/history') {
+                console.log('Handling /history command');
+                await this.fetchAndDisplayChatHistory();
+            } else if (message.trim() === '/documents') {
+                console.log('Handling /documents command');
+                if (this.documentView && this.documentView.documents.length > 0 && this.docFormat !== 'chat-history') {
+                    this.switchToDocumentView(this.docFormat);
+                } else {
+                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                    sttStatus.textContent = 'No documents to display.';
+                    sttStatus.classList.add('active');
+                    setTimeout(() => {
+                        sttStatus.classList.remove('active');
+                        sttStatus.textContent = '';
+                    }, 3000);
+                }
+            } else {
+                await this.processUserMessage(message, true);
+            }
+            this.isProcessingUserMessage = false;
         });
 
         ipcRenderer.on('exit-typing-mode', () => {
@@ -275,6 +325,10 @@ class ComRing extends BaseComponent {
             // Update UI based on typing mode
             this.circle.style.opacity = isTypingMode ? '0.4' : '1';
         });
+
+        // Listen for history navigation events from the document-view component
+        this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
+        this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));
 
         // Add event listeners for animation events
         ipcRenderer.on('animation-started', (event, data) => {
@@ -328,6 +382,15 @@ class ComRing extends BaseComponent {
         // Debug keyboard events
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
+            if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
+                console.log('Escape in document view: switching back to ring view.');
+                this.switchToRingView();
+                this.abortLLMResponse();
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
             if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
 ;
                 console.log("EVENT ESCAPE");
@@ -360,7 +423,7 @@ class ComRing extends BaseComponent {
                     !isTypingMode &&
                     !this.state.isRecording &&
                     event.key.length === 1 &&
-                    /[a-zA-Z0-9]/.test(event.key)
+                    /[a-zA-Z0-9/]/.test(event.key)
                 ) {
                     // Only handle the first keystroke to enter typing mode
                     console.log('ComRing: Entering typing mode');
@@ -413,7 +476,7 @@ class ComRing extends BaseComponent {
                 this.circle.classList.add('faded');
             }
         } catch (error) {
-            await this.showError('LLM Processing Error in message "' + message + '": ' + error.message)
+            await this.showInfo('LLM Processing Error in message "' + message + '": ' + error.message, true)
             ipcRenderer.send('llm-error', error.message);
         }
         this.state.isAwaitingResponse = false;
@@ -432,6 +495,10 @@ class ComRing extends BaseComponent {
 
     async startRecording() {
         if (this.state.isRecording || !this.isWindowVisible) return;
+
+        // // Force-sync memory state from config to fix color issue
+        // const memoryEnabled = this.config.get('memory.enabled', false);
+        // this.setMemoryState(memoryEnabled);
 
         this.ignoreIncomingEvents = false;
         this.state.isRecording = true;
@@ -683,7 +750,8 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
-            await this.showError(event.content.message + " " + error);
+            // await this.showError(event.content.message + " " + error);
+            await this.showInfo(error, true);
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
@@ -692,53 +760,69 @@ class ComRing extends BaseComponent {
     }
 
     // TODO extend the queued approach used to show errors to display all messages
-    async showError(error) {
+    async showInfo(info, isError = false) {
         let callstack = null;
         try {
             throw new Error('Stack Trace');
         } catch (e) {
             callstack = e.stack;
         }
-        console.error('Error:', error, callstack);
-        ipcRenderer.send('chat-error', error.toString());
-
-        // Create error queue if it doesn't exist
-        if (!this.errorQueue) {
-            this.errorQueue = [];
-            this.errorQueueIndex = 0;
-            this.isShowingError = false;
+        console.error('Info:', info, callstack);
+        if (isError) {
+            ipcRenderer.send('chat-error', info.toString());
         }
 
-        // Add error to queue
-        this.errorQueueIndex++;
-        this.errorQueue.push("Error #" + this.errorQueueIndex + ": " + error.toString());
+        // Create error queue if it doesn't exist
+        if (!this.infoQueue) {
+            this.infoQueue = [];
+            this.infoQueueIndex = 0;
+            this.isShowingInfo = false;
+        }
+
+        // Add info to queue
+        this.infoQueueIndex++;
+        if (isError) {
+            this.infoQueue.push(
+                "Error #" +
+                this.infoQueueIndex +
+                ": " +
+                info.toString()
+            );
+        } else {
+            this.infoQueue.push(info.toString());
+        }
 
         // Start processing the queue if not already doing so
-        if (!this.isShowingError) {
-            this.processErrorQueue();
+        if (!this.isShowingInfo) {
+            this.processInfoQueue();
         }
     }
 
-    async processErrorQueue() {
+    async processInfoQueue() {
         // If queue is empty or already showing an error, return
-        if (this.errorQueue.length === 0 || this.isShowingError) {
+        if (this.infoQueue.length === 0 || this.isShowingInfo) {
             return;
         }
 
         // Set flag to indicate we're showing an error
-        this.isShowingError = true;
+        this.isShowingInfo = true;
 
         // Get the next error from the queue
-        const errorMessage = this.errorQueue.shift();
+        const infoMessage = this.infoQueue.shift();
+        let isError = infoMessage.startsWith("Error #")
 
-        // Show the error
+        // Show the info message/error
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
-        sttStatus.innerHTML = errorMessage;
-        sttStatus.classList.add('active3');
+        sttStatus.innerHTML = infoMessage;
+        if (isError) {
+            sttStatus.classList.add('active3');
+        } else {
+            sttStatus.classList.add('active2');
+        }
 
         // Keep the message visible by refreshing it periodically
         const refreshInterval = 1000; // 1 second
-        const totalDuration = 8100;   // 5 seconds total
+        const totalDuration = 5000;   // 5 seconds total
         const refreshCount = Math.floor(totalDuration / refreshInterval);
 
         // Use a single interval instead of multiple timeouts
@@ -747,20 +831,118 @@ class ComRing extends BaseComponent {
             count++;
             // Refresh the message
             const sttStatus = this.shadowRoot.querySelector('.stt-status');
-            sttStatus.innerHTML = errorMessage;
-            sttStatus.classList.add('active3');
+            sttStatus.innerHTML = infoMessage;
+            if (isError) {
+                sttStatus.classList.add('active3');
+            } else {
+                sttStatus.classList.add('active2');
+            }
 
             // If we've reached the desired duration, clean up
             if (count >= refreshCount) {
                 clearInterval(intervalId);
-                sttStatus.classList.remove('active3');
+                if (isError) {
+                    sttStatus.classList.remove('active3');
+                } else {
+                    sttStatus.classList.remove('active2');
+                }
                 sttStatus.textContent = '';
-                this.isShowingError = false;
+                this.isShowingInfo = false;
 
                 // Process next error in queue if any
-                setTimeout(() => this.processErrorQueue(), 100);
+                setTimeout(() => this.processInfoQueue(), 100);
             }
         }, refreshInterval);
+    }
+
+    async fetchAndDisplayChatHistory(date = null) {
+        try {
+            const sttStatus = this.shadowRoot.querySelector('.stt-status');
+            sttStatus.textContent = 'Loading chat history...';
+            sttStatus.classList.add('active');
+
+            const url = date
+                ? `${this.pybridgeEndpoints.history}?date=${date}`
+                : this.pybridgeEndpoints.history;
+
+            const response = await fetch(url);
+
+            if (!response.ok) {
+                throw new Error(`Failed to fetch history: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Check if the history content exists beyond just a potential header
+            const historyContent = data.history ? data.history.substring(data.history.indexOf('\n')).trim() : '';
+
+            if (historyContent) {
+                this.historyDate = data.date;
+                this.switchToDocumentView('chat-history');
+                this.documentView.clear();
+                this.documentView.updateNavControls({
+                    show: true,
+                    prev: data.has_previous,
+                    next: data.has_next
+                });
+                this.documentView.addDocument(data.history, 'chat-history');
+                sttStatus.classList.remove('active');
+                sttStatus.textContent = '';
+            } else {
+                // If no history, just show a message and don't switch view
+                sttStatus.textContent = 'No chat history for this day.';
+                setTimeout(() => {
+                    sttStatus.classList.remove('active');
+                    sttStatus.textContent = '';
+                }, 3000);
+            }
+        } catch (error) {
+            console.error('Error fetching chat history:', error);
+            const sttStatus = this.shadowRoot.querySelector('.stt-status');
+            sttStatus.textContent = `Error: ${error.message}`;
+            sttStatus.classList.add('active', 'error');
+
+            setTimeout(() => {
+                sttStatus.classList.remove('active', 'error');
+                sttStatus.textContent = '';
+            }, 3000);
+        }
+    }
+
+
+    navigateHistory(direction) {
+        if (!this.historyDate) return;
+
+        // The 'T12:00:00Z' avoids timezone-related date change issues
+        const currentDate = new Date(`${this.historyDate}T12:00:00Z`);
+
+        if (direction === 'prev') {
+            currentDate.setUTCDate(currentDate.getUTCDate() - 1);
+        } else {
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+        }
+
+        const newDateStr = currentDate.toISOString().split('T')[0];
+        this.fetchAndDisplayChatHistory(newDateStr);
+    }
+
+    switchToDocumentView(format) {
+        this.currentView = 'document';
+        this.docFormat = format;
+        ipcRenderer.send('set-view-mode', { view: 'document' });
+        this.ringContainer.classList.add('document-view');
+        this.documentView.show();
+    }
+
+    switchToRingView() {
+        this.currentView = 'ring';
+        ipcRenderer.send('set-view-mode', { view: 'ring' });
+        this.ringContainer.classList.remove('document-view');
+        this.documentView.hide();
     }
 
     abortLLMResponse() {
@@ -793,6 +975,11 @@ class ComRing extends BaseComponent {
             this.currentAudio.pause();
             this.currentAudio.src = '';
             this.currentAudio = null;
+        }
+
+        // If in document view, switch back to ring view
+        if (this.currentView === 'document') {
+            this.switchToRingView();
         }
 
         // Reset visual states
@@ -1126,7 +1313,7 @@ class ComRing extends BaseComponent {
                             // Store the audio duration if available in the content
                             const audioDuration = content.flags.duration || null;
 
-                            console.log(JSON.stringify(content));
+                            // console.log(JSON.stringify(content));
 
                             // Add to message queue with audio
                             this.messageQueue.push({
@@ -1161,6 +1348,12 @@ class ComRing extends BaseComponent {
 
                     // Try to process queue
                     this.processMessageQueue();
+                }
+                break;
+
+            case 'setMemoryState':
+                if (event.type === 'ui') {
+                    this.setMemoryState(event.content.enabled);
                 }
                 break;
 
@@ -1204,10 +1397,38 @@ class ComRing extends BaseComponent {
                 }
                 break;
 
+            case 'infoMessage':
+                if (event.type === 'signal') {
+                    await this.showInfo(event.content.message);
+                }
+                break;
+
             case 'error':
                 if (event.type === 'signal') {
-                    await this.showError(event.content.message);
+                    await this.showInfo(event.content.message, true);
                     ipcRenderer.send('chat-error', event.content.message);
+                }
+                break;
+
+            case 'setView':
+                if (event.type === 'ui' && event.content.view === 'document') {
+                    // Only clear documents if we are starting a new document view session
+                    // from the main ring. This allows accumulating documents.
+                    if (this.currentView !== 'document') {
+                        this.documentView.clear();
+                    }
+                    this.switchToDocumentView(event.content.format);
+                }
+                break;
+
+            case 'full':
+                // console.log(JSON.stringify(event));
+                if (event.type === 'content') {
+                    if (this.currentView === 'document') {
+                        this.documentView.addDocument(event.content.content, this.docFormat);
+                    } else {
+                        console.warn('Received full content but not in document view. Ignoring.');
+                    }
                 }
                 break;
         }

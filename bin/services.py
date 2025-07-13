@@ -62,7 +62,7 @@ VENV_PATHS = [
 WATCH_SERVICES_HEALTH_FIRST = True
 
 
-def check_service_health(url, service_name, timeout=2):
+def check_service_health(url, service_name, timeout=10):
     """Check if a service is healthy by calling its health endpoint"""
     try:
         # print("-----------")
@@ -98,7 +98,7 @@ def watch_services_health(
         global WATCH_SERVICES_HEALTH_FIRST
         print("Monitoring...")
         fails = 0
-        fails_limit = 3
+        fails_limit = 10
         was_unhealthy = False
         polaris_started = False
 

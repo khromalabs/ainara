@@ -18,6 +18,7 @@
 
 const BaseWindow = require('./BaseWindow');
 const Logger = require('../utils/logger');
+const ConfigHelper = require('../utils/ConfigHelper');
 
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
@@ -69,12 +70,45 @@ class ComRingWindow extends BaseWindow {
         this.manager = manager; // Store reference to window manager
         this.loadContent('./components/com-ring.html');
         this.setupEventHandlers();
+        this.originalSize = [windowWidth, windowHeight];
+        this.originalPosition = [options.x, options.y];
+        this.isDocumentView = false;
     }
 
     setupEventHandlers() {
         super.setupBaseEventHandlers();
 
-        const { ipcMain } = require('electron');
+        const { ipcMain, screen } = require('electron');
+
+        ipcMain.on('set-view-mode', (event, args) => {
+            if (args.view === 'document') {
+                const docWidth = this.config.get('documentView.width', 800);
+                const docHeight = this.config.get('documentView.height', 600);
+
+                // Store current position before resizing
+                if (!this.isDocumentView) {
+                    const [currentX, currentY] = this.window.getPosition();
+                    this.originalPosition = [currentX, currentY];
+                }
+
+                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+                const targetX = Math.round((screenWidth - docWidth) / 2);
+                const targetY = Math.round((screenHeight - docHeight) / 2);
+
+                this.window.setResizable(true);
+                this.window.setMinimumSize(400, 300);
+                this.animateBounds({ x: targetX, y: targetY, width: docWidth, height: docHeight }, 400);
+                this.isDocumentView = true;
+
+            } else if (args.view === 'ring') {
+                // Restore original size and position
+                const [originalWidth, originalHeight] = this.originalSize;
+                this.window.setMinimumSize(originalWidth, originalHeight);
+                this.animateBounds({ x: this.originalPosition[0], y: this.originalPosition[1], width: originalWidth, height: originalHeight }, 400);
+                this.window.setResizable(false);
+                this.isDocumentView = false;
+            }
+        });
 
         ipcMain.on('com-ring-focus', () => {
             this.window.focus();
@@ -90,6 +124,12 @@ class ComRingWindow extends BaseWindow {
             this.window.focus();
             this.window.webContents.send('exit-typing-mode');
             Logger.log('ComRingWindow: Focusing window');
+        });
+
+        this.window.webContents.on('did-finish-load', async () => {
+            this.backendConfig = await ConfigHelper.fetchBackendConfig();
+            const memoryEnabled = this.backendConfig?.memory?.enabled || false;
+            this.window.webContents.send('set-memory-state', memoryEnabled);
         });
 
         // Add ComRing specific IPC handlers
@@ -108,6 +148,38 @@ class ComRingWindow extends BaseWindow {
                     Logger.log('Typing mode changed:', ...args);
                     break;
             }
+        });
+    }
+
+    animateBounds(targetBounds, duration) {
+        return new Promise(resolve => {
+            const startBounds = this.window.getBounds();
+            const startTime = Date.now();
+
+            const animationInterval = setInterval(() => {
+                const elapsedTime = Date.now() - startTime;
+                const progress = Math.min(elapsedTime / duration, 1);
+
+                // Ease-out function for a smoother stop
+                const easeOutProgress = 1 - Math.pow(1 - progress, 3);
+
+                const newBounds = {
+                    x: Math.round(startBounds.x + (targetBounds.x - startBounds.x) * easeOutProgress),
+                    y: Math.round(startBounds.y + (targetBounds.y - startBounds.y) * easeOutProgress),
+                    width: Math.round(startBounds.width + (targetBounds.width - startBounds.width) * easeOutProgress),
+                    height: Math.round(startBounds.height + (targetBounds.height - startBounds.height) * easeOutProgress)
+                };
+
+                // Use animate: false because we are creating the animation frames manually
+                this.window.setBounds(newBounds, false);
+
+                if (progress >= 1) {
+                    clearInterval(animationInterval);
+                    // Ensure the final size is exact
+                    this.window.setBounds(targetBounds, false);
+                    resolve();
+                }
+            }, 16); // ~60 FPS
         });
     }
 }

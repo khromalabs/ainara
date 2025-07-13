@@ -11,9 +11,11 @@ jobs:
   build:
     strategy:
       matrix:
-        # os: [ubuntu-latest, macos-latest, windows-latest]
-        os: [windows-latest, macos-14]
-        # os: [macos-14]
+        include:
+        - os: macos-14
+          python-version: '3.12'
+        - os: windows-latest
+          python-version: '3.12' # Use Python 3.11 for Windows
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
@@ -30,10 +32,10 @@ jobs:
         ref: ${{ github.ref }} # Checkout the specific tag that triggered the workflow
         token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set up Python 3.12
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.12'  # Updated to Python 3.12
+        python-version: ${{ matrix.python-version }}
 
     - name: Create virtual environment
       shell: bash
@@ -133,7 +135,7 @@ jobs:
         VERSION_PART="${TAG_NAME#*-}"
         # Clean the OS name (e.g., macos-latest -> macos, macos-14 -> macos)
         OS_NAME="$(echo "${{ matrix.os }}" | sed 's/-latest$//' | sed 's/-[0-9]*$//')"
-        
+
         # Add architecture detection
         if [[ "${{ matrix.os }}" == "macos-14" ]]; then
           ARCH="arm64"
@@ -188,7 +190,7 @@ jobs:
             exit 1
         }
 
-    - name: Create YAML Metadata for ZIP (Windows)
+    - name: Create YAML Metadata for installer (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
@@ -296,7 +298,7 @@ jobs:
         body: |
           Automated testing release from testing branch
           OS: ${{ matrix.os }}
-          Python: 3.12
+          Python: ${{ matrix.python-version }}
           SHA: ${{ github.sha }}
         draft: false
         prerelease: true

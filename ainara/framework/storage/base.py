@@ -18,7 +18,7 @@
 
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class StorageBackend(ABC):
@@ -80,6 +80,14 @@ class StorageBackend(ABC):
     @abstractmethod
     def close(self):
         """Close any open resources"""
+        pass
+
+    @abstractmethod
+    def add_historical_messages(self, messages: List[Dict[str, Any]]):
+        """
+        Adds a batch of historical messages to the database.
+        This is optimized for bulk inserts of past conversations.
+        """
         pass
 
 

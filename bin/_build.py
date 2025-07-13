@@ -53,15 +53,25 @@ def check_dependencies():
         print("Warning: pkg_resources not available, skipping dependency check")
         return True
 
-    required_packages = [
-        'pyinstaller',
-        'telegram',
-        'validators',
-        'google-api-python-client',  # Provides googleapiclient
-        'tiktoken',
-        'litellm',
-    ]
+    print("\n=== Reading dependencies from requirements.txt... ===")
+    try:
+        with open('requirements.txt', 'r') as f:
+            lines = f.readlines()
+        
+        required_packages = []
+        for line in lines:
+            line = line.strip()
+            # Ignore comments, blank lines, and special flags
+            if not line or line.startswith('#') or line.startswith('--'):
+                continue
+            # Strip version specifiers and extras (e.g., "mcp[cli]==1.7.1" -> "mcp")
+            package_name = line.split('==')[0].split('>=')[0].split('<=')[0].split('@')[0].split('[')[0].strip()
+            required_packages.append(package_name)
+    except FileNotFoundError:
+        print("Error: requirements.txt not found. Cannot check dependencies.")
+        return False
 
+    print("\n=== Checking for required packages... ===")
     missing = []
     for package in required_packages:
         try:
@@ -76,9 +86,12 @@ def check_dependencies():
             print(f"  - {package}")
         print("\nPlease install them using:")
         print(f"  pip install {' '.join(missing)}")
+        print("\nAdditionally, ensure the Spacy model is downloaded:")
+        print("  python -m spacy download en_core_web_sm")
         print("\nThen run this script again.")
         return False
 
+    print("All required packages are installed.")
     return True
 
 
@@ -116,9 +129,9 @@ def build_executables(force=False):
     else:
         print("\n=== Skipping joined servers build (already exists) ===\n")
         print("Use --force to rebuild anyway")
-    return True
 
     print(f"\nBuild complete! Executables are in {os.path.abspath(dist_dir)}")
+    return True
 
 
 if __name__ == "__main__":

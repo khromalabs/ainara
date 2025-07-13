@@ -16,29 +16,80 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import logging
+
+from ainara.framework.config import config as config_manager
+
 from .base import LLMBackend
 from .litellm import LiteLLM
+from .ollama import OllamaLLM
+
+logger = logging.getLogger(__name__)
 
 
-def create_llm_backend(config: dict) -> LLMBackend:
+def create_llm_backend(
+    llm_config: dict = None, selected_provider: str = None
+) -> LLMBackend:
     """Factory function to create LLM backend instance
 
     Args:
-        config: Configuration dictionary for LLM backend
+        llm_config: Full LLM configuration dictionary (optional if using config_manager)
+        selected_provider: Specific provider/model identifier to use
 
     Returns:
         Configured LLM backend instance
     """
-    # The 'config' parameter here is the specific dictionary for one LLM provider
-    # from the evaluation loop, or the general llm config during normal app use.
-    # For evaluation, 'provider' key usually indicates the type (e.g., 'litellm').
-    # For general use, 'backend' key in the main llm config block indicates the type.
-    backend_type = config.get("provider", config.get("backend", "litellm"))
+    # Use provided config or get from config manager
+    if llm_config is None:
+        llm_config = config_manager.get("llm", {})
 
-    if backend_type == "litellm":
-        # Pass the specific provider_config to LiteLLM
-        # If 'config' is from the evaluator, it's already a specific provider_config.
-        # If 'config' is the global llm config, LiteLLM's constructor will handle it.
-        return LiteLLM(provider_config=config if "model" in config else None)
+    # Determine which provider to use
+    selected_provider_identifier = selected_provider or llm_config.get(
+        "selected_provider"
+    )
+
+    if not selected_provider_identifier:
+        logger.info(
+            "No LLM provider selected in config. Defaulting to LiteLLM."
+        )
+        return LiteLLM(config_manager)
+
+    # Find the specific provider configuration
+    provider_config = None
+    for provider in llm_config.get("providers", []):
+        if (
+            provider.get("model") == selected_provider_identifier
+            or provider.get("name") == selected_provider_identifier
+        ):
+            provider_config = provider
+            break
+
+    if not provider_config:
+        logger.warning(
+            f"Provider '{selected_provider_identifier}' not found in config."
+            " Using default LiteLLM."
+        )
+        return LiteLLM(config_manager)
+
+    # Determine backend type based on provider identifier or provider config
+    backend_to_use = provider_config.get(
+        "provider", llm_config.get("selected_backend", "litellm")
+    )
+    if selected_provider_identifier.startswith("ollama/"):
+        backend_to_use = "ollama"
+
+    logger.info(
+        f"Selected LLM backend type: '{backend_to_use}' for provider:"
+        f" '{selected_provider_identifier}'"
+    )
+
+    if backend_to_use == "ollama":
+        return OllamaLLM(config_manager, provider_config=provider_config)
+    elif backend_to_use == "litellm":
+        return LiteLLM(provider_config=provider_config)
     else:
-        raise ValueError(f"Unsupported LLM backend type: {backend_type}")
+        logger.warning(
+            f"Unknown LLM backend type '{backend_to_use}'. Defaulting to"
+            " LiteLLM."
+        )
+        return LiteLLM(provider_config=provider_config)

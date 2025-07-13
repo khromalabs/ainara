@@ -21,6 +21,7 @@
 
 import argparse
 import atexit
+import bisect
 import json
 import logging
 import os
@@ -36,17 +37,18 @@ from flask_cors import CORS
 from ainara import __version__
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
+from ainara.framework.chat_memory import ChatMemory
+from ainara.framework.user_memories_manager import UserMemoriesManager
+from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
-from ainara.framework.dependency_checker import DependencyChecker
 
 # --- Global instances ---
 config = ConfigManager()
 config.load_config()
-llm = create_llm_backend(config.get("llm", {}))
 
 
 def cleanup_audio_directory(static_folder: str) -> None:
@@ -137,6 +139,40 @@ def parse_args():
 
 
 def create_app():
+
+    llm = create_llm_backend(config.get("llm", {}))
+    app.llm = llm
+
+    # # --- DEBUG: ChromaDB Dependency Check ---
+    # import sys
+    # import traceback
+    # logger.info("Starting ChromaDB dependency debug check...")
+    # logger.info(f"Platform: {sys.platform}, Frozen: {getattr(sys, 'frozen', False)}")
+    # if getattr(sys, 'frozen', False):
+    #     logger.info(f"MEIPASS path: {sys._MEIPASS}")
+    #
+    # chroma_deps = [
+    #     ('chromadb', 'import chromadb'),
+    #     ('chromadb-hnswlib', 'import hnswlib'),
+    #     ('onnxruntime', 'import onnxruntime'),
+    #     ('onnxruntime.capi', 'from onnxruntime import capi as onnx_capi'),  # Check binary extension
+    # ]
+    #
+    # for dep, import_stmt in chroma_deps:
+    #     try:
+    #         exec(import_stmt)
+    #         logger.info(f"SUCCESS: Imported {dep}")
+    #         # Check for a key file in MEIPASS (e.g., hnswlib binary)
+    #         if dep == 'hnswlib' and getattr(sys, 'frozen', False):
+    #             hnswlib_path = os.path.join(sys._MEIPASS, 'hnswlib', 'hnswlib.pyd')  # Adjust for Windows .pyd
+    #             if os.path.exists(hnswlib_path):
+    #                 logger.info(f"SUCCESS: Found hnswlib binary at {hnswlib_path}")
+    #             else:
+    #                 logger.info(f"WARNING: hnswlib binary not found at {hnswlib_path}")
+    #     except Exception as e:
+    #         logger.info(f"FAILURE: {dep} - {str(e)}\n{traceback.format_exc()}")
+    # logger.info("ChromaDB dependency debug check complete.")
+    # # --- END DEBUG ---
 
     # Get audio buffer size from config
     AUDIO_BUFFER_SIZE_MB = config.get("audio.buffer_size_mb", 10)
@@ -238,12 +274,44 @@ def create_app():
 
     atexit.register(cleanup_on_shutdown)
 
+    # --- Initialize Core Managers ---
+    # Initialize ChatMemory if enabled
+    chat_memory = None
+    if config.get("memory.enabled", True):
+        chat_memory = ChatMemory()
+        logger.info("Chat memory initialized")
+
+    # Initialize UserMemoriesManager
+    user_memories_manager = None
+    user_profile_summary = None
+    if chat_memory:
+        user_memories_manager = UserMemoriesManager(
+            llm=app.llm,
+            chat_memory=chat_memory,
+            context_window=app.llm.get_context_window(),
+        )
+        logger.info("User Memories Manager initialized")
+        # Perform initial consolidation at startup
+        logger.info("Processing new messages for user profile...")
+        user_memories_manager.process_new_messages_for_update()
+        logger.info("Message processing complete.")
+
+        # Generate the narrative user profile summary
+        user_profile_summary = (
+            user_memories_manager.generate_user_profile_summary()
+        )
+        if user_profile_summary:
+            logger.info("User profile summary generated successfully.")
+
     # Create chat_manager as app attribute so it's accessible to all routes
     app.chat_manager = ChatManager(
-        llm=llm,
+        llm=app.llm,
         tts=tts,
         flask_app=app,
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
+        chat_memory=chat_memory,
+        user_memories_manager=user_memories_manager,
+        user_profile_summary=user_profile_summary,
     )
 
     @app.route("/health", methods=["GET"])
@@ -266,14 +334,16 @@ def create_app():
                 "config_manager": config is not None,
                 "logging": logging_manager is not None,
             },
-            "dependencies": {"llm_available": llm is not None},
+            "dependencies": {"llm_available": app.llm is not None},
         }
 
         # Only include storage check if memory is enabled
         if memory_enabled:
-            status["dependencies"][
-                "storage_available"
-            ] = False  # Should implement actual storage check
+            # Check if chat_memory was successfully initialized in ChatManager
+            status["dependencies"]["storage_available"] = (
+                hasattr(app.chat_manager, "chat_memory")
+                and app.chat_manager.chat_memory is not None
+            )
 
         # Check if all essential services are available
         all_services_ok = all(status["services"].values())
@@ -334,6 +404,7 @@ def create_app():
             # # logger.info(f"new configuration: {pprint.pformat(data)}")
 
             new_llm = create_llm_backend(config.get("llm", {}))
+            app.llm = new_llm
             app.chat_manager.llm = new_llm
 
             return jsonify({"success": True})
@@ -399,7 +470,9 @@ def create_app():
 
                 # Check if whisper needs initialization
                 whisper_check = check_whisper_models()
-                resources_to_init = ["whisper"] if not whisper_check.get("initialized") else []
+                resources_to_init = (
+                    ["whisper"] if not whisper_check.get("initialized") else []
+                )
 
                 if not resources_to_init:
                     yield format_sse(
@@ -416,7 +489,9 @@ def create_app():
 
                 completed_resources = 0
                 total_resources = len(resources_to_init)
-                progress_per_resource = 100 / total_resources if total_resources > 0 else 100
+                progress_per_resource = (
+                    100 / total_resources if total_resources > 0 else 100
+                )
 
                 # --- Initialize Whisper models if needed ---
                 if "whisper" in resources_to_init:
@@ -603,6 +678,141 @@ def create_app():
 
         return Response(generate(), mimetype="text/event-stream")
 
+    @app.route("/framework/chat/history", methods=["GET"])
+    def get_chat_history():
+        """
+        Retrieve and format chat history for a specific day.
+        Accepts a 'date' query parameter in YYYY-MM-DD format.
+        Defaults to the most recent day with history if no date is provided.
+        """
+        if (
+            not hasattr(app, "chat_manager")
+            or not app.chat_manager.chat_memory
+        ):
+            return (
+                jsonify(
+                    {"error": "Chat memory is not available or disabled."}
+                ),
+                503,
+            )
+
+        try:
+            memory = app.chat_manager.chat_memory
+            total_messages = memory.get_total_messages()
+            logger.info(f"total_messages: {total_messages}")
+            if total_messages == 0:
+                return jsonify(
+                    {
+                        "history": "# Chat History\n\nNo history found.",
+                        "date": (
+                            datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        ),
+                        "has_previous": False,
+                        "has_next": False,
+                    }
+                )
+
+            # Fetch all messages and group by date
+            all_messages = memory.get_chat_history(
+                limit=total_messages, offset=0
+            )
+            messages_by_date = {}
+            for msg in all_messages:
+                logger.info(f"msg: {msg}")
+                timestamp_str = msg.get("timestamp")
+                logger.info(f"timestamp_str: {timestamp_str}")
+                if timestamp_str:
+                    # Ensure timestamp is timezone-aware before converting
+                    dt_object = datetime.fromisoformat(timestamp_str)
+                    if dt_object.tzinfo is None:
+                        dt_object = dt_object.replace(tzinfo=timezone.utc)
+
+                    msg_date = dt_object.astimezone(timezone.utc).date()
+                    if msg_date not in messages_by_date:
+                        messages_by_date[msg_date] = []
+                    messages_by_date[msg_date].append(msg)
+
+            if not messages_by_date:
+                return jsonify(
+                    {
+                        "history": "# Chat History\n\nNo history found for today.",
+                        "date": (
+                            datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        ),
+                        "has_previous": False,
+                        "has_next": False,
+                    }
+                )
+
+            sorted_dates = sorted(messages_by_date.keys())
+
+            # Determine target date
+            date_str = request.args.get("date")
+            if date_str:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            else:
+                # Default to the most recent day with messages
+                target_date = sorted_dates[-1]
+
+            # Get messages for the target day
+            messages_for_day = messages_by_date.get(target_date, [])
+            messages_for_day.sort(
+                key=lambda m: m.get("timestamp")
+            )
+
+            # Format into a concise Markdown string
+            markdown_lines = [
+                f"### History for {target_date.strftime('%A, %B %d, %Y')}\n"
+            ]
+            if not messages_for_day:
+                markdown_lines.append("\n_No messages for this day._")
+            else:
+                for msg in messages_for_day:
+                    role = msg.get("role", "unknown")
+                    role_prefix = "U" if role == "user" else "A"
+                    content = msg.get("content", "").replace("\n", " ")
+                    timestamp = msg.get("timestamp")
+
+                    dt_object = datetime.fromisoformat(timestamp)
+                    if dt_object.tzinfo is None:
+                        dt_object = dt_object.replace(tzinfo=timezone.utc)
+
+                    time_str = dt_object.astimezone(timezone.utc).strftime(
+                        "%H:%M:%S"
+                    )
+                    markdown_lines.append(
+                        f"`{time_str}` **{role_prefix}:** {content}"
+                    )
+
+            history_md = "\n".join(markdown_lines)
+
+            # Determine if previous/next days with history exist
+            try:
+                current_date_index = sorted_dates.index(target_date)
+                has_previous = current_date_index > 0
+                has_next = current_date_index < len(sorted_dates) - 1
+            except ValueError:
+                # This can happen if a date is requested that has no messages.
+                # Find where it would be inserted to determine prev/next.
+                insertion_point = bisect.bisect_left(sorted_dates, target_date)
+                has_previous = insertion_point > 0
+                has_next = insertion_point < len(sorted_dates)
+
+            return jsonify(
+                {
+                    "history": history_md,
+                    "date": target_date.strftime("%Y-%m-%d"),
+                    "has_previous": has_previous,
+                    "has_next": has_next,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error fetching chat history: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"error": "Failed to retrieve chat history."}), 500
+
     @app.route("/framework/tts", methods=["POST"])
     def framework_tts():
         data = request.get_json()
@@ -696,7 +906,7 @@ def create_app():
                 f" {filter_models if filter_models else 'None'}"
             )
 
-            providers = llm.get_available_providers()
+            providers = app.llm.get_available_providers()
             # logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
 
             # Format the response
@@ -864,7 +1074,7 @@ def create_app():
             api_base = data.get("api_base", None)  # Optional
 
             # Create a temporary provider config for the LLM backend
-            normalized_model = llm.normalize_model_name(model, provider)
+            normalized_model = app.llm.normalize_model_name(model, provider)
 
             logger.info(
                 f"Testing LLM connection for model: provider: {provider} "
@@ -885,7 +1095,7 @@ def create_app():
                 " greeting."
             )
             try:
-                response = llm.chat(
+                response = app.llm.chat(
                     chat_history=[
                         {
                             "role": "system",
@@ -1037,11 +1247,14 @@ if __name__ == "__main__":
     if args.profile:
         import cProfile
         import pstats
+
         # import os
         # Use the log directory from logging_manager
         log_dir = logging_manager._log_directory
         profile_output = os.path.join(log_dir, "pybridge_profile.prof")
-        logger.info(f"Profiling enabled. Output will be saved to {profile_output}")
+        logger.info(
+            f"Profiling enabled. Output will be saved to {profile_output}"
+        )
         profiler = cProfile.Profile()
         profiler.enable()
 
@@ -1059,4 +1272,4 @@ if __name__ == "__main__":
             # Print some basic stats to the log
             stats = pstats.Stats(profile_output)
             logger.info("Top 10 functions by cumulative time:")
-            stats.sort_stats('cumulative').print_stats(10)
+            stats.sort_stats("cumulative").print_stats(10)

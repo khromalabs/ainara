@@ -26,6 +26,13 @@ from pathlib import Path
 # import traceback
 import yaml
 
+from ainara.framework.platform_utils import (
+    get_default_cache_dir,
+    get_default_config_paths,
+    get_default_data_dir,
+    get_default_log_dir,
+)
+
 
 class ConfigManager:
     """Manages application configuration following platform-specific standards"""
@@ -44,34 +51,7 @@ class ConfigManager:
             return [Path(env_config_path)]
 
         # Determine OS-specific config locations
-        system = platform.system()
-        config_paths = []
-
-        if system == "Linux" or system == "Darwin":  # Linux or macOS
-            # XDG standard for Linux, similar location for macOS
-            config_home = os.environ.get(
-                "XDG_CONFIG_HOME", os.path.expanduser("~/.config")
-            )
-            config_paths = [
-                Path(config_home) / "ainara/ainara.yaml",
-                Path("/etc/ainara/ainara.yaml"),
-            ]
-        elif system == "Windows":
-            # Windows standard locations
-            appdata = os.environ.get(
-                "APPDATA", os.path.expanduser("~/AppData/Roaming")
-            )
-            config_paths = [
-                Path(appdata) / "Ainara/ainara.yaml",
-            ]
-        else:
-            # Fallback for other systems
-            config_paths = [
-                Path(os.path.expanduser("~/.ainara/ainara.yaml")),
-            ]
-
-        # Add current directory as last resort for development environments
-        config_paths.append(Path("config/ainara.yaml"))
+        config_paths = get_default_config_paths()
 
         return config_paths
 
@@ -201,6 +181,11 @@ class ConfigManager:
 
     def get(self, key_path: str, default=None):
         """Get a config value using dot notation"""
+        # Check if the config file has been modified and reload if necessary
+        if self.needs_load():
+            print("INFO: Configuration file has changed, reloading.")
+            self.load_config()
+
         keys = key_path.split(".")
         value = self.config
 
@@ -299,26 +284,7 @@ class ConfigManager:
             os.makedirs(log_dir, exist_ok=True)
             return log_dir
 
-        # Determine OS-specific log locations
-        system = platform.system()
-
-        if system == "Linux":
-            # XDG standard for Linux
-            data_home = os.environ.get(
-                "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
-            )
-            log_dir = Path(data_home) / "ainara/logs"
-        elif system == "Darwin":  # macOS
-            log_dir = Path(os.path.expanduser("~/Library/Logs/Ainara"))
-        elif system == "Windows":
-            # Windows standard locations
-            localappdata = os.environ.get(
-                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
-            )
-            log_dir = Path(localappdata) / "Ainara/logs"
-        else:
-            # Fallback for other systems
-            log_dir = Path(os.path.expanduser("~/.ainara/logs"))
+        log_dir = get_default_log_dir()
 
         # Ensure the directory exists
         os.makedirs(log_dir, exist_ok=True)
@@ -347,26 +313,7 @@ class ConfigManager:
             os.makedirs(cache_dir, exist_ok=True)
             return cache_dir
 
-        # Determine OS-specific cache locations
-        system = platform.system()
-
-        if system == "Linux":
-            # XDG standard for Linux
-            cache_home = os.environ.get(
-                "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
-            )
-            cache_dir = Path(cache_home) / "ainara"
-        elif system == "Darwin":  # macOS
-            cache_dir = Path(os.path.expanduser("~/Library/Caches/Ainara"))
-        elif system == "Windows":
-            # Windows standard locations
-            localappdata = os.environ.get(
-                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
-            )
-            cache_dir = Path(localappdata) / "Ainara/Cache"
-        else:
-            # Fallback for other systems
-            cache_dir = Path(os.path.expanduser("~/.ainara/cache"))
+        cache_dir = get_default_cache_dir()
 
         # Ensure the directory exists
         os.makedirs(cache_dir, exist_ok=True)
@@ -374,23 +321,7 @@ class ConfigManager:
 
     def _get_data_directory(self, app_name="ainara"):
         """Get the appropriate user data directory for the current platform"""
-        system = platform.system()
-        if system == "Windows":
-            # On Windows, use %LOCALAPPDATA%\app_name
-            return os.path.join(
-                os.environ.get(
-                    "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
-                ),
-                app_name,
-            )
-        elif system == "Darwin":  # macOS
-            # On macOS, use ~/Library/Application Support/app_name
-            return os.path.join(
-                os.path.expanduser("~/Library/Application Support"), str(app_name)
-            )
-        else:  # Linux and others
-            # On Linux, use ~/.local/state/app_name (for state data)
-            return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
+        return get_default_data_dir(app_name)
 
     def get_subdir(self, directory, subdirectory):
         """Returns a subdirectory ensuring it exists"""

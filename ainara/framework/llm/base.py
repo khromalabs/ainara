@@ -18,7 +18,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Generator, Union
+from typing import Generator, Optional, Tuple, Union, List
 
 import requests
 
@@ -90,6 +90,14 @@ class LLMBackend(ABC):
     #     messages.append({"role": "user", "content": text})
     #     return messages
 
+    def prepare_chat(
+        self, system_message: str, new_message: str
+    ) -> List[dict]:
+        """Format chat message for LLM processing"""
+        messages = [{"role": "system", "content": system_message}]
+        messages.append({"role": "user", "content": new_message})
+        return messages
+
     def check_provider_availability(self, api_base: str) -> bool:
         """Check if a provider endpoint is available"""
         try:
@@ -130,7 +138,7 @@ class LLMBackend(ABC):
         self,
         chat_history: list = None,
         stream: bool = False,
-    ) -> Union[str, Generator]:
+    ) -> Union[Tuple[str, Optional[str]], Generator]:
         """Process text using the LLM backend
 
         Args:

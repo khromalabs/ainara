@@ -16,6 +16,27 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+"""
+MCP (Model Context Protocol) client implementation for Ainara.
+Provides integration with MCP servers for tool discovery and execution.
+"""
 
-__version__ = "0.6.0"
-__version_info__ = (0, 6, 0)
+from .client_manager import MCPClientManager
+from .tool import MCPTool
+from .errors import (
+    MCPError,
+    MCPConnectionError,
+    MCPAuthenticationError,
+    MCPToolDiscoveryError,
+    MCPToolExecutionError,
+)
+
+__all__ = [
+    "MCPClientManager",
+    "MCPTool",
+    "MCPError",
+    "MCPConnectionError",
+    "MCPAuthenticationError",
+    "MCPToolDiscoveryError",
+    "MCPToolExecutionError",
+]

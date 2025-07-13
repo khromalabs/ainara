@@ -325,6 +325,8 @@ class OrakleMiddleware:
             stream=False,
         )
 
+        logger.info(f"ORAKLE selection_response: {selection_response}")
+
         try:
             # Parse the LLM response to get skill_id and parameters
             selection_data = json.loads(selection_response)

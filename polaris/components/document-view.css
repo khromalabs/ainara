@@ -1,0 +1,138 @@
+:host {
+    /* Position absolutely to fit inside the com-ring frame */
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    bottom: 170px; /* Leave space for the ring at the bottom */
+    background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */
+    color: #d4d4d4;
+    font-family: 'Menlo', 'Consolas', monospace;
+    border-radius: 16px; /* Match the inner frame's radius */
+    overflow: hidden;
+    /* Initial state for animation: hidden */
+    opacity: 0;
+    transform: scale(0.98);
+    pointer-events: none;
+    /* Animate the appearance, with a slight delay to sync with window resize */
+    transition: opacity 0.5s ease-in-out 0.2s, transform 0.5s ease-in-out 0.2s;
+}
+
+:host(.visible) {
+    /* Final state for animation: visible */
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+}
+
+.document-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.document-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #252526;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #ccc;
+    flex-shrink: 0;
+    border-bottom: 1px solid #333;
+}
+
+.doc-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Hide navigation controls by default */
+.controls,
+.counter {
+    display: none;
+}
+
+/* Show controls only when there are multiple documents */
+.document-container.has-multiple-docs .controls,
+.document-container.has-multiple-docs .counter {
+    display: flex; /* Or 'block' if you prefer */
+}
+
+.format-badge {
+    background-color: #3c3c3c;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.nav-button {
+    background: none;
+    border: 1px solid #444;
+    color: #ccc;
+    cursor: pointer;
+    padding: 2px 8px;
+    margin: 0 2px;
+    border-radius: 3px;
+}
+
+.copy-button {
+    background: #444;
+    color: #fff;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.nav-button:hover,
+.copy-button:hover {
+    background: #555;
+}
+
+.nav-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+pre {
+    margin: 0;
+    flex-grow: 1;
+    overflow: auto;
+    padding: 16px;
+}
+
+code {
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Add scrollbar styling */
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: #2a2a2a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #666;
+}
+
+.document-content {
+    margin: 10px;
+    padding: 10px;
+    overflow: auto;
+    /* border: 10px solid yellow; */
+}

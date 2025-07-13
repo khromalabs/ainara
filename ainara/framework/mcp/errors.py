@@ -16,6 +16,31 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+"""
+Custom exceptions for the MCP client implementation.
+"""
 
-__version__ = "0.6.0"
-__version_info__ = (0, 6, 0)
+
+class MCPError(Exception):
+    """Base exception for all MCP-related errors."""
+    pass
+
+
+class MCPConnectionError(MCPError):
+    """Raised when there's an error establishing a connection to an MCP server."""
+    pass
+
+
+class MCPAuthenticationError(MCPError):
+    """Raised when authentication with an MCP server fails."""
+    pass
+
+
+class MCPToolDiscoveryError(MCPError):
+    """Raised when there's an error discovering tools from an MCP server."""
+    pass
+
+
+class MCPToolExecutionError(MCPError):
+    """Raised when there's an error executing a tool on an MCP server."""
+    pass

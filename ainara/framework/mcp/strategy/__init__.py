@@ -16,6 +16,16 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+"""
+MCP connection strategies for different server types.
+"""
 
-__version__ = "0.6.0"
-__version_info__ = (0, 6, 0)
+from .base import MCPStrategyBase
+from .stdio import MCPStrategyStdio
+from .http_bearer import MCPStrategyHttpBearer
+
+__all__ = [
+    "MCPStrategyBase",
+    "MCPStrategyStdio",
+    "MCPStrategyHttpBearer",
+]

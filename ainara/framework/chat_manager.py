@@ -33,12 +33,13 @@ from typing import Any, Generator, List, Literal, Optional, Union
 from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.utils import load_spacy_model
 from ainara.framework.config import config
 from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
+from ainara.framework.user_memories_manager import UserMemoriesManager
+from ainara.framework.utils import load_spacy_model
 
 # import pprint
 
@@ -71,9 +72,12 @@ class ChatManager:
         self,
         llm,
         orakle_servers: List[str],
+        user_memories_manager: UserMemoriesManager,
         flask_app=None,
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
+        chat_memory: Optional[ChatMemory] = None,
+        user_profile_summary: Optional[str] = None,
         capabilities: Optional[dict] = None,
     ):
         self.app = flask_app
@@ -89,22 +93,29 @@ class ChatManager:
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
 
-        # # Add a reentrant lock for thread safety
-        # self.chat_lock = threading.RLock()
-
         # Initialize template manager
         self.template_manager = TemplateManager()
 
         # Initialize chat memory
-        memory_enabled = config.get("memory.enabled", True)
-        self.summary_enabled = config.get("summary.enabled", True)
-        if memory_enabled:
-            # Initialize chat memory using global config
-            self.chat_memory = ChatMemory()
-            logger.info("Chat memory initialized")
-        else:
-            self.chat_memory = None
-            logger.info("Chat memory disabled")
+        self.chat_memory = chat_memory
+        self.user_memories_manager = user_memories_manager
+        self.user_profile_summary = user_profile_summary
+        self.memory_enabled = config.get("memory.enabled", False)
+        self.summary_enabled = config.get("memory.summary_enabled", True)
+
+        # --- Memory Decay Tracking (persisted between sessions) ---
+        self.memory_decay_interval = config.get(
+            "memories.decay_interval_turns", 10
+        )
+        self.turn_counter = 0
+        self.decay_in_progress = False
+        self.decay_lock = threading.Lock()
+        if (
+            self.memory_enabled
+            and self.user_memories_manager
+            and self.memory_decay_interval > 0
+        ):
+            self.turn_counter = self.user_memories_manager.get_turn_counter()
 
         # Render the system message template
         current_date = datetime.now().date()
@@ -139,24 +150,94 @@ class ChatManager:
         for skill in self.capabilities:
             skills_description_list += "\n - " + skill["description"]
 
+        # Check if the user profile is new to show an onboarding message
+        user_memories_empty = (
+            self.user_memories_manager
+            and self.user_memories_manager.is_empty()
+        )
+        has_prior_user_messages = any(
+            msg.get("role") == "user" for msg in self.chat_history[:-1]
+        )  # Check all but the current one
+        if not has_prior_user_messages and user_memories_empty:
+            is_new_profile = True
+            logger.info(
+                "User profile is empty. Will display onboarding message."
+            )
+        else:
+            is_new_profile = False
+
         # Update system message with skills descriptions
         self.system_message = self.template_manager.render(
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": skills_description_list,
                 "current_date": current_date,
+                "is_new_profile": is_new_profile,
             },
         )
         self.llm.add_msg(self.system_message, self.chat_history, "system")
+
+        # Initialize executor if either summary or decay is enabled
+        self.summary_executor = None
         if self.summary_enabled:
-            self.llm.add_msg(self.new_summary, self.chat_history, "system")
+            self.summary_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="SummaryThread"
+            )
+
+        self.decay_executor = None
+        if (
+            self.memory_enabled
+            and self.user_memories_manager
+            and self.memory_decay_interval > 0
+        ):
+            self.decay_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="DecayThread"
+            )
+
+        if self.summary_enabled:
             # Summary generation fields
             self.trimmed_messages_buffer = []
             # Lock specifically for buffer operations
             self.buffer_lock = threading.Lock()
             self.summary_in_progress = False
-            self.summary_executor = ThreadPoolExecutor(max_workers=1)
-            self.current_summary = None
+            self.current_summary = "-"
+
+    def _initialize_memory_if_needed(self):
+        """Initializes memory components if they haven't been already."""
+        if self.chat_memory is None:
+            logger.info("Initializing ChatMemory on-demand...")
+            self.chat_memory = ChatMemory()
+            logger.info("Chat memory initialized.")
+
+        if self.user_memories_manager is None:
+            logger.info("Initializing UserMemoriesManager on-demand...")
+            self.user_memories_manager = UserMemoriesManager(
+                llm=self.llm,
+                chat_memory=self.chat_memory,
+                context_window=self.llm.get_context_window(),
+            )
+            logger.info("User Memories Manager initialized.")
+            # Perform initial consolidation
+            logger.info("Processing existing messages for user profile...")
+            self.user_memories_manager.process_new_messages_for_update()
+            logger.info("Message processing complete.")
+
+        # Always regenerate summary when enabling memory
+        if self.user_memories_manager:
+            self.user_profile_summary = (
+                self.user_memories_manager.generate_user_profile_summary()
+            )
+            if self.user_profile_summary:
+                logger.info("User profile summary generated/updated.")
+
+        # Initialize decay components if needed
+        if self.memory_decay_interval > 0 and self.decay_executor is None:
+            logger.info("Initializing Memory Decay executor on-demand...")
+            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.decay_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="DecayThread"
+            )
+            logger.info("Memory Decay executor initialized.")
 
     def _cleanup_audio_file(self, filepath: str) -> None:
         """Delete temporary audio file after a delay to ensure it's been served"""
@@ -291,7 +372,11 @@ class ChatManager:
                     try:
                         # Use spaCy to split the paragraph into sentences
                         doc = self.nlp(paragraph)
-                        paragraph_sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+                        paragraph_sentences = [
+                            sent.text.strip()
+                            for sent in doc.sents
+                            if sent.text.strip()
+                        ]
                         sentences.extend(paragraph_sentences)
                     except Exception as e:
                         logger.error(f"spaCy sentence tokenization error: {e}")
@@ -318,8 +403,16 @@ class ChatManager:
         if "_orakle_loading_signal_" in sentence:
             logger.info(f"PROCESSING: '{sentence}'")
             split_sentence = sentence.split("|")
-            skill_id = split_sentence[1].strip("\n") if len(split_sentence) > 1 else "skill_id"
-            yield ndjson("signal", "loading", {"state": "start", "type": "skill", "skill_id": skill_id})
+            skill_id = (
+                split_sentence[1].strip("\n")
+                if len(split_sentence) > 1
+                else "skill_id"
+            )
+            yield ndjson(
+                "signal",
+                "loading",
+                {"state": "start", "type": "skill", "skill_id": skill_id},
+            )
             return
 
         try:
@@ -359,6 +452,19 @@ class ChatManager:
         """Process and speak regular text content, yielding events as they're generated"""
         if not text.strip():
             return
+
+        # Handle non-TTS streaming directly to avoid sentence splitting logic
+        if not self.tts:
+            if stream_type == "json":
+                event_data = {
+                    "content": text,
+                    "flags": {"command": False, "audio": False},
+                }
+                yield ndjson("message", "stream", event_data)
+                return
+            elif stream_type == "cli":
+                print(text, end="", flush=True)
+                return
 
         # Use the extracted method to split text into chunks
         chunks = self._split_text_into_chunks(text)
@@ -461,8 +567,8 @@ class ChatManager:
         }
 
         # If we already have a summary, include it to maintain continuity
-        current_summary = self.chat_history[1]["content"]
-        if current_summary:
+        current_summary = self.current_summary
+        if current_summary and current_summary != "-":
             template_context["current_summary"] = current_summary
             prompt = self.template_manager.render(
                 "framework.chat_manager.update_summary", template_context
@@ -555,6 +661,40 @@ class ChatManager:
         # Submit the task to our executor
         self.summary_executor.submit(_background_summary_task)
 
+    def shutdown(self):
+        """Saves persistent state and gracefully shuts down background threads."""
+        logger.info("Shutting down thread executors")
+        # Shutdown the thread executors
+        if self.summary_executor:
+            self.summary_executor.shutdown(wait=True)
+        if self.decay_executor:
+            self.decay_executor.shutdown(wait=True)
+
+    def _trigger_memory_decay_in_background(self):
+        """Trigger background task to decay memory relevance."""
+        with self.decay_lock:
+            if self.decay_in_progress:
+                logger.debug(
+                    "Memory decay task already in progress. Skipping."
+                )
+                return
+            self.decay_in_progress = True
+            logger.info("Submitting memory decay task to background executor.")
+
+        self.decay_executor.submit(self._background_decay_task)
+
+    def _background_decay_task(self):
+        """Background worker to decay memory relevance."""
+        try:
+            logger.info("Background task started: Decaying memory relevance.")
+            self.user_memories_manager.decay_all_memories()
+            logger.info("Background task finished: Memory decay complete.")
+        except Exception as e:
+            logger.error(f"Error in background memory decay task: {e}")
+        finally:
+            with self.decay_lock:
+                self.decay_in_progress = False
+
     def trim_context(self, max_tokens=None):
         """
         Trim the chat history to stay within token limits while preserving context.
@@ -579,8 +719,7 @@ class ChatManager:
         )
 
         system_message = self.chat_history[0]
-        summary_message = self.chat_history[1]
-        system_tokens = system_message["tokens"] + summary_message["tokens"]
+        system_tokens = system_message["tokens"]
         available_tokens = max_tokens - system_tokens
 
         logger.info(f"System message uses {system_tokens} tokens")
@@ -686,7 +825,6 @@ class ChatManager:
         # Rebuild chat history with system message and kept exchanges
         new_history = []
         new_history.append(system_message)
-        new_history.append(summary_message)
         new_history.extend(kept_exchanges)
         logger.info(f"Added {len(kept_exchanges)} messages to new history")
 
@@ -702,9 +840,130 @@ class ChatManager:
 
         self.chat_history = new_history
 
+    def _handle_test_doc_view_stream(self, question: str, stream: str):
+        parts = question.strip().split(" ", 1)
+        if len(parts) < 2 or "," not in parts[1]:
+            usage_msg = "Usage: /testdocview <format>,<content>"
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+                logger.info("_handle_test_doc_view_stream 4")
+            return
+
+        command_body = parts[1]
+        doc_format, doc_content = command_body.split(",", 1)
+
+        if stream == "json":
+            yield ndjson("signal", "loading", {"state": "start"})
+            yield ndjson(
+                "ui",
+                "setView",
+                {"view": "document", "format": doc_format},
+            )
+            yield ndjson("content", "full", {"content": doc_content})
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+        elif stream == "cli":
+            print(f"\n--- Document (format: {doc_format}) ---")
+            print(doc_content)
+            print("---------------------------------")
+
+    def _handle_memory_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles /memory and /nomemory commands, updating the config."""
+        response = ""
+        command_lower = command.strip().lower()
+        state_changed = False
+        new_state = self.memory_enabled
+
+        if command_lower == "/memory":
+            if not self.memory_enabled:
+                self.memory_enabled = True
+                if "memory" not in config.config:
+                    config.config["memory"] = {}
+                config.config["memory"]["enabled"] = True
+                config.save()
+                self._initialize_memory_if_needed()
+                response = "Memory enabled"
+                state_changed = True
+                new_state = True
+            else:
+                response = "Memory is already enabled."
+        elif command_lower == "/nomemory":
+            if self.memory_enabled:
+                self.memory_enabled = False
+                if "memory" not in config.config:
+                    config.config["memory"] = {}
+                config.config["memory"]["enabled"] = False
+                config.save()
+                response = "Memory disabled"
+                state_changed = True
+                new_state = False
+            else:
+                response = "Memory disabled"
+
+        if stream is None:
+            return response
+
+        def generator():
+            if stream == "cli":
+                print(response)
+                return
+
+            if state_changed:
+                yield ndjson("ui", "setMemoryState", {"enabled": new_state})
+            yield ndjson("signal", "infoMessage", {"message": response})
+
+        return generator()
+
+    def _handle_test_doc_view_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testdocview command for all stream types."""
+        if stream:  # cli or json
+            return self._handle_test_doc_view_stream(command, stream)
+        else:  # no stream
+            parts = command.strip().split(" ", 1)
+            if len(parts) < 2 or "," not in parts[1]:
+                return "Usage: /testdocview <format>,<content>"
+
+            command_body = parts[1]
+            doc_format, doc_content = command_body.split(",", 1)
+            return f'<doc format="{doc_format}">{doc_content}</doc>'
+
+    def _handle_command(
+        self, question: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Checks for and handles special commands."""
+        command = question.strip()
+        if not command.startswith("/"):
+            return None
+
+        if command.lower() in ["/memory", "/nomemory"]:
+            return self._handle_memory_command(command, stream)
+
+        if command.lower().startswith("/testdocview"):
+            return self._handle_test_doc_view_command(command, stream)
+
+        return None
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
+        # user_message_id = None
+        # assistant_message_id = None
         """Main chat completion function
 
         Args:
@@ -714,9 +973,17 @@ class ChatManager:
                 - "cli": CLI streaming with prints and loading animation
                 - "json": Streams JSON events in NDJSON format
         """
+
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
             stream = "cli" if stream else None
+
+        # Handle special commands
+        command_response = self._handle_command(question, stream)
+        if command_response is not None:
+            # Delegate to the command's generator and then stop execution
+            yield from command_response
+            return
 
         # Check if spaCy model is available
         if not self.nlp:
@@ -732,8 +999,8 @@ class ChatManager:
 
         processed_answer = ""
         try:
-            if self.chat_memory:
-                self.chat_memory.add_entry(question, {"role": "user"})
+            if self.memory_enabled and self.chat_memory:
+                self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
             if (
@@ -747,31 +1014,107 @@ class ChatManager:
                 )
 
             self.llm.add_msg(question, self.chat_history, "user")
+
+            # --- Summary and Memory Injection ---
+            turn_chat_history = self.chat_history
+
             # Atomically check and apply any new summary
             if self.summary_enabled:
                 with self.buffer_lock:  # Use the existing lock for consistency
                     if self.new_summary:
-                        new_summary_copy = self.new_summary
+                        self.current_summary = self.new_summary
                         self.new_summary = (  # Clear it while holding the lock
                             "-"
                         )
                         logger.info("Retrieved new summary for application")
 
-            # Token counting can happen outside the lock
-            if "new_summary_copy" in locals():
-                new_summary_tokens = self.llm._get_token_count(
-                    new_summary_copy, "system"
+            # Prepare combined system prompt content
+            final_system_content = self.system_message
+            if (
+                self.summary_enabled
+                and self.current_summary
+                and self.current_summary != "-"
+            ):
+                final_system_content += (
+                    f"\n\n--- Conversation Summary ---\n{self.current_summary}"
                 )
-                self.chat_history[1]["content"] = new_summary_copy
-                self.chat_history[1]["tokens"] = new_summary_tokens
-                logger.info(f"Applied new summary: {new_summary_copy[:50]}...")
+
+            # --- User Profile Injection (from cached summary) ---
+            if self.memory_enabled and self.user_profile_summary:
+                # final_system_content += f"\n\n--- Next paragraph contains key information about the user, possibly including the user's name, which I MUST take into account:\n{self.user_profile_summary}"
+                final_system_content += (
+                    "\n\n--- IMPORTANT: The following is key information"
+                    " about the user you are talking to. You MUST use this"
+                    " information, such as their name, to personalize your"
+                    f" responses. ---\n{self.user_profile_summary}"
+                )
+
+            # --- Context Memories ---
+            if self.memory_enabled and self.user_memories_manager:
+                # 1. Create a search query from the last few turns for better context
+                history_for_search = self.prepare_chat_history_for_skill()[
+                    -4:
+                ]  # Last 2 exchanges
+                search_context = "\n".join(
+                    [
+                        f"{msg['role']}: {msg['content']}"
+                        for msg in history_for_search
+                    ]
+                )
+
+                # logger.info(f"search_context: {search_context}")
+
+                relevant_memories = (
+                    self.user_memories_manager.get_relevant_memories(
+                        search_context
+                    )
+                )
+                # logger.info(f"relevant_memories: {relevant_memories}")
+
+                if relevant_memories:
+                    # Pre-process memories to format the relevance score for display
+                    processed_memories_for_template = []
+                    for mem in relevant_memories:
+                        processed_mem = mem.copy()
+                        processed_mem["relevance_score"] = (
+                            f"{processed_mem.get('relevance', 0.0):.2f}"
+                        )
+                        processed_memories_for_template.append(processed_mem)
+
+                    logger.info(
+                        "Injecting"
+                        f" {len(processed_memories_for_template)} dynamically"
+                        " retrieved memories into context."
+                    )
+                    context_memories_prompt = self.template_manager.render(
+                        "framework.chat_manager.user_memories_prompt",
+                        {"memories": processed_memories_for_template},
+                    )
+                    final_system_content += f"\n\n{context_memories_prompt}"
+                    # logger.info(f"context_memories_prompt: {context_memories_prompt}")
+                else:
+                    logger.info("No relevant memories found to be injected.")
+
+            # Update the single system message
+            self.chat_history[0]["content"] = final_system_content
+            self.chat_history[0]["tokens"] = self.llm._get_token_count(
+                final_system_content, "system"
+            )
+            logger.info("Updated system prompt with summary and memories.")
+
+            # Trim context *after* injecting memories to ensure we are within limits
             self.trim_context()
+
+            # --- LLM Call ---
             llm_response_stream = self.llm.chat(
-                chat_history=self.chat_history, stream=True
+                chat_history=turn_chat_history, stream=True
             )
 
             processed_answer = ""
             text_buffer = ""
+            parsing_mode = "text"  # 'text' or 'doc'
+            doc_buffer = ""
+            doc_format = "plaintext"
 
             # Process the stream through the Orakle middleware
             # This now handles command execution and interpretation internally
@@ -782,49 +1125,95 @@ class ChatManager:
                     continue
 
                 processed_answer += chunk
-                text_buffer += chunk
 
-                # Process complete sentences for immediate TTS
-                if self.tts:
-                    sentences = self._extract_complete_sentences(text_buffer)
-                    # if len(sentences) > 0:
-                    #     logger.info(" --- SENTENCES --- ")
-                    #     logger.info(pprint.pformat(sentences))
-                    if stream == "cli":
-                        loading.stop()
-                    elif stream == "json":
-                        yield ndjson("signal", "loading", {"state": "stop"})
-                    for sentence in sentences:
-                        if stream == "json":
-                            yield from self._process_streaming_sentence(
-                                sentence, stream
-                            )
-                        else:
-                            # For CLI mode, just process without collecting events
-                            for _ in self._process_streaming_sentence(
-                                sentence, stream
-                            ):
-                                pass
+                # Route chunk to the correct buffer based on current parsing mode
+                if parsing_mode == "doc":
+                    doc_buffer += chunk
+                else:
+                    text_buffer += chunk
 
-                    # Keep any incomplete sentence in the buffer
-                    if sentences:
-                        last_sentence = sentences[-1]
-                        last_pos = text_buffer.rfind(last_sentence) + len(
-                            last_sentence
+                # --- State Machine for Parsing ---
+                # Loop to handle multiple state transitions within a single chunk (e.g., <doc>...</doc>)
+                while True:
+                    state_changed = False
+                    if parsing_mode == "text":
+                        doc_start_match = re.search(
+                            r'<doc format="([\w\d_.-]+)">', text_buffer
                         )
-                        text_buffer = text_buffer[last_pos:].strip()
-                elif stream == "cli":
-                    # For CLI without TTS, print directly
-                    print(chunk, end="", flush=True)
+                        if doc_start_match:
+                            pre_doc_text = text_buffer[
+                                : doc_start_match.start()
+                            ]
+                            if pre_doc_text.strip():
+                                yield from self._process_regular_text(
+                                    pre_doc_text, stream
+                                )
+
+                            doc_format = doc_start_match.group(1)
+                            if stream == "json":
+                                yield ndjson(
+                                    "ui",
+                                    "setView",
+                                    {"view": "document", "format": doc_format},
+                                )
+
+                            parsing_mode = "doc"
+                            doc_buffer = text_buffer[doc_start_match.end():]
+                            text_buffer = ""
+                            state_changed = True
+
+                    elif parsing_mode == "doc":
+                        doc_end_match = re.search(r"</doc>", doc_buffer)
+                        if doc_end_match:
+                            doc_content = doc_buffer[: doc_end_match.start()]
+                            if stream == "json":
+                                # def ndjson(event_name: str, event_type: str, content: Any = None) -> str:
+                                yield ndjson(
+                                    "content", "full", {"content": doc_content}
+                                )
+
+                            parsing_mode = "text"
+                            text_buffer = doc_buffer[doc_end_match.end():]
+                            doc_buffer = ""
+                            state_changed = True
+
+                    if not state_changed:
+                        break
+
+                # --- Regular Text Processing ---
+                if parsing_mode == "text" and text_buffer:
+                    if self.tts:
+                        sentences = self._extract_complete_sentences(
+                            text_buffer
+                        )
+                        if sentences:
+                            if stream == "cli":
+                                loading.stop()
+                            elif stream == "json":
+                                yield ndjson(
+                                    "signal", "loading", {"state": "stop"}
+                                )
+                            for sentence in sentences:
+                                yield from self._process_streaming_sentence(
+                                    sentence, stream
+                                )
+
+                            last_sentence = sentences[-1]
+                            last_pos = text_buffer.rfind(last_sentence) + len(
+                                last_sentence
+                            )
+                            text_buffer = text_buffer[last_pos:].strip()
+                    elif text_buffer:  # Non-TTS streaming
+                        (
+                            print(text_buffer, end="", flush=True)
+                            if stream == "cli"
+                            else None
+                        )
+                        text_buffer = ""
 
             # Process any remaining text in the buffer
-            if text_buffer and self.tts:
-                if stream == "json":
-                    yield from self._process_regular_text(text_buffer, stream)
-                else:
-                    # For CLI mode, just process without collecting events
-                    for _ in self._process_regular_text(text_buffer, stream):
-                        pass
+            if text_buffer.strip():
+                yield from self._process_regular_text(text_buffer, stream)
 
         except Exception as e:
             if loading:
@@ -846,19 +1235,17 @@ class ChatManager:
                 )
 
                 # Log assistant response to chat memory
-                if self.chat_memory:
-                    self.chat_memory.add_entry(
-                        processed_answer, {"role": "assistant"}
-                    )
+                if self.memory_enabled and self.chat_memory:
+                    self.chat_memory.add_entry(processed_answer, "assistant")
             else:
                 # If there's no processed answer, add a placeholder
                 logger.warning("No answer from the LLM, adding placeholder")
                 self.llm.add_msg(
                     "No response generated", self.chat_history, "assistant"
                 )
-                if self.chat_memory:
+                if self.memory_enabled and self.chat_memory:
                     self.chat_memory.add_entry(
-                        "No response generated", {"role": "assistant"}
+                        "No response generated", "assistant"
                     )
 
             # Stop loading animation
@@ -871,6 +1258,23 @@ class ChatManager:
             # Trigger background summary generation
             if self.summary_enabled:
                 self._update_summary_in_background()
+
+            # --- Memory Decay ---
+            if self.memory_enabled and self.memory_decay_interval > 0:
+                self.turn_counter += 1
+                if self.turn_counter >= self.memory_decay_interval:
+                    logger.info(
+                        f"decay turn counter {self.turn_counter} over "
+                        "limit, triggering decay"
+                    )
+                    self._trigger_memory_decay_in_background()
+                    self.user_memories_manager.reset_turn_counter()
+                    self.turn_counter = 0  # Reset in-memory counter
+                logger.info(f"Saving turn counter state: {self.turn_counter}")
+                if self.user_memories_manager:
+                    self.user_memories_manager.save_turn_counter(
+                        self.turn_counter
+                    )
 
             # For non-streaming mode, return the processed answer
             if not stream:
@@ -890,23 +1294,6 @@ class ChatManager:
 
     def prepare_chat_history_for_skill(self) -> list:
         """Prepare chat history in a format suitable for skills"""
-        # If we have chat memory, use recent entries from it
-        if self.chat_memory:
-            recent_entries = self.chat_memory.get_recent_entries(
-                20
-            )  # Get more entries from memory
-            formatted_history = []
-
-            for entry in recent_entries:
-                role = entry["metadata"].get("role")
-                if role in ["user", "assistant"]:
-                    formatted_history.append(
-                        {"role": role, "content": entry["content"]}
-                    )
-
-            return formatted_history
-
-        # Otherwise, fall back to the existing implementation
         formatted_history = []
         for msg in self.chat_history:
             # Only include user and assistant messages, skip system messages
