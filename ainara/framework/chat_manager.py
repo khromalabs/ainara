@@ -158,7 +158,7 @@ class ChatManager:
         has_prior_user_messages = any(
             msg.get("role") == "user" for msg in self.chat_history[:-1]
         )  # Check all but the current one
-        if has_prior_user_messages and user_memories_empty:
+        if not has_prior_user_messages and user_memories_empty:
             is_new_profile = True
             logger.info(
                 "User profile is empty. Will display onboarding message."
