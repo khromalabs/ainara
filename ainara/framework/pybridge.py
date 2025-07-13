@@ -38,7 +38,7 @@ from ainara import __version__
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.user_memories_manager import UserMemoriesManager
+from ainara.framework.green_memories import GreenMemories
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
@@ -281,11 +281,11 @@ def create_app():
         chat_memory = ChatMemory()
         logger.info("Chat memory initialized")
 
-    # Initialize UserMemoriesManager
-    user_memories_manager = None
+    # Initialize GreenMemories
+    green_memories = None
     user_profile_summary = None
     if chat_memory:
-        user_memories_manager = UserMemoriesManager(
+        green_memories = GreenMemories(
             llm=app.llm,
             chat_memory=chat_memory,
             context_window=app.llm.get_context_window(),
@@ -293,12 +293,12 @@ def create_app():
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
         logger.info("Processing new messages for user profile...")
-        user_memories_manager.process_new_messages_for_update()
+        green_memories.process_new_messages_for_update()
         logger.info("Message processing complete.")
 
         # Generate the narrative user profile summary
         user_profile_summary = (
-            user_memories_manager.generate_user_profile_summary()
+            green_memories.generate_user_profile_summary()
         )
         if user_profile_summary:
             logger.info("User profile summary generated successfully.")
@@ -310,7 +310,7 @@ def create_app():
         flask_app=app,
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
         chat_memory=chat_memory,
-        user_memories_manager=user_memories_manager,
+        green_memories=green_memories,
         user_profile_summary=user_profile_summary,
     )
 

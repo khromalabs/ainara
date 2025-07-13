@@ -44,7 +44,7 @@ MIN_RELEVANCE_THRESHOLD = 0.2
 KEY_MEMORY_BOOST = 1.5
 
 
-class UserMemoriesManager:
+class GreenMemories:
     """Manages the user's semantic memories (beliefs, preferences, facts)."""
 
     def __init__(
@@ -60,7 +60,7 @@ class UserMemoriesManager:
             # spaCy is a critical dependency for substantive query analysis.
             raise RuntimeError(
                 "Failed to load spaCy model, which is essential for"
-                " UserMemoriesManager."
+                " GreenMemories."
             )
 
         # This path is only needed for the one-time migration
@@ -421,7 +421,7 @@ class UserMemoriesManager:
         memories_text = "\n".join(formatted_memories)
 
         user_prompt = self.template_manager.render(
-            "framework.user_memories_manager.generate_user_profile",
+            "framework.green_memories.generate_user_profile",
             {"memories_text": memories_text},
         )
 
@@ -795,11 +795,11 @@ class UserMemoriesManager:
                 f"Assistant: {assistant_message['content']}"
             )
             extraction_prompt = self.template_manager.render(
-                "framework.user_memories_manager.extract_memory_candidate",
+                "framework.green_memories.extract_memory_candidate",
                 {"conversation_snippet": conversation_snippet},
             )
             system_prompt = self.template_manager.render(
-                "framework.user_memories_manager.extract_memory_candidate_system"
+                "framework.green_memories.extract_memory_candidate_system"
             )
             processing_history = [
                 {

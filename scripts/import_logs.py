@@ -130,11 +130,11 @@ def parse_and_import_logs(storage: SQLiteStorage, directory_path: str):
 
 
 def trigger_memory_rescan(storage: SQLiteStorage):
-    """Resets metadata to force UserMemoriesManager to re-process all messages."""
+    """Resets metadata to force GreenMemories to re-process all messages."""
     logger.info("Scheduling a full rescan of chat history to generate new memories...")
     try:
         with storage.conn:
-            # This forces the UserMemoriesManager to start from the beginning
+            # This forces the GreenMemories to start from the beginning
             storage.conn.execute(
                 "DELETE FROM db_metadata WHERE key = ?",
                 ("profile_last_processed_timestamp",),

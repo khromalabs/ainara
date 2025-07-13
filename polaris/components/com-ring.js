@@ -264,7 +264,7 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     sttStatus.classList.remove('active2');
                     sttStatus.textContent = '';
-                }, 8100);
+                }, 5000);
             }
         });
 

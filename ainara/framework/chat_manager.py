@@ -38,7 +38,7 @@ from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.user_memories_manager import UserMemoriesManager
+from ainara.framework.green_memories import GreenMemories
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -72,7 +72,7 @@ class ChatManager:
         self,
         llm,
         orakle_servers: List[str],
-        user_memories_manager: UserMemoriesManager,
+        green_memories: GreenMemories,
         flask_app=None,
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
@@ -98,7 +98,7 @@ class ChatManager:
 
         # Initialize chat memory
         self.chat_memory = chat_memory
-        self.user_memories_manager = user_memories_manager
+        self.green_memories = green_memories
         self.user_profile_summary = user_profile_summary
         self.memory_enabled = config.get("memory.enabled", False)
         self.summary_enabled = config.get("memory.summary_enabled", True)
@@ -112,10 +112,10 @@ class ChatManager:
         self.decay_lock = threading.Lock()
         if (
             self.memory_enabled
-            and self.user_memories_manager
+            and self.green_memories
             and self.memory_decay_interval > 0
         ):
-            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.turn_counter = self.green_memories.get_turn_counter()
 
         # Render the system message template
         current_date = datetime.now().date()
@@ -152,8 +152,8 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         user_memories_empty = (
-            self.user_memories_manager
-            and self.user_memories_manager.is_empty()
+            self.green_memories
+            and self.green_memories.is_empty()
         )
         has_prior_user_messages = any(
             msg.get("role") == "user" for msg in self.chat_history[:-1]
@@ -187,7 +187,7 @@ class ChatManager:
         self.decay_executor = None
         if (
             self.memory_enabled
-            and self.user_memories_manager
+            and self.green_memories
             and self.memory_decay_interval > 0
         ):
             self.decay_executor = ThreadPoolExecutor(
@@ -209,9 +209,9 @@ class ChatManager:
             self.chat_memory = ChatMemory()
             logger.info("Chat memory initialized.")
 
-        if self.user_memories_manager is None:
-            logger.info("Initializing UserMemoriesManager on-demand...")
-            self.user_memories_manager = UserMemoriesManager(
+        if self.green_memories is None:
+            logger.info("Initializing GreenMemories on-demand...")
+            self.green_memories = GreenMemories(
                 llm=self.llm,
                 chat_memory=self.chat_memory,
                 context_window=self.llm.get_context_window(),
@@ -219,13 +219,13 @@ class ChatManager:
             logger.info("User Memories Manager initialized.")
             # Perform initial consolidation
             logger.info("Processing existing messages for user profile...")
-            self.user_memories_manager.process_new_messages_for_update()
+            self.green_memories.process_new_messages_for_update()
             logger.info("Message processing complete.")
 
         # Always regenerate summary when enabling memory
-        if self.user_memories_manager:
+        if self.green_memories:
             self.user_profile_summary = (
-                self.user_memories_manager.generate_user_profile_summary()
+                self.green_memories.generate_user_profile_summary()
             )
             if self.user_profile_summary:
                 logger.info("User profile summary generated/updated.")
@@ -233,7 +233,7 @@ class ChatManager:
         # Initialize decay components if needed
         if self.memory_decay_interval > 0 and self.decay_executor is None:
             logger.info("Initializing Memory Decay executor on-demand...")
-            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.turn_counter = self.green_memories.get_turn_counter()
             self.decay_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="DecayThread"
             )
@@ -687,7 +687,7 @@ class ChatManager:
         """Background worker to decay memory relevance."""
         try:
             logger.info("Background task started: Decaying memory relevance.")
-            self.user_memories_manager.decay_all_memories()
+            self.green_memories.decay_all_memories()
             logger.info("Background task finished: Memory decay complete.")
         except Exception as e:
             logger.error(f"Error in background memory decay task: {e}")
@@ -1050,7 +1050,7 @@ class ChatManager:
                 )
 
             # --- Context Memories ---
-            if self.memory_enabled and self.user_memories_manager:
+            if self.memory_enabled and self.green_memories:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
                     -4:
@@ -1065,7 +1065,7 @@ class ChatManager:
                 # logger.info(f"search_context: {search_context}")
 
                 relevant_memories = (
-                    self.user_memories_manager.get_relevant_memories(
+                    self.green_memories.get_relevant_memories(
                         search_context
                     )
                 )
@@ -1268,11 +1268,11 @@ class ChatManager:
                         "limit, triggering decay"
                     )
                     self._trigger_memory_decay_in_background()
-                    self.user_memories_manager.reset_turn_counter()
+                    self.green_memories.reset_turn_counter()
                     self.turn_counter = 0  # Reset in-memory counter
                 logger.info(f"Saving turn counter state: {self.turn_counter}")
-                if self.user_memories_manager:
-                    self.user_memories_manager.save_turn_counter(
+                if self.green_memories:
+                    self.green_memories.save_turn_counter(
                         self.turn_counter
                     )
 
