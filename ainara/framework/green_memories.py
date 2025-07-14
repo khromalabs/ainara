@@ -22,6 +22,7 @@
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -44,7 +45,7 @@ MIN_RELEVANCE_THRESHOLD = 0.2
 KEY_MEMORY_BOOST = 1.5
 
 
-class GreenMemories:
+class GREENMemories:
     """Manages the user's semantic memories (beliefs, preferences, facts)."""
 
     def __init__(
@@ -56,11 +57,14 @@ class GreenMemories:
         self.template_manager = TemplateManager()
         self.context_window = context_window or 8192  # Default to 8k if not provided
         self.nlp = load_spacy_model()
+        self.extraction_context_turns = config.get(
+            "user_profile.green_memories.extraction_context_turns", 2
+        )
         if not self.nlp:
             # spaCy is a critical dependency for substantive query analysis.
             raise RuntimeError(
                 "Failed to load spaCy model, which is essential for"
-                " GreenMemories."
+                " GREENMemories."
             )
 
         # This path is only needed for the one-time migration
@@ -425,13 +429,18 @@ class GreenMemories:
             {"memories_text": memories_text},
         )
 
-        profile_summary = self.llm.chat(
-            chat_history=[{"role": "user", "content": user_prompt}],
-            stream=False,
-        )
-        logger.info(
-            f"Generated user profile summary: {profile_summary[:150]}..."
-        )
+        try:
+            profile_summary = self.llm.chat(
+                chat_history=[{"role": "user", "content": user_prompt}],
+                stream=False,
+            )
+            logger.info(
+                f"Generated user profile summary: {profile_summary[:150]}..."
+            )
+        except Exception:
+            profile_summary = "User profile couldn't be generated"
+            logger.error(profile_summary)
+
         return profile_summary
 
     def get_key_memories(
@@ -470,6 +479,10 @@ class GreenMemories:
         except Exception as e:
             logger.error(f"Failed to check if profile is empty: {e}")
             return False  # Safer to assume not empty on error
+
+    def _normalize_memory_text(self, text: str) -> str:
+        """Cleans memory text by collapsing whitespace and stripping ends."""
+        return re.sub(r'\s+', ' ', text).strip()
 
     def get_relevant_memories(
         self,
@@ -639,8 +652,14 @@ class GreenMemories:
         logger.info(
             f"Processing {len(conversation_turns)} new conversation turns."
         )
-        for user_msg, assistant_msg in conversation_turns:
-            self._extract_and_assimilate_memory(user_msg, assistant_msg)
+        for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
+            # Create a sliding window of context. A value of 0 means no extra context.
+            start_index = max(0, i - self.extraction_context_turns)
+            context_turns = conversation_turns[start_index: i + 1]
+
+            # The last turn in the window is the one we are primarily analyzing.
+            # The preceding turns provide the context.
+            self._extract_and_assimilate_memory(context_turns)
 
         # After processing all turns, update the timestamp to the last message processed
         latest_timestamp = new_messages[-1].get("timestamp")
@@ -699,7 +718,7 @@ class GreenMemories:
         target_section = memory_data.get("target", "extended_memories")
         new_memory = memory_data.get("memory_data", {})
         topic = new_memory.get("topic", "general")
-        memory_text = new_memory.get("memory")
+        memory_text = self._normalize_memory_text(new_memory.get("memory", ""))
 
         if not memory_text:
             logger.warning(
@@ -772,13 +791,18 @@ class GreenMemories:
             logger.error(f"Failed to create new memory in database: {e}")
 
     def _extract_and_assimilate_memory(
-        self, user_message: Dict, assistant_message: Dict
+        self, conversation_turns: List[tuple[Dict, Dict]]
     ):
         """
         Extracts a potential memory from a conversation turn. If a candidate
         memory is extracted, it is checked against existing memories for
         duplicates before being created or used to reinforce an existing memory.
         """
+        if not conversation_turns:
+            return
+
+        # The primary turn being analyzed is the last one in the list.
+        user_message, assistant_message = conversation_turns[-1]
         # A high threshold to ensure we only reinforce true duplicates.
         candidate_str = ""
 
@@ -790,9 +814,8 @@ class GreenMemories:
 
         try:
             # Step 1: Use the LLM to extract a potential memory candidate.
-            conversation_snippet = (
-                f"User: {user_message['content']}\n"
-                f"Assistant: {assistant_message['content']}"
+            conversation_snippet = "\n".join(
+                [f"User: {u['content']}\nAssistant: {a['content']}" for u, a in conversation_turns]
             )
             extraction_prompt = self.template_manager.render(
                 "framework.green_memories.extract_memory_candidate",
@@ -808,6 +831,10 @@ class GreenMemories:
                 },
                 {"role": "user", "content": extraction_prompt},
             ]
+            logger.info(
+                f"GREENMemories-Sending to the LLM this chat_history:"
+                f" {processing_history}"
+            )
             candidate_str = self.llm.chat(
                 chat_history=processing_history, stream=False
             )
@@ -820,7 +847,7 @@ class GreenMemories:
                 )
                 return
 
-            candidate_text = candidate_memory["memory"]
+            candidate_text = self._normalize_memory_text(candidate_memory["memory"])
             candidate_type = candidate_memory.get(
                 "memory_type", "extended_memories"
             )

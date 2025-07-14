@@ -38,7 +38,7 @@ from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.green_memories import GreenMemories
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -72,7 +72,7 @@ class ChatManager:
         self,
         llm,
         orakle_servers: List[str],
-        green_memories: GreenMemories,
+        green_memories: GREENMemories,
         flask_app=None,
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
@@ -210,8 +210,8 @@ class ChatManager:
             logger.info("Chat memory initialized.")
 
         if self.green_memories is None:
-            logger.info("Initializing GreenMemories on-demand...")
-            self.green_memories = GreenMemories(
+            logger.info("Initializing GREENMemories on-demand...")
+            self.green_memories = GREENMemories(
                 llm=self.llm,
                 chat_memory=self.chat_memory,
                 context_window=self.llm.get_context_window(),

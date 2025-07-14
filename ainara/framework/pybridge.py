@@ -38,7 +38,7 @@ from ainara import __version__
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.config import ConfigManager
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.green_memories import GreenMemories
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
@@ -281,11 +281,11 @@ def create_app():
         chat_memory = ChatMemory()
         logger.info("Chat memory initialized")
 
-    # Initialize GreenMemories
+    # Initialize GREENMemories
     green_memories = None
     user_profile_summary = None
     if chat_memory:
-        green_memories = GreenMemories(
+        green_memories = GREENMemories(
             llm=app.llm,
             chat_memory=chat_memory,
             context_window=app.llm.get_context_window(),
