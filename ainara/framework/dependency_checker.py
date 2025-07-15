@@ -313,12 +313,15 @@ class DependencyChecker:
 
                 # Fallback: Check common CUDA paths if 'where' fails
                 program_files = os.environ.get('ProgramFiles', 'C:\\Program Files')
-                cuda_path = os.path.join(program_files, 'NVIDIA GPU Computing Toolkit', 'CUDA')
-                common_versions = ['v12.1', 'v12.0', 'v11.8', 'v11.7', 'v11.0'] # Example versions
-                for version in common_versions:
-                    bin_path = os.path.join(cuda_path, version, 'bin')
-                    if os.path.exists(os.path.join(bin_path, f"{library_name}.dll")):
-                        return True
+                cuda_base_path = os.path.join(program_files, 'NVIDIA GPU Computing Toolkit', 'CUDA')
+                if os.path.exists(cuda_base_path):
+                    # Dynamically find installed CUDA versions instead of hardcoding
+                    installed_versions = [d for d in os.listdir(cuda_base_path) if os.path.isdir(os.path.join(cuda_base_path, d)) and d.lower().startswith('v')]
+                    # Check in descending order to find the latest version first
+                    for version in sorted(installed_versions, reverse=True):
+                        bin_path = os.path.join(cuda_base_path, version, 'bin')
+                        if os.path.exists(os.path.join(bin_path, f"{library_name}.dll")):
+                            return True
                 return False # Return false if not found by 'where' or in common paths
             except (subprocess.SubprocessError, FileNotFoundError):
                 return False
@@ -442,6 +445,7 @@ class DependencyChecker:
                     except Exception as e:
                         error_msg = str(e)
                         details["error_message"] = error_msg
+                        logger.error(f"PyTorch CUDA initialization error: {error_msg}")
 
                         if "Found no NVIDIA driver" in error_msg:
                             missing_libs.append("NVIDIA driver")

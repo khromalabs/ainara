@@ -65,7 +65,7 @@ def get_optimal_whisper_config():
             # Adjust model size based on VRAM
             if vram_gb >= 8:  # High-end GPUs
                 # Can use larger models with good performance
-                config["model_size"] = "medium"
+                config["model_size"] = "large-v3"
                 config["beam_size"] = 5
             elif vram_gb >= 4:  # Mid-range GPUs like GTX 1650 Ti
                 # Balance between speed and accuracy
@@ -150,7 +150,7 @@ class FasterWhisperSTT(STTBackend):
 
         # Check dependencies first
         try:
-            from ainara.framework.utils.dependency_checker import \
+            from ainara.framework.dependency_checker import \
                 DependencyChecker
 
             stt_deps = DependencyChecker.check_stt_dependencies()
