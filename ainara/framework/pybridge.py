@@ -25,7 +25,7 @@ import bisect
 import json
 import logging
 import os
-# import pprint
+import pprint
 import shutil
 import sys
 import time
@@ -42,6 +42,7 @@ from ainara.framework.config import ConfigManager
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.green_memories import GREENMemories
 from ainara.framework.llm import create_llm_backend
+from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
@@ -940,8 +941,9 @@ def create_app():
                 f" {filter_models if filter_models else 'None'}"
             )
 
-            providers = app.llm.get_available_providers()
-            # logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
+            litellm_provider = LiteLLM()
+            providers = litellm_provider.get_available_providers()
+            logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
 
             # Format the response
             formatted_providers = {}

@@ -28,7 +28,7 @@ class LLMBackend(ABC):
 
     def __init__(self, config: dict):
         self.config = config
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.provider = {}
 
     def my_custom_logging_fn(self, model_call_dict):
@@ -113,7 +113,6 @@ class LLMBackend(ABC):
     #         return False
     #     return self.check_provider_availability(self.provider["api_base"])
 
-    @abstractmethod
     def get_available_providers(self):
         """
         Get a list of available LLM providers and their models.
@@ -121,7 +120,7 @@ class LLMBackend(ABC):
         Returns:
             list: List of provider information including models
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_context_window(self) -> int:

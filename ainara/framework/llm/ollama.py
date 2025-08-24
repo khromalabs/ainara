@@ -338,9 +338,6 @@ class OllamaLLM(LLMBackend):
                 f"Error communicating with Ollama (async): {str(e)}"
             ) from e
 
-    def get_available_providers(self):
-        return None
-
     def get_available_models(self) -> List[Dict[str, Any]]:
         try:
             models_data = (

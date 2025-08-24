@@ -173,7 +173,7 @@ class ServiceManager {
             this.startService('pybridge')
         ];
 
-        this.startProgress = 30;
+        this.startProgress = 10;
 
         this.updateProgress(this.initializeMsg, this.startProgress);
 
@@ -226,8 +226,8 @@ class ServiceManager {
                     }
                 });
 
-                // Check if service starts successfully in three minutes top
-                this.waitForHealth(serviceId, 180000)
+                // Check if service starts successfully in ten minutes top
+                this.waitForHealth(serviceId, 600000)
                     .then(() => resolve())
                     .catch(err => reject(err));
 
@@ -549,7 +549,7 @@ class ServiceManager {
                             // Start the fake progress timer if still running
                             progressIntervalId = setInterval(() => {
                                 if (visualProgress < maxFakeProgress) {
-                                    visualProgress = Math.min(visualProgress + 0.3, maxFakeProgress);
+                                    visualProgress = Math.min(visualProgress + 0.05, maxFakeProgress);
                                     // Update UI with fake progress but last real message
                                     this.updateProgress(lastActualMessage, visualProgress);
                                     // console.log(`Fake progress incremented to ${visualProgress}%`);
@@ -558,7 +558,7 @@ class ServiceManager {
                                     // in case a real update resets it later.
                                     // console.log("Fake progress reached cap.");
                                 }
-                            }, 2000); // Increment every two seconds
+                            }, 1000); // Increment every second
                             // console.log("Started fake progress interval");
                         }
 
