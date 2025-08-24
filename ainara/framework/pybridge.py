@@ -35,11 +35,12 @@ from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 
 from ainara import __version__
+from ainara.framework.backup import BackupManager
 from ainara.framework.chat_manager import ChatManager
-from ainara.framework.config import ConfigManager
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.green_memories import GREENMemories
+from ainara.framework.config import ConfigManager
 from ainara.framework.dependency_checker import DependencyChecker
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
@@ -297,9 +298,7 @@ def create_app():
         logger.info("Message processing complete.")
 
         # Generate the narrative user profile summary
-        user_profile_summary = (
-            green_memories.generate_user_profile_summary()
-        )
+        user_profile_summary = green_memories.generate_user_profile_summary()
         if user_profile_summary:
             logger.info("User profile summary generated successfully.")
 
@@ -314,6 +313,12 @@ def create_app():
         user_profile_summary=user_profile_summary,
     )
 
+    # Initialize and start the backup manager
+    app.backup_manager = BackupManager(config)
+    app.backup_manager.start()
+    # Ensure the backup thread is stopped cleanly on exit
+    atexit.register(app.backup_manager.stop)
+
     @app.route("/health", methods=["GET"])
     def health_check():
         """Comprehensive health check endpoint"""
@@ -322,6 +327,7 @@ def create_app():
         # Get memory configuration
         memory_config = config.get("memory", {})
         memory_enabled = memory_config.get("enabled", False)
+        backup_enabled = config.get("backup.enabled", False)
 
         status = {
             "status": "ok",
@@ -333,6 +339,7 @@ def create_app():
                 "chat_manager": app.chat_manager is not None,
                 "config_manager": config is not None,
                 "logging": logging_manager is not None,
+                "backup_manager": app.backup_manager is not None,
             },
             "dependencies": {"llm_available": app.llm is not None},
         }
@@ -345,6 +352,18 @@ def create_app():
                 and app.chat_manager.chat_memory is not None
             )
 
+        # Add backup status details
+        if backup_enabled and hasattr(app, "backup_manager"):
+            bm = app.backup_manager
+            status["backup"] = {
+                "enabled": True,
+                "status": bm.last_backup_status,
+                "last_run": bm.last_backup_timestamp,
+                "error": bm.last_backup_error,
+            }
+        else:
+            status["backup"] = {"enabled": False, "status": "disabled"}
+
         # Check if all essential services are available
         all_services_ok = all(status["services"].values())
         all_dependencies_ok = all(status["dependencies"].values())
@@ -352,6 +371,20 @@ def create_app():
         if not all_services_ok or not all_dependencies_ok:
             status["status"] = "degraded"
             status["message"] = "Some services or dependencies are unavailable"
+        # Also mark as degraded if the last backup failed
+        elif (
+            status["backup"]["enabled"]
+            and status["backup"]["status"] != "success"
+        ):
+            status["status"] = "degraded"
+            if status["backup"]["status"] == "failure":
+                status["message"] = (
+                    "The last backup attempt failed. Please check the logs."
+                )
+            else:
+                status["message"] = (
+                    "A backup has not been successfully completed yet."
+                )
 
         # Add response time measurement
         status["response_time_ms"] = (time.time() - start_time) * 1000
@@ -718,9 +751,10 @@ def create_app():
             )
             messages_by_date = {}
             for msg in all_messages:
-                logger.info(f"msg: {msg}")
+                # TODO get messages by day instead of getting all together
+                # logger.info(f"msg: {msg}")
                 timestamp_str = msg.get("timestamp")
-                logger.info(f"timestamp_str: {timestamp_str}")
+                # logger.info(f"timestamp_str: {timestamp_str}")
                 if timestamp_str:
                     # Ensure timestamp is timezone-aware before converting
                     dt_object = datetime.fromisoformat(timestamp_str)
@@ -735,7 +769,9 @@ def create_app():
             if not messages_by_date:
                 return jsonify(
                     {
-                        "history": "# Chat History\n\nNo history found for today.",
+                        "history": (
+                            "# Chat History\n\nNo history found for today."
+                        ),
                         "date": (
                             datetime.now(timezone.utc).strftime("%Y-%m-%d")
                         ),
@@ -756,9 +792,7 @@ def create_app():
 
             # Get messages for the target day
             messages_for_day = messages_by_date.get(target_date, [])
-            messages_for_day.sort(
-                key=lambda m: m.get("timestamp")
-            )
+            messages_for_day.sort(key=lambda m: m.get("timestamp"))
 
             # Format into a concise Markdown string
             markdown_lines = [

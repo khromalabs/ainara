@@ -39,7 +39,7 @@ body {
     position: fixed;
     top: 0;
     left: 0;
-    padding: 20px;
+    padding: 40px;
     box-sizing: border-box;
     /* Add transitions for smooth changes */
     transition: justify-content 0.6s ease-in-out, padding 0.6s ease-in-out;
@@ -50,9 +50,9 @@ body {
 .ring-container::after {
     content: '';
     position: absolute;
-    top: 20px;
-    left: 20px;
-    right: 20px;
+    top: 40px;
+    left: 40px;
+    right: 40px;
     /* Height is calculated to leave space for the ring at the bottom */
     bottom: 170px;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -67,6 +67,8 @@ body {
 .ring-container.document-view {
     justify-content: flex-end;
     padding-bottom: 50px; /* Give some space for the ring at the bottom */
+    /* border: 5px solid rgba(0, 0, 0, 0.2); */
+    background: rgba(0, 0, 0, 0.15);
 }
 
 .ring-container.document-view::after {
@@ -145,6 +147,40 @@ body {
     box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
     opacity: 0;
     transition: opacity 0.1s ease-out;
+}
+
+.llm-provider-display {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.7);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    text-align: center;
+    opacity: 0; /* Hidden by default, shown with .visible class */
+    transition: opacity 0.3s ease, top 0.6s ease-in-out;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+    width: 90%;
+    max-width: 300px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.llm-provider-display.visible {
+    opacity: 1;
+}
+
+.ring-container.document-view .llm-provider-display {
+    top: 5px;
+    font-size: 11px;
+}
+
+/* No-Memory "Incognito" Mode Styles for provider display */
+.ring-container.no-memory .llm-provider-display {
+    color: rgba(219, 173, 255, 0.7);
+    text-shadow: 0 0 8px rgba(219, 173, 255, 0.3);
 }
 
 .stt-status {
@@ -256,7 +292,7 @@ body {
 .document-content {
     margin: 10px;
     overflow: auto;
-    border: 10px solid red;
+    /* border: 10px solid red; */
 }
 
 /* No-Memory "Incognito" Mode Styles */

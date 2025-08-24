@@ -18,7 +18,7 @@
 
 const BaseWindow = require('./BaseWindow');
 // const path = require('path');
-const Logger = require('../utils/logger');
+const Logger = require('../framework/logger');
 
 class SplashWindow extends BaseWindow {
     constructor(config, screen, windowManager, basePath) {

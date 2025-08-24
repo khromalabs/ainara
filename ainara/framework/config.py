@@ -148,6 +148,20 @@ class ConfigManager:
                             self._get_data_directory()
                         )
 
+                    # Set up backup configuration with defaults if not present
+                    if "backup" not in self.config:
+                        self.config["backup"] = {}
+                    if "enabled" not in self.config["backup"]:
+                        self.config["backup"]["enabled"] = False
+                    if "directory" not in self.config["backup"]:
+                        self.config["backup"]["directory"] = ""
+                    if "interval_hours" not in self.config["backup"]:
+                        self.config["backup"]["interval_hours"] = 24
+                    if "versions_to_keep" not in self.config["backup"]:
+                        self.config["backup"]["versions_to_keep"] = 7
+                    if "password" not in self.config["backup"]:
+                        self.config["backup"]["password"] = ""
+
                     # Force correct orakle server URL (temporary enforcement)
                     if "orakle" in self.config and "servers" in self.config["orakle"]:
                         self.config["orakle"]["servers"] = ["http://127.0.0.1:8100"]

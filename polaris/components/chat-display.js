@@ -31,6 +31,44 @@ class ChatDisplay extends BaseComponent {
         const { ipcRenderer } = require('electron');
         this.ipcRenderer = ipcRenderer;
         this.keydownHandler = null;
+        this.inputHandler = this.autoResizeTextArea.bind(this);
+    }
+
+    autoResizeTextArea() {
+        const textarea = this.textInput;
+        // const initialFontSize = '1.5em';
+        // const smallerFontSize = '1.2em';
+        const maxHeight = 200; // px
+
+        // Reset height to correctly calculate scrollHeight for line counting
+        textarea.style.height = 'auto';
+
+        // TODO temporally disabled
+        // const computedStyle = window.getComputedStyle(textarea);
+        // const lineHeight = parseFloat(computedStyle.lineHeight);
+        // scrollHeight includes padding, so we subtract it to get content height
+        // const paddingTop = parseFloat(computedStyle.paddingTop);
+        // const paddingBottom = parseFloat(computedStyle.paddingBottom);
+        // const contentHeight = textarea.scrollHeight - paddingTop - paddingBottom;
+        // const lines = Math.round(contentHeight / lineHeight);
+        // // Adjust font size based on lines
+        // if (lines > 2) {
+        //     textarea.style.fontSize = smallerFontSize;
+        // } else {
+        //     textarea.style.fontSize = initialFontSize;
+        // }
+
+        // After potential font size change, recalculate final height
+        textarea.style.height = 'auto';
+        const finalScrollHeight = textarea.scrollHeight;
+
+        if (finalScrollHeight > maxHeight) {
+            textarea.style.height = `${maxHeight}px`;
+            textarea.style.overflowY = 'auto';
+        } else {
+            textarea.style.height = `${finalScrollHeight}px`;
+            textarea.style.overflowY = 'hidden';
+        }
     }
 
     async enterTypingMode() {
@@ -43,6 +81,9 @@ class ChatDisplay extends BaseComponent {
         this.textInput.focus();
         this.container.style.marginBottom = '60px';
 
+        this.textInput.addEventListener('input', this.inputHandler);
+        this.autoResizeTextArea();
+
         this.keydownHandler = async (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -52,6 +93,7 @@ class ChatDisplay extends BaseComponent {
                     console.log("SENDING process-typed-message");
                     ipcRenderer.send('process-typed-message', text);
                     this.textInput.value = '';
+                    this.autoResizeTextArea();
                 }
                 this.exitTypingMode();
             } else if (e.key === 'Escape') {
@@ -67,6 +109,7 @@ class ChatDisplay extends BaseComponent {
             this.textInput.removeEventListener('keydown', this.keydownHandler);
             this.keydownHandler = null;
         }
+        this.textInput.removeEventListener('input', this.inputHandler);
 
         // Set state in window first
         await this.ipcRenderer.invoke('set-typing-mode-state', false);
@@ -75,6 +118,7 @@ class ChatDisplay extends BaseComponent {
         this.typingArea.style.opacity = '0';
         this.textInput.style.display = 'none';
         this.textInput.value = '';
+        this.autoResizeTextArea();
         this.container.style.marginBottom = '0';
         ipcRenderer.send('exit-typing-mode');
     }

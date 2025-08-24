@@ -17,7 +17,7 @@
 // Lesser General Public License for more details.
 
 const { BrowserWindow, nativeTheme } = require('electron');
-const Logger = require('../utils/logger');
+const Logger = require('../framework/logger');
 const path = require('path');
 const process = require('process');
 

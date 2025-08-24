@@ -34,8 +34,8 @@
  */
 
 const WhisperSTT = require('../services/stt/whisper');
-const ConfigManager = require('../utils/config');
-const ConfigHelper = require('../utils/ConfigHelper');
+const ConfigManager = require('../framework/config');
+const ConfigHelper = require('../framework/ConfigHelper');
 const BaseComponent = require('./base');
 const electron = require('electron');
 
@@ -47,6 +47,7 @@ class ComRing extends BaseComponent {
         try {
             super();
             this.ignoreIncomingEvents = false;
+            this.isFirstShow = true;
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
             this.text = null;
@@ -140,6 +141,10 @@ class ComRing extends BaseComponent {
                 'ring-container element not found'
             );
             this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
+            this.llmProviderDisplay = this.assert(
+                this.shadowRoot.querySelector('.llm-provider-display'),
+                'llm-provider-display element not found'
+            );
 
             this.audioContext = null;
             this.mediaStream = null;
@@ -147,6 +152,7 @@ class ComRing extends BaseComponent {
             this.animationFrame = null;
 
             this.initializeEventListeners();
+            await this.updateLLMProviderDisplay();
             this.emitEvent('ready');
 
         } catch (error) {
@@ -203,6 +209,35 @@ class ComRing extends BaseComponent {
         }
     }
 
+    _formatProviderName(provider) {
+        if (!provider) return '';
+        // Take the last part of the path (e.g., "deepseek/deepseek-chat" -> "deepseek-chat")
+        const parts = provider.split('/');
+        const modelName = parts[parts.length - 1];
+
+        // Capitalize each word separated by a hyphen (e.g., "deepseek-chat" -> "Deepseek-Chat")
+        return modelName
+            .split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join('-');
+    }
+
+    async updateLLMProviderDisplay() {
+        try {
+            const { selected_provider } = await ConfigHelper.getLLMProviders();
+
+            if (selected_provider) {
+                const displayName = this._formatProviderName(selected_provider);
+                this.llmProviderDisplay.textContent = displayName;
+            } else {
+                this.llmProviderDisplay.textContent = 'No LLM Provider';
+            }
+        } catch (error) {
+            console.error('Error updating LLM provider display:', error);
+            this.llmProviderDisplay.textContent = 'Provider Unknown';
+        }
+    }
+
     initializeEventListeners() {
         console.log('ComRing: Initializing event listeners');
         console.log('ComRing: Setting up IPC event listeners');
@@ -224,9 +259,18 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
+            const backendConfig = await ConfigHelper.fetchBackendConfig();
+
+            // Check for backup configuration on first show
+            if (this.isFirstShow) {
+                this.isFirstShow = false; // Ensure this only runs once
+                if (!backendConfig?.backup?.enabled) {
+                    this.showInfo("Backups are disabled. Please enable it in Setup Wizard", true);
+                }
+            }
+
             // Force-sync memory state from config to fix color issue on show
             if (this.memoryEnabled === null) {
-                let backendConfig = await ConfigHelper.fetchBackendConfig();
                 this.memoryEnabled = backendConfig?.memory?.enabled || false;
             }
             this.setMemoryState(this.memoryEnabled);
@@ -252,8 +296,9 @@ class ComRing extends BaseComponent {
         }
 
         // Add listener for LLM provider changes
-        ipcRenderer.on('llm-provider-changed', (event, providerName) => {
+        ipcRenderer.on('llm-provider-changed', async (event, providerName) => {
             console.log('ComRing: LLM provider changed to', providerName);
+            await this.updateLLMProviderDisplay();
             if (this.isWindowVisible) {
                 // Show provider change notification
                 const sttStatus = this.shadowRoot.querySelector('.stt-status');
@@ -295,6 +340,13 @@ class ComRing extends BaseComponent {
             if (message.trim() === '/history') {
                 console.log('Handling /history command');
                 await this.fetchAndDisplayChatHistory();
+            } else if (message.trim() === '/provider') {
+                console.log('Handling /provider command');
+                await this.updateLLMProviderDisplay();
+                this.llmProviderDisplay.classList.add('visible');
+                setTimeout(() => {
+                    this.llmProviderDisplay.classList.remove('visible');
+                }, 5000);
             } else if (message.trim() === '/documents') {
                 console.log('Handling /documents command');
                 if (this.documentView && this.documentView.documents.length > 0 && this.docFormat !== 'chat-history') {
@@ -392,11 +444,10 @@ class ComRing extends BaseComponent {
             }
 
             if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
-;
-                console.log("EVENT ESCAPE");
+                // console.log("EVENT ESCAPE");
                 // Always abort any ongoing LLM response first
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
-                    console.log('Aborting LLM response');
+                    console.log('Escape triggers abort LLM response');
                     this.abortLLMResponse();
                     event.preventDefault();
                     event.stopPropagation();
@@ -486,11 +537,19 @@ class ComRing extends BaseComponent {
 
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (transcription) => {
+            const reviewBeforeSend = this.config.get('stt.review', true);
             if (transcription) {
-                await this.processUserMessage(transcription);
+                if (reviewBeforeSend) {
+                    await this.enterTypingMode();
+                    ipcRenderer.send('typing-key-pressed', transcription);
+                    ipcRenderer.send('focus-chat-display');
+                } else {
+                    await this.processUserMessage(transcription);
+                }
             }
         };
     }
+
 
 
     async startRecording() {
@@ -884,12 +943,16 @@ class ComRing extends BaseComponent {
                 this.historyDate = data.date;
                 this.switchToDocumentView('chat-history');
                 this.documentView.clear();
-                this.documentView.updateNavControls({
-                    show: true,
-                    prev: data.has_previous,
-                    next: data.has_next
-                });
-                this.documentView.addDocument(data.history, 'chat-history');
+                // this.documentView.updateNavControls({
+                //     show: true,
+                //     prev: data.has_previous,
+                //     next: data.has_next
+                // });
+                this.documentView.addDocument(
+                    data.history,
+                    'chat-history',
+                    `Chat History: ${this.historyDate}`
+                );
                 sttStatus.classList.remove('active');
                 sttStatus.textContent = '';
             } else {
@@ -1421,11 +1484,33 @@ class ComRing extends BaseComponent {
                 }
                 break;
 
+            case 'renderNexus':
+                if (event.type === 'ui') {
+                    const orakleUrl = this.config.get('orakle.api_url');
+                    if (!orakleUrl) {
+                        this.showInfo('Orakle API URL not configured.', true);
+                        return;
+                    }
+                    const fullUrl = orakleUrl + event.content.component_path;
+                    const pathParts = event.content.component_path.split('/');
+                    const componentName = pathParts[pathParts.length - 2];
+                    this.switchToDocumentView('nexus');
+                    this.documentView.addDocument(
+                        { url: fullUrl, data: event.content.data },
+                        'nexus',
+                        componentName
+                    );
+                }
+                break;
+
             case 'full':
                 // console.log(JSON.stringify(event));
                 if (event.type === 'content') {
                     if (this.currentView === 'document') {
-                        this.documentView.addDocument(event.content.content, this.docFormat);
+                        const title =
+                            event.content.title ||
+                            this.docFormat.charAt(0).toUpperCase() + this.docFormat.slice(1);
+                        this.documentView.addDocument(event.content.content, this.docFormat, title);
                     } else {
                         console.warn('Received full content but not in document view. Ignoring.');
                     }

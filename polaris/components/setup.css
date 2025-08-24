@@ -617,3 +617,41 @@ input:disabled, button:disabled {
     font-style: italic;
     color: #6c757d;
 }
+
+/* Backup Directory Styles */
+.backup-directory-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.backup-directory-container input[type="text"] {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+    cursor: pointer;
+}
+
+.backup-directory-container button {
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    border: 1px solid #007bff;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    white-space: nowrap;
+}
+
+.backup-directory-container button:hover {
+    background-color: #0056b3;
+    border-color: #0056b3;
+}
+
+.backup-directory-container button:disabled {
+    background-color: #ccc;
+    border-color: #ccc;
+    cursor: not-allowed;
+}

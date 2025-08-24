@@ -22,15 +22,15 @@ const semver = require('semver');
 // const yargs = require('yargs/yargs');
 // const { hideBin } = require('yargs/helpers');
 const path = require('path');
-const ConfigManager = require('./utils/config');
+const ConfigManager = require('./framework/config');
 const { WindowManager } = require('./windows/WindowManager');
 const ComRingWindow = require('./windows/ComRingWindow');
 const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const SplashWindow = require('./windows/SplashWindow');
 const UpdateProgressWindow = require('./windows/UpdateProgressWindow');
-const ServiceManager = require('./utils/ServiceManager');
-const ConfigHelper = require('./utils/ConfigHelper');
-const Logger = require('./utils/logger');
+const ServiceManager = require('./framework/ServiceManager');
+const ConfigHelper = require('./framework/ConfigHelper');
+const Logger = require('./framework/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
 const debugMode = true;
@@ -97,7 +97,7 @@ function showSetupWizard() {
     setupWindow.setIcon(iconPath);
 
     // Load the setup page
-    setupWindow.loadFile(path.join(__dirname, 'windows', 'setup', 'index.html'));
+    setupWindow.loadFile(path.join(__dirname, 'components', 'setup.html'));
 
     setupWindow.once('ready-to-show', () => {
         setupWindow.show();
@@ -959,6 +959,20 @@ function appSetupEventHandlers() {
     // Handle opening external links in the system browser
     ipcMain.on('open-external-url', (event, url) => {
         shell.openExternal(url);
+    });
+
+    // Handle backup directory selection from setup wizard
+    ipcMain.on('select-backup-directory', async (event) => {
+        const window = BrowserWindow.fromWebContents(event.sender);
+        if (window) {
+            const result = await dialog.showOpenDialog(window, {
+                properties: ['openDirectory']
+            });
+
+            if (!result.canceled && result.filePaths.length > 0) {
+                event.sender.send('backup-directory-selected', result.filePaths[0]);
+            }
+        }
     });
 
     // Prevent app from closing when all windows are closed

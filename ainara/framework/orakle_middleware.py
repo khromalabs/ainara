@@ -358,16 +358,74 @@ class OrakleMiddleware:
             yield f"\n{skill_intention}\n\n"
             yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
 
+            # Get skill info to check its type
+            skill_info = self._get_skill_info(selected_skill_id)
+
             # Execute the selected skill with parameters
             result = self.execute_orakle_command(
                 selected_skill_id, parameters, chat_manager
             )
 
-            # Get interpretation as a stream
-            for interpretation_chunk in self.stream_command_interpretation(
-                [result], query
-            ):
-                yield interpretation_chunk
+            # If the skill is a nexus skill with a UI, yield the component data directly
+            if skill_info and skill_info.get("type") == "nexus" and skill_info.get("ui"):
+                component_name = skill_info.get("ui", {}).get("component")
+                try:
+                    result_data = json.loads(result)
+                    # Yield the special dictionary for ChatManager with a flat structure
+                    yield {
+                        "type": "nexus_skill_result",
+                        "vendor": skill_info.get("vendor"),
+                        "bundle": skill_info.get("bundle"),
+                        "component": component_name,
+                        "data": result_data,
+                    }
+                except json.JSONDecodeError:
+                    error_msg = f"Nexus skill '{selected_skill_id}' did not return valid JSON data."
+                    logger.error(f"ORAKLE: {error_msg} Data: {result}")
+                    yield f"\nError: {error_msg}\n\n"
+                    return
+            else:
+                # Prepare context for interpretation
+                chat_context = {}
+                if chat_manager:
+                    # User profile summary
+                    if hasattr(chat_manager, "user_profile_summary") and getattr(
+                        chat_manager, "user_profile_summary"
+                    ):
+                        chat_context["user_profile_summary"] = getattr(
+                            chat_manager, "user_profile_summary"
+                        )
+
+                    # Conversation summary
+                    if hasattr(chat_manager, "current_summary") and getattr(
+                        chat_manager, "current_summary"
+                    ):
+                        chat_context["conversation_summary"] = getattr(
+                            chat_manager, "current_summary"
+                        )
+
+                    # Recent chat history (e.g., last 4 messages / 2 rounds)
+                    if hasattr(chat_manager, "chat_history") and getattr(
+                        chat_manager, "chat_history"
+                    ):
+                        history_text = ""
+                        # Take last 4 messages
+                        recent_messages = getattr(chat_manager, "chat_history")[-4:]
+                        for msg in recent_messages:
+                            # Skip system messages to avoid redundant context
+                            if msg.get("role") == "system":
+                                continue
+                            role = msg.get("role", "unknown").capitalize()
+                            content = msg.get("content", "")
+                            history_text += f"{role}: {content}\n"
+                        if history_text:
+                            chat_context["recent_history"] = history_text.strip()
+
+                # Get interpretation as a stream for regular skills
+                for interpretation_chunk in self.stream_command_interpretation(
+                    [result], query, chat_context=chat_context
+                ):
+                    yield interpretation_chunk
 
         except json.JSONDecodeError:
             error_msg = "Failed to parse skill selection response."
@@ -492,14 +550,18 @@ class OrakleMiddleware:
         return {}
 
     def stream_command_interpretation(
-        self, results: List[str], query: str
+        self,
+        results: List[str],
+        query: str,
+        chat_context: Optional[dict] = None,
     ) -> Generator[str, None, None]:
         """
         Stream LLM interpretation of command results.
 
         Args:
             results: List of command result strings
-            command_types: List of command type strings (SKILL/RECIPE)
+            query: The natural language query that triggered the command
+            chat_context: Optional dictionary with conversational context
 
         Yields:
             Chunks of the LLM interpretation as they become available
@@ -517,6 +579,7 @@ class OrakleMiddleware:
             {
                 "formatted_results": "\n".join(formatted_results),
                 "query": query,
+                "chat_context": chat_context or {},
             },
         )
 
@@ -567,6 +630,10 @@ class OrakleMiddleware:
                     )
                 ),
                 "embeddings_boost_factor": skill_info.get("embeddings_boost_factor", 1.0),
+                "type": skill_info.get("type"),
+                "ui": skill_info.get("ui"),
+                "vendor": skill_info.get("vendor"),
+                "bundle": skill_info.get("bundle"),
                 "parameters": [],
             }
 

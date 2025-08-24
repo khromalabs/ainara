@@ -17,7 +17,7 @@
 // Lesser General Public License for more details.
 
 const BaseWindow = require('./BaseWindow');
-const Logger = require('../utils/logger');
+const Logger = require('../framework/logger');
 
 class ChatDisplayWindow extends BaseWindow {
     static getHandlers() {
@@ -85,7 +85,6 @@ class ChatDisplayWindow extends BaseWindow {
             opacity: 1.0, // Full window opacity
             alwaysOnTop: true,
             show: false,
-            skipTaskbar: true,
             hasShadow: false
         };
 

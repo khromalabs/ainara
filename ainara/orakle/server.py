@@ -25,7 +25,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from ainara.framework.capabilities_manager import CapabilitiesManager
+from ainara.framework.capabilities.manager import CapabilitiesManager
 from ainara.framework.config import config  # Use the global config instance
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
@@ -177,51 +177,6 @@ def create_app(internet_available: bool):
 
             logger.error(traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
-
-    # Add a route to execute a capability (native or MCP)
-    @app.route("/run", methods=["POST"])
-    def execute_capability_route():
-        if not hasattr(app, "capabilities_manager"):
-            return (
-                jsonify({"error": "CapabilitiesManager not initialized"}),
-                500,
-            )
-        data = request.get_json()
-        if not data or "name" not in data or "arguments" not in data:
-            return (
-                jsonify({"error": "Missing 'name' or 'arguments' in request"}),
-                400,
-            )
-
-        capability_name = data["name"]
-        arguments = data["arguments"]
-
-        try:
-            result = app.capabilities_manager.execute_capability(
-                capability_name, arguments
-            )
-            return jsonify({"success": True, "result": result})
-        except (ValueError, TypeError, RuntimeError) as e:
-            logger.error(
-                f"Error executing capability '{capability_name}': {e}",
-                exc_info=True,
-            )
-            return jsonify({"success": False, "error": str(e)}), 400
-        except Exception as e:
-            logger.error(
-                "Unexpected error executing capability"
-                f" '{capability_name}': {e}",
-                exc_info=True,
-            )
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "error": "An unexpected server error occurred",
-                    }
-                ),
-                500,
-            )
 
     return app
 

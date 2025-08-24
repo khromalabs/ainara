@@ -105,7 +105,7 @@ class ChatManager:
 
         # --- Memory Decay Tracking (persisted between sessions) ---
         self.memory_decay_interval = config.get(
-            "memories.decay_interval_turns", 10
+            "memories.decay_interval_turns", 5
         )
         self.turn_counter = 0
         self.decay_in_progress = False
@@ -879,6 +879,77 @@ class ChatManager:
             print(doc_content)
             print("---------------------------------")
 
+    def _handle_test_nexus_stream(self, command: str, stream: str):
+        """Handles streaming for the /testnexus command."""
+        parts = command.strip().split(" ", 2)
+        usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+
+        if len(parts) < 3:
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        _command, ui_parts_str, data_json_str = parts
+        ui_parts = ui_parts_str.split(',')
+
+        if len(ui_parts) != 3:
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        vendor, bundle, component = ui_parts
+
+        try:
+            data = json.loads(data_json_str)
+        except json.JSONDecodeError:
+            error_msg = "Error: Invalid JSON data provided."
+            if stream == "cli":
+                print(error_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson("signal", "error", {"message": error_msg})
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
+
+        if stream == "json":
+            yield ndjson("signal", "loading", {"state": "start"})
+            yield ndjson(
+                "ui",
+                "renderNexus",
+                {
+                    "component_path": component_path,
+                    "data": data,
+                },
+            )
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+        elif stream == "cli":
+            print("\n--- Nexus Component ---")
+            print(f"Path: {component_path}")
+            print(f"Data: {pprint.pformat(data)}")
+            print("-----------------------")
+
     def _handle_memory_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -928,6 +999,27 @@ class ChatManager:
 
         return generator()
 
+    def _handle_test_nexus_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testnexus command for all stream types."""
+        if stream:  # cli or json
+            return self._handle_test_nexus_stream(command, stream)
+        else:  # no stream
+            parts = command.strip().split(" ", 2)
+            usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+            if len(parts) < 3:
+                return usage_msg
+
+            _command, ui_parts_str, data_json_str = parts
+            ui_parts = ui_parts_str.split(',')
+            if len(ui_parts) != 3:
+                return usage_msg
+
+            vendor, bundle, component = ui_parts
+            component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
+            return f'<nexus path="{component_path}" data=\'{data_json_str}\'/>'
+
     def _handle_test_doc_view_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -941,7 +1033,7 @@ class ChatManager:
 
             command_body = parts[1]
             doc_format, doc_content = command_body.split(",", 1)
-            return f'<doc format="{doc_format}">{doc_content}</doc>'
+            return f'```{doc_format}\n{doc_content}```'
 
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
@@ -956,6 +1048,9 @@ class ChatManager:
 
         if command.lower().startswith("/testdocview"):
             return self._handle_test_doc_view_command(command, stream)
+
+        if command.lower().startswith("/testnexus"):
+            return self._handle_test_nexus_command(command, stream)
 
         return None
 
@@ -1053,14 +1148,27 @@ class ChatManager:
             if self.memory_enabled and self.green_memories:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
-                    -4:
-                ]  # Last 2 exchanges
-                search_context = "\n".join(
+                    -20:
+                ]  # Last 10 exchanges
+
+                search_context_parts = []
+                if self.current_summary and self.current_summary != "-":
+                    # add the current conversation summary as the first element
+                    # of the search_context dict
+                    summary_text = (
+                        "This is a summary of the conversation so far:"
+                        f" {self.current_summary}"
+                    )
+                    search_context_parts.append(summary_text)
+
+                history_text = "\n".join(
                     [
                         f"{msg['role']}: {msg['content']}"
                         for msg in history_for_search
                     ]
                 )
+                search_context_parts.append(history_text)
+                search_context = "\n\n".join(search_context_parts)
 
                 # logger.info(f"search_context: {search_context}")
 
@@ -1121,6 +1229,33 @@ class ChatManager:
             for chunk in self.orakle_middleware.process_stream(
                 llm_response_stream, self
             ):
+                if isinstance(chunk, dict) and chunk.get("type") == "nexus_skill_result":
+                    vendor = chunk.get("vendor")
+                    bundle = chunk.get("bundle")
+                    component = chunk.get("component")
+                    skill_data = chunk.get("data", {})
+
+                    if not all([vendor, bundle, component]):
+                        logger.error(
+                            "Nexus skill result received with incomplete component info:"
+                            f" vendor='{vendor}', bundle='{bundle}', component='{component}'"
+                        )
+                        continue
+
+                    component_path = (
+                        f"/nexus/{vendor}/{bundle}/{component}/index.html"
+                    )
+
+                    yield ndjson(
+                        "ui",
+                        "renderNexus",
+                        {
+                            "component_path": component_path,
+                            "data": skill_data,
+                        },
+                    )
+                    continue
+
                 if not chunk:
                     continue
 
@@ -1138,7 +1273,7 @@ class ChatManager:
                     state_changed = False
                     if parsing_mode == "text":
                         doc_start_match = re.search(
-                            r'<doc format="([\w\d_.-]+)">', text_buffer
+                            r"```([\w\d_.-]*)\n", text_buffer
                         )
                         if doc_start_match:
                             pre_doc_text = text_buffer[
@@ -1149,7 +1284,7 @@ class ChatManager:
                                     pre_doc_text, stream
                                 )
 
-                            doc_format = doc_start_match.group(1)
+                            doc_format = doc_start_match.group(1) or "plaintext"
                             if stream == "json":
                                 yield ndjson(
                                     "ui",
@@ -1163,7 +1298,7 @@ class ChatManager:
                             state_changed = True
 
                     elif parsing_mode == "doc":
-                        doc_end_match = re.search(r"</doc>", doc_buffer)
+                        doc_end_match = re.search(r"```", doc_buffer)
                         if doc_end_match:
                             doc_content = doc_buffer[: doc_end_match.start()]
                             if stream == "json":

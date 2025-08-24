@@ -17,9 +17,9 @@
 // Lesser General Public License for more details.
 
 const { ipcRenderer } = require('electron');
-const ConfigManager = require('../../utils/config');
-const Logger = require('../../utils/logger');
-const ConfigHelper = require('../../utils/ConfigHelper');
+const ConfigManager = require('../framework/config');
+const Logger = require('../framework/logger');
+const ConfigHelper = require('../framework/ConfigHelper');
 // const fs = require('fs');
 // const path = require('path');
 // const yaml = require('js-yaml');
@@ -412,9 +412,9 @@ async function updateOllamaProviders() {
             providersModified = true;
             // Check if the selected provider was removed
             const selectedProvider = backendConfig.llm.selected_provider;
-            if (selectedProvider && selectedProvider.startsWith('ollama/') && 
+            if (selectedProvider && selectedProvider.startsWith('ollama/') &&
                 !backendConfig.llm.providers.some(p => p.model === selectedProvider)) {
-                backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ? 
+                backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ?
                     backendConfig.llm.providers[0].model : null;
                 selectedProviderChanged = true;
             }
@@ -846,6 +846,44 @@ function setupEventListeners() {
                 startMinimizedCheckbox.addEventListener('change', (event) => handleInputChange(event));
                 startMinimizedCheckbox.checked = config.get('startup.startMinimized');
             }
+
+            // Add event listener for the review stt checkbox
+            const reviewSttCheckbox = document.getElementById('review-stt-checkbox');
+            if (reviewSttCheckbox) {
+                reviewSttCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                reviewSttCheckbox.checked = config.get('stt.review');
+            }
+
+            // Add event listener for the backup directory input and browse button
+            const backupDirectoryInput = document.getElementById('backup-directory-input');
+            const browseBackupDirectoryBtn = document.getElementById('browse-backup-directory-btn');
+
+            if (backupDirectoryInput) {
+                backupDirectoryInput.addEventListener('input', (event) => handleInputChange(event));
+                backupDirectoryInput.value = config.get('startup.backupDirectory', '');
+
+                // Make the input clickable to trigger browse
+                backupDirectoryInput.addEventListener('click', () => {
+                    if (browseBackupDirectoryBtn) {
+                        browseBackupDirectoryBtn.click();
+                    }
+                });
+            }
+
+            if (browseBackupDirectoryBtn) {
+                browseBackupDirectoryBtn.addEventListener('click', () => {
+                    ipcRenderer.send('select-backup-directory');
+                });
+            }
+
+            // Listen for backup directory selection response
+            ipcRenderer.on('backup-directory-selected', (event, directoryPath) => {
+                if (backupDirectoryInput) {
+                    backupDirectoryInput.value = directoryPath;
+                    // Trigger change event to mark as modified
+                    backupDirectoryInput.dispatchEvent(new Event('input'));
+                }
+            });
 
             // Add enter key support for filter input
             document.getElementById('model-filter').addEventListener('keypress', (e) => {
@@ -1417,7 +1455,7 @@ function handleInputChange(event) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'backup-directory-input') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -2428,7 +2466,7 @@ async function saveSkillsConfig() {
 }
 
 // Function to save finish step configuration
-function saveFinishStepConfig() {
+async function saveFinishStepConfig() {
     // If no finish step fields were modified, skip saving
     if (modifiedFields.finish.size === 0) {
         return true;
@@ -2438,6 +2476,26 @@ function saveFinishStepConfig() {
         if (modifiedFields.finish.has('start-minimized-checkbox')) {
             const isChecked = document.getElementById('start-minimized-checkbox').checked;
             config.set('startup.startMinimized', isChecked);
+        }
+
+        if (modifiedFields.finish.has('review-stt-checkbox')) {
+            const isChecked = document.getElementById('review-stt-checkbox').checked;
+            config.set('stt.review', isChecked);
+        }
+
+        if (modifiedFields.finish.has('backup-directory-input')) {
+            const backupDirectory = document.getElementById('backup-directory-input').value.trim();
+            config.set('startup.backupDirectory', backupDirectory);
+
+            // Save to backend config
+            const backendConfig = await loadBackendConfig();
+            if (!backendConfig.backup) {
+                backendConfig.backup = {};
+            }
+            backendConfig.backup.directory = backupDirectory;
+            backendConfig.backup.enabled = !!backupDirectory; // Enable if directory is not empty
+
+            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         }
 
         config.saveConfig();
@@ -2873,8 +2931,8 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
-        { id: 'qwen2.5-coder:14b', name: 'Qwen 2.5 Coder (14B)', size: 9, minVram: 12 },
-        { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder (32B)', size: 20, minVram: 24 },
+        { id: 'qwen3:14b', name: 'Qwen 3 (14B)', size: 9, minVram: 12 },
+        { id: 'qwen3:32b', name: 'Qwen 3 (32B)', size: 20, minVram: 24 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
@@ -2971,11 +3029,11 @@ async function loadOllamaModel(client, modelId) {
 async function finishSetup() {
     // Save any pending changes from the last configurable steps
     saveShortcutsConfig(); // Save shortcuts if modified
-    saveFinishStepConfig(); // Save finish step settings (like start minimized)
+    await saveFinishStepConfig(); // Save finish step settings (like start minimized)
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.6.1');
+    config.set('setup.version', '0.7.0');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

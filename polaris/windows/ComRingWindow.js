@@ -17,8 +17,8 @@
 // Lesser General Public License for more details.
 
 const BaseWindow = require('./BaseWindow');
-const Logger = require('../utils/logger');
-const ConfigHelper = require('../utils/ConfigHelper');
+const Logger = require('../framework/logger');
+const ConfigHelper = require('../framework/ConfigHelper');
 
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
@@ -73,6 +73,7 @@ class ComRingWindow extends BaseWindow {
         this.originalSize = [windowWidth, windowHeight];
         this.originalPosition = [options.x, options.y];
         this.isDocumentView = false;
+        // this.window.webContents.openDevTools();
     }
 
     setupEventHandlers() {
@@ -82,8 +83,12 @@ class ComRingWindow extends BaseWindow {
 
         ipcMain.on('set-view-mode', (event, args) => {
             if (args.view === 'document') {
-                const docWidth = this.config.get('documentView.width', 800);
-                const docHeight = this.config.get('documentView.height', 600);
+                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+
+                // const docWidth = this.config.get('documentView.width', 800);
+                // const docWidth = this.config.get('documentView.width', 800);
+                const docHeight = screenHeight * .80
+                const docWidth = screenWidth * .80
 
                 // Store current position before resizing
                 if (!this.isDocumentView) {
@@ -91,7 +96,6 @@ class ComRingWindow extends BaseWindow {
                     this.originalPosition = [currentX, currentY];
                 }
 
-                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
                 const targetX = Math.round((screenWidth - docWidth) / 2);
                 const targetY = Math.round((screenHeight - docHeight) / 2);
 

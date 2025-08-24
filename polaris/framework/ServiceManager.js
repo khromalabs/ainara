@@ -25,7 +25,7 @@ const { app } = require('electron');
 const { createEventSource } = require('eventsource-client');
 const net = require('net');
 
-const ConfigManager = require('../utils/config');
+const ConfigManager = require('../framework/config');
 const Logger = require('./logger');
 
 
