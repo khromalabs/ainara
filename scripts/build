@@ -43,9 +43,9 @@ fi
 if [ "$SKIP_PYINSTALLER" = false ]; then
     echo "Running Python build..."
     if [ "$FORCE_BUILD" = true ]; then
-        bin/_build.py --force
+        scripts/_build.py --force
     else
-        bin/_build.py
+        scripts/_build.py
     fi
     # Check if Python build was successful
     if [ $? -ne 0 ]; then
