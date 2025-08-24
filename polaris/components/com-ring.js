@@ -943,16 +943,15 @@ class ComRing extends BaseComponent {
                 this.historyDate = data.date;
                 this.switchToDocumentView('chat-history');
                 this.documentView.clear();
-                // this.documentView.updateNavControls({
-                //     show: true,
-                //     prev: data.has_previous,
-                //     next: data.has_next
-                // });
                 this.documentView.addDocument(
                     data.history,
                     'chat-history',
                     `Chat History: ${this.historyDate}`
                 );
+                this.documentView.updateNavControls({
+                    prev: data.has_previous,
+                    next: data.has_next
+                });
                 sttStatus.classList.remove('active');
                 sttStatus.textContent = '';
             } else {

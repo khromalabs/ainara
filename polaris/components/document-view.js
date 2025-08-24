@@ -39,6 +39,22 @@ class DocumentView extends BaseComponent {
         const controls = document.createElement('div');
         controls.className = 'doc-controls';
 
+        if (format === 'chat-history') {
+            const prevButton = document.createElement('button');
+            prevButton.className = 'nav-button prev';
+            prevButton.innerHTML = '&lt;';
+            prevButton.title = 'Previous Day';
+            prevButton.addEventListener('click', () => this.emitEvent('history-prev-clicked'));
+            controls.appendChild(prevButton);
+
+            const nextButton = document.createElement('button');
+            nextButton.className = 'nav-button next';
+            nextButton.innerHTML = '&gt;';
+            nextButton.title = 'Next Day';
+            nextButton.addEventListener('click', () => this.emitEvent('history-next-clicked'));
+            controls.appendChild(nextButton);
+        }
+
         if (format !== 'nexus') {
             const formatBadge = document.createElement('span');
             formatBadge.className = 'format-badge';
@@ -133,6 +149,19 @@ class DocumentView extends BaseComponent {
     hide() {
         this.classList.remove('visible');
         this.isVisible = false;
+    }
+
+    updateNavControls(state) {
+        // state = { prev: boolean, next: boolean }
+        const prevButton = this.shadowRoot.querySelector('.nav-button.prev');
+        const nextButton = this.shadowRoot.querySelector('.nav-button.next');
+
+        if (prevButton) {
+            prevButton.disabled = !state.prev;
+        }
+        if (nextButton) {
+            nextButton.disabled = !state.next;
+        }
     }
 
     clear() {
