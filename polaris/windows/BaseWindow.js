@@ -16,7 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { BrowserWindow, nativeTheme } = require('electron');
+const { BrowserWindow } = require('electron');
 const Logger = require('../framework/logger');
 const path = require('path');
 const process = require('process');
@@ -134,6 +134,7 @@ class BaseWindow {
         this.window.hide();
         // Enable background throttling when window is hidden
         if (this.window.webContents) {
+            this.window.webContents.send("hide");
             this.window.webContents.setBackgroundThrottling(true);
             // Set minimum possible frame rate when hidden
             this.window.webContents.setFrameRate(1); // 1 FPS is the minimum

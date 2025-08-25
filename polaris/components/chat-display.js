@@ -32,6 +32,8 @@ class ChatDisplay extends BaseComponent {
         this.ipcRenderer = ipcRenderer;
         this.keydownHandler = null;
         this.inputHandler = this.autoResizeTextArea.bind(this);
+        this.messageHistory = [];
+        this.historyIndex = 0;
     }
 
     autoResizeTextArea() {
@@ -89,6 +91,8 @@ class ChatDisplay extends BaseComponent {
                 e.preventDefault();
                 const text = this.textInput.value.trim();
                 if (text) {
+                    this.messageHistory.push(text);
+                    this.historyIndex = this.messageHistory.length;
                     this.addMessage(text, 1, false);
                     console.log("SENDING process-typed-message");
                     ipcRenderer.send('process-typed-message', text);
@@ -98,6 +102,26 @@ class ChatDisplay extends BaseComponent {
                 this.exitTypingMode();
             } else if (e.key === 'Escape') {
                 this.exitTypingMode();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (this.historyIndex > 0) {
+                    this.historyIndex--;
+                    this.textInput.value = this.messageHistory[this.historyIndex];
+                    this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
+                    this.autoResizeTextArea();
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (this.historyIndex < this.messageHistory.length) {
+                    this.historyIndex++;
+                    if (this.historyIndex < this.messageHistory.length) {
+                        this.textInput.value = this.messageHistory[this.historyIndex];
+                    } else {
+                        this.textInput.value = '';
+                    }
+                    this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
+                    this.autoResizeTextArea();
+                }
             }
         };
 
@@ -262,15 +286,34 @@ class ChatDisplay extends BaseComponent {
                     this.exitTypingMode();
                 });
 
-                ipcRenderer.on('typing-key-pressed', (event, key) => {
+                ipcRenderer.on('hide', () => {
+                    console.log('ChatDisplay: Saving message in history');
+                    const text = this.textInput.value.trim();
+                    if (text) {
+                        console.log('ChatDisplay: Saving message in history');
+                        this.messageHistory.push(text);
+                        this.historyIndex = this.messageHistory.length;
+                    }
+                });
+
+                ipcRenderer.on('typing-key-pressed', async (event, key) => {
                     console.log('ChatDisplay: Received typing key:', key);
                     if (!this.isTypingMode) {
-                        this.enterTypingMode();
-                        this.textInput.value = key;
+                        await this.enterTypingMode();
+                        if (key == "ArrowUp" || key == "ArrowDown") {
+                            await this.keydownHandler({
+                                key: key, preventDefault: () => {}
+                            });
+                        } else {
+                            this.textInput.value = key;
+                        }
                     } else {
                         this.textInput.value += key;
                     }
                     this.textInput.focus();
+                });
+
+                ipcRenderer.on('save-text', () => {
                 });
 
                 console.log('ChatDisplay: IPC listeners setup complete');

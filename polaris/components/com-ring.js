@@ -375,7 +375,7 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('typing-mode-changed', (event, isTypingMode) => {
             console.log('ComRing: Typing mode changed to', isTypingMode);
             // Update UI based on typing mode
-            this.circle.style.opacity = isTypingMode ? '0.4' : '1';
+            this.circle.style.opacity = isTypingMode ? '0.3' : '1';
         });
 
         // Listen for history navigation events from the document-view component
@@ -464,6 +464,7 @@ class ComRing extends BaseComponent {
                 // Get current typing mode state from window
                 const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
 
+                console.log('ComRing: key detected: ' + event.key);
                 if (!isTypingMode && event.code === this.triggerKey) {
                     this.state.keyPressed = true;
                     if (!this.state.isRecording) {
@@ -473,8 +474,11 @@ class ComRing extends BaseComponent {
                 } else if (
                     !isTypingMode &&
                     !this.state.isRecording &&
-                    event.key.length === 1 &&
-                    /[a-zA-Z0-9/]/.test(event.key)
+                    (
+                        event.key == "ArrowUp" ||
+                        event.key == "ArrowDown" ||
+                        ( event.key.length === 1 && /[a-zA-Z0-9/]/.test(event.key) )
+                    )
                 ) {
                     // Only handle the first keystroke to enter typing mode
                     console.log('ComRing: Entering typing mode');

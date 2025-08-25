@@ -27,7 +27,6 @@ class ChatDisplayWindow extends BaseWindow {
                 if (chatDisplay.isTypingMode) {
                     chatDisplay.send('set-typing-mode-state', false);
                 }
-                // manager.hideAll();
             },
             onShow: (window, manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
