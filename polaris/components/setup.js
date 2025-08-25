@@ -900,7 +900,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat,deepseek-coder,llama,-8b,-7b,-3b,-1b';
+                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
