@@ -5,14 +5,13 @@
 **Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 
 
+Ainara is a modular AI integration platform that reimagines human-computer interaction through natural conversation, made with components which work together to create intelligent companions that collaborate helping with tasks, generating insights, and transforming how people work with technology through voice and intuitive interfaces.
 
-Ainara is a (work-in-progress) modular AI companion framework that combines local LLM capabilities with extensible skills. It consists of multiple components that work together to provide a flexible and powerful AI interaction system.
+It differentiates itself from other projects with its "user-first" philosophy. Eg. AI skills/tools can be both locally in the user's system, using the Orakle server approach developed by this project, or be accessed remotelly via the MCP protocol. The project also emphasizes a "local-first" AI approach via Ollama full integration, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
 
-It differentiates itself from other projects with its "user-first" philosophy. AI skills/tools can be both locally in the user's system, using the Orakle server approach developed by this project, or be accessed remotelly. For this purpose Ainara is compatible now with the MCP protocol as well. The project also emphasizes a "local-first" approach, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
+Finally, this project creates a truly AI collaborating-companion experience. Conversations are not session-based; user interactions with the LLM are recorded permanently as a continuous conversation (though users can choose to disable the memory feature at any moment). 
 
-Finally, this project aims to create a truly AI companion experience. Conversations will not be session-based; user interactions with the LLM will be recorded permanently as a continuous conversation (though users can choose to exclude specific parts). [TODO]
-
-All interaction data will remain private on the user's system.
+All interaction data remains private on the user's system.
 
 ## Demonstration video
 
