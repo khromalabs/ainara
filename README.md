@@ -1,4 +1,4 @@
-# Ainara AI Companion Framework
+# Ainara AI Productivity Companion Framework
 
 ![Ainara logo](./assets/ainara_logo.png)
 
