@@ -25,8 +25,8 @@ import bisect
 import json
 import logging
 import os
-import pprint
 import shutil
+import requests
 import sys
 import time
 from datetime import datetime, timezone
@@ -139,12 +139,166 @@ def parse_args():
 
 # def setup_app()
 
+def _validate_skill_key(service: str, keys: dict):
+    """Performs a simple API call to validate credentials for a given service."""
+    logger.info(f"Validating API key for service: {service}")
+    headers = {}
+    params = {}
+
+    try:
+        if service == "tavily":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            response = requests.post(
+                "https://api.tavily.com/search",
+                json={"api_key": api_key, "query": "test", "max_results": 1},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "google":
+            api_key = keys.get("api_key")
+            cse_id = keys.get("cx")
+            if not api_key or not cse_id:
+                return False, "API Key and Search Engine ID are required"
+            params = {"key": api_key, "cx": cse_id, "q": "test"}
+            response = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key and CSE ID are valid."
+
+        elif service == "coinmarketcap":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {"X-CMC_PRO_API_KEY": api_key}
+            response = requests.get(
+                "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest",
+                headers=headers,
+                params={"limit": 1},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "newsapi":
+            api_key = keys.get("api_key")  # Note: key is apiKey
+            if not api_key:
+                return False, "API key is missing"
+            params = {"q": "test", "apiKey": api_key}
+            response = requests.get(
+                "https://newsapi.org/v2/everything", params=params, timeout=10
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "perplexity":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "model": "sonar-small-online",
+                "messages": [{"role": "user", "content": "test"}],
+            }
+            response = requests.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "metaphor":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+            data = {"query": "test", "numResults": 1}
+            response = requests.post(
+                "https://api.metaphor.systems/search",
+                headers=headers,
+                json=data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "finance":
+            api_key = keys.get("alphavantage_api_key")
+            if not api_key:
+                return False, "API key is missing"
+            params = {
+                "function": "SYMBOL_SEARCH",
+                "keywords": "BA",
+                "apikey": api_key,
+            }
+            response = requests.get(
+                "https://www.alphavantage.co/query",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if "Error Message" in data or "Information" in data:
+                return False, data.get("Error Message") or data.get(
+                    "Information"
+                )
+            return True, "Key is valid."
+
+        elif service == "weather":
+            api_key = keys.get("openweathermap_api_key")
+            if not api_key:
+                return False, "API key is missing"
+            params = {"q": "London", "appid": api_key}
+            response = requests.get(
+                "https://api.openweathermap.org/data/2.5/weather",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        else:
+            return (
+                False,
+                f"Validation for service '{service}' is not implemented.",
+            )
+
+    except requests.HTTPError as e:
+        # Attempt to get a more specific error from the response body
+        error_message = str(e)
+        try:
+            error_details = e.response.json()
+            if "error" in error_details:
+                if isinstance(error_details["error"], dict):
+                    error_message = error_details["error"].get(
+                        "message", str(error_details)
+                    )
+                else:
+                    error_message = error_details["error"]
+            elif "message" in error_details:
+                error_message = error_details["message"]
+        except json.JSONDecodeError:
+            pass  # Stick with the original HTTPError message
+        return False, error_message
+    except requests.RequestException as e:
+        return False, str(e)
+
 
 def create_app():
 
     llm = create_llm_backend(config.get("llm", {}))
     app.llm = llm
-
     # # --- DEBUG: ChromaDB Dependency Check ---
     # import sys
     # import traceback
@@ -290,7 +444,6 @@ def create_app():
         green_memories = GREENMemories(
             llm=app.llm,
             chat_memory=chat_memory,
-            context_window=app.llm.get_context_window(),
         )
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
@@ -439,7 +592,7 @@ def create_app():
 
             new_llm = create_llm_backend(config.get("llm", {}))
             app.llm = new_llm
-            app.chat_manager.llm = new_llm
+            app.chat_manager.update_llm(new_llm)
 
             return jsonify({"success": True})
         except Exception as e:
@@ -943,7 +1096,7 @@ def create_app():
 
             litellm_provider = LiteLLM()
             providers = litellm_provider.get_available_providers()
-            logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
+            # logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
 
             # Format the response
             formatted_providers = {}
@@ -1083,6 +1236,41 @@ def create_app():
 
             logger.error(traceback.format_exc())
             return jsonify({"error": str(e), "providers": {}}), 500
+
+    @app.route("/test-skill-key", methods=["POST"])
+    def test_skill_key():
+        """Test API key for a given skill/service."""
+        try:
+            data = request.get_json()
+            logger.info(f"data: {data}")
+            service = data.get("service")
+            keys = data.get("keys")
+
+            if not service or not keys:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "message": "Service and keys are required.",
+                        }
+                    ),
+                    400,
+                )
+
+            is_valid, message = _validate_skill_key(service, keys)
+
+            if is_valid:
+                return jsonify({"success": True, "message": message})
+            else:
+                # Return 200 OK on validation failure so frontend can parse it
+                return jsonify({"success": False, "message": message})
+
+        except Exception as e:
+            logger.error(f"Error in /test-skill-key: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"success": False, "message": str(e)}), 500
 
     @app.route("/test-llm", methods=["POST"])
     def test_llm_connection():

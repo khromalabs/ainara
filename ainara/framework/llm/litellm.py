@@ -18,8 +18,8 @@
 
 import json
 import os
-import sys
 from typing import Generator, List, Union
+from datetime import datetime
 
 import litellm
 import pkg_resources
@@ -255,6 +255,11 @@ class LiteLLM(LLMBackend):
         self, new_message: str, chat_history: List, role: str
     ) -> List[dict]:
         """Format user chat message for LLM processing with token count"""
+        if role == "user":
+            timestamp = datetime.now()
+            new_message = (
+                f"[{timestamp.strftime("%H:%M")}] {new_message}"
+            )
         token_count = self._get_token_count(new_message, role)
         chat_history.append(
             {"role": role, "content": new_message, "tokens": token_count}
@@ -291,7 +296,7 @@ class LiteLLM(LLMBackend):
             completion_kwargs = {
                 "model": provider["model"],
                 "messages": clean_messages,
-                "temperature": 0.2,
+                # "temperature": 0.2,
                 "stream": stream,
                 **(
                     {"api_base": provider["api_base"]}

@@ -34,6 +34,7 @@ class DocumentView extends BaseComponent {
         const titleElement = document.createElement('span');
         titleElement.className = 'doc-title';
         titleElement.textContent = title || (format.charAt(0).toUpperCase() + format.slice(1));
+        titleElement.title = titleElement.textContent
         docInfo.appendChild(titleElement);
 
         const controls = document.createElement('div');

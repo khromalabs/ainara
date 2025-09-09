@@ -44,11 +44,13 @@ def get_optimal_whisper_config():
         "vad_filter": True,
         "vad_parameters": {
             "min_silence_duration_ms": 500,
-            "threshold": 0.5,
+            "threshold": 0.4,  # Lowered for better sensitivity
             "min_speech_duration_ms": 250
         },
         "word_timestamps": False,
-        "condition_on_previous_text": False
+        "condition_on_previous_text": False,
+        # Add a prompt to help recognize specific words
+        "initial_prompt": "Ainara is a personal AI assistant."
     }
 
     try:
@@ -222,6 +224,17 @@ class FasterWhisperSTT(STTBackend):
         })
         self.word_timestamps = optimal_config.get("word_timestamps", False)
         self.condition_on_previous_text = optimal_config.get("condition_on_previous_text", False)
+        self.initial_prompt = config_manager.get(
+            "stt.modules.faster_whisper.initial_prompt",
+            optimal_config.get("initial_prompt")
+        )
+        # VAD parameters for the listen() method
+        self.silence_threshold = config_manager.get(
+            "stt.modules.faster_whisper.silence_threshold", 500
+        )
+        self.silence_duration_s = config_manager.get(
+            "stt.modules.faster_whisper.silence_duration_s", 2
+        )
 
         # If using CPU, set number of threads
         if self.device == "cpu":
@@ -337,7 +350,8 @@ class FasterWhisperSTT(STTBackend):
                 vad_filter=self.vad_filter,
                 vad_parameters=self.vad_parameters,
                 word_timestamps=self.word_timestamps,
-                condition_on_previous_text=self.condition_on_previous_text
+                condition_on_previous_text=self.condition_on_previous_text,
+                initial_prompt=self.initial_prompt
             )
 
             # Combine all segments into a single transcript
@@ -382,7 +396,6 @@ class FasterWhisperSTT(STTBackend):
             CHANNELS = 1
             RATE = 16000
             CHUNK = 1024
-            SILENCE_THRESHOLD = 500  # Adjust based on testing
 
             # Create a temporary file for the recording
             fd, temp_file = tempfile.mkstemp(suffix=".wav")
@@ -423,14 +436,14 @@ class FasterWhisperSTT(STTBackend):
                         for i in range(0, len(data), 2)
                     )
 
-                    if amplitude > SILENCE_THRESHOLD:
+                    if amplitude > self.silence_threshold:
                         silent_chunks = 0
                         has_speech = True
                     else:
                         silent_chunks += 1
 
-                    # Stop after ~3 seconds of silence if we've detected speech before
-                    if has_speech and silent_chunks > RATE / CHUNK * 3:
+                    # Stop after N seconds of silence if we've detected speech before
+                    if has_speech and silent_chunks > RATE / CHUNK * self.silence_duration_s:
                         break
 
                     # Also stop if recording gets too long (30 seconds)

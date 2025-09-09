@@ -38,11 +38,12 @@ class WindowManager {
         this.basePath = null;
     }
 
-    initialize(windowClasses, basePath) {
+    initialize(windowClasses, basePath, showWindows) {
         this.basePath = basePath;
         this.handlers = this.collectHandlers(windowClasses);
         this.createWindows(windowClasses);
         this.setupWindowEvents();
+        this.showWindows = showWindows;
     }
 
     setTray(tray, iconPath) {
@@ -217,6 +218,14 @@ class WindowManager {
 
             // Apply additional throttling to all windows
             this.applyBackgroundThrottling(true);
+
+            // TODO Does this piece of code have a legitimate use case?
+            // const shortcutKey = this.config.get('shortcuts.toggle', 'F1');
+            // global.shortcutRegistered =
+            //     require('electron').globalShortcut.register(
+            //         shortcutKey,
+            //         this.showWindows
+            //     );
         }
     }
 

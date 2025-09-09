@@ -11,7 +11,6 @@
             <button title="Close setup wizard" class="close-btn">&times;</button>
             <h1>Welcome to Ainara Polaris</h1>
             <p>Let's get everything set up for you</p>
-            <img src="../assets/logo.png" alt="Ainara Polaris Logo" class="logo">
         </div>
 
         <div class="setup-content">
@@ -34,10 +33,6 @@
                     <h2>Welcome to Ainara Polaris Setup</h2>
                     <p>This wizard will help you configure Polaris for first use.</p>
                     <p>We'll set up your LLM provider and configure API keys for various skills.</p>
-                    <div class="button-row">
-                        <div></div> <!-- Empty div to maintain spacing -->
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- Ollama setup step -->
@@ -46,17 +41,12 @@
                     <p>Ainara can optionally make use of local LLM models via Ollama. Download models based on your hardware capabilities.<br><br><span class="note-signal">&nbsp;</span>Any kind of local LLM server compatible with the OpenAI standard can be configured as well in the <b>LLM Providers</b> section using the <b>Custom API</b> option.</p><br>
                     <div id="ollama-hardware-info" class="hardware-info"></div>
                     <div id="ollama-models-container"></div>
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- LLM setup step -->
                 <div class="step-panel" id="llm-panel">
                     <h2>LLM Provider Setup</h2>
                     <p>Polaris needs access to a Large Language Model (LLM) to function.</p>
-                    <p>Please select your preferred provider:</p>
 
                     <div class="provider-options" id="provider-options">
                         <p>Loading providers...</p>
@@ -73,10 +63,6 @@
                         <br>
                     </div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn" id="llm-next" disabled>Next</button>
-                    </div>
                 </div>
 
                 <!-- STT setup step -->
@@ -113,28 +99,20 @@
 
                     <div id="stt-test-result" class="hidden"></div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn" id="stt-next">Next</button>
-                    </div>
                 </div>
 
                 <!-- Skills setup step -->
                 <div class="step-panel" id="skills-panel">
                     <h2>Skills API Keys</h2>
-                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities, simply ask her in a dialog.</b></br></br>
-                    <p>Some Ainara's skills require API keys to function properly.</p>
-                    <p>Configure the ones you plan to use (all are optional, but all the search services are highly recommended).</p>
+                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities at any moment, simply ask her.</b></br></br>
+                    <p>The following skills require API keys. All are optional, but especially the search services are highly recommended.</p>
+                    <p>Validate new keys before continuing.</p>
 
                     <div class="skills-list">
                         <!-- This will be populated dynamically -->
                         <p>Loading available skills...</p>
                     </div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- MCP Servers setup step -->
@@ -149,10 +127,6 @@
                     </div>
                     <button id="add-mcp-server-btn" class="btn" style="margin-top: 15px;">Add MCP Server</button>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- Shortcuts setup step -->
@@ -195,10 +169,6 @@
                         </div>
                     </div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- Finish step -->
@@ -230,11 +200,16 @@
                     </div>
 
                     <p>Click the button below to start using Polaris.</p>
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="finish-btn">Start Polaris</button>
-                    </div>
                 </div>
+            </div>
+        </div>
+        <div class="button-row">
+            <div>
+                <button class="back-btn" id="main-back-btn">Back</button>
+            </div>
+            <div>
+                <button class="next-btn" id="main-next-btn">Next</button>
+                <button class="finish-btn" id="main-finish-btn">Start Polaris</button>
             </div>
         </div>
     </div>

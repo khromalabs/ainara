@@ -16,7 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const semver = require('semver');
 // const yargs = require('yargs/yargs');
@@ -63,8 +63,8 @@ function showSetupWizard() {
 
    // Disable tray icon
     if (tray) {
-        tray.setContextMenu(null);
-        tray.removeAllListeners('click');
+        tray.destroy();
+        tray = null;
     }
 
     // Get the appropriate icon based on theme
@@ -73,12 +73,16 @@ function showSetupWizard() {
 
     wizardActive = true;
     globalShortcut.unregister(shortcutKey);
+    shortcutRegistered = false;
+
+    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+
+    Logger.info("Screen X " + screenWidth)
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        width: 950,
-        // width: 1350,
-        height: 750,
+        width: screenHeight,
+        height: screenHeight * 0.8,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
@@ -114,11 +118,10 @@ function showSetupWizard() {
         }
         wizardActive = false;
         appSetupShortcuts();
-        updateProviderSubmenu();
         // Re-enable tray icon
         if (tray) {
-            tray.destroy();
             await appCreateTray();
+            updateProviderSubmenu();
         }
 
         await restartWithSplash();
@@ -256,6 +259,20 @@ function initializeOllamaClient() {
 
 async function appInitialization() {
     try {
+        const singleInstanceLock = app.requestSingleInstanceLock();
+
+        if (!singleInstanceLock) {
+            // App is already running this will force visibility
+            app.quit();
+            return;
+        }
+
+        app.on('second-instance', () => {
+            if (windowManager) {
+                showWindows();
+            }
+        });
+
         Logger.setDebugMode(debugMode);
         app.isQuitting = false;
         await app.whenReady();
@@ -265,7 +282,11 @@ async function appInitialization() {
 
         // Initialize window manager and windows
         windowManager = new WindowManager(config);
-        windowManager.initialize([ComRingWindow, ChatDisplayWindow], __dirname);
+        windowManager.initialize(
+            [ComRingWindow, ChatDisplayWindow],
+            __dirname,
+            showWindows
+        );
         appSetupEventHandlers();
         await appCreateTray();
 
@@ -474,9 +495,11 @@ function handlePortConflictError(port, serviceName) {
     app.quit();
 }
 
-function showWindows(force=false) {
+// function showWindows(force=false) {
+// TODO Disabled conditional but unsure if has a legitimate use case
+function showWindows() {
     Logger.log('Shortcut pressed'); // Keep as debug log
-    if (force || !windowManager.isAnyVisible()) {
+    // if (force || !windowManager.isAnyVisible()) {
         Logger.log('Windows were hidden - showing'); // Keep as debug log
         // Disable shortcut before showing windows
         globalShortcut.unregister(shortcutKey);
@@ -487,7 +510,7 @@ function showWindows(force=false) {
             comRing.focus();
         }
         Logger.log('shown and focused, unregistered globalShortcut'); // Keep as debug log
-    }
+    // }
 }
 
 function appSetupShortcuts() {
@@ -997,6 +1020,7 @@ function appSetupEventHandlers() {
     // Cleanup before quit
     app.on('before-quit', async () => {
         globalShortcut.unregisterAll();
+        shortcutRegistered = false;
 
         // Stop services
         try {

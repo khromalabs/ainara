@@ -17,11 +17,13 @@
 # Lesser General Public License for more details.
 
 import logging
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union, Generator
+from typing import (Any, AsyncGenerator, Dict, Generator, List, Optional,
+                    Union)
+from datetime import datetime
 
 import ollama
-
 from litellm import token_counter
+
 from ainara.framework.config import ConfigManager
 
 from .base import LLMBackend
@@ -35,14 +37,19 @@ class OllamaLLM(LLMBackend):
     Uses /api/chat for primary interaction
     """
 
-    def __init__(self, config_manager: ConfigManager, provider_config: dict = None):
+    def __init__(
+        self, config_manager: ConfigManager, provider_config: dict = None
+    ):
         self.config_manager = config_manager
         super().__init__(self.config_manager)
 
         if provider_config:
             # Use the specific provider config passed in
             self.provider_config = provider_config
-            self.logger.info(f"Using provided provider config: {provider_config.get('name', provider_config.get('model'))}")
+            self.logger.info(
+                "Using provided provider config:"
+                f" {provider_config.get('name', provider_config.get('model'))}"
+            )
         else:
             # Fallback to getting config from config manager
             self.provider_config = self._get_ollama_provider_config_entry()
@@ -52,8 +59,9 @@ class OllamaLLM(LLMBackend):
                 )
                 if selected_provider_id.startswith("ollama/"):
                     logger.warning(
-                        f"No specific provider entry for '{selected_provider_id}'."
-                        " Trying generic Ollama config."
+                        "No specific provider entry for"
+                        f" '{selected_provider_id}'. Trying generic Ollama"
+                        " config."
                     )
                     self.provider_config = self.config_manager.get(
                         "llm.providers_config.ollama", {}
@@ -135,9 +143,13 @@ class OllamaLLM(LLMBackend):
         self, new_message: str, chat_history: List, role: str
     ) -> List[dict]:
         """Format user chat message for LLM processing with token count"""
-        token_count = self._get_token_count(new_message, role)
+        timestamp = datetime.now()
+        new_message_ts = (
+            f"[{timestamp.strftime("%H:%M")}] {new_message}"
+        )
+        token_count = self._get_token_count(new_message_ts, role)
         chat_history.append(
-            {"role": role, "content": new_message, "tokens": token_count}
+            {"role": role, "content": new_message_ts, "tokens": token_count}
         )
         self.logger.debug(f"Added {role} message with {token_count} tokens")
         return chat_history

@@ -167,9 +167,6 @@ def create_app(internet_available: bool):
             # Update the configuration without saving
             config.update_config(new_config=data, save=False)
 
-            # # Reload skills without registering new routes
-            # app.capabilities_manager.reload_skills()
-
             return jsonify({"success": True})
         except Exception as e:
             logger.error(f"Error updating configuration: {e}")

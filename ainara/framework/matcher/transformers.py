@@ -258,7 +258,8 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
                 * embeddings_boost_factor
             )
 
-            if similarity >= threshold:
+            # skills with a boost factor of 3 or more get always included
+            if similarity >= threshold or embeddings_boost_factor >= 3:
                 matches.append(
                     {
                         "skill_id": skill_id,

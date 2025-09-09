@@ -1,4 +1,4 @@
-# Ainara AI Companion Framework Project
+# Ainara  AI Companion Framework Project
 # Copyright (C) 2025 Rubén Gómez - khromalabs.org
 #
 # This file is dual-licensed under:
@@ -22,6 +22,7 @@
 import json
 import logging
 import os
+import math
 # import re
 import uuid
 from datetime import datetime, timezone
@@ -51,10 +52,6 @@ logger = logging.getLogger(__name__)
 # This acts as a low-pass filter to prune irrelevant memories from active recall.
 MIN_RELEVANCE_THRESHOLD = 0.2
 
-# A multiplier to boost the importance of key_memories during ranking.
-# This ensures they are more likely to be selected over extended_memories.
-KEY_MEMORY_BOOST = 1.5
-
 # Define a set of stopwords for normalization.
 # We use spaCy's list and can extend it if needed.
 STOPWORDS = set(SPACY_STOP_WORDS)
@@ -67,15 +64,26 @@ class GREENMemories:
         self,
         llm: LLMBackend,
         chat_memory: ChatMemory,
-        context_window: Optional[int] = None,
     ):
         self.llm = llm
         self.chat_memory = chat_memory
         self.storage = chat_memory.storage
         self.template_manager = TemplateManager()
-        self.context_window = (
-            context_window or 8192
-        )  # Default to 8k if not provided
+        self.context_window = llm.get_context_window() or 4096  # default 4k
+        self.scoring_config = {
+            # A multiplier to boost the importance of key_memories during ranking.
+            "key_memory_boost": 1.5,
+            # The weight given to a memory's intrinsic relevance score versus its
+            # semantic similarity to the query. 0.3 means 30% relevance, 70% semantic.
+            "relevance_weight": 0.3,
+            # The penalty applied to memories marked as 'past' to de-prioritize them.
+            "past_memory_penalty": 0.5,
+            # The maximum boost applied to a memory that was just updated.
+            "max_recency_boost": 1.5,
+            # Controls how quickly the recency boost fades over time (in hours).
+            # A smaller value means the boost lasts longer.
+            "recency_decay_rate": 0.01,
+        }
         self.nlp = load_spacy_model()
         self._db_lock = threading.Lock()
         self.extraction_context_turns = config.get(
@@ -201,6 +209,10 @@ class GREENMemories:
                 f"Failed to initialize vector storage for profile: {e}"
             )
             self.vector_storage = None
+
+    def update_llm(self, llm):
+        self.llm = llm
+        self.context_window = llm.get_context_window() or 4096  # default 4k
 
     def _create_memories_table(self):
         """Creates the user_memories table in the database if it doesn't exist."""
@@ -535,6 +547,81 @@ class GREENMemories:
 
         return profile_summary
 
+    def generate_recent_memories_summary(
+        self, top_k: Optional[int] = None
+    ) -> Optional[str]:
+        """
+        Generates a narrative summary of the most recently discussed topics.
+
+        This method fetches the most recently updated memories and asks the LLM to
+        synthesize them into a coherent paragraph.
+
+        Args:
+            top_k: The number of top recent memories to use for the summary.
+
+        Returns:
+            A string containing the narrative of recent memories, or None if no
+            memories exist.
+        """
+        if top_k is None:
+            # Dynamically set top_k for profile summary based on context window
+            if self.context_window <= 8192:
+                top_k = 25
+            elif self.context_window <= 32768:
+                top_k = 50
+            else:
+                top_k = 75
+            logger.info(
+                f"Context window is {self.context_window}, dynamically setting"
+                f" top_k for recent memories summary to {top_k}"
+            )
+        logger.info(
+            f"Generating narrative of recent memories from top {top_k} most"
+            " recent memories..."
+        )
+
+        # Fetch recent memories
+        query = (
+            "SELECT * FROM user_memories WHERE status = 'current' ORDER BY"
+            " last_updated DESC"
+        )
+        params = ()
+
+        if top_k is not None:
+            query += " LIMIT ?"
+            params += (top_k,)
+
+        cursor = self.storage.conn.cursor()
+        cursor.execute(query, params)
+        recent_memories = [self._dict_from_row(row) for row in cursor.fetchall()]
+
+        if not recent_memories:
+            logger.info("No recent memories found to generate a summary.")
+            return None
+
+        # Prepare the memories for the prompt
+        formatted_memories = [f"- {mem['memory']}" for mem in recent_memories]
+        memories_text = "\n".join(formatted_memories)
+
+        user_prompt = self.template_manager.render(
+            "framework.green_memories.generate_recent_memories",
+            {"memories_text": memories_text},
+        )
+
+        try:
+            recent_summary = self.llm.chat(
+                chat_history=[{"role": "user", "content": user_prompt}],
+                stream=False,
+            )
+            logger.info(
+                f"Generated recent memories summary: {recent_summary[:150]}..."
+            )
+        except Exception:
+            recent_summary = "Recent memories summary couldn't be generated"
+            logger.error(recent_summary)
+
+        return recent_summary
+
     def get_key_memories(
         self,
         limit: Optional[int] = None,
@@ -649,7 +736,6 @@ class GREENMemories:
         self,
         query: str,
         top_k: Optional[int] = None,
-        relevance_weight: float = 0.3,
         exclude_ids: Optional[List[str]] = None,
         topic_boost: bool = True,
     ) -> List[Dict]:
@@ -731,13 +817,14 @@ class GREENMemories:
                 memory_status = memory.get("status", "current")
                 relevance = memory.get("relevance", 1.0)
                 memory_topic = memory.get("topic")
+                last_updated_str = memory.get("last_updated")
 
                 if memory_type == "key_memories":
-                    relevance *= KEY_MEMORY_BOOST
+                    relevance *= self.scoring_config["key_memory_boost"]
 
                 # Boost relevance if the memory's topic is currently active
                 if relevant_topics and memory_topic in relevant_topics:
-                    relevance *= KEY_MEMORY_BOOST
+                    relevance *= self.scoring_config["key_memory_boost"]
                     logger.debug(
                         f"Boosting memory {memory.get('id')} due to relevant"
                         f" topic: {memory_topic}"
@@ -747,13 +834,39 @@ class GREENMemories:
                 # squared L2 distance using: 1 - (distance / 2)
                 semantic_score = 1 - (score / 2)
 
-                combined_score = (semantic_score * (1 - relevance_weight)) + (
-                    relevance * relevance_weight
-                )
+                base_score = (
+                    semantic_score * (1 - self.scoring_config["relevance_weight"])
+                ) + (relevance * self.scoring_config["relevance_weight"])
+
+                # Calculate and apply recency boost
+                recency_boost = 1.0
+                if last_updated_str:
+                    try:
+                        last_updated_dt = datetime.fromisoformat(
+                            last_updated_str
+                        )
+                        time_delta = datetime.now(
+                            timezone.utc
+                        ) - last_updated_dt
+                        hours_since_update = time_delta.total_seconds() / 3600
+                        recency_boost = 1 + (
+                            self.scoring_config["max_recency_boost"] - 1
+                        ) * math.exp(
+                            -self.scoring_config["recency_decay_rate"]
+                            * hours_since_update
+                        )
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            f"Could not parse last_updated timestamp: {last_updated_str}"
+                        )
+
+                combined_score = base_score * recency_boost
 
                 # Demote past memories in ranking so current ones are preferred.
                 if memory_status == "past":
-                    combined_score *= 0.5  # Apply a penalty
+                    combined_score *= self.scoring_config[
+                        "past_memory_penalty"
+                    ]  # Apply a penalty
 
                 ranked_memories.append((memory, combined_score))
 
@@ -863,13 +976,13 @@ class GREENMemories:
             f"Profile update complete. New timestamp: {latest_timestamp}"
         )
 
-    def decay_all_memories(self, decay_factor: float = 0.98):
+    def decay_all_memories(self, decay_factor: float = 0.995):
         """Applies a decay factor to the relevance of all memories."""
         # This is a public wrapper for the decay functionality.
         with self._db_lock:
             self._decay_memory_relevance(decay_factor)
 
-    def _decay_memory_relevance(self, decay_factor: float = 0.98):
+    def _decay_memory_relevance(self, decay_factor: float = 0.995):
         """Applies a decay factor to the relevance of all memories."""
         logger.info(f"Applying relevance decay (factor: {decay_factor})...")
         try:

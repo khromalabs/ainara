@@ -5,10 +5,10 @@
     left: 40px;
     right: 40px;
     bottom: 170px; /* Leave space for the ring at the bottom */
-    background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */
+    /* background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */ */
     color: #d4d4d4;
     font-family: 'Menlo', 'Consolas', monospace;
-    border-radius: 16px; /* Match the inner frame's radius */
+    border-radius: 12px; /* Match the inner frame's radius */
     overflow: auto;
     /* Initial state for animation: hidden */
     opacity: 0;
@@ -29,8 +29,8 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
     gap: 16px;
-    padding: 16px;
-    height: 94%;
+    /* padding: 16px; */
+    height: 99%;
     overflow: auto;
 }
 
@@ -38,9 +38,10 @@
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
-    border-radius: 8px;
+    border-radius: 12px;
     overflow: hidden;
     min-height: 300px;
+    color: #d4d4d4;
 }
 
 .document-header {
@@ -52,7 +53,7 @@
     font-size: 12px;
     color: #ccc;
     flex-shrink: 0;
-    border-bottom: 1px solid #333;
+    /* border-bottom: 1px solid #333; */
 }
 
 .doc-info {
@@ -88,8 +89,8 @@
 
 .copy-button {
     background: #444;
+    border: 2px solid #444;
     color: #fff;
-    border: none;
     padding: 4px 8px;
     border-radius: 4px;
     cursor: pointer;
@@ -100,10 +101,14 @@
     background: #555;
 }
 
+.copy-button:active {
+    border: 2px solid yellow;
+}
+
 .close-button {
     background: transparent;
+    border: 2px solid transparent;
     color: #ccc;
-    border: none;
     padding: 0 4px;
     border-radius: 4px;
     cursor: pointer;
@@ -114,6 +119,10 @@
 .close-button:hover {
     background: #c0392b;
     color: white;
+}
+
+.close-button:active {
+    border: 2px solid yellow;
 }
 
 pre {
@@ -154,7 +163,7 @@ code {
 .document-content {
     flex-grow: 1;
     overflow: auto;
-    padding: 16px;
+    /* padding: 16px; */
 }
 
 .nexus-frame {

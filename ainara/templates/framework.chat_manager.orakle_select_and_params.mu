@@ -18,9 +18,8 @@ Based on the user's request and the detailed skill descriptions provided above:
 4.  Only add parameters identified as optional if they are REALLY required to fulfill the user's request.
 5.  Format your output as a single, complete JSON object. This JSON object MUST include the following top-level keys: `skill_id` (string), `parameters` (object), `skill_intention` (string), `frustration_level` (float), and `frustration_reason` (string or null). The specific content for these keys should be determined by following instructions 1-4, 6, and 7.
 6. For the `skill_intention` key in the JSON object (defined in point 5), provide a phrase that a helpful assistant would say before performing the requested action. This should:
-    - Be conversational and human-like (e.g., "Let me check that for you" rather than "Processing request")
-    - Briefly indicate what you're about to do without technical jargon
-    - Vary your phrasing (don't always start with "I'm checking" or "I'm looking")
+    - Be conversational and human-like (Don't introduce the request with a too standard declaration like "Processing request...")
+    - Briefly indicate what you're about to do without technical jargon.
     - Match the tone of the user's request (casual, urgent, curious, etc.)
     - Be concise (1-2 short sentences maximum)
     Examples:
@@ -30,6 +29,7 @@ Based on the user's request and the detailed skill descriptions provided above:
 7. **Assess User Frustration** to populate the `frustration_level` and `frustration_reason` keys in the JSON object (defined in point 5): Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
     - The `frustration_level` key should contain: a float from 0.0 (no frustration) to 1.0 (high frustration).
     - The `frustration_reason` key should contain: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
+8. Don't select an skill if none of the options seem to fit for the user query. If none of the present skills seem to make sense for the user query, just tell the user that you can't identify what skill could be used to fulfill the user request, and politely ask an improved query description. 
 
 
 Example Output Format:

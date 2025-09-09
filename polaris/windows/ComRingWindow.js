@@ -73,7 +73,6 @@ class ComRingWindow extends BaseWindow {
         this.originalSize = [windowWidth, windowHeight];
         this.originalPosition = [options.x, options.y];
         this.isDocumentView = false;
-        // this.window.webContents.openDevTools();
     }
 
     setupEventHandlers() {
@@ -134,6 +133,7 @@ class ComRingWindow extends BaseWindow {
             this.backendConfig = await ConfigHelper.fetchBackendConfig();
             const memoryEnabled = this.backendConfig?.memory?.enabled || false;
             this.window.webContents.send('set-memory-state', memoryEnabled);
+            // this.window.webContents.openDevTools();
         });
 
         // Add ComRing specific IPC handlers

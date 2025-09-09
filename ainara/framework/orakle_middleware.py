@@ -106,6 +106,9 @@ class OrakleMiddleware:
         # logger.info("-----------------")
         # logger.info(pprint.pformat(skill))
 
+    def update_llm(self, llm):
+        self.llm = llm
+
     def process_stream(
         self, token_stream: Generator[str, None, None], chat_manager=None
     ) -> Generator[str, None, None]:
@@ -193,9 +196,9 @@ class OrakleMiddleware:
                     in_command = True
                 elif len(buffer) > len(command_start_delimiter) + 10:
                     # Check if the end of the buffer could be the start of a delimiter
-                    for i in range(
+                    for i in reversed(range(
                         1, min(len(buffer), len(command_start_delimiter))
-                    ):
+                    )):
                         if buffer.endswith(command_start_delimiter[:i]):
                             # Found a partial match at the end
                             yield buffer[:-i]
@@ -377,6 +380,7 @@ class OrakleMiddleware:
                         "vendor": skill_info.get("vendor"),
                         "bundle": skill_info.get("bundle"),
                         "component": component_name,
+                        "query": query,
                         "data": result_data,
                     }
                 except json.JSONDecodeError:

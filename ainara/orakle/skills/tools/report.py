@@ -24,6 +24,7 @@ from typing import Annotated, Any, Dict, List, Optional
 
 from ainara.framework.config import ConfigManager
 from ainara.framework.skill import Skill
+from ainara.framework.llm import create_llm_backend
 
 
 class ToolsReport(Skill):
@@ -147,9 +148,8 @@ class ToolsReport(Skill):
             prompt = self._create_report_prompt(_chat_history, goal, format)
 
             # Get LLM from the framework
-            from ainara.framework.llm.litellm import LiteLLM
-
-            llm = LiteLLM()
+            llm_config = self.config.get("llm", {})
+            llm = create_llm_backend(llm_config)
 
             # Prepare chat messages for the LLM
             system_message = (

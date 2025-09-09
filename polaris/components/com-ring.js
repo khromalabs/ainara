@@ -265,7 +265,10 @@ class ComRing extends BaseComponent {
             if (this.isFirstShow) {
                 this.isFirstShow = false; // Ensure this only runs once
                 if (!backendConfig?.backup?.enabled) {
-                    this.showInfo("Backups are disabled. Please enable it in Setup Wizard", true);
+                    this.showInfo("Backups are disabled. Use Setup Wizard to enable.");
+                }
+                if (!this.memoryEnabled) {
+                    this.showInfo("Memory is disabled, to enable type: /memory");
                 }
             }
 
@@ -321,11 +324,11 @@ class ComRing extends BaseComponent {
                 this.stopRecording();
             }
 
-            if (this.state.isProcessingLLM) {
-                this.abortLLMResponse();
-                this.cleanAudio();
-                this.state.isAwaitingResponse = false;
-            }
+            // if (this.state.isProcessingLLM) {
+            //     this.abortLLMResponse();
+            //     this.cleanAudio();
+            //     this.state.isAwaitingResponse = false;
+            // }
 
             this.exitTypingMode();
         });
@@ -464,7 +467,7 @@ class ComRing extends BaseComponent {
                 // Get current typing mode state from window
                 const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
 
-                console.log('ComRing: key detected: ' + event.key);
+                // console.log('ComRing: key detected: ' + event.key);
                 if (!isTypingMode && event.code === this.triggerKey) {
                     this.state.keyPressed = true;
                     if (!this.state.isRecording) {
@@ -474,12 +477,17 @@ class ComRing extends BaseComponent {
                 } else if (
                     !isTypingMode &&
                     !this.state.isRecording &&
+                    // don't process control+v
+                    ( !(event.key.toLowerCase() === 'v' && event.ctrlKey) ) &&
                     (
+                        // process arrows
                         event.key == "ArrowUp" ||
                         event.key == "ArrowDown" ||
+                        // process alphanumeric keys
                         ( event.key.length === 1 && /[a-zA-Z0-9/]/.test(event.key) )
                     )
                 ) {
+                    // console.log("EVENT KEYDOWN");
                     // Only handle the first keystroke to enter typing mode
                     console.log('ComRing: Entering typing mode');
                     await this.enterTypingMode();
@@ -509,6 +517,20 @@ class ComRing extends BaseComponent {
             if (event.target === document.body && !this.state.isRecording) {
                 console.log('ComRing: Escape pressed - hiding window');
                 ipcRenderer.send('hide-window');
+            }
+        });
+
+        document.addEventListener('paste', async (event) => {
+            const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
+            if (!isTypingMode) {
+                await this.enterTypingMode();
+                let clipboardText = electron.clipboard.readText();
+                ipcRenderer.send(
+                    'typing-key-pressed',
+                    clipboardText
+                );
+                ipcRenderer.send('focus-chat-display');
+                event.preventDefault();
             }
         });
 
@@ -1498,10 +1520,15 @@ class ComRing extends BaseComponent {
                     const pathParts = event.content.component_path.split('/');
                     const componentName = pathParts[pathParts.length - 2];
                     this.switchToDocumentView('nexus');
+                    console.log("EVENT")
+                    console.log(JSON.stringify(event))
                     this.documentView.addDocument(
-                        { url: fullUrl, data: event.content.data },
+                        {
+                            url: fullUrl,
+                            data: event.content.data
+                        },
                         'nexus',
-                        componentName
+                        componentName + "—" + event.content.query
                     );
                 }
                 break;

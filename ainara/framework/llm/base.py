@@ -123,6 +123,10 @@ class LLMBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def add_msg(self):
+        pass
+
+    @abstractmethod
     def get_context_window(self) -> int:
         """Get the context window size for the current model
 
@@ -130,7 +134,6 @@ class LLMBackend(ABC):
             Maximum number of tokens the model can process
         """
         pass
-        # return 4000  # Default conservative value
 
     @abstractmethod
     async def chat(

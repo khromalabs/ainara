@@ -27,9 +27,11 @@ class ChatDisplayWindow extends BaseWindow {
                 if (chatDisplay.isTypingMode) {
                     chatDisplay.send('set-typing-mode-state', false);
                 }
+                chatDisplay.window.setFocusable(false);
             },
             onShow: (window, manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
+                chatDisplay.window.setFocusable(true);
                 if (chatDisplay) {
                     chatDisplay.send('ready-for-transcription');
                     if (chatDisplay.isTypingMode) {
@@ -43,6 +45,10 @@ class ChatDisplayWindow extends BaseWindow {
                     const comRing = manager.getWindow('comRing');
                     comRing.focus();
                 }
+            },
+            onHide: (window, manager) => {
+                const chatDisplay = manager.getWindow('chatDisplay');
+                chatDisplay.window.setFocusable(false);
             }
         };
     }
@@ -64,7 +70,7 @@ class ChatDisplayWindow extends BaseWindow {
             windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
         } else {
             // Linux: Position lower as before
-            windowY = Math.floor(screenHeight * (5/6)) - (windowHeight / 2);
+            windowY = Math.floor(screenHeight * (6/7)) - (windowHeight / 2);
         }
 
         Logger.log(`ChatDisplayWindow: Positioning at Y=${windowY} (${process.platform}, screen height=${screenHeight})`);

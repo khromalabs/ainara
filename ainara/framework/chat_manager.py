@@ -89,6 +89,7 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
+        self.nexus_test = 0
 
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
@@ -118,14 +119,14 @@ class ChatManager:
             self.turn_counter = self.green_memories.get_turn_counter()
 
         # Render the system message template
-        current_date = datetime.now().date()
+        self.current_date = datetime.now().date()
         self.system_message = self.template_manager.render(
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": (
                     ""
                 ),  # Will be populated by middleware
-                "current_date": current_date,
+                "current_date": self.current_date,
             },
         )
 
@@ -171,7 +172,7 @@ class ChatManager:
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": skills_description_list,
-                "current_date": current_date,
+                "current_date": self.current_date,
                 "is_new_profile": is_new_profile,
             },
         )
@@ -202,6 +203,12 @@ class ChatManager:
             self.summary_in_progress = False
             self.current_summary = "-"
 
+    def update_llm(self, llm):
+        self.llm = llm
+        self.orakle_middleware.update_llm(llm)
+        if self.green_memories:
+            self.green_memories.update_llm(llm)
+
     def _initialize_memory_if_needed(self):
         """Initializes memory components if they haven't been already."""
         if self.chat_memory is None:
@@ -214,7 +221,6 @@ class ChatManager:
             self.green_memories = GREENMemories(
                 llm=self.llm,
                 chat_memory=self.chat_memory,
-                context_window=self.llm.get_context_window(),
             )
             logger.info("User Memories Manager initialized.")
             # Perform initial consolidation
@@ -416,20 +422,21 @@ class ChatManager:
             return
 
         try:
-            audio_file, duration = self.tts.generate_audio(sentence)
+            cleaned_sentence = re.sub(r"^\[\d{1,2}:\d{2}\]\s*", "", sentence)
+            audio_file, duration = self.tts.generate_audio(cleaned_sentence)
             if stream_type == "json":
                 event_data = self._create_audio_stream_event(
                     audio_file=audio_file,
-                    text_content=sentence,
+                    text_content=cleaned_sentence,
                     duration=duration,
                 )
                 yield ndjson("message", "stream", event_data)
             else:
                 # logger.info("_process_streaming_sentence 4 '" + sentence + "'")
-                char_delay = duration / len(sentence)
+                char_delay = duration / len(cleaned_sentence) if cleaned_sentence else 0
                 if not self.tts.play_audio(audio_file):
                     raise RuntimeError("Failed to start audio playback")
-                for char in sentence:
+                for char in cleaned_sentence:
                     sys.stdout.write(char)
                     sys.stdout.flush()
                     time.sleep(char_delay)
@@ -455,15 +462,18 @@ class ChatManager:
 
         # Handle non-TTS streaming directly to avoid sentence splitting logic
         if not self.tts:
+            cleaned_text = re.sub(
+                r"^\[\d{1,2}:\d{2}\]\s*", "", text, flags=re.MULTILINE
+            )
             if stream_type == "json":
                 event_data = {
-                    "content": text,
+                    "content": cleaned_text,
                     "flags": {"command": False, "audio": False},
                 }
                 yield ndjson("message", "stream", event_data)
                 return
             elif stream_type == "cli":
-                print(text, end="", flush=True)
+                print(cleaned_text, end="", flush=True)
                 return
 
         # Use the extracted method to split text into chunks
@@ -934,16 +944,26 @@ class ChatManager:
 
         if stream == "json":
             yield ndjson("signal", "loading", {"state": "start"})
+            nexus_data = {
+                "component_path": component_path,
+                "data": data,
+                # "query": f"Test #{self.nexus_test} {vendor}/{bundle}/{component}",
+                "query": f"Test #{self.nexus_test}",
+            }
+            # Create a descriptive message for the chat history
+            history_message = (
+                "Nexus component data was generated and sent to the UI. "
+                f"Data: {json.dumps(nexus_data)}"
+            )
+            self.llm.add_msg(history_message, self.chat_history, "assistant")
             yield ndjson(
                 "ui",
                 "renderNexus",
-                {
-                    "component_path": component_path,
-                    "data": data,
-                },
+                nexus_data
             )
             yield ndjson("signal", "loading", {"state": "stop"})
             yield ndjson("signal", "completed", None)
+            self.nexus_test = self.nexus_test + 1
         elif stream == "cli":
             print("\n--- Nexus Component ---")
             print(f"Path: {component_path}")
@@ -1144,12 +1164,24 @@ class ChatManager:
                     f" responses. ---\n{self.user_profile_summary}"
                 )
 
+            # --- Recent Memories Summary Injection ---
+            if self.memory_enabled and self.green_memories:
+                recent_memories_summary = (
+                    self.green_memories.generate_recent_memories_summary()
+                )
+                if recent_memories_summary:
+                    final_system_content += (
+                        "\n\n--- This is a summary of topics and facts that have been"
+                        " discussed recently. Use this to maintain conversation"
+                        f" continuity. ---\n{recent_memories_summary}"
+                    )
+
             # --- Context Memories ---
             if self.memory_enabled and self.green_memories:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
-                    -20:
-                ]  # Last 10 exchanges
+                    -10:
+                ]  # Last 5 exchanges
 
                 search_context_parts = []
                 if self.current_summary and self.current_summary != "-":
@@ -1233,6 +1265,7 @@ class ChatManager:
                     vendor = chunk.get("vendor")
                     bundle = chunk.get("bundle")
                     component = chunk.get("component")
+                    query = chunk.get("query")
                     skill_data = chunk.get("data", {})
 
                     if not all([vendor, bundle, component]):
@@ -1246,13 +1279,23 @@ class ChatManager:
                         f"/nexus/{vendor}/{bundle}/{component}/index.html"
                     )
 
+                    nexus_data = {
+                            "component_path": component_path,
+                            "data": skill_data,
+                            "query": query
+                    }
+
+                    # Create a descriptive message for the chat history
+                    history_message = (
+                        "Nexus component data was generated and sent to the UI. "
+                        f"Data: {json.dumps(nexus_data)}"
+                    )
+                    self.llm.add_msg(history_message, self.chat_history, "assistant")
+
                     yield ndjson(
                         "ui",
                         "renderNexus",
-                        {
-                            "component_path": component_path,
-                            "data": skill_data,
-                        },
+                        nexus_data
                     )
                     continue
 

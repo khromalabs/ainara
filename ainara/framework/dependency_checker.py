@@ -344,8 +344,44 @@ class DependencyChecker:
             "cuda_version": None,
             "cudnn_version": None,
             "pytorch_cuda_available": False,
-            "driver_issue": False
+            "driver_issue": False,
+            "total_ram_gb": None,
+            "is_apple_silicon": False,
         }
+
+        # --- Get System RAM and check for Apple Silicon ---
+        try:
+            if sys.platform == 'darwin':
+                if platform.machine() == 'arm64':
+                    details['is_apple_silicon'] = True
+                # Get RAM on macOS
+                result = subprocess.run(
+                    ['sysctl', '-n', 'hw.memsize'],
+                    capture_output=True, text=True, check=True, timeout=2
+                )
+                mem_bytes = int(result.stdout.strip())
+                details['total_ram_gb'] = round(mem_bytes / (1024**3), 1)
+            elif sys.platform == 'linux':
+                # Get RAM on Linux
+                with open('/proc/meminfo', 'r') as f:
+                    for line in f:
+                        if 'MemTotal' in line:
+                            mem_kb = int(line.split()[1])
+                            details['total_ram_gb'] = round(mem_kb / (1024**2), 1)
+                            break
+            elif sys.platform == 'win32':
+                # Get RAM on Windows
+                result = subprocess.run(
+                    ['wmic', 'ComputerSystem', 'get', 'TotalPhysicalMemory', '/value'],
+                    capture_output=True, text=True, check=True, timeout=5
+                )
+                for line in result.stdout.splitlines():
+                    if 'TotalPhysicalMemory' in line:
+                        mem_bytes = int(line.split('=')[1].strip())
+                        details['total_ram_gb'] = round(mem_bytes / (1024**3), 1)
+                        break
+        except Exception as e:
+            logger.warning(f"Could not determine system RAM or architecture: {e}")
 
         # First detect if NVIDIA hardware is present
         has_nvidia_gpu, gpu_list = DependencyChecker.detect_nvidia_gpus()

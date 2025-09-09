@@ -24,6 +24,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from ainara.framework.config import config
 from ainara.framework.skill import Skill
+# from ainara.framework.llm import create_llm_backend
 
 from .web_engines import discover_engines
 from .web_engines.base import SearchEngineBase, SearchResult
@@ -32,12 +33,15 @@ logger = logging.getLogger(__name__)
 
 
 class SearchWeb(Skill):
-    """Search the internet for information about any topic or product or news or current events or just anything not present in my built-in knowledge."""
+    """Search the internet for information about any topic or product or news or current events or just anything not present in your built-in knowledge."""
 
     if not config.get("apis.search"):
         hiddenCapability = True
-
-    embeddings_boost_factor = 2
+        # embeddings factor 3 makes the skill always selected, avoid if it
+        # if we don't have valid keys
+        embeddings_boost_factor = 1
+    else:
+        embeddings_boost_factor = 3
 
     matcher_info = (
         "Primarily use when the user explicitly requests a web search,"
@@ -176,12 +180,6 @@ class SearchWeb(Skill):
 
         logger.debug(f"Engine specialties: {self.engine_specialties}")
 
-    async def initialize(self, chat_manager):
-        """Initialize the skill with the chat manager"""
-        # Store LLM for advanced result fusion if available
-        if hasattr(chat_manager, "llm"):
-            self.llm = chat_manager.llm
-
     async def run(
         self,
         query: Annotated[str, "Search web query string"],
@@ -219,6 +217,9 @@ class SearchWeb(Skill):
                 ),
                 "results": [],
             }
+
+        # TODO disabled llm weights by now
+        # self.llm = create_llm_backend(config.get("llm", {}))
 
         # Validate search type
         valid_search_types = [

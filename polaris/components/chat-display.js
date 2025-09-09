@@ -73,6 +73,12 @@ class ChatDisplay extends BaseComponent {
         }
     }
 
+    // Add paste event listener for proper resize handling
+    pasteHandler = () => {
+        // Use setTimeout to ensure the value is updated before resizing
+        setTimeout(() => this.autoResizeTextArea(), 1);
+    };
+
     async enterTypingMode() {
         // Set state in window first
         await this.ipcRenderer.invoke('set-typing-mode-state', true);
@@ -84,7 +90,9 @@ class ChatDisplay extends BaseComponent {
         this.container.style.marginBottom = '60px';
 
         this.textInput.addEventListener('input', this.inputHandler);
+        this.textInput.addEventListener('paste', this.pasteHandler);
         this.autoResizeTextArea();
+
 
         this.keydownHandler = async (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -134,6 +142,7 @@ class ChatDisplay extends BaseComponent {
             this.keydownHandler = null;
         }
         this.textInput.removeEventListener('input', this.inputHandler);
+        this.textInput.removeEventListener('paste', this.inputHandler);
 
         // Set state in window first
         await this.ipcRenderer.invoke('set-typing-mode-state', false);
@@ -310,6 +319,7 @@ class ChatDisplay extends BaseComponent {
                     } else {
                         this.textInput.value += key;
                     }
+                    this.autoResizeTextArea();
                     this.textInput.focus();
                 });
 

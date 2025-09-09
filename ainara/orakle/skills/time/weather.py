@@ -19,6 +19,7 @@
 import logging
 from typing import Annotated, Any, Dict, Optional
 
+import pycountry
 import requests
 
 from ainara.framework.config import config
@@ -38,11 +39,12 @@ class TimeWeather(Skill):
             "Use this skill when the user wants to get current weather"
             " information for their location or a specific location. This"
             " skill can determine the user's location using IP-based"
-            " geolocation if no location is provided.\n\nExamples include: 'what"
-            " is the weather like today', 'tell me the forecast for London',"
-            " 'how hot is it in New York', 'current temperature in Paris'."
-            " Keywords: weather, forecast, temperature, current, today,"
-            " location, city, country, climate, rain, sun, wind, humidity."
+            " geolocation if no location is provided. Examples include:"
+            " 'what is the weather like today', 'tell me the forecast for"
+            " London', 'how hot is it in New York', 'current temperature in"
+            " Paris'.\n\nKeywords: weather, forecast, temperature, current,"
+            " today, location, city, country, climate, rain, sun, wind,"
+            " humidity."
         )
         self.logger = logging.getLogger(__name__)
         self.api_key = config.get("apis.weather.openweathermap_api_key")
@@ -51,6 +53,13 @@ class TimeWeather(Skill):
     #     super().reload(config)
     #     self.api_key = config.get("apis.weather.openweathermap_api_key")
     #     # self.logger.info("TimeWeather RELOAD self.api_key = " + self.api_key)
+
+    def get_country_name(self, code):
+        try:
+            country = pycountry.countries.get(alpha_2=code.upper())
+            return country.name
+        except AttributeError:
+            return None  # or handle invalid code
 
     def get_location_from_ip(self):
         """Get location information from IP address"""
@@ -71,10 +80,18 @@ class TimeWeather(Skill):
                 data = location_response.json()
                 if data.get("status") == "success":
                     return {
-                        "latitude": data["lat"],
-                        "longitude": data["lon"],
-                        "city": data["city"],
-                        "country_name": data["country"],
+                        "lat": data["lat"],
+                        "lon": data["lon"],
+                        "city": (
+                            data["city"]
+                            # .encode("latin1")
+                            # .decode("unicode_escape")
+                        ),
+                        "country_name": (
+                            data["country"]
+                            # .encode("latin1")
+                            # .decode("unicode_escape")
+                        ),
                     }
                 self.logger.error(
                     f"IP-API error: {data.get('message', 'Unknown error')}"
@@ -90,44 +107,42 @@ class TimeWeather(Skill):
 
     def get_weather_by_city(self, city_name: str):
         """Get weather information for a specific city"""
-        api_key = config.get("apis.weather.openweathermap_api_key")
-        if not api_key:
-            return {"error": "OpenWeatherMap API key not configured"}
-
         try:
-            url = "https://api.openweathermap.org/data/2.5/weather"
-            params = {
-                "q": city_name,
-                "appid": api_key,
-                "units": "metric",
-            }
-            response = requests.get(url, params=params)
+            # Step 1: Geocoding to convert city name to lat/lon
+            geo_url = "http://api.openweathermap.org/geo/1.0/direct"
+            geo_params = {"q": city_name, "limit": 1, "appid": self.api_key}
+            geo_response = requests.get(geo_url, params=geo_params)
 
-            if response.status_code == 200:
-                weather_data = response.json()
-                return {
-                    "location": (
-                        f"{weather_data['name']},"
-                        f" {weather_data['sys']['country']}"
-                    ),
-                    "temperature": weather_data["main"]["temp"],
-                    "description": weather_data["weather"][0]["description"],
-                    "humidity": weather_data["main"]["humidity"],
-                    "wind_speed": weather_data["wind"]["speed"],
-                }
-            return {"error": f"Weather API error: {response.status_code}"}
+            if geo_response.status_code != 200 or not geo_response.json():
+                self.logger.error(
+                    "Geocoding API error:"
+                    f" {geo_response.status_code} - {geo_response.text}"
+                )
+                return {"error": f"Could not find location: {city_name}"}
+
+            location = geo_response.json()[0]
+            location["city"] = location["name"]
+            location["country_name"] = self.get_country_name(
+                location["country"]
+            )
+            # lat, lon = location["lat"], location["lon"]
+            # self.logger.info(f"location: {location}")
+
+            # Step 2: Get weather using One Call API 3.0 with coordinates
+            return self.get_weather(location)
 
         except Exception as e:
             self.logger.error(f"Error getting weather: {str(e)}")
             return {"error": f"Failed to get weather data: {str(e)}"}
 
-    def get_weather(self):
+    def get_weather(self, location=None):
         """
         Get weather information based on IP location.
         """
-        location = self.get_location_from_ip()
         if not location:
-            return {"error": "Could not determine location"}
+            location = self.get_location_from_ip()
+            if not location:
+                return {"error": "Could not determine location"}
 
         # Using OpenWeatherMap API (you'll need to add API key to config)
         api_key = config.get("apis.weather.openweathermap_api_key")
@@ -137,8 +152,8 @@ class TimeWeather(Skill):
         try:
             url = "https://api.openweathermap.org/data/2.5/weather"
             params = {
-                "lat": location["latitude"],
-                "lon": location["longitude"],
+                "lat": location["lat"],
+                "lon": location["lon"],
                 "appid": api_key,
                 "units": "metric",  # Use metric units
             }
@@ -164,10 +179,15 @@ class TimeWeather(Skill):
 
     async def run(
         self,
-        location: Annotated[
+        city: Annotated[
             Optional[str],
-            "Location name (city, country, etc.) - will use IP-based location"
-            " if not provided",
+            "City or town name. If not provided, IP-based geolocation will be"
+            " used.",
+        ] = None,
+        country: Annotated[
+            Optional[str],
+            "Country name or code (e.g., US, UK). Used to make the city search"
+            " more specific.",
         ] = None,
         api_key: Annotated[
             Optional[str],
@@ -176,6 +196,7 @@ class TimeWeather(Skill):
         ] = None,
     ) -> Dict[str, Any]:
         """Gets current weather information for a location"""
-        if location:
-            return self.get_weather_by_city(location)
+        if city:
+            location_query = f"{city},{country}" if country else city
+            return self.get_weather_by_city(location_query)
         return self.get_weather()
