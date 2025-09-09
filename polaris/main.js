@@ -639,6 +639,18 @@ async function appCreateTray() {
         },
         { type: 'separator' },
         {
+            label: 'Help',
+            click: () => {
+                const comRing = windowManager.getWindow('comRing');
+                if (comRing) {
+                    if (!comRing.isVisible()) {
+                        windowManager.showAll();
+                    }
+                    comRing.send('show-help');
+                }
+            }
+        },
+        {
             label: 'Check for Updates',
             click: () => checkForUpdates(true)
         },
@@ -800,6 +812,18 @@ async function updateProviderSubmenu() {
                 click: () => windowManager.hideAll(true)
             },
             { type: 'separator' },
+            {
+                label: 'Help',
+                click: () => {
+                    const comRing = windowManager.getWindow('comRing');
+                    if (comRing) {
+                        if (!comRing.isVisible()) {
+                            windowManager.showAll();
+                        }
+                        comRing.send('show-help');
+                    }
+                }
+            },
             {
                 label: 'Check for Updates',
                 click: () => checkForUpdates(true)

@@ -771,7 +771,7 @@ class GREENMemories:
             elif self.context_window <= 32768:
                 top_k = 10
             else:
-                top_k = 25  # More for very large contexts
+                top_k = 20  # More for very large contexts
             logger.info(
                 f"Context window is {self.context_window}, dynamically setting"
                 f" top_k for memories to {top_k}"

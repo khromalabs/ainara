@@ -1,8 +1,8 @@
-You are an expert data analyst. Your task is to synthesize the following list of facts and memories from a recent conversation into a concise, well-written, third-person narrative paragraph, in no more than 150-200 words.
+You are an expert data analyst. Your task is to synthesize the following list of facts and memories from a recent conversation into a concise, well-written, third-person list, in no more than 150 words.
 
-The goal is to create a summary of what has been discussed recently to help maintain conversational continuity. Focus on the key topics, facts, and user sentiments that have emerged.
+The goal is to create a small list of topics that has been discussed recently to help maintain conversational continuity. Focus on the key topics, facts, names, activities, places and user sentiments that may have emerged.
 
-Do not present the output as a list. The output should be a smooth, narrative summary. Do NOT make the paragraph longer than 200 words.
+Do NOT make the list longer than 150 words.
 
 ---
 Recent memories to summarize:

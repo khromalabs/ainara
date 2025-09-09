@@ -42,6 +42,8 @@ const electron = require('electron');
 var ipcRenderer = electron.ipcRenderer;
 console.log('com-ring.js loaded');
 
+const ERROR_WITH_CALL_TRACE = false
+
 class ComRing extends BaseComponent {
     constructor() {
         try {
@@ -351,18 +353,14 @@ class ComRing extends BaseComponent {
                     this.llmProviderDisplay.classList.remove('visible');
                 }, 5000);
             } else if (message.trim() === '/documents') {
-                console.log('Handling /documents command');
-                if (this.documentView && this.documentView.documents.length > 0 && this.docFormat !== 'chat-history') {
+                if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
                     this.switchToDocumentView(this.docFormat);
                 } else {
-                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                    sttStatus.textContent = 'No documents to display.';
-                    sttStatus.classList.add('active');
-                    setTimeout(() => {
-                        sttStatus.classList.remove('active');
-                        sttStatus.textContent = '';
-                    }, 3000);
+                    this.showInfo('No documents to display.');
                 }
+            } else if (message.trim() === '/help') {
+                console.log('Handling /help command');
+                await this.showHelp();
             } else {
                 await this.processUserMessage(message, true);
             }
@@ -467,6 +465,21 @@ class ComRing extends BaseComponent {
                 // Get current typing mode state from window
                 const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
 
+                if (event.key === 'Tab' && !isTypingMode) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (this.currentView === 'ring') {
+                        if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
+                            this.switchToDocumentView(this.docFormat);
+                        } else {
+                            this.showInfo('No documents to display.');
+                        }
+                    } else if (this.currentView === 'document') {
+                        this.switchToRingView();
+                    }
+                    return;
+                }
+
                 // console.log('ComRing: key detected: ' + event.key);
                 if (!isTypingMode && event.code === this.triggerKey) {
                     this.state.keyPressed = true;
@@ -538,6 +551,10 @@ class ComRing extends BaseComponent {
         console.log('ComRing: Sending ready confirmation to main process');
         ipcRenderer.send('com-ring-ready');
         ipcRenderer.send('comRing-ready');
+
+        ipcRenderer.on('show-help', async () => {
+            await this.showHelp();
+        });
     }
 
 
@@ -844,15 +861,16 @@ class ComRing extends BaseComponent {
         }
     }
 
-    // TODO extend the queued approach used to show errors to display all messages
     async showInfo(info, isError = false) {
-        let callstack = null;
-        try {
-            throw new Error('Stack Trace');
-        } catch (e) {
-            callstack = e.stack;
+        if (ERROR_WITH_CALL_TRACE) {
+            let callstack = null;
+            try {
+                throw new Error('Stack Trace');
+            } catch (e) {
+                callstack = e.stack;
+            }
+            console.error('Info:', info, callstack);
         }
-        console.error('Info:', info, callstack);
         if (isError) {
             ipcRenderer.send('chat-error', info.toString());
         }
@@ -938,6 +956,29 @@ class ComRing extends BaseComponent {
                 setTimeout(() => this.processInfoQueue(), 100);
             }
         }, refreshInterval);
+    }
+
+    async showHelp() {
+        const helpTitle = 'Help & Shortcuts';
+        const helpContent = `
+**Keyboard Shortcuts**
+- **${this.triggerKey}**: Hold to record your voice.
+- **Tab**: Switch between Ring and Document view.
+- **Escape**: Abort current action or hide the window.
+- **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
+
+**Commands**
+- **/help**: Shows this help message.
+- **/history**: View your chat history.
+- **/documents**: Switch to the document view.
+- **/provider**: Show the current LLM provider.
+- **/memory**: Toggle conversation memory on.
+- **/nomemory**: Toggle conversation memory off.
+        `.trim().replace(/^\s+/gm, '');
+
+        this.switchToDocumentView('help');
+        this.documentView.clear();
+        this.documentView.addDocument(helpContent, 'help', helpTitle);
     }
 
     async fetchAndDisplayChatHistory(date = null) {

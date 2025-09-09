@@ -29,7 +29,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
     gap: 16px;
-    /* padding: 16px; */
     height: 99%;
     overflow: auto;
 }
@@ -164,6 +163,7 @@ code {
     flex-grow: 1;
     overflow: auto;
     /* padding: 16px; */
+    margin: 20px;
 }
 
 .nexus-frame {
