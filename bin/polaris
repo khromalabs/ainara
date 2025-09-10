@@ -1,5 +1,5 @@
 #!/bin/sh
-if [ -f "package.json" ]; then
+if [[ $PWD == $HOME/lab/src/ainara ]]; then
 	npm run start 
 else
 	cd $HOME/lab/src/ainara/dist/

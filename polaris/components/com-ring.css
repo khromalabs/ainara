@@ -211,11 +211,11 @@ body {
 }
 
 .stt-status.active2 {
-    animation: fadeInOut 5s infinite;
+    animation: fadeInOut 4s infinite;
 }
 
 .stt-status.active3 {
-    animation: fadeInOut 5s infinite;
+    animation: fadeInOut 4s infinite;
     color: rgba(255, 0, 0, 1);
 }
 

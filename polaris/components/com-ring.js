@@ -49,7 +49,7 @@ class ComRing extends BaseComponent {
         try {
             super();
             this.ignoreIncomingEvents = false;
-            this.isFirstShow = true;
+            this.showInitialMessages = true;
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
             this.text = null;
@@ -261,24 +261,49 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
-            const backendConfig = await ConfigHelper.fetchBackendConfig();
+            var backendConfig;
+            try {
+                backendConfig = await ConfigHelper.fetchBackendConfig();
+            } catch {
+                this.showInfo("Couldn't read Polaris configuration", true);
+            }
 
-            // Check for backup configuration on first show
-            if (this.isFirstShow) {
-                this.isFirstShow = false; // Ensure this only runs once
-                if (!backendConfig?.backup?.enabled) {
-                    this.showInfo("Backups are disabled. Use Setup Wizard to enable.");
-                }
-                if (!this.memoryEnabled) {
+            // console.log('MEMORYINFO 1');
+            // console.log(JSON.stringify(backendConfig));
+
+            if (this.showInitialMessages &&
+                backendConfig &&
+                backendConfig.memory &&
+                backendConfig.backup) {
+
+                // console.log('MEMORYINFO 2');
+                // this.showInfo("MEMORYINFO 2");
+                this.memoryEnabled = backendConfig.memory.enabled || false;
+                this.setMemoryState(this.memoryEnabled);
+                if (this.memoryEnabled === false) {
+                    // console.log('MEMORYINFO 3');
+                    // this.showInfo("MEMORYINFO 3");
                     this.showInfo("Memory is disabled, to enable type: /memory");
                 }
+                if (!backendConfig.backup.enabled) {
+                    this.showInfo("Backups are disabled. Use Setup Wizard to enable.");
+                }
+                this.showInitialMessages = false;
             }
 
-            // Force-sync memory state from config to fix color issue on show
-            if (this.memoryEnabled === null) {
-                this.memoryEnabled = backendConfig?.memory?.enabled || false;
-            }
-            this.setMemoryState(this.memoryEnabled);
+            // Check for backup configuration on first show
+            // if (this.isFirstShow) {
+            //     this.showInfo("MEMORYINFO 2");
+            //     this.isFirstShow = false; // Ensure this only runs once
+            //     if (!backendConfig?.backup?.enabled) {
+            //         this.showInfo("Backups are disabled. Use Setup Wizard to enable.");
+            //     }
+            //     if (this.memoryEnabled == false) {
+            //         this.showInfo("Memory is disabled, to enable type: /memory");
+            //     }
+            //     this.showInfo("MEMORYINFO 3");
+            // }
+
         });
 
         ipcRenderer.on('set-memory-state', (event, enabled) => {
@@ -314,7 +339,7 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     sttStatus.classList.remove('active2');
                     sttStatus.textContent = '';
-                }, 5000);
+                }, 4000);
             }
         });
 
@@ -351,7 +376,7 @@ class ComRing extends BaseComponent {
                 this.llmProviderDisplay.classList.add('visible');
                 setTimeout(() => {
                     this.llmProviderDisplay.classList.remove('visible');
-                }, 5000);
+                }, 4000);
             } else if (message.trim() === '/documents') {
                 if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
                     this.switchToDocumentView(this.docFormat);
@@ -925,7 +950,7 @@ class ComRing extends BaseComponent {
 
         // Keep the message visible by refreshing it periodically
         const refreshInterval = 1000; // 1 second
-        const totalDuration = 5000;   // 5 seconds total
+        const totalDuration = 4000;   // 5 seconds total
         const refreshCount = Math.floor(totalDuration / refreshInterval);
 
         // Use a single interval instead of multiple timeouts
@@ -1027,7 +1052,7 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     sttStatus.classList.remove('active');
                     sttStatus.textContent = '';
-                }, 3000);
+                }, 4000);
             }
         } catch (error) {
             console.error('Error fetching chat history:', error);
