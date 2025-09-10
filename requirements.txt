@@ -662,8 +662,9 @@ tree-sitter-javascript==0.23.1
     # via -r requirements.in
 tree-sitter-python==0.23.6
     # via -r requirements.in
-triton==3.2.0
-    # via torch
+# Commented out to avoid GPU requirement
+#triton==3.2.0
+#   # via torch
 tweepy==4.15.0
     # via -r requirements.in
 typer==0.15.2
