@@ -991,6 +991,7 @@ class ComRing extends BaseComponent {
 - **Tab**: Switch between Ring and Document view.
 - **Escape**: Abort current action or hide the window.
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
+- **Control+v**: Paste clipboard content on input control.
 
 **Commands**
 - **/help**: Shows this help message.
