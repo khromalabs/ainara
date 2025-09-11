@@ -206,7 +206,7 @@ def _validate_skill_key(service: str, keys: dict):
                 "Content-Type": "application/json",
             }
             data = {
-                "model": "sonar-small-online",
+                "model": "sonar",
                 "messages": [{"role": "user", "content": "test"}],
             }
             response = requests.post(
@@ -369,30 +369,6 @@ def create_app():
     # Choose STT backend based on configuration
     stt_selected_module = config.get("stt.selected_module", "faster_whisper")
     if stt_selected_module == "faster_whisper":
-        # Pre-download the model if using faster-whisper
-        model_size = config.get(
-            "stt.modules.faster_whisper.model_size", "small"
-        )
-        try:
-            logger.info(
-                f"Pre-downloading Faster-Whisper {model_size} model..."
-            )
-            from huggingface_hub import hf_hub_download
-
-            cache_dir = config.get_subdir("cache.directory", "whisper")
-            model_path = hf_hub_download(
-                repo_id=f"guillaumekln/faster-whisper-{model_size}",
-                filename="model.bin",
-                cache_dir=cache_dir,
-            )
-            logger.info(
-                f"Faster-Whisper {model_size} model cached/downloaded to"
-                f" {model_path}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to pre-download model: {e}")
-            logger.warning("Model will be downloaded when first used")
-
         stt = FasterWhisperSTT()
         logger.info("Using FasterWhisper STT backend")
     else:
@@ -609,7 +585,7 @@ def create_app():
             results = {"status": "success", "initialized": True, "details": {}}
 
             # Check Whisper models
-            whisper_status = check_whisper_models()
+            whisper_status = stt.check_model()
             results["details"]["whisper"] = whisper_status
 
             # If whisper resource is not initialized, set the overall status
@@ -656,7 +632,7 @@ def create_app():
                 )
 
                 # Check if whisper needs initialization
-                whisper_check = check_whisper_models()
+                whisper_check = stt.check_model()
                 resources_to_init = (
                     ["whisper"] if not whisper_check.get("initialized") else []
                 )
@@ -695,7 +671,7 @@ def create_app():
                     logger.info(
                         "SSE Initialization: Setting up Whisper models..."
                     )
-                    whisper_result = setup_whisper_models()  # Blocking call
+                    whisper_result = stt.setup_model()  # Blocking call
                     if not whisper_result["success"]:
                         # Yield error and stop
                         yield format_sse(
@@ -764,94 +740,6 @@ def create_app():
         return send_file(
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
-
-    def check_whisper_models():
-        """Check if Whisper models are available"""
-        try:
-            import os
-
-            # Get model size from config
-            model_size = config.get(
-                "stt.modules.faster_whisper.model_size", "small"
-            )
-            cache_dir = config.get_subdir("cache.directory", "whisper")
-
-            # Check if model file exists
-            model_path = os.path.join(
-                cache_dir,
-                "models--guillaumekln--faster-whisper-" + model_size,
-                "snapshots",
-            )
-
-            if os.path.exists(model_path):
-                # Find the snapshot directory
-                snapshot_dirs = [
-                    d
-                    for d in os.listdir(model_path)
-                    if os.path.isdir(os.path.join(model_path, d))
-                ]
-
-                if snapshot_dirs:
-                    # Check if model.bin exists in any snapshot directory
-                    for snapshot in snapshot_dirs:
-                        model_bin = os.path.join(
-                            model_path, snapshot, "model.bin"
-                        )
-                        if os.path.exists(model_bin):
-                            return {
-                                "initialized": True,
-                                "message": (
-                                    f"Whisper {model_size} model is available"
-                                ),
-                                "path": model_bin,
-                            }
-
-            return {
-                "initialized": False,
-                "message": f"Whisper {model_size} model is not available",
-            }
-        except Exception as e:
-            logger.error(f"Error checking Whisper models: {e}")
-            return {
-                "initialized": False,
-                "message": f"Error checking Whisper models: {str(e)}",
-            }
-
-    def setup_whisper_models():
-        """Download and setup whisper models"""
-        try:
-            # Get model size from config
-            model_size = config.get(
-                "stt.modules.faster_whisper.model_size", "small"
-            )
-
-            logger.info(f"Downloading Faster-Whisper {model_size} model...")
-            from huggingface_hub import hf_hub_download
-
-            cache_dir = config.get_subdir("cache.directory", "whisper")
-            model_path = hf_hub_download(
-                repo_id=f"guillaumekln/faster-whisper-{model_size}",
-                filename="model.bin",
-                cache_dir=cache_dir,
-            )
-
-            logger.info(
-                f"Faster-Whisper {model_size} model downloaded to {model_path}"
-            )
-            return {
-                "success": True,
-                "message": (
-                    f"Whisper {model_size} model downloaded successfully"
-                ),
-                "path": model_path,
-            }
-        except Exception as e:
-            logger.error(f"Error downloading whisper model: {e}")
-            return {
-                "success": False,
-                "message": f"Error downloading whisper model: {str(e)}",
-                "path": model_path,
-            }
 
     @app.route("/framework/chat", methods=["POST"])
     def framework_chat():

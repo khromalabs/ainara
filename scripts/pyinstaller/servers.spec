@@ -225,6 +225,10 @@ common_imports = [
     'typer',
     'rich',
     'httpx',
+    'pycountry',
+    'tree-sitter',
+    'tree-sitter-javascript',
+    'tree-sitter-python',
 
     # Dependencies for MCP
     'mcp',
@@ -443,7 +447,7 @@ coll = COLLECT(
     a_pybridge.zipfiles,
     a_pybridge.datas,
     strip=False,
-    upx=False,
+    upx=True,
     upx_exclude=[],
     name='servers',
 )

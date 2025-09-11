@@ -21,6 +21,9 @@ import os
 import platform
 from typing import Any, Dict, Optional
 
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import HfHubHTTPError
+
 from ainara.framework.config import ConfigManager
 from ainara.framework.stt.base import STTBackend
 
@@ -476,3 +479,56 @@ class FasterWhisperSTT(STTBackend):
         except Exception as e:
             logger.info(f"Error in Faster-Whisper listen: {e}")
             return ""
+
+    def check_model(self) -> Dict[str, Any]:
+        """Check if Whisper models are available locally."""
+        try:
+            cache_dir = config_manager.get_subdir("cache.directory", "whisper")
+            model_path = hf_hub_download(
+                repo_id=f"guillaumekln/faster-whisper-{self.model_size}",
+                filename="model.bin",
+                cache_dir=cache_dir,
+                local_files_only=True,
+            )
+            return {
+                "initialized": True,
+                "message": f"Whisper {self.model_size} model is available",
+                "path": model_path,
+            }
+        except HfHubHTTPError:
+            # This exception is raised when the file is not found in the cache with local_files_only=True
+            return {
+                "initialized": False,
+                "message": f"Whisper {self.model_size} model is not available",
+            }
+        except Exception as e:
+            logger.error(f"Error checking Whisper models: {e}")
+            return {
+                "initialized": False,
+                "message": f"Error checking Whisper models: {str(e)}",
+            }
+
+    def setup_model(self) -> Dict[str, Any]:
+        """Download and setup whisper models."""
+        try:
+            logger.info(f"Downloading Faster-Whisper {self.model_size} model...")
+            cache_dir = config_manager.get_subdir("cache.directory", "whisper")
+            model_path = hf_hub_download(
+                repo_id=f"guillaumekln/faster-whisper-{self.model_size}",
+                filename="model.bin",
+                cache_dir=cache_dir,
+            )
+            logger.info(
+                f"Faster-Whisper {self.model_size} model downloaded to {model_path}"
+            )
+            return {
+                "success": True,
+                "message": f"Whisper {self.model_size} model downloaded successfully",
+                "path": model_path,
+            }
+        except Exception as e:
+            logger.error(f"Error downloading whisper model: {e}")
+            return {
+                "success": False,
+                "message": f"Error downloading whisper model: {str(e)}",
+            }

@@ -41,3 +41,13 @@ class STTBackend(ABC):
     def transcribe_file(self, audio_file: str) -> str:
         """Transcribe an existing audio file to text"""
         pass
+
+    @abstractmethod
+    def check_model(self) -> Dict[str, Any]:
+        """Check if the required model is available"""
+        pass
+
+    @abstractmethod
+    def setup_model(self) -> Dict[str, Any]:
+        """Download and setup the required model"""
+        pass
