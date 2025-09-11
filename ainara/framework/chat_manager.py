@@ -27,7 +27,6 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any, Generator, List, Literal, Optional, Union
 
 from pygame import mixer
@@ -119,14 +118,12 @@ class ChatManager:
             self.turn_counter = self.green_memories.get_turn_counter()
 
         # Render the system message template
-        self.current_date = datetime.now().date()
         self.system_message = self.template_manager.render(
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": (
                     ""
                 ),  # Will be populated by middleware
-                "current_date": self.current_date,
             },
         )
 
@@ -172,7 +169,6 @@ class ChatManager:
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": skills_description_list,
-                "current_date": self.current_date,
                 "is_new_profile": is_new_profile,
             },
         )
