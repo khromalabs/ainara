@@ -47,6 +47,7 @@ from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
+from ainara.framework.utils import check_embedding_model, setup_embedding_model
 
 # --- Global instances ---
 config = ConfigManager()
@@ -588,8 +589,15 @@ def create_app():
             whisper_status = stt.check_model()
             results["details"]["whisper"] = whisper_status
 
-            # If whisper resource is not initialized, set the overall status
-            if not whisper_status["initialized"]:
+            # Check embedding model
+            embedding_status = check_embedding_model()
+            results["details"]["embedding"] = embedding_status
+
+            # If any resource is not initialized, set the overall status
+            if (
+                not whisper_status["initialized"]
+                or not embedding_status["initialized"]
+            ):
                 results["initialized"] = False
 
             return jsonify(results)
@@ -636,6 +644,11 @@ def create_app():
                 resources_to_init = (
                     ["whisper"] if not whisper_check.get("initialized") else []
                 )
+
+                # Check if embedding model needs initialization
+                embedding_check = check_embedding_model()
+                if not embedding_check.get("initialized"):
+                    resources_to_init.append("embedding")
 
                 if not resources_to_init:
                     yield format_sse(
@@ -693,6 +706,46 @@ def create_app():
                                 completed_resources * progress_per_resource
                             ),
                             "message": "Whisper setup complete.",
+                        }
+                    )
+
+                # --- Initialize Embedding model if needed ---
+                if "embedding" in resources_to_init:
+                    current_progress = int(
+                        completed_resources * progress_per_resource
+                    )
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": current_progress,
+                            "message": "Setting up embedding model...",
+                        }
+                    )
+                    logger.info(
+                        "SSE Initialization: Setting up embedding model..."
+                    )
+                    embedding_result = setup_embedding_model()  # Blocking call
+                    if not embedding_result["success"]:
+                        # Yield error and stop
+                        yield format_sse(
+                            {
+                                "status": "error",
+                                "progress": current_progress,
+                                "message": (
+                                    "Embedding model setup failed:"
+                                    f" {embedding_result['message']}"
+                                ),
+                            }
+                        )
+                        return
+                    completed_resources += 1
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": int(
+                                completed_resources * progress_per_resource
+                            ),
+                            "message": "Embedding model setup complete.",
                         }
                     )
 
