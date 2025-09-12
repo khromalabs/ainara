@@ -226,9 +226,9 @@ common_imports = [
     'rich',
     'httpx',
     'pycountry',
-    'tree-sitter',
-    'tree-sitter-javascript',
-    'tree-sitter-python',
+    'tree_sitter',
+    'tree_sitter_javascript',
+    'tree_sitter_python',
 
     # Dependencies for MCP
     'mcp',

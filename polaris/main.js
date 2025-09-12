@@ -598,76 +598,84 @@ async function appCreateTray() {
 
         windowManager.setTray(tray, iconBasePath); // Pass iconBasePath for potential future use by windowManager
 
-    // Add service management to tray menu
-    const contextMenu = Menu.buildFromTemplate([
-        {
-            label: 'Setup',
-            click: () => { windowManager.hideAll(true); showSetupWizard(); }
-        },
-        { type: 'separator' },
-        // {
-        //     label: 'Auto-update',
-        //     type: 'checkbox',
-        //     checked: config.get('autoUpdate.enabled', true),
-        //     click: (menuItem) => {
-        //         config.set('autoUpdate.enabled', menuItem.checked);
-        //         autoUpdater.autoInstallOnAppQuit = menuItem.checked;
-        //     }
-        // },
-        {
-            label: 'LLM Models',
-            submenu: [
-                {
-                    label: 'Configure Providers',
-                    click: () => showSetupWizard()
-                },
-                { type: 'separator' },
-                {
-                    label: 'Loading providers...',
-                    enabled: false
-                }
-            ]
-        },
-        { type: 'separator' },
-        {
-            label: 'Show',
-            click: () => windowManager.showAll()
-        },
-        {
-            label: 'Hide',
-            click: () => windowManager.hideAll(true)
-        },
-        { type: 'separator' },
-        {
-            label: 'Help',
-            click: () => {
-                const comRing = windowManager.getWindow('comRing');
-                if (comRing) {
-                    if (!comRing.isVisible()) {
-                        windowManager.showAll();
+        // Add service management to tray menu
+        const contextMenu = Menu.buildFromTemplate([
+            {
+                label: 'Setup',
+                click: () => { windowManager.hideAll(true); showSetupWizard(); }
+            },
+            { type: 'separator' },
+            // {
+            //     label: 'Auto-update',
+            //     type: 'checkbox',
+            //     checked: config.get('autoUpdate.enabled', true),
+            //     click: (menuItem) => {
+            //         config.set('autoUpdate.enabled', menuItem.checked);
+            //         autoUpdater.autoInstallOnAppQuit = menuItem.checked;
+            //     }
+            // },
+            {
+                label: 'LLM Models',
+                submenu: [
+                    {
+                        label: 'Configure Providers',
+                        click: () => showSetupWizard()
+                    },
+                    { type: 'separator' },
+                    {
+                        label: 'Loading providers...',
+                        enabled: false
                     }
-                    comRing.send('show-help');
+                ]
+            },
+            { type: 'separator' },
+            {
+                label: 'Show',
+                click: () => windowManager.showAll()
+            },
+            {
+                label: 'Hide',
+                click: () => windowManager.hideAll(true)
+            },
+            { type: 'separator' },
+            {
+                label: 'Help',
+                click: () => {
+                    const comRing = windowManager.getWindow('comRing');
+                    if (comRing) {
+                        if (!comRing.isVisible()) {
+                            windowManager.showAll();
+                        }
+                        comRing.send('show-help');
+                    }
+                }
+            },
+            {
+                label: 'Check for Updates',
+                click: () => checkForUpdates(true)
+            },
+            { type: 'separator' },
+            {
+                label: 'Quit',
+                click: () => {
+                    app.isQuitting = true;
+                    app.quit();
                 }
             }
-        },
-        {
-            label: 'Check for Updates',
-            click: () => checkForUpdates(true)
-        },
-        { type: 'separator' },
-        {
-            label: 'Quit',
-            click: () => {
-                app.isQuitting = true;
-                app.quit();
-            }
-        }
-    ]);
+        ]);
 
-    tray.setContextMenu(contextMenu);
-        Logger.info('appCreateTray: Context menu set.');
+        // tray.setContextMenu(contextMenu);
+        // Logger.info('appCreateTray: Context menu set.');
 
-        // Optional: Single click to toggle windows
+        // On Windows, listening for 'right-click' prevents the 'click' event from
+        // firing for right-clicks. This is the key to consistent behavior.
+        // tray.on('right-click', (event, bounds) => {
+        tray.on('right-click', () => {
+            Logger.info('Tray right-clicked.');
+            tray.popUpContextMenu(contextMenu);
+        });
+
+        // A 'click' event now reliably corresponds to a left-click on all platforms.
         tray.on('click', () => {
             Logger.info('Tray clicked.');
             if (wizardActive) {
@@ -676,7 +684,7 @@ async function appCreateTray() {
             }
             windowManager.toggleVisibility();
         });
-        Logger.info('appCreateTray: Click listener added.');
+        Logger.info('appCreateTray: Click listeners added.');
 
         // Set initial tooltip
         let llmProviders = await ConfigHelper.getLLMProviders();
