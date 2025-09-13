@@ -1003,7 +1003,7 @@ class ComRing extends BaseComponent {
 
 **Tips**
 - Click the tray icon (left button) to toggle visibility.
-- You can switch to another application while editing text in the input control and recover it later with the up arrow key.
+- You can switch to another application while typing in the input control and recover it later with the arrow up key.
         `.trim().replace(/^\s+/gm, '');
 
         this.switchToDocumentView('help');

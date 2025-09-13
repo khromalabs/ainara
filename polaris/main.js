@@ -496,7 +496,7 @@ async function appInitialization() {
         if (config.get('setup.firstLaunch', true)) {
             const notification = new Notification({
                 title: 'Ainara AI Assistant',
-                body: 'Click the tray icon (left button) to toggle visibility.',
+                body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
                 icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
             });
             notification.show();
