@@ -22,8 +22,12 @@ import re
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-import torch
-from transformers import AutoModel, AutoTokenizer
+try:
+    from sentence_transformers import SentenceTransformer
+    from sentence_transformers.util import cos_sim
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 from ainara.framework.config import ConfigManager
 from ainara.framework.utils import load_spacy_model
@@ -48,13 +52,16 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         """
         super().__init__()
         self.embeddings_cache = {}
+        self.model = None
+
+        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+            raise ImportError(
+                "sentence-transformers library not found. Please run 'pip"
+                " install sentence-transformers'."
+            )
 
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name)
-            if torch.cuda.is_available():
-                self.model = self.model.cuda()
-            self.model.eval()
+            self.model = SentenceTransformer(model_name)
             logger.info(
                 "Initialized OrakleMatcherTransformers with model:"
                 f" {model_name}"
@@ -147,27 +154,9 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         if text in self.embeddings_cache:
             return self.embeddings_cache[text]
 
-        # Tokenize and prepare input
-        inputs = self.tokenizer(
-            text,
-            padding=True,
-            truncation=True,
-            max_length=512,
-            return_tensors="pt",
-        )
-
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
-
-        # Generate embedding
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            # Use mean pooling of last hidden state
-            embedding = outputs.last_hidden_state.mean(dim=1)
-
-        embedding_np = embedding.cpu().numpy()
-        self.embeddings_cache[text] = embedding_np
-        return embedding_np
+        embedding = self.model.encode(text)
+        self.embeddings_cache[text] = embedding
+        return embedding
 
     def _calculate_similarity(
         self, query_embedding: np.ndarray, skill_embedding: np.ndarray
@@ -175,13 +164,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         """
         Calculate cosine similarity between query and skill embeddings
         """
-        return float(
-            np.dot(query_embedding, skill_embedding.T)
-            / (
-                np.linalg.norm(query_embedding)
-                * np.linalg.norm(skill_embedding)
-            )
-        )
+        return cos_sim(query_embedding, skill_embedding).item()
 
     def _clean_query(self, query: str) -> str:
         """
