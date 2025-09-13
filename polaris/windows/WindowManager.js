@@ -17,14 +17,16 @@
 // Lesser General Public License for more details.
 
 const { screen, ipcMain } = require('electron');
+const { EventEmitter } = require('events');
 const Logger = require('../framework/logger');
 const path = require('path');
 const { nativeTheme } = require('electron');
 
 var me;
 
-class WindowManager {
+class WindowManager extends EventEmitter {
     constructor(config) {
+        super();
         this.config = config;
         this.windows = new Map();
         this.handlers = {
@@ -34,28 +36,15 @@ class WindowManager {
             beforeHide: () => {},
             onFocus: () => {},
         };
-        this.tray = null;
-        this.iconPath = null;
-        this.currentState = 'inactive';
         this.basePath = null;
-        this.showWindowsBackend = null;
-        this.hideWindowsBackend = null;
         me = this;
     }
 
-    initialize(windowClasses,
-        basePath, showWindowsBackend = null, hideWindowsBackend = null) {
+    initialize(windowClasses, basePath) {
         this.basePath = basePath;
         this.handlers = this.collectHandlers(windowClasses);
         this.createWindows(windowClasses);
         this.setupWindowEvents();
-        this.showWindowsBackend = showWindowsBackend;
-        this.hideWindowsBackend = hideWindowsBackend;
-    }
-
-    setTray(tray, iconPath) {
-        this.tray = tray;
-        this.iconPath = iconPath;
     }
 
     collectHandlers() {  // ( windowClasses )
@@ -200,9 +189,7 @@ class WindowManager {
                 window.show();
                 Logger.log("showAll: Shown window: " + window.prefix)
             });
-            if (me.showWindowsBackend) {
-                me.showWindowsBackend();
-            }
+            me.emit('visibility-changed', 'active');
         } else {
             Logger.log("showAll: No force and visible windows, skipping.")
         }
@@ -220,14 +207,10 @@ class WindowManager {
                     // Background throttling is applied in the window.hide() method
                 }
             });
-            this.updateTrayIcon('inactive'); // Update tray icon to inactive state
+            this.emit('visibility-changed', 'inactive');
 
             // Apply additional throttling to all windows
             this.applyBackgroundThrottling(true);
-
-            if (this.hideWindowsBackend) {
-                this.hideWindowsBackend();
-            }
         }
     }
 
@@ -259,39 +242,8 @@ class WindowManager {
         return this.windows.get(prefix);
     }
 
-    updateTrayIcon(state) {
-        this.currentState = state;
-        const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-
-        // Check if iconPath and tray are properly initialized
-        if (this.iconPath && this.tray && !this.tray.isDestroyed()) {
-            let iconFileName;
-
-            // Use platform-specific icon naming
-            if (process.platform === 'darwin') {
-                // On macOS, use template image
-                iconFileName = `tray-icon-${state}-Template.png`;
-            } else {
-                // On other platforms, use theme-specific icons
-                iconFileName = `tray-icon-${state}-${theme}.png`;
-            }
-
-            const iconPath = path.join(this.iconPath, iconFileName);
-            Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
-            this.tray.setImage(iconPath);
-        } else {
-            Logger.warn(`Cannot update tray icon: iconPath=${this.iconPath}, tray=${!!this.tray}`);
-        }
-    }
-
     getWindows() {
         return Array.from(this.windows.values());
-    }
-
-    updateTheme() {
-        if (this.tray && this.iconPath) {
-            this.updateTrayIcon(this.currentState);
-        }
     }
 
     // New method to apply background throttling to all windows

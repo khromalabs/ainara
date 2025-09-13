@@ -284,10 +284,35 @@ async function appInitialization() {
         windowManager = new WindowManager(config);
         windowManager.initialize(
             [ComRingWindow, ChatDisplayWindow],
-            __dirname,
-            showWindowsBackend,
-            hideWindowsBackend
+            __dirname
         );
+
+        // Listen for visibility changes to handle tray, shortcuts, and focus
+        windowManager.on('visibility-changed', (state) => {
+            updateTrayIcon(state);
+
+            if (state === 'active') {
+                // Unregister shortcut and focus comRing (original showWindowsBackend logic)
+                globalShortcut.unregister(shortcutKey);
+                shortcutRegistered = false;
+                Logger.log('visibility-changed (active): unregistered globalShortcut');
+                const comRing = windowManager.getWindow('comRing');
+                if (comRing) {
+                    comRing.focus();
+                    Logger.log('visibility-changed (active): focused comRing');
+                }
+            } else if (state === 'inactive') {
+                // Register shortcut (original hideWindowsBackend logic)
+                if (!shortcutRegistered) {
+                    shortcutRegistered = globalShortcut.register(shortcutKey, () => windowManager.showAll());
+                    if (shortcutRegistered) {
+                        Logger.info('visibility-changed (inactive): Successfully registered shortcut:', shortcutKey);
+                    } else {
+                        Logger.error('visibility-changed (inactive): Failed to register shortcut:', shortcutKey);
+                    }
+                }
+            }
+        });
         appSetupEventHandlers();
         await appCreateTray();
 
@@ -496,22 +521,6 @@ function handlePortConflictError(port, serviceName) {
     app.quit();
 }
 
-function showWindowsBackend() {
-    // Disable shortcut before showing windows
-    globalShortcut.unregister(shortcutKey);
-    shortcutRegistered = false;
-    Logger.log('showWindows: unregistered globalShortcut');
-    const comRing = windowManager.getWindow('comRing');
-    if (comRing) {
-        comRing.focus();
-        Logger.log('showWindows: focused comRing');
-    }
-}
-
-function hideWindowsBackend() {
-    globalShortcut.register(shortcutKey, windowManager.showAll);
-    shortcutRegistered = true;
-}
 
 function appSetupShortcuts() {
     if (!wizardActive && !shortcutRegistered) {
@@ -597,7 +606,6 @@ async function appCreateTray() {
             Logger.info('appCreateTray: Set macOS highlight mode to selection');
         }
 
-        windowManager.setTray(tray, iconBasePath); // Pass iconBasePath for potential future use by windowManager
 
         // Add service management to tray menu
         const contextMenu = Menu.buildFromTemplate([
@@ -666,13 +674,7 @@ async function appCreateTray() {
                 Logger.info('Wizard active, skipping visibility toggle');
                 return
             }
-            var visible = windowManager.toggleVisibility();
-            if (visible) {
-                const comRing = windowManager.getWindow('comRing');
-                if (comRing) {
-                    comRing.focus();
-                }
-            }
+            windowManager.toggleVisibility();
         });
         Logger.info('appCreateTray: Click listeners added.');
 
@@ -685,6 +687,18 @@ async function appCreateTray() {
         }
     } catch (error) {
         Logger.error(`appCreateTray: Error during tray setup: ${error.message}`, error);
+    }
+}
+
+function updateTrayIcon(state) {
+    const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+    if (tray && !tray.isDestroyed()) {
+        let iconFileName = process.platform === 'darwin'
+            ? `tray-icon-${state}-Template.png`
+            : `tray-icon-${state}-${theme}.png`;
+        const iconPath = path.join(__dirname, 'assets', iconFileName);
+        Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
+        tray.setImage(iconPath);
     }
 }
 
@@ -1083,25 +1097,14 @@ function appSetupEventHandlers() {
     nativeTheme.on('updated', () => {
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
         Logger.info('System theme changed:', theme);
-        const iconStatus = windowManager && windowManager.currentState ? windowManager.currentState : 'inactive';
 
-        // Use platform-specific icon path
-        let iconPath;
-        if (process.platform === 'darwin') {
-            // On macOS, use template image regardless of theme change
-            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-Template.png`);
-        } else {
-            // On other platforms, update based on theme
-            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
-        }
-
-        // Update tray icon
-        if (tray && !tray.isDestroyed()) {
-            tray.setImage(iconPath);
-        }
+        // Update tray based on current visibility (query WindowManager)
+        const currentState = windowManager.isAnyVisible() ? 'active' : 'inactive';
+        updateTrayIcon(currentState);
 
         // Update setup window icon if it exists
         if (setupWindow && !setupWindow.isDestroyed()) {
+            const iconPath = path.join(__dirname, 'assets', `tray-icon-${currentState}-${theme}.png`);
             setupWindow.setIcon(iconPath);
         }
     });
