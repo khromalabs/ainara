@@ -986,24 +986,22 @@ class ComRing extends BaseComponent {
     async showHelp() {
         const helpTitle = 'Help & Shortcuts';
         const helpContent = `
-**Keyboard Shortcuts**
+### Keyboard Shortcuts
 - **${this.triggerKey}**: Hold to record your voice.
 - **Tab**: Switch between Ring and Document view.
 - **Escape**: Abort current action or hide the window.
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
-
-**Commands**
+### Commands
 - **/help**: Shows this help message.
 - **/history**: View your chat history.
 - **/documents**: Switch to the document view.
 - **/provider**: Show the current LLM provider.
 - **/memory**: Toggle conversation memory on.
 - **/nomemory**: Toggle conversation memory off.
-
-**Tips**
+### Tips
 - Click the tray icon (left button) to toggle visibility.
-- You can switch to another application while typing in the input control and recover it later with the arrow up key.
+- You can switch to another application while typing in the input control and recover your edited text later with the arrow up key.
         `.trim().replace(/^\s+/gm, '');
 
         this.switchToDocumentView('help');

@@ -149,24 +149,24 @@ class BaseComponent extends HTMLElement {
 
     parseMarkdown(text) {
         // Handle bold text with ** or __
-        text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/g, '<strong>$1$2</strong>');
+        text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>');
 
         // Handle italic text with * or _
-        text = text.replace(/\*(.*?)\*|_(.*?)_/g, '<em>$1$2</em>');
+        text = text.replace(/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>');
 
         // Handle code blocks with `
-        text = text.replace(/`(.*?)`/g, '<code>$1</code>');
+        text = text.replace(/`(.*?)`/gm, '<code>$1</code>');
         //
         // Handle H1,H2
-        text = text.replace(/^### (.*?)\n/g, '<h3>$1</h3>');
-        text = text.replace(/^## (.*?)\n/g, '<h2>$1</h2>');
-        text = text.replace(/^# (.*?)\n/g, '<h1>$1</h1>');
+        text = text.replace(/^### (.*?)\n/gm, '<h3>$1</h3>');
+        text = text.replace(/^## (.*?)\n/gm, '<h2>$1</h2>');
+        text = text.replace(/^# (.*?)\n/gm, '<h1>$1</h1>');
 
         // Handle CR
-        text = text.replace(/\n/g, '<br>');
+        text = text.replace(/\n/gm, '<br>');
 
         // Handle links [text](url)
-        text = text.replace(/\[(.*?)\]\((.*?)\)/g, function(match, linkText, url) {
+        text = text.replace(/\[(.*?)\]\((.*?)\)/gm, function(match, linkText, url) {
             // Extract domain from URL
             let domain = "";
             try {
