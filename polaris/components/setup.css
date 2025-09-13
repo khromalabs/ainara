@@ -236,6 +236,10 @@ button {
     content: '🛈 TIP';
 }
 
+#validate-all-keys-btn {
+    background-color: #ffc107;
+}
+
 .note-signal:before {
     color: #ffc107;
     content: '🗎 NOTE';

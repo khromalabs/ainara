@@ -365,7 +365,7 @@ async function generateSkillsUI() {
         if (skillsListContainer) {
             skillsListContainer.innerHTML = html;
             skillsListContainer.insertAdjacentHTML('beforeend', `
-                <div class="validate-all-container" style="text-align: center; margin-top: 20px; display: flex; justify-content: center; gap: 10px;">
+                <div class="validate-all-container" style="text-align: center; margin-top: 20px; margin-bottom: 10px; display: flex; justify-content: center; gap: 10px;">
                     <button id="reset-skills-btn" class="btn btn-secondary">Reset Changes</button>
                     <button id="validate-all-keys-btn" class="btn">Validate API Keys</button>
                 </div>
@@ -1591,7 +1591,7 @@ function handleInputChange(event) {
             let isGroupModified = false;
             groupItem.querySelectorAll('input[data-path]').forEach(input => {
                 const path = input.dataset.path;
-                if (input.value !== initialSkillValues[path]) {
+                if (input.value && input.value !== initialSkillValues[path]) {
                     isGroupModified = true;
                 }
             });
