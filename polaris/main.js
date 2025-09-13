@@ -288,9 +288,9 @@ async function appInitialization() {
 
         // Listen for visibility changes to handle tray, shortcuts, and focus
         windowManager.on('visibility-changed', (state) => {
-	    if(updateTrayIcon) {
-            	updateTrayIcon(state);
-	    }
+            if(updateTrayIcon) {
+                updateTrayIcon(state);
+           }
 
             if (state === 'active') {
                 // Unregister shortcut and focus comRing (original showWindowsBackend logic)
@@ -305,7 +305,10 @@ async function appInitialization() {
             } else if (state === 'inactive') {
                 // Register shortcut (original hideWindowsBackend logic)
                 if (!shortcutRegistered) {
-                    shortcutRegistered = globalShortcut.register(shortcutKey, () => windowManager.showAll());
+                    shortcutRegistered = globalShortcut.register(
+                        shortcutKey, 
+                        () => windowManager.showAll(true)
+                    );
                     if (shortcutRegistered) {
                         Logger.info('visibility-changed (inactive): Successfully registered shortcut:', shortcutKey);
                     } else {
@@ -539,7 +542,8 @@ function handlePortConflictError(port, serviceName) {
 function appSetupShortcuts() {
     if (!wizardActive && !shortcutRegistered) {
         shortcutRegistered = globalShortcut.register(
-            shortcutKey, windowManager.showAll);
+            shortcutKey,
+            () => windowManager.showAll(true));
 
         if (shortcutRegistered) {
            Logger.info('Successfully registered shortcut:', shortcutKey);
