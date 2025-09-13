@@ -186,20 +186,12 @@ class WindowManager {
     }
 
     showAll() {
-        // Disable global shortcut when showing windows
-        if (global.shortcutRegistered) {
-            const shortcutKey = this.config.get('shortcuts.toggle', 'F1');
-            require('electron').globalShortcut.unregister(shortcutKey);
-            global.shortcutRegistered = false;
-            Logger.log('Disabled global shortcut while windows shown');
-        }
-
         // Remove throttling before showing windows
         this.applyBackgroundThrottling(false);
-
-        this.windows.forEach(window => window.show());
-        this.handlers.onShow(this);
-        this.updateTrayIcon('active'); // Update tray icon to active state
+        this.windows.forEach(window => {
+            window.show();
+            Logger.log("showAll: Shown window: " + window.prefix)
+        });
     }
 
     hideAll(force = false) {
@@ -218,22 +210,16 @@ class WindowManager {
 
             // Apply additional throttling to all windows
             this.applyBackgroundThrottling(true);
-
-            // TODO Does this piece of code have a legitimate use case?
-            // const shortcutKey = this.config.get('shortcuts.toggle', 'F1');
-            // global.shortcutRegistered =
-            //     require('electron').globalShortcut.register(
-            //         shortcutKey,
-            //         this.showWindows
-            //     );
         }
     }
 
     toggleVisibility() {
         if (this.isAnyVisible()) {
             this.hideAll(true);
+            return false;
         } else {
             this.showAll();
+            return true;
         }
     }
 

@@ -259,7 +259,7 @@ function initializeOllamaClient() {
 
 async function appInitialization() {
     try {
-        const singleInstanceLock = app.requestSingleInstanceLock();
+         const singleInstanceLock = app.requestSingleInstanceLock();
 
         if (!singleInstanceLock) {
             // App is already running this will force visibility
@@ -495,11 +495,9 @@ function handlePortConflictError(port, serviceName) {
     app.quit();
 }
 
-// function showWindows(force=false) {
-// TODO Disabled conditional but unsure if has a legitimate use case
-function showWindows() {
+function showWindows(force=false) {
     Logger.log('Shortcut pressed'); // Keep as debug log
-    // if (force || !windowManager.isAnyVisible()) {
+    if (force || !windowManager.isAnyVisible()) {
         Logger.log('Windows were hidden - showing'); // Keep as debug log
         // Disable shortcut before showing windows
         globalShortcut.unregister(shortcutKey);
@@ -510,7 +508,7 @@ function showWindows() {
             comRing.focus();
         }
         Logger.log('shown and focused, unregistered globalShortcut'); // Keep as debug log
-    // }
+    }
 }
 
 function appSetupShortcuts() {
@@ -664,16 +662,8 @@ async function appCreateTray() {
             }
         ]);
 
-        // tray.setContextMenu(contextMenu);
-        // Logger.info('appCreateTray: Context menu set.');
-
-        // On Windows, listening for 'right-click' prevents the 'click' event from
-        // firing for right-clicks. This is the key to consistent behavior.
-        // tray.on('right-click', (event, bounds) => {
-        tray.on('right-click', () => {
-            Logger.info('Tray right-clicked.');
-            tray.popUpContextMenu(contextMenu);
-        });
+        tray.setContextMenu(contextMenu);
+        Logger.info('appCreateTray: Context menu set.');
 
         // A 'click' event now reliably corresponds to a left-click on all platforms.
         tray.on('click', () => {
@@ -682,7 +672,13 @@ async function appCreateTray() {
                 Logger.info('Wizard active, skipping visibility toggle');
                 return
             }
-            windowManager.toggleVisibility();
+            var visible = windowManager.toggleVisibility();
+            if (visible) {
+                const comRing = windowManager.getWindow('comRing');
+                if (comRing) {
+                    comRing.focus();
+                }
+            }
         });
         Logger.info('appCreateTray: Click listeners added.');
 
@@ -826,7 +822,7 @@ async function updateProviderSubmenu() {
                     const comRing = windowManager.getWindow('comRing');
                     if (comRing) {
                         if (!comRing.isVisible()) {
-                            windowManager.showAll();
+                            showWindows();
                         }
                         comRing.send('show-help');
                     }
