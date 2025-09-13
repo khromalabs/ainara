@@ -19,8 +19,6 @@
 const { screen, ipcMain } = require('electron');
 const { EventEmitter } = require('events');
 const Logger = require('../framework/logger');
-const path = require('path');
-const { nativeTheme } = require('electron');
 
 var me;
 
@@ -37,6 +35,7 @@ class WindowManager extends EventEmitter {
             onFocus: () => {},
         };
         this.basePath = null;
+        this.lastShowTimestamp = 0;  // Track when we last showed windows
         me = this;
     }
 
@@ -93,6 +92,12 @@ class WindowManager extends EventEmitter {
             window.handlers = window.constructor.getHandlers();
 
             window.on('blur', () => {
+                // Ignore blur for 500ms after show
+                const timeSinceShow = Date.now() - this.lastShowTimestamp;
+                if (timeSinceShow < 500) {
+                    Logger.log('Ignoring blur shortly after show');
+                    return;
+                }
                 // Add delay to allow focus to settle on another window
                 setTimeout(() => {
                     if (!this.isAnyApplicationWindowFocused()) {
@@ -105,8 +110,7 @@ class WindowManager extends EventEmitter {
                     } else {
                         Logger.log('WindowManager: Focus still within application windows');
                     }
-                }, 100);
-
+                }, 300);
             });
 
             window.window.webContents.on('crashed', () => {
@@ -220,6 +224,7 @@ class WindowManager extends EventEmitter {
             return false;
         } else {
             this.showAll();
+            this.lastShowTimestamp = Date.now();  // Update timestamp on show
             return true;
         }
     }

@@ -16,7 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen } = require('electron');
+const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const semver = require('semver');
 // const yargs = require('yargs/yargs');
@@ -490,6 +490,19 @@ async function appInitialization() {
         }
 
         initializeAutoUpdater();
+        // New: Show one-time tray guidance notification on Windows
+        // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
+        if (config.get('setup.firstLaunch', true)) {
+            const notification = new Notification({
+                title: 'Ainara AI Assistant',
+                body: 'Look for the tray icon (bottom-right) to toggle visibility. Right-click it to pin for easy access!',
+                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+            });
+            notification.show();
+            notification.on('click', () => windowManager.showAll());  // Click notification to show UI
+            config.set('setup.firstLaunch', false);  // Mark as shown
+            config.saveConfig();
+        }
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
