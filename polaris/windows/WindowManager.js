@@ -172,7 +172,7 @@ class WindowManager extends EventEmitter {
                     const anyVisible = Array.from(this.windows.values()).some(w => w.isVisible());
                     if (anyVisible) {
                         Logger.log('At least one window is visible after restore - updating tray icon to active');
-                        this.updateTrayIcon('active');
+                        me.emit('visibility-changed', 'active');
                     }
                 }, 100); // Small delay to ensure state is updated
             });

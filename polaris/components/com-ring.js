@@ -1000,6 +1000,10 @@ class ComRing extends BaseComponent {
 - **/provider**: Show the current LLM provider.
 - **/memory**: Toggle conversation memory on.
 - **/nomemory**: Toggle conversation memory off.
+
+**Tips**
+- Click the tray icon (left button) to toggle visibility.
+- You can switch to another application while editing text in the input control and recover it later with the up arrow key.
         `.trim().replace(/^\s+/gm, '');
 
         this.switchToDocumentView('help');

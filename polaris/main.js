@@ -76,13 +76,12 @@ function showSetupWizard() {
     shortcutRegistered = false;
 
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-
     Logger.info("Screen X " + screenWidth)
 
     // Create setup window
     setupWindow = new BrowserWindow({
         width: screenHeight,
-        height: screenHeight * 0.8,
+        height: Math.floor(screenHeight * 0.9),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
@@ -289,7 +288,9 @@ async function appInitialization() {
 
         // Listen for visibility changes to handle tray, shortcuts, and focus
         windowManager.on('visibility-changed', (state) => {
-            updateTrayIcon(state);
+	    if(updateTrayIcon) {
+            	updateTrayIcon(state);
+	    }
 
             if (state === 'active') {
                 // Unregister shortcut and focus comRing (original showWindowsBackend logic)
@@ -495,7 +496,7 @@ async function appInitialization() {
         if (config.get('setup.firstLaunch', true)) {
             const notification = new Notification({
                 title: 'Ainara AI Assistant',
-                body: 'Look for the tray icon (bottom-right) to toggle visibility. Right-click it to pin for easy access!',
+                body: 'Click the tray icon (left button) to toggle visibility.',
                 icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
             });
             notification.show();
@@ -1058,7 +1059,7 @@ function appSetupEventHandlers() {
             appInitialization();
         } else {
             // Update tray icon to active when app is activated via taskbar/dock click
-            windowManager.updateTrayIcon('active');
+            updateTrayIcon('active');
             // Ensure windows are shown if they were hidden or minimized
             if (!windowManager.isAnyVisible()) {
                 windowManager.showAll();
