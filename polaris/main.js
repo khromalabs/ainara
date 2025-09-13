@@ -231,7 +231,7 @@ function showSetupWizard() {
             // Read the start minimized setting
             if (!config.get('startup.startMinimized', false)) {
                 Logger.info('Starting with windows visible.');
-                showWindows(true);
+                windowManager.showAll(true);
             } else Logger.info('Starting minimized as per configuration.');
         }
     }
@@ -269,7 +269,7 @@ async function appInitialization() {
 
         app.on('second-instance', () => {
             if (windowManager) {
-                showWindows();
+                windowManager.showAll();
             }
         });
 
@@ -285,7 +285,8 @@ async function appInitialization() {
         windowManager.initialize(
             [ComRingWindow, ChatDisplayWindow],
             __dirname,
-            showWindows
+            showWindowsBackend,
+            hideWindowsBackend
         );
         appSetupEventHandlers();
         await appCreateTray();
@@ -351,7 +352,7 @@ async function appInitialization() {
             } else {
                 if (!startMinimized) {
                     Logger.info('Starting with windows visible.');
-                    showWindows(true);
+                    windowManager.showAll(true);
                 } else Logger.info('Starting minimized as per configuration.');
             }
 
@@ -454,7 +455,7 @@ async function appInitialization() {
             // Read the start minimized setting
             if (!config.get('startup.startMinimized', false)) {
                 Logger.info('Starting with windows visible.');
-                showWindows(true);
+                windowManager.showAll(true);
             } else Logger.info('Starting minimized as per configuration.');
         }
 
@@ -495,25 +496,27 @@ function handlePortConflictError(port, serviceName) {
     app.quit();
 }
 
-function showWindows(force=false) {
-    Logger.log('Shortcut pressed'); // Keep as debug log
-    if (force || !windowManager.isAnyVisible()) {
-        Logger.log('Windows were hidden - showing'); // Keep as debug log
-        // Disable shortcut before showing windows
-        globalShortcut.unregister(shortcutKey);
-        shortcutRegistered = false;
-        windowManager.showAll();
-        const comRing = windowManager.getWindow('comRing');
-        if (comRing) {
-            comRing.focus();
-        }
-        Logger.log('shown and focused, unregistered globalShortcut'); // Keep as debug log
+function showWindowsBackend() {
+    // Disable shortcut before showing windows
+    globalShortcut.unregister(shortcutKey);
+    shortcutRegistered = false;
+    Logger.log('showWindows: unregistered globalShortcut');
+    const comRing = windowManager.getWindow('comRing');
+    if (comRing) {
+        comRing.focus();
+        Logger.log('showWindows: focused comRing');
     }
+}
+
+function hideWindowsBackend() {
+    globalShortcut.register(shortcutKey, windowManager.showAll);
+    shortcutRegistered = true;
 }
 
 function appSetupShortcuts() {
     if (!wizardActive && !shortcutRegistered) {
-        shortcutRegistered = globalShortcut.register(shortcutKey, showWindows);
+        shortcutRegistered = globalShortcut.register(
+            shortcutKey, windowManager.showAll);
 
         if (shortcutRegistered) {
            Logger.info('Successfully registered shortcut:', shortcutKey);
@@ -603,15 +606,6 @@ async function appCreateTray() {
                 click: () => { windowManager.hideAll(true); showSetupWizard(); }
             },
             { type: 'separator' },
-            // {
-            //     label: 'Auto-update',
-            //     type: 'checkbox',
-            //     checked: config.get('autoUpdate.enabled', true),
-            //     click: (menuItem) => {
-            //         config.set('autoUpdate.enabled', menuItem.checked);
-            //         autoUpdater.autoInstallOnAppQuit = menuItem.checked;
-            //     }
-            // },
             {
                 label: 'LLM Models',
                 submenu: [
@@ -822,7 +816,7 @@ async function updateProviderSubmenu() {
                     const comRing = windowManager.getWindow('comRing');
                     if (comRing) {
                         if (!comRing.isVisible()) {
-                            showWindows();
+                            windowManager.showAll(true);
                         }
                         comRing.send('show-help');
                     }
@@ -945,7 +939,7 @@ function initializeAutoUpdater() {
                 // Read the start minimized setting
                 if (!config.get('startup.startMinimized', false)) {
                     Logger.info('Starting with windows visible.');
-                    showWindows(true);
+                    windowManager.showAll(true);
                 } else {
                     Logger.info('Starting minimized as per configuration.');
                 }

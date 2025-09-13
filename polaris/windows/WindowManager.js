@@ -21,6 +21,8 @@ const Logger = require('../framework/logger');
 const path = require('path');
 const { nativeTheme } = require('electron');
 
+var me;
+
 class WindowManager {
     constructor(config) {
         this.config = config;
@@ -36,14 +38,19 @@ class WindowManager {
         this.iconPath = null;
         this.currentState = 'inactive';
         this.basePath = null;
+        this.showWindowsBackend = null;
+        this.hideWindowsBackend = null;
+        me = this;
     }
 
-    initialize(windowClasses, basePath, showWindows) {
+    initialize(windowClasses,
+        basePath, showWindowsBackend = null, hideWindowsBackend = null) {
         this.basePath = basePath;
         this.handlers = this.collectHandlers(windowClasses);
         this.createWindows(windowClasses);
         this.setupWindowEvents();
-        this.showWindows = showWindows;
+        this.showWindowsBackend = showWindowsBackend;
+        this.hideWindowsBackend = hideWindowsBackend;
     }
 
     setTray(tray, iconPath) {
@@ -185,13 +192,20 @@ class WindowManager {
             .some(window => window.isFocused());
     }
 
-    showAll() {
-        // Remove throttling before showing windows
-        this.applyBackgroundThrottling(false);
-        this.windows.forEach(window => {
-            window.show();
-            Logger.log("showAll: Shown window: " + window.prefix)
-        });
+    showAll(force = false) {
+        if (force || !me.isAnyVisible()) {
+            // Remove throttling before showing windows
+            me.applyBackgroundThrottling(false);
+            me.windows.forEach(window => {
+                window.show();
+                Logger.log("showAll: Shown window: " + window.prefix)
+            });
+            if (me.showWindowsBackend) {
+                me.showWindowsBackend();
+            }
+        } else {
+            Logger.log("showAll: No force and visible windows, skipping.")
+        }
     }
 
     hideAll(force = false) {
@@ -210,6 +224,10 @@ class WindowManager {
 
             // Apply additional throttling to all windows
             this.applyBackgroundThrottling(true);
+
+            if (this.hideWindowsBackend) {
+                this.hideWindowsBackend();
+            }
         }
     }
 
