@@ -558,7 +558,7 @@ class ServiceManager {
                                     // in case a real update resets it later.
                                     // console.log("Fake progress reached cap.");
                                 }
-                            }, 1000); // Increment every second
+                            }, 1500); // Increment every second
                             // console.log("Started fake progress interval");
                         }
 

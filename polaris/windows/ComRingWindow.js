@@ -49,7 +49,6 @@ class ComRingWindow extends BaseWindow {
             },
             onFocus: () => {
                 Logger.log('ComRingWindow RECEIVED FOCUS');
-                // Add your focus handling logic here
             }
         };
     }
@@ -134,7 +133,7 @@ class ComRingWindow extends BaseWindow {
 
         ipcMain.on('send-notification', (event, message) => {
             const notification = new Notification({
-                title: 'Ainara AI Assistant',
+                title: 'Ainara AI',
                 body: message,
                 icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
             });

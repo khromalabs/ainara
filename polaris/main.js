@@ -51,6 +51,8 @@ let updateProgressWindow = null;
 let ollamaClient = null;
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
+const triggerKey = config.get('shortcuts.trigger', 'Space');
+const hideKey = config.get('shortcuts.hide', 'Escape');
 
 // Check if this is the first run of the application
 function isFirstRun() {
@@ -119,7 +121,7 @@ function showSetupWizard() {
         wizardActive = false;
         appSetupShortcuts();
         // Re-enable tray icon
-        if (tray) {
+        if (!tray) {
             await appCreateTray();
             updateProviderSubmenu();
         }
@@ -291,7 +293,7 @@ async function appInitialization() {
         windowManager.on('visibility-changed', (state) => {
             if(updateTrayIcon) {
                 updateTrayIcon(state);
-           }
+            }
 
             if (state === 'active') {
                 // Unregister shortcut and focus comRing (original showWindowsBackend logic)
@@ -299,10 +301,12 @@ async function appInitialization() {
                 shortcutRegistered = false;
                 Logger.log('visibility-changed (active): unregistered globalShortcut');
                 const comRing = windowManager.getWindow('comRing');
-                if (comRing) {
-                    comRing.focus();
-                    Logger.log('visibility-changed (active): focused comRing');
-                }
+                setTimeout(() => {
+                    if (comRing) {
+                        comRing.focus();
+                        Logger.log('visibility-changed (active): focused comRing');
+                    }
+                }, 300);
             } else if (state === 'inactive') {
                 // Register shortcut (original hideWindowsBackend logic)
                 if (!shortcutRegistered) {
@@ -498,13 +502,20 @@ async function appInitialization() {
         // New: Show one-time tray guidance notification on Windows
         // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
         if (config.get('setup.firstLaunch', true)) {
+            const notification2 = new Notification({
+                title: 'Ainara AI',
+                body: `Press ${shortcutKey} to show the Ainara UI, ${hideKey} to hide the UI and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
+                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+            });
+            notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
+            notification2.show();
             const notification = new Notification({
-                title: 'Ainara AI Assistant',
+                title: 'Ainara AI',
                 body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
                 icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
             });
-            notification.show();
             notification.on('click', () => windowManager.showAll());  // Click notification to show UI
+            notification.show();
             config.set('setup.firstLaunch', false);  // Mark as shown
             config.saveConfig();
         }
