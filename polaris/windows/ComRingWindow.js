@@ -16,12 +16,10 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { Notification } = require('electron');
-const path = require('path');
-
 const BaseWindow = require('./BaseWindow');
 const Logger = require('../framework/logger');
 const ConfigHelper = require('../framework/ConfigHelper');
+const Notifier = require('../framework/notifier');
 
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
@@ -132,12 +130,7 @@ class ComRingWindow extends BaseWindow {
         });
 
         ipcMain.on('send-notification', (event, message) => {
-            const notification = new Notification({
-                title: 'Ainara AI',
-                body: message,
-                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
-            });
-            notification.show();
+            Notifier.show(message);
         });
 
         this.window.webContents.on('did-finish-load', async () => {
