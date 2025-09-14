@@ -18,6 +18,9 @@
  * Lesser General Public License for more details.
  */
 
+/* :host { */
+/*     border: 1px solid red; */
+/* } */
 
 body {
     margin: 0;

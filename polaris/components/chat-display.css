@@ -28,6 +28,7 @@
     pointer-events: none;
     display: flex;
     flex-direction: column;
+    /* border: 1px solid blue; */
 }
 
 .typing-container {

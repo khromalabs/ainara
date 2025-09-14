@@ -51,7 +51,8 @@ class BaseWindow {
             hasShadow: config.get(`${prefix}.hasShadow`, false),
             vibrancy: config.get(`${prefix}.vibrancy`, 'blur'),
             visualEffectState: config.get(`${prefix}.visualEffectState`, 'active'),
-            opacity: config.get(`${prefix}.opacity`, 0.8)
+            opacity: config.get(`${prefix}.opacity`, 0.8),
+            resizable: false
         };
 
         this.windowOptions = { ...this.defaultOptions, ...options };
@@ -70,10 +71,12 @@ class BaseWindow {
             } else {
                 this.send('window-show');
             }
+            this.window.setIgnoreMouseEvents(false);
         });
 
         this.window.on('hide', () => {
-            Logger.log(`${this.name} hidden`);
+            this.window.setIgnoreMouseEvents(true);
+            Logger.log(`${this.name} hidden, disabled mouse events`);
         });
 
         this.window.on('blur', () => {

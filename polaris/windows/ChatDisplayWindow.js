@@ -81,12 +81,13 @@ class ChatDisplayWindow extends BaseWindow {
             height: windowHeight,
             x: windowX,
             y: windowY,
-            type: 'toolbar',
+            // type: 'toolbar',
+            titleBarStyle: 'customButtonsOnHover', // macOS: Prevents ghost draggable area
             focusable: true,
             skipTaskbar: true, // Explicitly hide taskbar icon for ChatDisplayWindow
             frame: false,
             transparent: true,
-            backgroundColor: 'rgba(0,0,0,0)', // Explicit transparent background
+            // backgroundColor: 'rgba(0,0,0,0)', // Explicit transparent background
             opacity: 1.0, // Full window opacity
             alwaysOnTop: true,
             show: false,
@@ -94,6 +95,8 @@ class ChatDisplayWindow extends BaseWindow {
         };
 
         super(config, 'chatDisplay', options, basePath);
+
+        this.window.setIgnoreMouseEvents(true);
 
         this.manager = manager; // Store reference to window manager
         this.loadContent('./components/chat-display.html');
@@ -138,6 +141,9 @@ class ChatDisplayWindow extends BaseWindow {
         ipcMain.handle('set-typing-mode-state', (event, isTyping) => {
             const oldState = this.isTypingMode;
             this.isTypingMode = isTyping;
+
+            // When typing, capture mouse events. Otherwise, let them pass through.
+            this.window.setIgnoreMouseEvents(!isTyping);
 
             // Only broadcast if state actually changed
             if (oldState !== isTyping) {

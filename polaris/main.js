@@ -93,7 +93,8 @@ function showSetupWizard() {
         frame: false,
         skipTaskbar: false, // Show taskbar icon for setup window
         transparent: true,
-        iconPath: iconPath
+        iconPath: iconPath,
+        hasShadow: false
     });
     // setupWindow.webContents.openDevTools();
 
