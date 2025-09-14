@@ -388,6 +388,9 @@ class ComRing extends BaseComponent {
             } else if (message.trim() === '/help') {
                 console.log('Handling /help command');
                 await this.showHelp();
+            } else if (message.trim() === '/about') {
+                console.log('Handling /about command');
+                await this.showAbout();
             } else {
                 await this.processUserMessage(message, true);
             }
@@ -581,6 +584,9 @@ class ComRing extends BaseComponent {
 
         ipcRenderer.on('show-help', async () => {
             await this.showHelp();
+        });
+        ipcRenderer.on('show-about', async () => {
+            await this.showAbout();
         });
     }
 
@@ -1006,6 +1012,19 @@ class ComRing extends BaseComponent {
 ### Tips
 - Click the tray icon (left button) to toggle visibility.
 - You can switch to another application while typing in the input control and recover your edited text later with the arrow up key.
+        `.trim().replace(/^\s+/gm, '');
+
+        this.switchToDocumentView('help');
+        this.documentView.clear();
+        this.documentView.addDocument(helpContent, 'help', helpTitle);
+    }
+
+    async showAbout() {
+        const helpTitle = 'About Ainara Polaris';
+        const helpContent = `
+### About Ainara Polaris v${this.config.get("setup.version")} (testing)
+Copyright 2025 &copy; Rubén Gómez - https://khromalabs.org
+Visit our project site at: https://ainara.app
         `.trim().replace(/^\s+/gm, '');
 
         this.switchToDocumentView('help');

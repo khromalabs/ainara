@@ -54,6 +54,76 @@ const shortcutKey = config.get('shortcuts.show', 'F1');
 const triggerKey = config.get('shortcuts.trigger', 'Space');
 const hideKey = config.get('shortcuts.hide', 'Escape');
 
+// // Add service management to tray menu
+// const contextMenu = Menu.buildFromTemplate([
+//     {
+//         label: 'KK Setup',
+//         click: () => { windowManager.hideAll(true); showSetupWizard(); }
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'LLM Models',
+//         submenu: [
+//             {
+//                 label: 'Configure Providers',
+//                 click: () => showSetupWizard()
+//             },
+//             { type: 'separator' },
+//             {
+//                 label: 'Loading providers...',
+//                 enabled: false
+//             }
+//         ]
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Show',
+//         click: () => windowManager.showAll()
+//     },
+//     {
+//         label: 'Hide',
+//         click: () => windowManager.hideAll(true)
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Check for Updates',
+//         click: () => checkForUpdates(true)
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Help',
+//         click: () => {
+//             const comRing = windowManager.getWindow('comRing');
+//             if (comRing) {
+//                 if (!comRing.isVisible()) {
+//                     windowManager.showAll();
+//                 }
+//                 comRing.send('show-help');
+//             }
+//         }
+//     },
+//     {
+//         label: 'About',
+//         click: () => {
+//             const comRing = windowManager.getWindow('comRing');
+//             if (comRing) {
+//                 if (!comRing.isVisible()) {
+//                     windowManager.showAll();
+//                 }
+//                 comRing.send('show-about');
+//             }
+//         }
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Quit',
+//         click: () => {
+//             app.isQuitting = true;
+//             app.quit();
+//         }
+//     }
+// ]);
+
 // Check if this is the first run of the application
 function isFirstRun() {
     return !config.get('setup.completed', false);
@@ -123,7 +193,7 @@ function showSetupWizard() {
         // Re-enable tray icon
         if (!tray) {
             await appCreateTray();
-            updateProviderSubmenu();
+            // updateProviderSubmenu();
         }
 
         await restartWithSplash();
@@ -324,7 +394,6 @@ async function appInitialization() {
         });
         appSetupEventHandlers();
         await appCreateTray();
-
         await waitForWindowsAndComponentsReady();
 
         // --- Port Availability Check (Packaged App Only) ---
@@ -637,64 +706,8 @@ async function appCreateTray() {
         }
 
 
-        // Add service management to tray menu
-        const contextMenu = Menu.buildFromTemplate([
-            {
-                label: 'Setup',
-                click: () => { windowManager.hideAll(true); showSetupWizard(); }
-            },
-            { type: 'separator' },
-            {
-                label: 'LLM Models',
-                submenu: [
-                    {
-                        label: 'Configure Providers',
-                        click: () => showSetupWizard()
-                    },
-                    { type: 'separator' },
-                    {
-                        label: 'Loading providers...',
-                        enabled: false
-                    }
-                ]
-            },
-            { type: 'separator' },
-            {
-                label: 'Show',
-                click: () => windowManager.showAll()
-            },
-            {
-                label: 'Hide',
-                click: () => windowManager.hideAll(true)
-            },
-            { type: 'separator' },
-            {
-                label: 'Help',
-                click: () => {
-                    const comRing = windowManager.getWindow('comRing');
-                    if (comRing) {
-                        if (!comRing.isVisible()) {
-                            windowManager.showAll();
-                        }
-                        comRing.send('show-help');
-                    }
-                }
-            },
-            {
-                label: 'Check for Updates',
-                click: () => checkForUpdates(true)
-            },
-            { type: 'separator' },
-            {
-                label: 'Quit',
-                click: () => {
-                    app.isQuitting = true;
-                    app.quit();
-                }
-            }
-        ]);
-
-        tray.setContextMenu(contextMenu);
+        // tray.setContextMenu(contextMenu);
+        await updateProviderSubmenu();
         Logger.info('appCreateTray: Context menu set.');
 
         // A 'click' event now reliably corresponds to a left-click on all platforms.
@@ -855,6 +868,11 @@ async function updateProviderSubmenu() {
             },
             { type: 'separator' },
             {
+                label: 'Check for Updates',
+                click: () => checkForUpdates(true)
+            },
+            { type: 'separator' },
+            {
                 label: 'Help',
                 click: () => {
                     const comRing = windowManager.getWindow('comRing');
@@ -867,8 +885,16 @@ async function updateProviderSubmenu() {
                 }
             },
             {
-                label: 'Check for Updates',
-                click: () => checkForUpdates(true)
+                label: 'About',
+                click: () => {
+                    const comRing = windowManager.getWindow('comRing');
+                    if (comRing) {
+                        if (!comRing.isVisible()) {
+                            windowManager.showAll(true);
+                        }
+                        comRing.send('show-about');
+                    }
+                }
             },
             { type: 'separator' },
             {
