@@ -996,6 +996,13 @@ function setupEventListeners() {
                 reviewSttCheckbox.checked = config.get('stt.review');
             }
 
+            // Add event listener for the background notifications checkbox
+            const backgroundNotificationsCheckbox = document.getElementById('background-notifications-checkbox');
+            if (backgroundNotificationsCheckbox) {
+                backgroundNotificationsCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                backgroundNotificationsCheckbox.checked = config.get('ui.backgroundNotifications');
+            }
+
             // Add event listener for the backup directory input and browse button
             const backupDirectoryInput = document.getElementById('backup-directory-input');
             const browseBackupDirectoryBtn = document.getElementById('browse-backup-directory-btn');
@@ -1617,7 +1624,7 @@ function handleInputChange(event) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'backup-directory-input') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -2736,6 +2743,11 @@ async function saveFinishStepConfig() {
         if (modifiedFields.finish.has('review-stt-checkbox')) {
             const isChecked = document.getElementById('review-stt-checkbox').checked;
             config.set('stt.review', isChecked);
+        }
+
+        if (modifiedFields.finish.has('background-notifications-checkbox')) {
+            const isChecked = document.getElementById('background-notifications-checkbox').checked;
+            config.set('ui.backgroundNotifications', isChecked);
         }
 
         if (modifiedFields.finish.has('backup-directory-input')) {

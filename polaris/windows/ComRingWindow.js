@@ -16,6 +16,9 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
+const { Notification } = require('electron');
+const path = require('path');
+
 const BaseWindow = require('./BaseWindow');
 const Logger = require('../framework/logger');
 const ConfigHelper = require('../framework/ConfigHelper');
@@ -127,6 +130,15 @@ class ComRingWindow extends BaseWindow {
             this.window.focus();
             this.window.webContents.send('exit-typing-mode');
             Logger.log('ComRingWindow: Focusing window');
+        });
+
+        ipcMain.on('send-notification', (event, message) => {
+            const notification = new Notification({
+                title: 'Ainara AI Assistant',
+                body: message,
+                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+            });
+            notification.show();
         });
 
         this.window.webContents.on('did-finish-load', async () => {

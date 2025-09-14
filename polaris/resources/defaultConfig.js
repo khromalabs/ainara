@@ -83,5 +83,8 @@ module.exports = {
         serverIp: "127.0.0.1",
         port: 11434,
         totalVram: 0
+    },
+    ui: {
+        backgroundNotifications: false
     }
 };

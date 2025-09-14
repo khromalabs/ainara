@@ -261,6 +261,7 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
+            console.log('window-show: isWindowVisible true');
             var backendConfig;
             try {
                 backendConfig = await ConfigHelper.fetchBackendConfig();
@@ -335,7 +336,7 @@ class ComRing extends BaseComponent {
                 sttStatus.innerHTML = `Switched LLM model to:<br><i>${truncateMiddle(providerName, 44)}</i>`;
                 sttStatus.classList.add('active2');
 
-                // Hide the message after 3 seconds
+                // Hide the message after 4 seconds
                 setTimeout(() => {
                     sttStatus.classList.remove('active2');
                     sttStatus.textContent = '';
@@ -346,6 +347,7 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('window-hide', () => {
             console.log('ComRing: Received window-hide event');
             this.isWindowVisible = false;
+            console.log('window-hide: isWindowVisible false');
             if (this.state.isRecording) {
                 console.log('Window hidden while recording - stopping recording');
                 this.stopRecording();
@@ -722,7 +724,9 @@ class ComRing extends BaseComponent {
         await ipcRenderer.invoke('set-typing-mode-state', false);
         // Update UI
         this.circle.style.opacity = '1';
-        this.isWindowVisible = true;
+        // this.isWindowVisible = true;
+        // console.log('exitTypingMode: isWindowVisible true');
+
         ipcRenderer.send('com-ring-focus');
     }
 
@@ -1194,8 +1198,9 @@ class ComRing extends BaseComponent {
             const promises = [];
 
             // 1. Send message to chat display if not a skill
-            if (!content.flags.skill && !this.ignoreIncomingEvents) {
+            if (!content.flags.skill && !this.ignoreIncomingEvents && this.isWindowVisible) {
                 console.log(`Sending message to chat display: ${messageId}`);
+                console.log(`isWindowVisible: ${this.isWindowVisible}`);
 
                 // Create animation completion promise
                 const animationPromise = new Promise((resolve) => {
@@ -1233,6 +1238,14 @@ class ComRing extends BaseComponent {
 
                 // Add animation promise to the list
                 promises.push(animationPromise);
+            } else {
+                // console.log("send-notification event-------------------");
+                // console.log("send-notification " + JSON.stringify(event));
+                // console.log("send-notification content-------------------");
+                // console.log("send-notification " + JSON.stringify(content));
+                if (this.config.get("ui.backgroundNotifications", false)) {
+                    ipcRenderer.send('send-notification', content.content);
+                }
             }
 
             // 2. Start playing audio if available (in parallel with animation)
@@ -1375,7 +1388,7 @@ class ComRing extends BaseComponent {
 
     async handleEvent(event) {
         // Ignore events if flag is set
-        if (this.ignoreIncomingEvents || !this.isWindowVisible) {
+        if (this.ignoreIncomingEvents) {
             console.log('Ignoring incoming events');
             return;
         }
@@ -1394,21 +1407,6 @@ class ComRing extends BaseComponent {
                     if (content.flags.skill) {
                         // Check flag again before showing skill status
                         if (this.ignoreIncomingEvents) return;
-
-                        // TODO Show skill in com-ring?
-                        // // Show skill request message in status
-                        // const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                        // // Add loading state to both status and ring
-                        // sttStatus.textContent = `${content.content}`;
-                        // sttStatus.classList.add('active');
-                        //
-                        // // Remove after 3 seconds
-                        // setTimeout(() => {
-                        //     if (!this.ignoreIncomingEvents) {  // Check flag before removing
-                        //         sttStatus.classList.remove('active');
-                        //         sttStatus.textContent = '';
-                        //     }
-                        // }, 3000);
                     }
 
                     // Add message ID to the event
