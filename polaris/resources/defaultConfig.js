@@ -73,7 +73,8 @@ module.exports = {
     setup: {
         completed: false,
         version: 0,
-        timestamp: 0
+        timestamp: 0,
+        firstLaunch: true
     },
     startup: {
         startMinimized: false,
