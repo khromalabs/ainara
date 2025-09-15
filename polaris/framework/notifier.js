@@ -16,19 +16,36 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const notifier = require('node-notifier');
 const path = require('path');
+const os = require('os');
+
+const isWindows = os.platform() === "win32";
+var notifier = null
+
+if ( isWindows ) {
+    const WindowsBalloon = require('node-notifier').WindowsBalloon;
+    notifier = new WindowsBalloon({
+        withFallback: false,
+        customPath: undefined
+    });
+} else {
+    notifier = require('node-notifier');
+}
 
 class Notifier {
     static show(message) {
+        var msg_clean = isWindows ? message.replace(/\r+$/, "") : message;
         notifier.notify(
             {
                 title: 'Ainara AI',
-                message,
+                msg_clean,
                 icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png'),
                 sound: false, // Do not play a sound
+                time: 5000,
+                wait: false
             },
-            function (err, response) {
+            // function (err, response) {
+            function (err, ) {
                 // Response is response from notification
                 if (err) {
                     console.error('Notification error:', err);
