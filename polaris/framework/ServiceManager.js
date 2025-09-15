@@ -255,11 +255,11 @@ class ServiceManager {
                 // Ignore errors during startup
             }
 
-            this.startProgress++;
+            this.startProgress+=0.25;
             this.updateProgress(this.initializeMsg, this.startProgress);
 
             // Wait before next attempt
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         throw new Error(`Timeout waiting for ${service.name} to become healthy`);
@@ -342,7 +342,7 @@ class ServiceManager {
                     service.process.kill('SIGINT'); // Use SIGINT instead of SIGTERM
 
                     let pollingInterval = null;
-                    const maxWaitTime = 10000; // 10 seconds total wait time
+                    const maxWaitTime = 20000; // 20 seconds total wait time
                     const pollIntervalTime = 1000; // Check every 1 second
                     const startTime = Date.now();
 
