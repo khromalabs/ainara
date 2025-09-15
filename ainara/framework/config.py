@@ -140,6 +140,17 @@ class ConfigManager:
                             self._get_cache_directory()
                         )
 
+                    # Set up sentence_transformers cache directory
+                    cache_dir = Path(self.config["cache"]["directory"])
+                    st_home = (
+                        self.config["cache"].get("sentence_transformers_home")
+                        or cache_dir / "transformers"
+                    )
+                    st_home = Path(os.path.expanduser(str(st_home)))
+                    os.makedirs(st_home, exist_ok=True)
+                    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(st_home)
+                    self.config["cache"]["sentence_transformers_home"] = str(st_home)
+
                     # Set up data directory in config
                     if "data" not in self.config:
                         self.config["data"] = {}
