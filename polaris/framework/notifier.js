@@ -34,11 +34,11 @@ if ( isWindows ) {
 
 class Notifier {
     static show(message) {
-        var msg_clean = isWindows ? message.replace(/\r+$/, "") : message;
+        var msg_clean = isWindows ? message.replace(/[\r|\n]*$/, "") : message;
         notifier.notify(
             {
                 title: 'Ainara AI',
-                msg_clean,
+                message: msg_clean,
                 icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png'),
                 sound: false, // Do not play a sound
                 time: 5000,
