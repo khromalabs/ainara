@@ -19,39 +19,41 @@
 const path = require('path');
 const os = require('os');
 
-const isWindows = os.platform() === "win32";
-var notifier = null
-
-if ( isWindows ) {
-    const WindowsBalloon = require('node-notifier').WindowsBalloon;
-    notifier = new WindowsBalloon({
-        withFallback: false,
-        customPath: undefined
-    });
-} else {
-    notifier = require('node-notifier');
-}
-
 class Notifier {
     static show(message) {
-        var msg_clean = isWindows ? message.replace(/[\r|\n]*$/, "") : message;
-        notifier.notify(
-            {
-                title: 'Ainara AI',
-                message: msg_clean,
-                icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png'),
-                sound: false, // Do not play a sound
-                time: 5000,
-                wait: false
-            },
-            // function (err, response) {
-            function (err, ) {
-                // Response is response from notification
-                if (err) {
-                    console.error('Notification error:', err);
+        const isWindows = os.platform() === "win32";
+        if (isWindows) {
+            const WindowsBalloon = require('node-notifier').WindowsBalloon;
+            const notifier = new WindowsBalloon({
+                withFallback: false,
+                customPath: undefined
+            });
+            notifier.notify(
+                {
+                    title: 'Ainara Polaris',
+                    message: message.replace(/[\r|\n]*$/, ""),
+                    icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png'),
+                    sound: false, // Do not play a sound
+                    time: 5000,
+                    wait: false
+                },
+                // function (err, response) {
+                function (err, ) {
+                    // Response is response from notification
+                    if (err) {
+                        console.error('Notification error:', err);
+                    }
                 }
-            }
-        );
+            );
+        } else {
+            const { Notification } = require('electron');
+            const notification = new Notification({
+                title: 'Ainara Polaris',
+                body: message,
+                icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png')
+            });
+            notification.show();
+        }
     }
 }
 
