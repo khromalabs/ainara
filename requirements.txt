@@ -618,8 +618,6 @@ sympy==1.13.1
     #   -r requirements.in
     #   onnxruntime
     #   torch
-telegram==0.0.1
-    # via -r requirements.in
 tenacity==9.1.2
     # via chromadb
 textblob==0.19.0
