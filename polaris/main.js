@@ -18,6 +18,7 @@
 
 const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const { EventEmitter } = require('events');
 const semver = require('semver');
 // const yargs = require('yargs/yargs');
 // const { hideBin } = require('yargs/helpers');
@@ -53,6 +54,7 @@ let ollamaClient = null;
 const shortcutKey = config.get('shortcuts.show', 'F1');
 const triggerKey = config.get('shortcuts.trigger', 'Space');
 const hideKey = config.get('shortcuts.hide', 'Escape');
+const myEmitter = new EventEmitter();
 
 // // Add service management to tray menu
 // const contextMenu = Menu.buildFromTemplate([
@@ -589,6 +591,7 @@ async function appInitialization() {
             config.saveConfig();
         }
         Logger.info('Polaris initialized successfully');
+	myEmitter.emit('visibility-changed', 'active');
     } catch (error) {
         appHandleCriticalError(error);
     }
@@ -816,6 +819,8 @@ async function updateProviderSubmenu() {
                 type: 'radio',
                 checked: selected_provider === model,
                 click: async () => {
+		    windowManager.showAll(true);
+	            myEmitter.emit('visibility-changed', 'active');
                     const success = await ConfigHelper.selectLLMProvider(model);
                     if (success) {
                         // Update the menu
