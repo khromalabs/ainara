@@ -16,40 +16,25 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { Notification } = require('electron');
+const notifier = require('node-notifier');
 const path = require('path');
-const os = require('os');
-
-// Conditional import for Windows-specific notifications
-let ToastNotification;
-if (os.platform() === 'win32') {
-    try {
-        ToastNotification = require('electron-windows-notifications').ToastNotification;
-    } catch (error) {
-        console.error("Could not load electron-windows-notifications. Please run 'npm install electron-windows-notifications'.", error);
-        ToastNotification = null;
-    }
-}
 
 class Notifier {
     static show(message) {
-        if (os.platform() === 'win32' && ToastNotification) {
-            // Windows Toast Notification
-            const notification = new ToastNotification({
-                appId: 'org.khromalabs.ainara', // Make sure this matches your app's AppUserModelID
-                template: `<toast><visual><binding template="ToastText01"><text id="1">%s</text></binding></visual></toast>`,
-                strings: [message]
-            });
-            notification.show();
-        } else {
-            // Standard Electron Notification for other platforms (Linux, macOS)
-            const notification = new Notification({
+        notifier.notify(
+            {
                 title: 'Ainara AI',
-                body: message,
-                icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png')
-            });
-            notification.show();
-        }
+                message,
+                icon: path.join(__dirname, '..', 'windows', 'assets', 'icon.png'),
+                sound: false, // Do not play a sound
+            },
+            function (err, response) {
+                // Response is response from notification
+                if (err) {
+                    console.error('Notification error:', err);
+                }
+            }
+        );
     }
 }
 
