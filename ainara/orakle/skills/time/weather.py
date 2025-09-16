@@ -36,15 +36,16 @@ class TimeWeather(Skill):
         super().__init__()
         self.name = "weather"
         self.matcher_info = (
-            "Use this skill when the user wants to get current weather"
-            " information for their location or a specific location. This"
-            " skill can determine the user's location using IP-based"
-            " geolocation if no location is provided. Examples include:"
-            " 'what is the weather like today', 'tell me the forecast for"
-            " London', 'how hot is it in New York', 'current temperature in"
-            " Paris'.\n\nKeywords: weather, forecast, temperature, current,"
-            " today, location, city, country, climate, rain, sun, wind,"
-            " humidity."
+            "Use this skill when the user wants to get current real-time"
+            " weather information for their location or a specific location."
+            " This skill can determine the user's location using IP-based"
+            " geolocation if no location is provided. This skill is not apt"
+            " for forecasts involving several days ahead, just for real-time"
+            " data. Examples include: 'what is the weather like today', 'tell"
+            " me the forecast for London', 'how hot is it in New York',"
+            " 'current temperature in Paris'.\n\nKeywords: weather, forecast,"
+            " temperature, current, today, location, city, country, climate,"
+            " rain, sun, wind, humidity."
         )
         self.logger = logging.getLogger(__name__)
         self.api_key = config.get("apis.weather.openweathermap_api_key")

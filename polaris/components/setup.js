@@ -1224,7 +1224,7 @@ function loadProvidersWithFilter(filter = '') {
                     radio.addEventListener('change', () => {
                         // Hide test result and disable next button when provider changes
                         const testResult = document.getElementById('test-result');
-                        const nextButton = document.getElementById('llm-next');
+                        const nextButton = document.getElementById('main-next-btn');
 
                         testResult.classList.add('hidden');
                         nextButton.disabled = true;

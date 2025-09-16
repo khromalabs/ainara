@@ -21,7 +21,7 @@ No similar memories found.
 Based on your analysis, choose one of the following actions:
 
 1.  **"ignore"**: If the conversation contains no new lasting information, or if the information is already perfectly captured by an existing memory.
-2.  **"reinforce"**: If the conversation confirms or restates an existing memory. Provide the 'memory_id' of the memory to reinforce. If several memories contain exactly the same concept, chose the memory with the highest relevance to be reinforced, and add all the duplicates in an array which will mark them to be erased.
+2.  **"reinforce"**: If the conversation confirms or restates an existing memory. Provide the 'memory_id' of the memory to reinforce. If several memories contain exactly the same concept, chose the memory with the highest relevance score to be reinforced, and add all the duplicates in an array which will mark them to be erased.
 3.  **"create"**: If the conversation introduces a new piece of information. Provide the new 'memory_data', a 'target' section, and if this memory makes outdated other memories, a 'past_memory_ids' list containing the IDs of any memories that this new fact make outdated.
 
 **Step 4: Provide JSON Output**

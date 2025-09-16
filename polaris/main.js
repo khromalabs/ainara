@@ -146,7 +146,10 @@ function showSetupWizard() {
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
 
     wizardActive = true;
-    globalShortcut.unregister(shortcutKey);
+    setTimeout(() => {
+        console.log("showSetupWizard: Disabled shortcutKey")
+        globalShortcut.unregister(shortcutKey);
+    }, 500);
     shortcutRegistered = false;
 
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -591,7 +594,7 @@ async function appInitialization() {
             config.saveConfig();
         }
         Logger.info('Polaris initialized successfully');
-	myEmitter.emit('visibility-changed', 'active');
+        myEmitter.emit('visibility-changed', 'active');
     } catch (error) {
         appHandleCriticalError(error);
     }
@@ -819,8 +822,8 @@ async function updateProviderSubmenu() {
                 type: 'radio',
                 checked: selected_provider === model,
                 click: async () => {
-		    windowManager.showAll(true);
-	            myEmitter.emit('visibility-changed', 'active');
+                    windowManager.showAll(true);
+                    myEmitter.emit('visibility-changed', 'active');
                     const success = await ConfigHelper.selectLLMProvider(model);
                     if (success) {
                         // Update the menu
