@@ -988,6 +988,8 @@ function initializeAutoUpdater() {
         }
 
         updateAvailable = info; // Keep track of the available update info
+        const comRing = windowManager.getWindow('comRing');
+        comRing.hide();
 
         dialog.showMessageBox({
             type: 'info',
