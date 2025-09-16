@@ -3339,7 +3339,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.8.0');
+    config.set('setup.version', '0.8.1');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags
