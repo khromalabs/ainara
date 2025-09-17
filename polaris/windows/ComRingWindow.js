@@ -27,7 +27,7 @@ class ComRingWindow extends BaseWindow {
             onShow: (window, manager) => {
                 const comRing = manager.getWindow('comRing');
                 if (comRing) {
-                    comRing.focus();
+                    // comRing.focus();
                     comRing.window.webContents.send('window-show');
                 }
             },
@@ -60,9 +60,10 @@ class ComRingWindow extends BaseWindow {
             height: windowHeight,
             x: config.get('comRing.x', (screenWidth / 2) - (windowWidth / 2)),
             y: config.get('comRing.y', (screenHeight / 2) - (windowHeight / 2)),
-            skipTaskbar: true, // Show taskbar icon for ComRingWindow
-            // type: 'normal',  // Override to normal for keyboard focus
-            focusable: true  // Explicitly set focusable
+            skipTaskbar: false, // Show taskbar icon for ComRingWindow
+            type: 'normal',  // Override to normal for keyboard focus
+            focusable: true,  // Explicitly set focusable
+            alwaysOnTop: true
         };
 
         super(config, 'comRing', options, basePath);
@@ -132,6 +133,10 @@ class ComRingWindow extends BaseWindow {
         ipcMain.on('send-notification', (event, message) => {
             Notifier.show(message);
         });
+
+        // ipcMain.on('ready-to-show', (event, message) => {
+        //     this.window.focus();
+        // });
 
         this.window.webContents.on('did-finish-load', async () => {
             this.backendConfig = await ConfigHelper.fetchBackendConfig();

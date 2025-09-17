@@ -189,6 +189,7 @@ class WindowManager extends EventEmitter {
         if (force || !me.isAnyVisible()) {
             // Remove throttling before showing windows
             me.applyBackgroundThrottling(false);
+            this.lastShowTimestamp = Date.now();  // Update timestamp on show
             me.windows.forEach(window => {
                 window.show();
                 Logger.log("showAll: Shown window: " + window.prefix)

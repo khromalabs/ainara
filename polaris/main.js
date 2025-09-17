@@ -146,10 +146,12 @@ function showSetupWizard() {
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
 
     wizardActive = true;
-    setTimeout(() => {
-        console.log("showSetupWizard: Disabled shortcutKey")
-        globalShortcut.unregister(shortcutKey);
-    }, 500);
+    // Correction: Removed unnecessary setTimeout for unregistering a global shortcut.
+    // Improvement: `globalShortcut.unregister` is a synchronous operation. Removing the delay
+    // ensures the shortcut is disabled immediately when the setup wizard becomes active,
+    // preventing a race condition where the user could trigger it before it's disabled.
+    console.log("showSetupWizard: Disabled shortcutKey")
+    globalShortcut.unregister(shortcutKey);
     shortcutRegistered = false;
 
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -197,10 +199,9 @@ function showSetupWizard() {
         appSetupShortcuts();
         // Re-enable tray icon
         if (!tray) {
-            await appCreateTray();
-            // updateProviderSubmenu();
+             await appCreateTray();
+             // updateProviderSubmenu();
         }
-
         await restartWithSplash();
     }
 
@@ -321,8 +322,11 @@ function showSetupWizard() {
             await ServiceManager.stopServices();
             app.quit(); // Hard exit without cleanup
         } else {
-            splashWindow.close();
-            await setupComplete();
+            // Correction: Prevented re-entrant call to setupComplete.
+            // Improvement: The 'close-setup-window' event is fired when the setup window closes.
+            // If setup was already completed, this was re-triggering the setup completion logic.
+            // Now, it only logs that the user closed the window, and the main flow continues as intended.
+            Logger.info('Setup complete, window closed by user. Main flow will continue.');
         }
     });
 }
@@ -398,7 +402,6 @@ async function appInitialization() {
             }
         });
         appSetupEventHandlers();
-        await appCreateTray();
         await waitForWindowsAndComponentsReady();
 
         // --- Port Availability Check (Packaged App Only) ---
@@ -450,6 +453,7 @@ async function appInitialization() {
 
             // Set shortcut just before showing windows
             appSetupShortcuts();
+            await appCreateTray();
 
             // Read the start minimized setting
             const startMinimized = config.get('startup.startMinimized', false);
@@ -549,24 +553,17 @@ async function appInitialization() {
 
         // Close splash and show main window
         splashWindow.updateProgress('Ready!', 100);
-        await new Promise(resolve => setTimeout(resolve, 500));
-        splashWindow.close();
-
-        // Set shortcut just before showing windows
-        appSetupShortcuts();
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await splashWindow.close();
 
         // Check if this is the first run
         if (isFirstRun()) {
             showSetupWizard();
             return;
-        } else {
-            // Read the start minimized setting
-            if (!config.get('startup.startMinimized', false)) {
-                Logger.info('Starting with windows visible.');
-                windowManager.showAll(true);
-            } else Logger.info('Starting minimized as per configuration.');
         }
 
+        // Read the start minimized setting
+        await appCreateTray();
         let llmProviders = await ConfigHelper.getLLMProviders();
         if (llmProviders) {
             tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
@@ -593,8 +590,16 @@ async function appInitialization() {
             config.set('setup.firstLaunch', false);  // Mark as shown
             config.saveConfig();
         }
+
+        // Set shortcut just before showing windows
+        appSetupShortcuts();
+
+        // Show windows if not startMinimized
+        if (!config.get('startup.startMinimized', false)) {
+            Logger.info('Starting with windows visible.');
+            windowManager.showAll(true);
+        } else Logger.info('Starting minimized as per configuration.');
         Logger.info('Polaris initialized successfully');
-        myEmitter.emit('visibility-changed', 'active');
     } catch (error) {
         appHandleCriticalError(error);
     }
@@ -988,8 +993,10 @@ function initializeAutoUpdater() {
         }
 
         updateAvailable = info; // Keep track of the available update info
+
         const comRing = windowManager.getWindow('comRing');
-        comRing.hide();
+        if ( comRing )
+            comRing.hide();
 
         dialog.showMessageBox({
             type: 'info',
@@ -1100,22 +1107,24 @@ function appSetupEventHandlers() {
         }
     });
 
-    // Prevent app from closing when all windows are closed
-    app.on('window-all-closed', () => {
-        app.quit();
-    });
+    // Correction: Modified 'window-all-closed' handler for tray application behavior.
+    // Improvement: A tray application should not quit when all its windows are closed.
+    // This handler is changed to do nothing, aligning with the app's design to run
+    // in the background. Individual window 'close' events are already handled to hide
+    // windows instead of quitting.
+    app.on('window-all-closed', () => { });
 
     // Handle app activation (e.g., clicking dock icon on macOS)
     app.on('activate', () => {
-        if (windowManager.isEmpty()) {
-            appInitialization();
-        } else {
-            // Update tray icon to active when app is activated via taskbar/dock click
-            updateTrayIcon('active');
-            // Ensure windows are shown if they were hidden or minimized
-            if (!windowManager.isAnyVisible()) {
-                windowManager.showAll();
-            }
+        // Correction: Simplified the 'activate' event handler.
+        // Improvement: The `windowManager.isEmpty()` check is unreachable because windows are
+        // created at startup and never destroyed, only hidden. This simplifies the logic to
+        // always handle the case where the app is running but may not have visible windows.
+        // Update tray icon to active when app is activated via taskbar/dock click
+        updateTrayIcon('active');
+        // Ensure windows are shown if they were hidden or minimized
+        if (!windowManager.isAnyVisible()) {
+            windowManager.showAll();
         }
     });
 
@@ -1140,15 +1149,10 @@ function appSetupEventHandlers() {
     // Remove browser-window-focus handler as it conflicts with hide/show logic
     app.removeAllListeners('browser-window-focus');
 
-    // Add handler for window hide
+    // Correction: Removed redundant 'hide' event handler.
+    // Improvement: Shortcut registration is now solely managed by the 'visibility-changed'
+    // event on the WindowManager, simplifying logic and preventing potential race conditions.
     windowManager.windows.forEach(window => {
-        window.window.on('hide', () => {
-            if (!shortcutRegistered) {
-                appSetupShortcuts();
-                Logger.log('Re-enabled global shortcut after window hide'); // Keep as debug log
-            }
-        });
-
         // Handle Alt+F4 and other OS window close events
         window.window.on('close', (event) => {
             // If this is not part of the app quitting process, prevent default and hide instead

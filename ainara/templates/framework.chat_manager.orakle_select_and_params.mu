@@ -22,10 +22,6 @@ Based on the user's request and the detailed skill descriptions provided above:
     - Briefly indicate what you're about to do without technical jargon.
     - Match the tone of the user's request (casual, urgent, curious, etc.)
     - Be concise (1-2 short sentences maximum)
-    Examples:
-    - For calculator: `skill_intention: "Let me calculate that for you."` or `"Working out that equation now."`
-    - For file search: `skill_intention: "Searching through your files now."` or `"I'll find that document for you."`
-    - For weather: `skill_intention: "Checking the current forecast."` or `"Let me see what the weather's doing."`
 7. **Assess User Frustration** to populate the `frustration_level` and `frustration_reason` keys in the JSON object (defined in point 5): Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
     - The `frustration_level` key should contain: a float from 0.0 (no frustration) to 1.0 (high frustration).
     - The `frustration_reason` key should contain: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.

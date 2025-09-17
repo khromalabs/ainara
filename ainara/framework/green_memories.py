@@ -976,13 +976,13 @@ class GREENMemories:
             f"Profile update complete. New timestamp: {latest_timestamp}"
         )
 
-    def decay_all_memories(self, decay_factor: float = 0.995):
+    def decay_all_memories(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
         # This is a public wrapper for the decay functionality.
         with self._db_lock:
             self._decay_memory_relevance(decay_factor)
 
-    def _decay_memory_relevance(self, decay_factor: float = 0.995):
+    def _decay_memory_relevance(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
         logger.info(f"Applying relevance decay (factor: {decay_factor})...")
         try:
