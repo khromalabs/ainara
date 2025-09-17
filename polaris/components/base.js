@@ -181,7 +181,8 @@ class BaseComponent extends HTMLElement {
             }
 
             // Create a properly formatted HTML string
-            return '<a href="' + domain + '">' + linkText + '</a>';
+            return '"' + linkText + '"' +
+                   (domain ? ' [' + domain + ']' : '');
         });
 
         return text;
