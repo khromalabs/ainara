@@ -1246,6 +1246,39 @@ class ChatManager:
                 chat_history=turn_chat_history, stream=True
             )
 
+            def _stream_with_thinking_markers(raw_stream):
+                buffer = ""
+                in_thinking = False
+                for chunk in raw_stream:
+                    # logger.info(f"LLM raw chunk: {repr(chunk)}")
+                    buffer += chunk
+                    while True:
+                        if not in_thinking:
+                            start_pos = buffer.find("<think>")
+                            if start_pos != -1:
+                                yielded = buffer[:start_pos]
+                                # logger.info(f"yielded: {yielded}")
+                                yield yielded
+                                yield "\n_AINARA_THINKING_START_\n"
+                                buffer = buffer[start_pos + len("<think>"):]
+                                in_thinking = True
+                            else:
+                                yielded = buffer
+                                # logger.info(f"yielded: {yielded}")
+                                yield yielded
+                                buffer = ""
+                                break
+                        if in_thinking:
+                            end_pos = buffer.find("</think>")
+                            if end_pos != -1:
+                                yield "\n_AINARA_THINKING_STOP_\n"
+                                buffer = buffer[end_pos + len("</think>"):]
+                                in_thinking = False
+                            else:
+                                break
+                if buffer:
+                    yield buffer
+
             processed_answer = ""
             text_buffer = ""
             parsing_mode = "text"  # 'text' or 'doc'
@@ -1255,8 +1288,16 @@ class ChatManager:
             # Process the stream through the Orakle middleware
             # This now handles command execution and interpretation internally
             for chunk in self.orakle_middleware.process_stream(
-                llm_response_stream, self
+                _stream_with_thinking_markers(llm_response_stream), self
             ):
+                # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
+                if "_AINARA_THINKING_START_" in chunk:
+                    yield ndjson("signal", "thinking", {"state": "start"})
+                    continue
+                if "_AINARA_THINKING_STOP_" in chunk:
+                    yield ndjson("signal", "thinking", {"state": "stop"})
+                    continue
+
                 if isinstance(chunk, dict) and chunk.get("type") == "nexus_skill_result":
                     vendor = chunk.get("vendor")
                     bundle = chunk.get("bundle")

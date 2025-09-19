@@ -1525,6 +1525,19 @@ Visit our project site at: https://ainara.app
                 }
                 break;
 
+            case 'thinking':
+                if (event.type === 'signal') {
+                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                    if (event.content.state === 'start') {
+                        sttStatus.textContent = 'Reasoning...';
+                        sttStatus.classList.add('active');
+                    } else if (event.content.state === 'stop') {
+                        sttStatus.classList.remove('active');
+                        sttStatus.textContent = '';
+                    }
+                }
+                break;
+
             case 'setMemoryState':
                 if (event.type === 'ui') {
                     this.setMemoryState(event.content.enabled);

@@ -130,24 +130,26 @@ class OrakleMiddleware:
         command_end_delimiter = "ORAKLE"
 
         for token in token_stream:
+            # logger.info(f"OrakleMiddleware received token: {repr(token)}")
             if token is None:
                 continue
 
             if in_command:
                 command_buffer += token
                 # Check if we've reached the end delimiter on a line by itself
+                # logger.info(
+                #     "OrakleMiddleware in_command=True, command_buffer:"
+                #     f" {repr(command_buffer)}"
+                # )
                 # This handles both "ORAKLE" and "ORAKLE;" endings
                 if re.search(
-                    r"(?:^|\n)"
-                    + re.escape(command_end_delimiter)
-                    + r"(?:;|\s*$)",
+                    re.escape(command_end_delimiter) + r"(?:;|\s*$)",
                     command_buffer,
                 ):
+                    # logger.info("OrakleMiddleware found end delimiter.")
                     # Extract the command content up to the end delimiter
                     match = re.search(
-                        r"(.*?)(?:^|\n)"
-                        + re.escape(command_end_delimiter)
-                        + r"(?:;|\s*$)",
+                        r"(.*?)" + re.escape(command_end_delimiter) + r"(?:;|\s*$)",
                         command_buffer,
                         re.DOTALL,
                     )
@@ -162,8 +164,7 @@ class OrakleMiddleware:
 
                         # Find where the end delimiter ends
                         end_match = re.search(
-                            r"(?:^|\n)"
-                            + re.escape(command_end_delimiter)
+                            re.escape(command_end_delimiter)
                             + r"(?:;|\s*$)",
                             command_buffer,
                         )
@@ -181,10 +182,16 @@ class OrakleMiddleware:
                 # Add token to buffer
                 buffer += token
 
+                # logger.info(
+                #     f"OrakleMiddleware in_command=False, buffer: {repr(buffer)}"
+                # )
                 # Check if buffer contains the start delimiter
                 if command_start_delimiter in buffer:
                     # Extract everything up to the command
                     command_start = buffer.find(command_start_delimiter)
+                    # logger.info(
+                    #     f"OrakleMiddleware found start delimiter at pos {command_start}."
+                    # )
                     yield buffer[:command_start]
 
                     # Start collecting the command, excluding the start delimiter
@@ -213,8 +220,39 @@ class OrakleMiddleware:
         if buffer:
             yield buffer
 
+        # If we are still in a command, it means the stream ended before the
+        # command was closed (or the full command was in the last chunk).
+        # Let's try to process what we have in command_buffer.
+        if in_command and command_buffer:
+            # logger.info(
+            #     "OrakleMiddleware processing command_buffer at end of stream:"
+            #     f" {repr(command_buffer)}"
+            # )
+            # This logic is the same as inside the loop's `if in_command:` block
+            if re.search(
+                re.escape(command_end_delimiter) + r"(?:;|\s*$)",
+                command_buffer,
+            ):
+                match = re.search(
+                    r"(.*?)" + re.escape(command_end_delimiter) + r"(?:;|\s*$)",
+                    command_buffer,
+                    re.DOTALL,
+                )
+                if match:
+                    command_content = match.group(1).strip()
+                    for chunk in self._process_orakle_request(
+                        command_content, chat_manager
+                    ):
+                        yield chunk
+                    # Command is processed, so we can clear the buffer
+                    command_buffer = ""
+
         # Process any remaining command buffer
         if command_buffer and not in_command:
+            # logger.info(
+            #     "OrakleMiddleware yielding leftover command_buffer:"
+            #     f" {repr(command_buffer)}"
+            # )
             yield command_buffer
 
     def _process_orakle_request(
@@ -553,6 +591,35 @@ class OrakleMiddleware:
                 return skill
         return {}
 
+    def _strip_think_blocks_from_stream(
+        self, raw_stream: Generator[str, None, None]
+    ) -> Generator[str, None, None]:
+        """Strips <think>...</think> blocks from a stream of text chunks."""
+        buffer = ""
+        in_thinking = False
+        for chunk in raw_stream:
+            buffer += chunk
+            while True:
+                if not in_thinking:
+                    start_pos = buffer.find("<think>")
+                    if start_pos != -1:
+                        yield buffer[:start_pos]
+                        buffer = buffer[start_pos + len("<think>"):]
+                        in_thinking = True
+                    else:
+                        yield buffer
+                        buffer = ""
+                        break
+                if in_thinking:
+                    end_pos = buffer.find("</think>")
+                    if end_pos != -1:
+                        buffer = buffer[end_pos + len("</think>"):]
+                        in_thinking = False
+                    else:
+                        break  # Wait for more chunks
+        if buffer:
+            yield buffer
+
     def stream_command_interpretation(
         self,
         results: List[str],
@@ -598,8 +665,11 @@ class OrakleMiddleware:
             stream=True,
         )
 
+        # Wrap the stream to strip out <think> blocks
+        cleaned_stream = self._strip_think_blocks_from_stream(interpretation_stream)
+
         # Yield each chunk as it comes
-        for chunk in interpretation_stream:
+        for chunk in cleaned_stream:
             if chunk:
                 yield chunk
 

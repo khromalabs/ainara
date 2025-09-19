@@ -18,6 +18,7 @@
 
 import json
 import os
+import re
 from typing import Generator, List, Union
 from datetime import datetime
 
@@ -329,7 +330,12 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response)
+                    full_response = self._handle_normal_response(response)
+                    # Strip <think> blocks for non-streaming responses
+                    cleaned_response = re.sub(
+                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
+                    ).strip()
+                    return cleaned_response
 
             except Exception as e:
                 self.logger.error(f"LiteLLM completion error: {str(e)}")
@@ -444,7 +450,12 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response)
+                    full_response = self._handle_normal_response(response)
+                    # Strip <think> blocks for non-streaming responses
+                    cleaned_response = re.sub(
+                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
+                    ).strip()
+                    return cleaned_response
 
             except Exception as e:
                 self.logger.error(f"LiteLLM async completion error: {str(e)}")

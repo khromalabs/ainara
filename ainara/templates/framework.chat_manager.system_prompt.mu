@@ -37,8 +37,8 @@ Also some of this capabilities allow you to directly show web components on
 screen and are labeled as "nexus".
 {{/nexus_available}}
 
-Always use ORAKLE commands in this exact HEREDOC syntax, leaving an empty line
-both before and after the command:
+Always use ORAKLE commands in this exact HEREDOC, multiline syntax, leaving an
+empty line both before and after the command:
 
 <<<ORAKLE
 request to the Orakle server in natural language
