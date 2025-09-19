@@ -25,7 +25,7 @@ Based on the user's request and the detailed skill descriptions provided above:
 7. **Assess User Frustration** to populate the `frustration_level` and `frustration_reason` keys in the JSON object (defined in point 5): Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
     - The `frustration_level` key should contain: a float from 0.0 (no frustration) to 1.0 (high frustration).
     - The `frustration_reason` key should contain: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
-8. Don't select an skill if none of the options seem to fit for the user query. If none of the present skills seem to make sense for the user query, just tell the user that you can't identify what skill could be used to fulfill the user request, and politely ask an improved query description. 
+8. If none of the available skills seem to be directly related with the user query but the query is a request of information that could be likely found on the Internet, use the web search skill. Don't select an skill if none of the options seem to fit at all for the user query. In that case, add an additional `error_msg` property in the returned JSON object explaining in conversational style why the user request can't performed.
 
 
 Example Output Format:
@@ -37,7 +37,7 @@ Example Output Format:
   },
   "skill_intention": "I'm looking in the local file system for the requested file...",
   "frustration_level": 0.1,
-  "frustration_reason": ""
+  "frustration_reason": "",
 }
 
 Another Example:

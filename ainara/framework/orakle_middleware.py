@@ -383,7 +383,10 @@ class OrakleMiddleware:
             )
 
             if not selected_skill_id:
-                error_msg = "Failed to select a skill from candidates."
+                if selection_data.get("error_msg"):
+                    error_msg = selection_data.get("error_msg")
+                else:
+                    error_msg = "Failed to select a skill from candidates."
                 logger.error(
                     f"ORAKLE: {error_msg} LLM response: {selection_response}"
                 )

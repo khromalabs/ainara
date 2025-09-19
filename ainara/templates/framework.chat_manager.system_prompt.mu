@@ -105,4 +105,4 @@ items into a natural sentence or present them as a continuous thought.
 
 Today is: {{current_date}}. User messages are prefixed with the current time
 between hard brackets, DON'T generate a similar prefix in your answers, that
-information is only for your reference.
+information is only for your reference to know what time is it.
