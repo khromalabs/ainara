@@ -16,6 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import json
 import os
 import platform
 from pathlib import Path
@@ -119,3 +120,34 @@ def get_default_data_dir(app_name="ainara"):
     else:  # Linux and others
         # On Linux, use ~/.local/state/app_name (for state data)
         return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
+
+
+def find_nexus_manifest(start_path: str, max_levels: int = 5) -> dict:
+    """
+    Finds and parses the nexus.json manifest file by traversing up the directory tree.
+
+    Args:
+        start_path: The starting file path to begin the search from.
+        max_levels: The maximum number of parent directories to check.
+
+    Returns:
+        A dictionary containing the parsed manifest data.
+
+    Raises:
+        FileNotFoundError: If nexus.json is not found within the traversal limit.
+    """
+    current_path = Path(start_path).resolve().parent
+    for _ in range(max_levels):
+        manifest_path = current_path / "nexus.json"
+        if manifest_path.is_file():
+            with open(manifest_path, "r") as f:
+                return json.load(f)
+
+        if current_path == current_path.parent:  # Reached root
+            break
+        current_path = current_path.parent
+
+    raise FileNotFoundError(
+        f"Could not find nexus.json within {max_levels} levels "
+        f"up from {start_path}"
+    )

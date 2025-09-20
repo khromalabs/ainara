@@ -17,8 +17,8 @@
 // Lesser General Public License for more details.
 
 const STTBackend = require('./base');
-const ConfigManager = require('../../utils/config');
-const ConfigHelper = require('../../utils/ConfigHelper');
+const ConfigManager = require('../../framework/config');
+const ConfigHelper = require('../../framework/ConfigHelper');
 const { ipcRenderer } = require('electron');
 const { promisify } = require('util');
 const fs = require('fs');

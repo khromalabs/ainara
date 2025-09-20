@@ -18,7 +18,7 @@
 
 const { BrowserWindow } = require('electron');
 const path = require('path');
-const Logger = require('../utils/logger');
+const Logger = require('../framework/logger');
 
 class RestartModal {
     constructor(parentWindow) {

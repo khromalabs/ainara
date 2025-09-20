@@ -25,8 +25,8 @@ import bisect
 import json
 import logging
 import os
-# import pprint
 import shutil
+import requests
 import sys
 import time
 from datetime import datetime, timezone
@@ -35,16 +35,19 @@ from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 
 from ainara import __version__
+from ainara.framework.backup import BackupManager
 from ainara.framework.chat_manager import ChatManager
-from ainara.framework.config import ConfigManager
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.user_memories_manager import UserMemoriesManager
+from ainara.framework.config import ConfigManager
 from ainara.framework.dependency_checker import DependencyChecker
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.llm import create_llm_backend
+from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts.piper import PiperTTS
+from ainara.framework.utils import check_embedding_model, setup_embedding_model
 
 # --- Global instances ---
 config = ConfigManager()
@@ -137,12 +140,166 @@ def parse_args():
 
 # def setup_app()
 
+def _validate_skill_key(service: str, keys: dict):
+    """Performs a simple API call to validate credentials for a given service."""
+    logger.info(f"Validating API key for service: {service}")
+    headers = {}
+    params = {}
+
+    try:
+        if service == "tavily":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            response = requests.post(
+                "https://api.tavily.com/search",
+                json={"api_key": api_key, "query": "test", "max_results": 1},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "google":
+            api_key = keys.get("api_key")
+            cse_id = keys.get("cx")
+            if not api_key or not cse_id:
+                return False, "API Key and Search Engine ID are required"
+            params = {"key": api_key, "cx": cse_id, "q": "test"}
+            response = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key and CSE ID are valid."
+
+        elif service == "coinmarketcap":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {"X-CMC_PRO_API_KEY": api_key}
+            response = requests.get(
+                "https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest",
+                headers=headers,
+                params={"limit": 1},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "newsapi":
+            api_key = keys.get("api_key")  # Note: key is apiKey
+            if not api_key:
+                return False, "API key is missing"
+            params = {"q": "test", "apiKey": api_key}
+            response = requests.get(
+                "https://newsapi.org/v2/everything", params=params, timeout=10
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "perplexity":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            data = {
+                "model": "sonar",
+                "messages": [{"role": "user", "content": "test"}],
+            }
+            response = requests.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "metaphor":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+            data = {"query": "test", "numResults": 1}
+            response = requests.post(
+                "https://api.metaphor.systems/search",
+                headers=headers,
+                json=data,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "finance":
+            api_key = keys.get("alphavantage_api_key")
+            if not api_key:
+                return False, "API key is missing"
+            params = {
+                "function": "SYMBOL_SEARCH",
+                "keywords": "BA",
+                "apikey": api_key,
+            }
+            response = requests.get(
+                "https://www.alphavantage.co/query",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if "Error Message" in data or "Information" in data:
+                return False, data.get("Error Message") or data.get(
+                    "Information"
+                )
+            return True, "Key is valid."
+
+        elif service == "weather":
+            api_key = keys.get("openweathermap_api_key")
+            if not api_key:
+                return False, "API key is missing"
+            params = {"q": "London", "appid": api_key}
+            response = requests.get(
+                "https://api.openweathermap.org/data/2.5/weather",
+                params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        else:
+            return (
+                False,
+                f"Validation for service '{service}' is not implemented.",
+            )
+
+    except requests.HTTPError as e:
+        # Attempt to get a more specific error from the response body
+        error_message = str(e)
+        try:
+            error_details = e.response.json()
+            if "error" in error_details:
+                if isinstance(error_details["error"], dict):
+                    error_message = error_details["error"].get(
+                        "message", str(error_details)
+                    )
+                else:
+                    error_message = error_details["error"]
+            elif "message" in error_details:
+                error_message = error_details["message"]
+        except json.JSONDecodeError:
+            pass  # Stick with the original HTTPError message
+        return False, error_message
+    except requests.RequestException as e:
+        return False, str(e)
+
 
 def create_app():
 
     llm = create_llm_backend(config.get("llm", {}))
     app.llm = llm
-
     # # --- DEBUG: ChromaDB Dependency Check ---
     # import sys
     # import traceback
@@ -213,30 +370,6 @@ def create_app():
     # Choose STT backend based on configuration
     stt_selected_module = config.get("stt.selected_module", "faster_whisper")
     if stt_selected_module == "faster_whisper":
-        # Pre-download the model if using faster-whisper
-        model_size = config.get(
-            "stt.modules.faster_whisper.model_size", "small"
-        )
-        try:
-            logger.info(
-                f"Pre-downloading Faster-Whisper {model_size} model..."
-            )
-            from huggingface_hub import hf_hub_download
-
-            cache_dir = config.get_subdir("cache.directory", "whisper")
-            model_path = hf_hub_download(
-                repo_id=f"guillaumekln/faster-whisper-{model_size}",
-                filename="model.bin",
-                cache_dir=cache_dir,
-            )
-            logger.info(
-                f"Faster-Whisper {model_size} model cached/downloaded to"
-                f" {model_path}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to pre-download model: {e}")
-            logger.warning("Model will be downloaded when first used")
-
         stt = FasterWhisperSTT()
         logger.info("Using FasterWhisper STT backend")
     else:
@@ -281,25 +414,22 @@ def create_app():
         chat_memory = ChatMemory()
         logger.info("Chat memory initialized")
 
-    # Initialize UserMemoriesManager
-    user_memories_manager = None
+    # Initialize GREENMemories
+    green_memories = None
     user_profile_summary = None
     if chat_memory:
-        user_memories_manager = UserMemoriesManager(
+        green_memories = GREENMemories(
             llm=app.llm,
             chat_memory=chat_memory,
-            context_window=app.llm.get_context_window(),
         )
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
         logger.info("Processing new messages for user profile...")
-        user_memories_manager.process_new_messages_for_update()
+        green_memories.process_new_messages_for_update()
         logger.info("Message processing complete.")
 
         # Generate the narrative user profile summary
-        user_profile_summary = (
-            user_memories_manager.generate_user_profile_summary()
-        )
+        user_profile_summary = green_memories.generate_user_profile_summary()
         if user_profile_summary:
             logger.info("User profile summary generated successfully.")
 
@@ -310,9 +440,15 @@ def create_app():
         flask_app=app,
         orakle_servers=config.get("orakle.servers", ["http://127.0.0.1:8100"]),
         chat_memory=chat_memory,
-        user_memories_manager=user_memories_manager,
+        green_memories=green_memories,
         user_profile_summary=user_profile_summary,
     )
+
+    # Initialize and start the backup manager
+    app.backup_manager = BackupManager(config)
+    app.backup_manager.start()
+    # Ensure the backup thread is stopped cleanly on exit
+    atexit.register(app.backup_manager.stop)
 
     @app.route("/health", methods=["GET"])
     def health_check():
@@ -322,6 +458,7 @@ def create_app():
         # Get memory configuration
         memory_config = config.get("memory", {})
         memory_enabled = memory_config.get("enabled", False)
+        backup_enabled = config.get("backup.enabled", False)
 
         status = {
             "status": "ok",
@@ -333,6 +470,7 @@ def create_app():
                 "chat_manager": app.chat_manager is not None,
                 "config_manager": config is not None,
                 "logging": logging_manager is not None,
+                "backup_manager": app.backup_manager is not None,
             },
             "dependencies": {"llm_available": app.llm is not None},
         }
@@ -345,6 +483,18 @@ def create_app():
                 and app.chat_manager.chat_memory is not None
             )
 
+        # Add backup status details
+        if backup_enabled and hasattr(app, "backup_manager"):
+            bm = app.backup_manager
+            status["backup"] = {
+                "enabled": True,
+                "status": bm.last_backup_status,
+                "last_run": bm.last_backup_timestamp,
+                "error": bm.last_backup_error,
+            }
+        else:
+            status["backup"] = {"enabled": False, "status": "disabled"}
+
         # Check if all essential services are available
         all_services_ok = all(status["services"].values())
         all_dependencies_ok = all(status["dependencies"].values())
@@ -352,6 +502,20 @@ def create_app():
         if not all_services_ok or not all_dependencies_ok:
             status["status"] = "degraded"
             status["message"] = "Some services or dependencies are unavailable"
+        # Also mark as degraded if the last backup failed
+        elif (
+            status["backup"]["enabled"]
+            and status["backup"]["status"] != "success"
+        ):
+            status["status"] = "degraded"
+            if status["backup"]["status"] == "failure":
+                status["message"] = (
+                    "The last backup attempt failed. Please check the logs."
+                )
+            else:
+                status["message"] = (
+                    "A backup has not been successfully completed yet."
+                )
 
         # Add response time measurement
         status["response_time_ms"] = (time.time() - start_time) * 1000
@@ -405,7 +569,7 @@ def create_app():
 
             new_llm = create_llm_backend(config.get("llm", {}))
             app.llm = new_llm
-            app.chat_manager.llm = new_llm
+            app.chat_manager.update_llm(new_llm)
 
             return jsonify({"success": True})
         except Exception as e:
@@ -422,11 +586,18 @@ def create_app():
             results = {"status": "success", "initialized": True, "details": {}}
 
             # Check Whisper models
-            whisper_status = check_whisper_models()
+            whisper_status = stt.check_model()
             results["details"]["whisper"] = whisper_status
 
-            # If whisper resource is not initialized, set the overall status
-            if not whisper_status["initialized"]:
+            # Check embedding model
+            embedding_status = check_embedding_model()
+            results["details"]["embedding"] = embedding_status
+
+            # If any resource is not initialized, set the overall status
+            if (
+                not whisper_status["initialized"]
+                or not embedding_status["initialized"]
+            ):
                 results["initialized"] = False
 
             return jsonify(results)
@@ -469,10 +640,15 @@ def create_app():
                 )
 
                 # Check if whisper needs initialization
-                whisper_check = check_whisper_models()
+                whisper_check = stt.check_model()
                 resources_to_init = (
                     ["whisper"] if not whisper_check.get("initialized") else []
                 )
+
+                # Check if embedding model needs initialization
+                embedding_check = check_embedding_model()
+                if not embedding_check.get("initialized"):
+                    resources_to_init.append("embedding")
 
                 if not resources_to_init:
                     yield format_sse(
@@ -508,7 +684,7 @@ def create_app():
                     logger.info(
                         "SSE Initialization: Setting up Whisper models..."
                     )
-                    whisper_result = setup_whisper_models()  # Blocking call
+                    whisper_result = stt.setup_model()  # Blocking call
                     if not whisper_result["success"]:
                         # Yield error and stop
                         yield format_sse(
@@ -530,6 +706,46 @@ def create_app():
                                 completed_resources * progress_per_resource
                             ),
                             "message": "Whisper setup complete.",
+                        }
+                    )
+
+                # --- Initialize Embedding model if needed ---
+                if "embedding" in resources_to_init:
+                    current_progress = int(
+                        completed_resources * progress_per_resource
+                    )
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": current_progress,
+                            "message": "Setting up embedding model...",
+                        }
+                    )
+                    logger.info(
+                        "SSE Initialization: Setting up embedding model..."
+                    )
+                    embedding_result = setup_embedding_model()  # Blocking call
+                    if not embedding_result["success"]:
+                        # Yield error and stop
+                        yield format_sse(
+                            {
+                                "status": "error",
+                                "progress": current_progress,
+                                "message": (
+                                    "Embedding model setup failed:"
+                                    f" {embedding_result['message']}"
+                                ),
+                            }
+                        )
+                        return
+                    completed_resources += 1
+                    yield format_sse(
+                        {
+                            "status": "running",
+                            "progress": int(
+                                completed_resources * progress_per_resource
+                            ),
+                            "message": "Embedding model setup complete.",
                         }
                     )
 
@@ -577,94 +793,6 @@ def create_app():
         return send_file(
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
-
-    def check_whisper_models():
-        """Check if Whisper models are available"""
-        try:
-            import os
-
-            # Get model size from config
-            model_size = config.get(
-                "stt.modules.faster_whisper.model_size", "small"
-            )
-            cache_dir = config.get_subdir("cache.directory", "whisper")
-
-            # Check if model file exists
-            model_path = os.path.join(
-                cache_dir,
-                "models--guillaumekln--faster-whisper-" + model_size,
-                "snapshots",
-            )
-
-            if os.path.exists(model_path):
-                # Find the snapshot directory
-                snapshot_dirs = [
-                    d
-                    for d in os.listdir(model_path)
-                    if os.path.isdir(os.path.join(model_path, d))
-                ]
-
-                if snapshot_dirs:
-                    # Check if model.bin exists in any snapshot directory
-                    for snapshot in snapshot_dirs:
-                        model_bin = os.path.join(
-                            model_path, snapshot, "model.bin"
-                        )
-                        if os.path.exists(model_bin):
-                            return {
-                                "initialized": True,
-                                "message": (
-                                    f"Whisper {model_size} model is available"
-                                ),
-                                "path": model_bin,
-                            }
-
-            return {
-                "initialized": False,
-                "message": f"Whisper {model_size} model is not available",
-            }
-        except Exception as e:
-            logger.error(f"Error checking Whisper models: {e}")
-            return {
-                "initialized": False,
-                "message": f"Error checking Whisper models: {str(e)}",
-            }
-
-    def setup_whisper_models():
-        """Download and setup whisper models"""
-        try:
-            # Get model size from config
-            model_size = config.get(
-                "stt.modules.faster_whisper.model_size", "small"
-            )
-
-            logger.info(f"Downloading Faster-Whisper {model_size} model...")
-            from huggingface_hub import hf_hub_download
-
-            cache_dir = config.get_subdir("cache.directory", "whisper")
-            model_path = hf_hub_download(
-                repo_id=f"guillaumekln/faster-whisper-{model_size}",
-                filename="model.bin",
-                cache_dir=cache_dir,
-            )
-
-            logger.info(
-                f"Faster-Whisper {model_size} model downloaded to {model_path}"
-            )
-            return {
-                "success": True,
-                "message": (
-                    f"Whisper {model_size} model downloaded successfully"
-                ),
-                "path": model_path,
-            }
-        except Exception as e:
-            logger.error(f"Error downloading whisper model: {e}")
-            return {
-                "success": False,
-                "message": f"Error downloading whisper model: {str(e)}",
-                "path": model_path,
-            }
 
     @app.route("/framework/chat", methods=["POST"])
     def framework_chat():
@@ -718,9 +846,10 @@ def create_app():
             )
             messages_by_date = {}
             for msg in all_messages:
-                logger.info(f"msg: {msg}")
+                # TODO get messages by day instead of getting all together
+                # logger.info(f"msg: {msg}")
                 timestamp_str = msg.get("timestamp")
-                logger.info(f"timestamp_str: {timestamp_str}")
+                # logger.info(f"timestamp_str: {timestamp_str}")
                 if timestamp_str:
                     # Ensure timestamp is timezone-aware before converting
                     dt_object = datetime.fromisoformat(timestamp_str)
@@ -735,7 +864,9 @@ def create_app():
             if not messages_by_date:
                 return jsonify(
                     {
-                        "history": "# Chat History\n\nNo history found for today.",
+                        "history": (
+                            "# Chat History\n\nNo history found for today."
+                        ),
                         "date": (
                             datetime.now(timezone.utc).strftime("%Y-%m-%d")
                         ),
@@ -756,9 +887,7 @@ def create_app():
 
             # Get messages for the target day
             messages_for_day = messages_by_date.get(target_date, [])
-            messages_for_day.sort(
-                key=lambda m: m.get("timestamp")
-            )
+            messages_for_day.sort(key=lambda m: m.get("timestamp"))
 
             # Format into a concise Markdown string
             markdown_lines = [
@@ -906,7 +1035,8 @@ def create_app():
                 f" {filter_models if filter_models else 'None'}"
             )
 
-            providers = app.llm.get_available_providers()
+            litellm_provider = LiteLLM()
+            providers = litellm_provider.get_available_providers()
             # logger.info(f"PROVIDERS1:\n{pprint.pformat(providers)}")
 
             # Format the response
@@ -1047,6 +1177,41 @@ def create_app():
 
             logger.error(traceback.format_exc())
             return jsonify({"error": str(e), "providers": {}}), 500
+
+    @app.route("/test-skill-key", methods=["POST"])
+    def test_skill_key():
+        """Test API key for a given skill/service."""
+        try:
+            data = request.get_json()
+            logger.info(f"data: {data}")
+            service = data.get("service")
+            keys = data.get("keys")
+
+            if not service or not keys:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "message": "Service and keys are required.",
+                        }
+                    ),
+                    400,
+                )
+
+            is_valid, message = _validate_skill_key(service, keys)
+
+            if is_valid:
+                return jsonify({"success": True, "message": message})
+            else:
+                # Return 200 OK on validation failure so frontend can parse it
+                return jsonify({"success": False, "message": message})
+
+        except Exception as e:
+            logger.error(f"Error in /test-skill-key: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return jsonify({"success": False, "message": str(e)}), 500
 
     @app.route("/test-llm", methods=["POST"])
     def test_llm_connection():

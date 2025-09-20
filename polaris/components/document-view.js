@@ -3,8 +3,6 @@
 class DocumentView extends BaseComponent {
     constructor() {
         super();
-        this.documents = [];
-        this.currentIndex = -1;
         this.isVisible = false;
     }
 
@@ -15,28 +13,6 @@ class DocumentView extends BaseComponent {
             this.shadowRoot.appendChild(template.content.cloneNode(true));
 
             this.container = this.shadowRoot.querySelector('.document-container');
-            this.codeBlock = this.shadowRoot.querySelector('.document-content');
-            this.formatBadge = this.shadowRoot.querySelector('.format-badge');
-            this.counter = this.shadowRoot.querySelector('.counter');
-            this.copyButton = this.shadowRoot.querySelector('.copy-button');
-            this.prevButton = this.shadowRoot.querySelector('.prev');
-            this.nextButton = this.shadowRoot.querySelector('.next');
-
-            this.copyButton.addEventListener('click', () => this.copyToClipboard());
-            this.prevButton.addEventListener('click', () => {
-                if (this.formatBadge.textContent === 'chat-history') {
-                    this.emitEvent('history-prev-clicked');
-                } else {
-                    this.navigate(-1);
-                }
-            });
-            this.nextButton.addEventListener('click', () => {
-                if (this.formatBadge.textContent === 'chat-history') {
-                    this.emitEvent('history-next-clicked');
-                } else {
-                    this.navigate(1);
-                }
-            });
 
             this.hide(); // Initially hidden
         } catch (error) {
@@ -44,64 +20,124 @@ class DocumentView extends BaseComponent {
         }
     }
 
-    addDocument(content, format = 'text') {
-        this.documents.push({ content, format });
-        this.currentIndex = this.documents.length - 1;
-        this.render();
-    }
+    addDocument(content, format = 'text', title) {
+        const documentElement = document.createElement('div');
+        documentElement.className = 'document-item';
 
-    navigate(direction) {
-        const newIndex = this.currentIndex + direction;
-        if (newIndex >= 0 && newIndex < this.documents.length) {
-            this.currentIndex = newIndex;
-            this.render();
+        // Create header for all items
+        const header = document.createElement('div');
+        header.className = 'document-header';
+
+        const docInfo = document.createElement('div');
+        docInfo.className = 'doc-info';
+
+        const titleElement = document.createElement('span');
+        titleElement.className = 'doc-title';
+        titleElement.textContent = title || (format.charAt(0).toUpperCase() + format.slice(1));
+        titleElement.title = titleElement.textContent
+        docInfo.appendChild(titleElement);
+
+        const controls = document.createElement('div');
+        controls.className = 'doc-controls';
+
+        if (format === 'chat-history') {
+            const prevButton = document.createElement('button');
+            prevButton.className = 'nav-button prev';
+            prevButton.innerHTML = '&lt;';
+            prevButton.title = 'Previous Day';
+            prevButton.addEventListener('click', () => this.emitEvent('history-prev-clicked'));
+            controls.appendChild(prevButton);
+
+            const nextButton = document.createElement('button');
+            nextButton.className = 'nav-button next';
+            nextButton.innerHTML = '&gt;';
+            nextButton.title = 'Next Day';
+            nextButton.addEventListener('click', () => this.emitEvent('history-next-clicked'));
+            controls.appendChild(nextButton);
         }
-    }
 
-    render() {
-        if (this.currentIndex < 0 || this.documents.length === 0) {
-            this.codeBlock.textContent = '';
-            this.formatBadge.textContent = '';
-            this.counter.textContent = '0/0';
-            return;
+        if (format !== 'nexus') {
+            const formatBadge = document.createElement('span');
+            formatBadge.className = 'format-badge';
+            formatBadge.textContent = format;
+            docInfo.appendChild(formatBadge);
+
+            const copyButton = document.createElement('button');
+            copyButton.className = 'copy-button';
+            copyButton.textContent = 'Copy';
+            copyButton.addEventListener('click', () => this.copyToClipboard(content));
+            controls.appendChild(copyButton);
         }
 
-        const doc = this.documents[this.currentIndex];
-        this.formatBadge.textContent = doc.format;
-        if (doc.format === "chat-history") {
-            this.codeBlock.innerHTML = this.parseMarkdown(doc.content);
-            // History nav state is set externally via updateNavControls
-        } else {
-            // Logic for other document types
-            this.container.classList.toggle('has-multiple-docs', this.documents.length > 1);
-            this.codeBlock.innerHTML = "<pre>" + doc.content + "</pre>";
-            this.codeBlock.className = `language-${doc.format}`;
-            if (window.hljs) {
-                window.hljs.highlightElement(this.codeBlock);
-            } else {
-                console.warn('highlight.js not found. Code will not be highlighted.');
+        const closeButton = document.createElement('button');
+        closeButton.className = 'close-button';
+        closeButton.innerHTML = '&times;';
+        closeButton.title = 'Close';
+        closeButton.addEventListener('click', () => {
+            const iframe = documentElement.querySelector('iframe');
+            if (iframe) {
+                iframe.src = 'about:blank';
             }
-            // Update counter and button states for multi-doc view
-            this.counter.textContent = `${this.currentIndex + 1}/${this.documents.length}`;
-            this.prevButton.disabled = this.currentIndex === 0;
-            this.nextButton.disabled = this.currentIndex >= this.documents.length - 1;
+            documentElement.remove();
+        });
+        controls.appendChild(closeButton);
+
+        header.appendChild(docInfo);
+        header.appendChild(controls);
+        documentElement.appendChild(header);
+
+        if (format === 'nexus') {
+            // Create iframe for nexus content
+            const iframe = document.createElement('iframe');
+            iframe.className = 'nexus-frame';
+            iframe.sandbox = 'allow-scripts allow-same-origin allow-forms';
+
+            // Post data on load
+            iframe.onload = () => {
+                if (iframe.contentWindow) {
+                    const dataToSend = content.data.result || content.data;
+                    iframe.contentWindow.postMessage(dataToSend, '*');
+                }
+            };
+
+            iframe.src = content.url;
+            documentElement.appendChild(iframe);
+        } else {
+            // Create content area
+            const contentArea = document.createElement('div');
+            contentArea.className = 'document-content';
+
+            if (format === "chat-history" || format === "help") {
+                contentArea.innerHTML = this.parseMarkdown(content);
+            } else {
+                contentArea.innerHTML = "<pre>" + content + "</pre>";
+                contentArea.className += ` language-${format}`;
+                if (window.hljs) {
+                    window.hljs.highlightElement(contentArea);
+                }
+            }
+            documentElement.appendChild(contentArea);
         }
+
+        this.container.appendChild(documentElement);
     }
 
-    copyToClipboard() {
-        if (this.currentIndex < 0) return;
-        const contentToCopy = this.documents[this.currentIndex].content;
-
-        navigator.clipboard.writeText(contentToCopy).then(() => {
-            this.copyButton.textContent = 'Copied!';
+    copyToClipboard(content) {
+        navigator.clipboard.writeText(content).then(() => {
+            // Find the button that was clicked and update its text
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = 'Copied!';
             setTimeout(() => {
-                this.copyButton.textContent = 'Copy';
+                button.textContent = originalText;
             }, 2000);
         }).catch(err => {
             console.error('Failed to copy text: ', err);
-            this.copyButton.textContent = 'Error';
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = 'Error';
             setTimeout(() => {
-                this.copyButton.textContent = 'Copy';
+                button.textContent = originalText;
             }, 2000);
         });
     }
@@ -117,26 +153,29 @@ class DocumentView extends BaseComponent {
     }
 
     updateNavControls(state) {
-        // state = { show: boolean, prev: boolean, next: boolean }
-        const controls = this.shadowRoot.querySelector('.controls');
-        controls.style.display = state.show ? 'flex' : '';
-        this.prevButton.disabled = !state.prev;
-        this.nextButton.disabled = !state.next;
+        // state = { prev: boolean, next: boolean }
+        const prevButton = this.shadowRoot.querySelector('.nav-button.prev');
+        const nextButton = this.shadowRoot.querySelector('.nav-button.next');
 
-        // Also hide the counter if we are showing history nav
-        if (state.show) {
-            this.counter.style.display = 'none';
-            this.container.classList.remove('has-multiple-docs');
-        } else {
-            this.counter.style.display = ''; // reset to default
+        if (prevButton) {
+            prevButton.disabled = !state.prev;
+        }
+        if (nextButton) {
+            nextButton.disabled = !state.next;
         }
     }
 
     clear() {
-        this.documents = [];
-        this.currentIndex = -1;
-        this.updateNavControls({ show: false }); // Hide controls
-        this.render();
+        // Remove all document items from the container
+        while (this.container.firstChild) {
+            const child = this.container.firstChild;
+            // Clean up iframes
+            if (child.querySelector && child.querySelector('iframe')) {
+                const iframe = child.querySelector('iframe');
+                iframe.src = 'about:blank';
+            }
+            this.container.removeChild(child);
+        }
     }
 }
 

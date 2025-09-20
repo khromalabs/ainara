@@ -12,8 +12,8 @@ jobs:
     strategy:
       matrix:
         include:
-        - os: macos-14
-          python-version: '3.12'
+#        - os: macos-14
+#          python-version: '3.12'
         - os: windows-latest
           python-version: '3.12' # Use Python 3.11 for Windows
     runs-on: ${{ matrix.os }}
@@ -97,8 +97,8 @@ jobs:
         else
           source venv/bin/activate
         fi
-        chmod +x bin/build
-        bin/build --skip-npm-build --skip-git-tag
+        chmod +x scripts/build
+        scripts/build --skip-npm-build --skip-git-tag
 
     - name: Set up Node.js
       uses: actions/setup-node@v3

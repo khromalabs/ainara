@@ -16,7 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { Logger } = require('../../utils/logger');
+const { Logger } = require('../../framework/logger');
 
 class STTBackend {
     /**

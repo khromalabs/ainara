@@ -34,19 +34,22 @@
  */
 
 const WhisperSTT = require('../services/stt/whisper');
-const ConfigManager = require('../utils/config');
-const ConfigHelper = require('../utils/ConfigHelper');
+const ConfigManager = require('../framework/config');
+const ConfigHelper = require('../framework/ConfigHelper');
 const BaseComponent = require('./base');
 const electron = require('electron');
 
 var ipcRenderer = electron.ipcRenderer;
 console.log('com-ring.js loaded');
 
+const ERROR_WITH_CALL_TRACE = false
+
 class ComRing extends BaseComponent {
     constructor() {
         try {
             super();
             this.ignoreIncomingEvents = false;
+            this.showInitialMessages = true;
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
             this.text = null;
@@ -140,6 +143,10 @@ class ComRing extends BaseComponent {
                 'ring-container element not found'
             );
             this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
+            this.llmProviderDisplay = this.assert(
+                this.shadowRoot.querySelector('.llm-provider-display'),
+                'llm-provider-display element not found'
+            );
 
             this.audioContext = null;
             this.mediaStream = null;
@@ -147,6 +154,7 @@ class ComRing extends BaseComponent {
             this.animationFrame = null;
 
             this.initializeEventListeners();
+            await this.updateLLMProviderDisplay();
             this.emitEvent('ready');
 
         } catch (error) {
@@ -203,6 +211,35 @@ class ComRing extends BaseComponent {
         }
     }
 
+    _formatProviderName(provider) {
+        if (!provider) return '';
+        // Take the last part of the path (e.g., "deepseek/deepseek-chat" -> "deepseek-chat")
+        const parts = provider.split('/');
+        const modelName = parts[parts.length - 1];
+
+        // Capitalize each word separated by a hyphen (e.g., "deepseek-chat" -> "Deepseek-Chat")
+        return modelName
+            .split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join('-');
+    }
+
+    async updateLLMProviderDisplay() {
+        try {
+            const { selected_provider } = await ConfigHelper.getLLMProviders();
+
+            if (selected_provider) {
+                const displayName = this._formatProviderName(selected_provider);
+                this.llmProviderDisplay.textContent = displayName;
+            } else {
+                this.llmProviderDisplay.textContent = 'No LLM Provider';
+            }
+        } catch (error) {
+            console.error('Error updating LLM provider display:', error);
+            this.llmProviderDisplay.textContent = 'Provider Unknown';
+        }
+    }
+
     initializeEventListeners() {
         console.log('ComRing: Initializing event listeners');
         console.log('ComRing: Setting up IPC event listeners');
@@ -224,12 +261,50 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
-            // Force-sync memory state from config to fix color issue on show
-            if (this.memoryEnabled === null) {
-                let backendConfig = await ConfigHelper.fetchBackendConfig();
-                this.memoryEnabled = backendConfig?.memory?.enabled || false;
+            console.log('window-show: isWindowVisible true');
+            var backendConfig;
+            try {
+                backendConfig = await ConfigHelper.fetchBackendConfig();
+            } catch {
+                this.showInfo("Couldn't read Polaris configuration", true);
             }
-            this.setMemoryState(this.memoryEnabled);
+
+            // console.log('MEMORYINFO 1');
+            // console.log(JSON.stringify(backendConfig));
+
+            if (this.showInitialMessages &&
+                backendConfig &&
+                backendConfig.memory &&
+                backendConfig.backup) {
+
+                // console.log('MEMORYINFO 2');
+                // this.showInfo("MEMORYINFO 2");
+                this.memoryEnabled = backendConfig.memory.enabled || false;
+                this.setMemoryState(this.memoryEnabled);
+                if (this.memoryEnabled === false) {
+                    // console.log('MEMORYINFO 3');
+                    // this.showInfo("MEMORYINFO 3");
+                    this.showInfo("Memory is disabled, to enable type: /memory");
+                }
+                if (!backendConfig.backup.enabled) {
+                    this.showInfo("Backups are disabled. Use Setup Wizard to enable.");
+                }
+                this.showInitialMessages = false;
+            }
+
+            // Check for backup configuration on first show
+            // if (this.isFirstShow) {
+            //     this.showInfo("MEMORYINFO 2");
+            //     this.isFirstShow = false; // Ensure this only runs once
+            //     if (!backendConfig?.backup?.enabled) {
+            //         this.showInfo("Backups are disabled. Use Setup Wizard to enable.");
+            //     }
+            //     if (this.memoryEnabled == false) {
+            //         this.showInfo("Memory is disabled, to enable type: /memory");
+            //     }
+            //     this.showInfo("MEMORYINFO 3");
+            // }
+
         });
 
         ipcRenderer.on('set-memory-state', (event, enabled) => {
@@ -252,35 +327,37 @@ class ComRing extends BaseComponent {
         }
 
         // Add listener for LLM provider changes
-        ipcRenderer.on('llm-provider-changed', (event, providerName) => {
+        ipcRenderer.on('llm-provider-changed', async (event, providerName) => {
             console.log('ComRing: LLM provider changed to', providerName);
+            await this.updateLLMProviderDisplay();
             if (this.isWindowVisible) {
                 // Show provider change notification
                 const sttStatus = this.shadowRoot.querySelector('.stt-status');
                 sttStatus.innerHTML = `Switched LLM model to:<br><i>${truncateMiddle(providerName, 44)}</i>`;
                 sttStatus.classList.add('active2');
 
-                // Hide the message after 3 seconds
+                // Hide the message after 4 seconds
                 setTimeout(() => {
                     sttStatus.classList.remove('active2');
                     sttStatus.textContent = '';
-                }, 8100);
+                }, 4000);
             }
         });
 
         ipcRenderer.on('window-hide', () => {
             console.log('ComRing: Received window-hide event');
             this.isWindowVisible = false;
+            console.log('window-hide: isWindowVisible false');
             if (this.state.isRecording) {
                 console.log('Window hidden while recording - stopping recording');
                 this.stopRecording();
             }
 
-            if (this.state.isProcessingLLM) {
-                this.abortLLMResponse();
-                this.cleanAudio();
-                this.state.isAwaitingResponse = false;
-            }
+            // if (this.state.isProcessingLLM) {
+            //     this.abortLLMResponse();
+            //     this.cleanAudio();
+            //     this.state.isAwaitingResponse = false;
+            // }
 
             this.exitTypingMode();
         });
@@ -295,19 +372,25 @@ class ComRing extends BaseComponent {
             if (message.trim() === '/history') {
                 console.log('Handling /history command');
                 await this.fetchAndDisplayChatHistory();
+            } else if (message.trim() === '/provider') {
+                console.log('Handling /provider command');
+                await this.updateLLMProviderDisplay();
+                this.llmProviderDisplay.classList.add('visible');
+                setTimeout(() => {
+                    this.llmProviderDisplay.classList.remove('visible');
+                }, 4000);
             } else if (message.trim() === '/documents') {
-                console.log('Handling /documents command');
-                if (this.documentView && this.documentView.documents.length > 0 && this.docFormat !== 'chat-history') {
+                if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
                     this.switchToDocumentView(this.docFormat);
                 } else {
-                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                    sttStatus.textContent = 'No documents to display.';
-                    sttStatus.classList.add('active');
-                    setTimeout(() => {
-                        sttStatus.classList.remove('active');
-                        sttStatus.textContent = '';
-                    }, 3000);
+                    this.showInfo('No documents to display.');
                 }
+            } else if (message.trim() === '/help') {
+                console.log('Handling /help command');
+                await this.showHelp();
+            } else if (message.trim() === '/about') {
+                console.log('Handling /about command');
+                await this.showAbout();
             } else {
                 await this.processUserMessage(message, true);
             }
@@ -323,7 +406,7 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('typing-mode-changed', (event, isTypingMode) => {
             console.log('ComRing: Typing mode changed to', isTypingMode);
             // Update UI based on typing mode
-            this.circle.style.opacity = isTypingMode ? '0.4' : '1';
+            this.circle.style.opacity = isTypingMode ? '0.3' : '1';
         });
 
         // Listen for history navigation events from the document-view component
@@ -392,11 +475,10 @@ class ComRing extends BaseComponent {
             }
 
             if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
-;
-                console.log("EVENT ESCAPE");
+                // console.log("EVENT ESCAPE");
                 // Always abort any ongoing LLM response first
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
-                    console.log('Aborting LLM response');
+                    console.log('Escape triggers abort LLM response');
                     this.abortLLMResponse();
                     event.preventDefault();
                     event.stopPropagation();
@@ -413,6 +495,22 @@ class ComRing extends BaseComponent {
                 // Get current typing mode state from window
                 const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
 
+                if (event.key === 'Tab' && !isTypingMode) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (this.currentView === 'ring') {
+                        if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
+                            this.switchToDocumentView(this.docFormat);
+                        } else {
+                            this.showInfo('No documents to display.');
+                        }
+                    } else if (this.currentView === 'document') {
+                        this.switchToRingView();
+                    }
+                    return;
+                }
+
+                // console.log('ComRing: key detected: ' + event.key);
                 if (!isTypingMode && event.code === this.triggerKey) {
                     this.state.keyPressed = true;
                     if (!this.state.isRecording) {
@@ -422,9 +520,17 @@ class ComRing extends BaseComponent {
                 } else if (
                     !isTypingMode &&
                     !this.state.isRecording &&
-                    event.key.length === 1 &&
-                    /[a-zA-Z0-9/]/.test(event.key)
+                    // don't process control+v
+                    ( !(event.key.toLowerCase() === 'v' && event.ctrlKey) ) &&
+                    (
+                        // process arrows
+                        event.key == "ArrowUp" ||
+                        event.key == "ArrowDown" ||
+                        // process alphanumeric keys
+                        ( event.key.length === 1 && /[a-zA-Z0-9/]/.test(event.key) )
+                    )
                 ) {
+                    // console.log("EVENT KEYDOWN");
                     // Only handle the first keystroke to enter typing mode
                     console.log('ComRing: Entering typing mode');
                     await this.enterTypingMode();
@@ -457,10 +563,31 @@ class ComRing extends BaseComponent {
             }
         });
 
+        document.addEventListener('paste', async (event) => {
+            const isTypingMode = await ipcRenderer.invoke('get-typing-mode-state');
+            if (!isTypingMode) {
+                await this.enterTypingMode();
+                let clipboardText = electron.clipboard.readText();
+                ipcRenderer.send(
+                    'typing-key-pressed',
+                    clipboardText
+                );
+                ipcRenderer.send('focus-chat-display');
+                event.preventDefault();
+            }
+        });
+
         console.log('ComRing: Event listeners initialized');
         console.log('ComRing: Sending ready confirmation to main process');
         ipcRenderer.send('com-ring-ready');
         ipcRenderer.send('comRing-ready');
+
+        ipcRenderer.on('show-help', async () => {
+            await this.showHelp();
+        });
+        ipcRenderer.on('show-about', async () => {
+            await this.showAbout();
+        });
     }
 
 
@@ -486,11 +613,19 @@ class ComRing extends BaseComponent {
 
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (transcription) => {
+            const reviewBeforeSend = this.config.get('stt.review', true);
             if (transcription) {
-                await this.processUserMessage(transcription);
+                if (reviewBeforeSend) {
+                    await this.enterTypingMode();
+                    ipcRenderer.send('typing-key-pressed', transcription);
+                    ipcRenderer.send('focus-chat-display');
+                } else {
+                    await this.processUserMessage(transcription);
+                }
             }
         };
     }
+
 
 
     async startRecording() {
@@ -595,7 +730,9 @@ class ComRing extends BaseComponent {
         await ipcRenderer.invoke('set-typing-mode-state', false);
         // Update UI
         this.circle.style.opacity = '1';
-        this.isWindowVisible = true;
+        // this.isWindowVisible = true;
+        // console.log('exitTypingMode: isWindowVisible true');
+
         ipcRenderer.send('com-ring-focus');
     }
 
@@ -759,15 +896,16 @@ class ComRing extends BaseComponent {
         }
     }
 
-    // TODO extend the queued approach used to show errors to display all messages
     async showInfo(info, isError = false) {
-        let callstack = null;
-        try {
-            throw new Error('Stack Trace');
-        } catch (e) {
-            callstack = e.stack;
+        if (ERROR_WITH_CALL_TRACE) {
+            let callstack = null;
+            try {
+                throw new Error('Stack Trace');
+            } catch (e) {
+                callstack = e.stack;
+            }
+            console.error('Info:', info, callstack);
         }
-        console.error('Info:', info, callstack);
         if (isError) {
             ipcRenderer.send('chat-error', info.toString());
         }
@@ -822,7 +960,7 @@ class ComRing extends BaseComponent {
 
         // Keep the message visible by refreshing it periodically
         const refreshInterval = 1000; // 1 second
-        const totalDuration = 5000;   // 5 seconds total
+        const totalDuration = 4000;   // 5 seconds total
         const refreshCount = Math.floor(totalDuration / refreshInterval);
 
         // Use a single interval instead of multiple timeouts
@@ -855,6 +993,45 @@ class ComRing extends BaseComponent {
         }, refreshInterval);
     }
 
+    async showHelp() {
+        const helpTitle = 'Help & Shortcuts';
+        const helpContent = `
+### Keyboard Shortcuts
+- **${this.triggerKey}**: Hold to record your voice.
+- **Tab**: Switch between Ring and Document view.
+- **Escape**: Abort current action or hide the window.
+- **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
+- **Control+v**: Paste clipboard content on input control.
+### Commands
+- **/help**: Shows this help message.
+- **/history**: View your chat history.
+- **/documents**: Switch to the document view.
+- **/provider**: Show the current LLM provider.
+- **/memory**: Toggle conversation memory on.
+- **/nomemory**: Toggle conversation memory off.
+### Tips
+- Click the tray icon (left button) to toggle visibility.
+- You can switch to another application while typing in the input control and recover your edited text later with the arrow up key.
+        `.trim().replace(/^\s+/gm, '');
+
+        this.switchToDocumentView('help');
+        this.documentView.clear();
+        this.documentView.addDocument(helpContent, 'help', helpTitle);
+    }
+
+    async showAbout() {
+        const helpTitle = 'About Ainara Polaris';
+        const helpContent = `
+### About Ainara Polaris v${this.config.get("setup.version")} (testing)
+Copyright 2025 &copy; Rubén Gómez - https://khromalabs.org
+Visit our project site at: https://ainara.app
+        `.trim().replace(/^\s+/gm, '');
+
+        this.switchToDocumentView('help');
+        this.documentView.clear();
+        this.documentView.addDocument(helpContent, 'help', helpTitle);
+    }
+
     async fetchAndDisplayChatHistory(date = null) {
         try {
             const sttStatus = this.shadowRoot.querySelector('.stt-status');
@@ -884,12 +1061,15 @@ class ComRing extends BaseComponent {
                 this.historyDate = data.date;
                 this.switchToDocumentView('chat-history');
                 this.documentView.clear();
+                this.documentView.addDocument(
+                    data.history,
+                    'chat-history',
+                    `Chat History: ${this.historyDate}`
+                );
                 this.documentView.updateNavControls({
-                    show: true,
                     prev: data.has_previous,
                     next: data.has_next
                 });
-                this.documentView.addDocument(data.history, 'chat-history');
                 sttStatus.classList.remove('active');
                 sttStatus.textContent = '';
             } else {
@@ -898,7 +1078,7 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     sttStatus.classList.remove('active');
                     sttStatus.textContent = '';
-                }, 3000);
+                }, 4000);
             }
         } catch (error) {
             console.error('Error fetching chat history:', error);
@@ -1037,8 +1217,9 @@ class ComRing extends BaseComponent {
             const promises = [];
 
             // 1. Send message to chat display if not a skill
-            if (!content.flags.skill && !this.ignoreIncomingEvents) {
+            if (!content.flags.skill && !this.ignoreIncomingEvents && this.isWindowVisible) {
                 console.log(`Sending message to chat display: ${messageId}`);
+                console.log(`isWindowVisible: ${this.isWindowVisible}`);
 
                 // Create animation completion promise
                 const animationPromise = new Promise((resolve) => {
@@ -1076,6 +1257,14 @@ class ComRing extends BaseComponent {
 
                 // Add animation promise to the list
                 promises.push(animationPromise);
+            } else {
+                // console.log("send-notification event-------------------");
+                // console.log("send-notification " + JSON.stringify(event));
+                // console.log("send-notification content-------------------");
+                // console.log("send-notification " + JSON.stringify(content));
+                if (this.config.get("ui.backgroundNotifications", false)) {
+                    ipcRenderer.send('send-notification', content.content);
+                }
             }
 
             // 2. Start playing audio if available (in parallel with animation)
@@ -1218,7 +1407,7 @@ class ComRing extends BaseComponent {
 
     async handleEvent(event) {
         // Ignore events if flag is set
-        if (this.ignoreIncomingEvents || !this.isWindowVisible) {
+        if (this.ignoreIncomingEvents) {
             console.log('Ignoring incoming events');
             return;
         }
@@ -1237,21 +1426,6 @@ class ComRing extends BaseComponent {
                     if (content.flags.skill) {
                         // Check flag again before showing skill status
                         if (this.ignoreIncomingEvents) return;
-
-                        // TODO Show skill in com-ring?
-                        // // Show skill request message in status
-                        // const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                        // // Add loading state to both status and ring
-                        // sttStatus.textContent = `${content.content}`;
-                        // sttStatus.classList.add('active');
-                        //
-                        // // Remove after 3 seconds
-                        // setTimeout(() => {
-                        //     if (!this.ignoreIncomingEvents) {  // Check flag before removing
-                        //         sttStatus.classList.remove('active');
-                        //         sttStatus.textContent = '';
-                        //     }
-                        // }, 3000);
                     }
 
                     // Add message ID to the event
@@ -1351,6 +1525,19 @@ class ComRing extends BaseComponent {
                 }
                 break;
 
+            case 'thinking':
+                if (event.type === 'signal') {
+                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                    if (event.content.state === 'start') {
+                        sttStatus.textContent = 'Reasoning...';
+                        sttStatus.classList.add('active');
+                    } else if (event.content.state === 'stop') {
+                        sttStatus.classList.remove('active');
+                        sttStatus.textContent = '';
+                    }
+                }
+                break;
+
             case 'setMemoryState':
                 if (event.type === 'ui') {
                     this.setMemoryState(event.content.enabled);
@@ -1421,11 +1608,38 @@ class ComRing extends BaseComponent {
                 }
                 break;
 
+            case 'renderNexus':
+                if (event.type === 'ui') {
+                    const orakleUrl = this.config.get('orakle.api_url');
+                    if (!orakleUrl) {
+                        this.showInfo('Orakle API URL not configured.', true);
+                        return;
+                    }
+                    const fullUrl = orakleUrl + event.content.component_path;
+                    const pathParts = event.content.component_path.split('/');
+                    const componentName = pathParts[pathParts.length - 2];
+                    this.switchToDocumentView('nexus');
+                    console.log("EVENT")
+                    console.log(JSON.stringify(event))
+                    this.documentView.addDocument(
+                        {
+                            url: fullUrl,
+                            data: event.content.data
+                        },
+                        'nexus',
+                        componentName + "—" + event.content.query
+                    );
+                }
+                break;
+
             case 'full':
                 // console.log(JSON.stringify(event));
                 if (event.type === 'content') {
                     if (this.currentView === 'document') {
-                        this.documentView.addDocument(event.content.content, this.docFormat);
+                        const title =
+                            event.content.title ||
+                            this.docFormat.charAt(0).toUpperCase() + this.docFormat.slice(1);
+                        this.documentView.addDocument(event.content.content, this.docFormat, title);
                     } else {
                         console.warn('Received full content but not in document view. Ignoring.');
                     }

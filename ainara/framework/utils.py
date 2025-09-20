@@ -21,6 +21,18 @@ import logging
 import os
 import sys
 
+from ainara.framework.config import config
+
+try:
+    from sentence_transformers import SentenceTransformer
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.utils import EntryNotFoundError
+
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+
+
 from colorama import Fore, Style
 
 logger = logging.getLogger(__name__)
@@ -99,3 +111,84 @@ def format_orakle_command(command: str) -> str:
         f"{Fore.CYAN}╰─ Parameters:{Style.RESET_ALL}\n"
         f"{formatted_params}"
     )
+
+
+def get_embedding_model_name():
+    """Gets the embedding model name from the configuration."""
+    return config.get(
+        "user_profile.vector_storage.embedding_model",
+        config.get(
+            "memory.vector_storage.embedding_model",
+            "sentence-transformers/all-mpnet-base-v2",
+        ),
+    )
+
+
+def check_embedding_model():
+    """
+    Checks if the sentence-transformer embedding model is downloaded.
+
+    Returns:
+        dict: A dictionary with status and model information.
+    """
+    if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        return {
+            "initialized": False,
+            "message": "sentence-transformers library not found.",
+            "model_name": get_embedding_model_name(),
+        }
+
+    model_name = get_embedding_model_name()
+    try:
+        # This will check for the model in the cache without downloading it.
+        # It will raise an exception if not found locally.
+        snapshot_download(repo_id=model_name, local_files_only=True)
+        logger.info(f"Embedding model '{model_name}' found in cache.")
+        return {
+            "initialized": True,
+            "message": "Model is cached.",
+            "model_name": model_name,
+        }
+    except (EntryNotFoundError, FileNotFoundError, OSError):
+        # These exceptions indicate the model is not cached.
+        logger.info(f"Embedding model '{model_name}' not found in cache.")
+        return {
+            "initialized": False,
+            "message": "Model not found in local cache.",
+            "model_name": model_name,
+        }
+    except Exception as e:
+        logger.error(
+            "An unexpected error occurred while checking for embedding model"
+            f" '{model_name}': {e}"
+        )
+        return {
+            "initialized": False,
+            "message": f"An error occurred: {e}",
+            "model_name": model_name,
+        }
+
+
+def setup_embedding_model():
+    """
+    Downloads and caches the sentence-transformer embedding model.
+
+    Returns:
+        dict: A dictionary with success status and a message.
+    """
+    if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        return {
+            "success": False,
+            "message": "sentence-transformers library not found.",
+        }
+
+    model_name = get_embedding_model_name()
+    try:
+        logger.info(f"Downloading and caching embedding model: {model_name}...")
+        # Instantiating the model triggers the download and caching process.
+        SentenceTransformer(model_name)
+        logger.info(f"Successfully downloaded and cached model: {model_name}")
+        return {"success": True, "message": "Model downloaded successfully."}
+    except Exception as e:
+        logger.error(f"Failed to download embedding model '{model_name}': {e}")
+        return {"success": False, "message": str(e)}

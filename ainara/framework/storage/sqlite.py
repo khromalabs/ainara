@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -111,6 +112,21 @@ class SQLiteStorage(StorageBackend):
             self.conn.execute(
                 "INSERT OR IGNORE INTO db_metadata (key, value) VALUES (?, ?)",
                 ("schema_version", "1.0"),
+            )
+
+            # Add a generic cache table
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    cache_value TEXT NOT NULL
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cache_provider ON api_cache (provider);"
             )
 
     def add_message(
@@ -246,6 +262,58 @@ class SQLiteStorage(StorageBackend):
         if msg.get("metadata"):
             msg["metadata"] = json.loads(msg["metadata"])
         return msg
+
+    def get_cache(self, key: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a cache entry by key.
+
+        Args:
+            key: The cache key.
+
+        Returns:
+            A dictionary representing the cache row, or None if not found.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM api_cache WHERE cache_key = ?", (key,))
+        row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
+
+    def set_cache(self, key: str, value: str, provider: str):
+        """
+        Insert or replace a key-value pair in the cache.
+
+        Args:
+            key: The cache key.
+            value: The value to store (should be a JSON string).
+            provider: The name of the provider storing the data.
+        """
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT OR REPLACE INTO api_cache (cache_key, provider, timestamp, cache_value)
+                VALUES (?, ?, ?, ?)
+                """,
+                (key, provider, int(time.time()), value),
+            )
+
+    def clear_expired_cache(self, ttl_seconds: int):
+        """
+        Removes expired entries from the cache table.
+
+        Args:
+            ttl_seconds: The time-to-live for cache entries in seconds.
+        """
+        expiration_time = int(time.time()) - ttl_seconds
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "DELETE FROM api_cache WHERE timestamp < ?", (expiration_time,)
+            )
+            logger.info(f"Cleared {cursor.rowcount} expired cache entries.")
 
     def get_metadata(self, key: str) -> Optional[str]:
         """Get a value from the metadata table."""

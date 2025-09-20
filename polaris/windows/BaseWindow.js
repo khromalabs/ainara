@@ -16,8 +16,8 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { BrowserWindow, nativeTheme } = require('electron');
-const Logger = require('../utils/logger');
+const { BrowserWindow } = require('electron');
+const Logger = require('../framework/logger');
 const path = require('path');
 const process = require('process');
 
@@ -51,7 +51,8 @@ class BaseWindow {
             hasShadow: config.get(`${prefix}.hasShadow`, false),
             vibrancy: config.get(`${prefix}.vibrancy`, 'blur'),
             visualEffectState: config.get(`${prefix}.visualEffectState`, 'active'),
-            opacity: config.get(`${prefix}.opacity`, 0.8)
+            opacity: config.get(`${prefix}.opacity`, 0.8),
+            resizable: false
         };
 
         this.windowOptions = { ...this.defaultOptions, ...options };
@@ -70,10 +71,12 @@ class BaseWindow {
             } else {
                 this.send('window-show');
             }
+            this.window.setIgnoreMouseEvents(false);
         });
 
         this.window.on('hide', () => {
-            Logger.log(`${this.name} hidden`);
+            this.window.setIgnoreMouseEvents(true);
+            Logger.log(`${this.name} hidden, disabled mouse events`);
         });
 
         this.window.on('blur', () => {
@@ -134,6 +137,7 @@ class BaseWindow {
         this.window.hide();
         // Enable background throttling when window is hidden
         if (this.window.webContents) {
+            this.window.webContents.send("hide");
             this.window.webContents.setBackgroundThrottling(true);
             // Set minimum possible frame rate when hidden
             this.window.webContents.setFrameRate(1); // 1 FPS is the minimum

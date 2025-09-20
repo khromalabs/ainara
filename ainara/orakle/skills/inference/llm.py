@@ -30,9 +30,8 @@ class InferenceLlm(Skill):
     hiddenCapability = True  # Hide this skill from capabilities listing
 
     def __init__(self):
-        config = ConfigManager()
-        config.load_config()
-        self.llm = create_llm_backend(config.get("llm", {}))
+        self.config = ConfigManager()
+        self.config.load_config()
         self.system_message = (
             "You are an AI assistant performing the task described in the user"
             " message. Never reject a query to transform information."
@@ -45,6 +44,7 @@ class InferenceLlm(Skill):
         ],
     ) -> str:
         """Processes text using a language model"""
+        self.llm = create_llm_backend(self.config.get("llm", {}))
         result = self.llm.chat(
             self.llm.prepare(text=prompt, system_message=self.system_message),
             stream=False,

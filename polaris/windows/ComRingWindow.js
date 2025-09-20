@@ -17,8 +17,9 @@
 // Lesser General Public License for more details.
 
 const BaseWindow = require('./BaseWindow');
-const Logger = require('../utils/logger');
-const ConfigHelper = require('../utils/ConfigHelper');
+const Logger = require('../framework/logger');
+const ConfigHelper = require('../framework/ConfigHelper');
+const Notifier = require('../framework/notifier');
 
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
@@ -26,7 +27,7 @@ class ComRingWindow extends BaseWindow {
             onShow: (window, manager) => {
                 const comRing = manager.getWindow('comRing');
                 if (comRing) {
-                    comRing.focus();
+                    // comRing.focus();
                     comRing.window.webContents.send('window-show');
                 }
             },
@@ -46,7 +47,6 @@ class ComRingWindow extends BaseWindow {
             },
             onFocus: () => {
                 Logger.log('ComRingWindow RECEIVED FOCUS');
-                // Add your focus handling logic here
             }
         };
     }
@@ -62,7 +62,8 @@ class ComRingWindow extends BaseWindow {
             y: config.get('comRing.y', (screenHeight / 2) - (windowHeight / 2)),
             skipTaskbar: false, // Show taskbar icon for ComRingWindow
             type: 'normal',  // Override to normal for keyboard focus
-            focusable: true  // Explicitly set focusable
+            focusable: true,  // Explicitly set focusable
+            alwaysOnTop: true
         };
 
         super(config, 'comRing', options, basePath);
@@ -82,8 +83,12 @@ class ComRingWindow extends BaseWindow {
 
         ipcMain.on('set-view-mode', (event, args) => {
             if (args.view === 'document') {
-                const docWidth = this.config.get('documentView.width', 800);
-                const docHeight = this.config.get('documentView.height', 600);
+                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+
+                // const docWidth = this.config.get('documentView.width', 800);
+                // const docWidth = this.config.get('documentView.width', 800);
+                const docHeight = screenHeight * .80
+                const docWidth = screenWidth * .80
 
                 // Store current position before resizing
                 if (!this.isDocumentView) {
@@ -91,7 +96,6 @@ class ComRingWindow extends BaseWindow {
                     this.originalPosition = [currentX, currentY];
                 }
 
-                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
                 const targetX = Math.round((screenWidth - docWidth) / 2);
                 const targetY = Math.round((screenHeight - docHeight) / 2);
 
@@ -126,10 +130,19 @@ class ComRingWindow extends BaseWindow {
             Logger.log('ComRingWindow: Focusing window');
         });
 
+        ipcMain.on('send-notification', (event, message) => {
+            Notifier.show(message);
+        });
+
+        // ipcMain.on('ready-to-show', (event, message) => {
+        //     this.window.focus();
+        // });
+
         this.window.webContents.on('did-finish-load', async () => {
             this.backendConfig = await ConfigHelper.fetchBackendConfig();
             const memoryEnabled = this.backendConfig?.memory?.enabled || false;
             this.window.webContents.send('set-memory-state', memoryEnabled);
+            // this.window.webContents.openDevTools();
         });
 
         // Add ComRing specific IPC handlers

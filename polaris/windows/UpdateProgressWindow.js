@@ -42,7 +42,7 @@ class UpdateProgressWindow extends BaseWindow {
         // Use a unique prefix to avoid conflicts if BaseWindow uses it internally
         super(config, 'updateProgress', windowOptions, path.dirname(__dirname)); // Pass basePath correctly
 
-        this.loadContent('windows/update-progress.html'); // Load the new HTML file
+        this.loadContent('components/update-progress.html'); // Load the new HTML file
 
         this.window.once('ready-to-show', () => {
             // Optional: Add any logic needed when the window is ready but not yet shown

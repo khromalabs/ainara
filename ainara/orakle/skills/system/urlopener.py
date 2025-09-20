@@ -73,7 +73,7 @@ class SystemUrlopener(Skill):
                 return False
 
             # Check if the protocol is supported
-            if parsed.scheme not in self.supported_protocols:
+            if parsed.scheme and parsed.scheme not in self.supported_protocols:
                 return False
 
             return True
@@ -217,15 +217,3 @@ class SystemUrlopener(Skill):
                 "error": "Error opening URL(s)",
                 "details": str(e),
             }
-
-    async def get_supported_protocols(self) -> Dict[str, str]:
-        """Returns a dictionary of supported URL protocols and their descriptions"""
-        return {
-            "http": "Standard web protocol for non-secure connections",
-            "https": "Secure web protocol (recommended for most websites)",
-            "ftp": "File Transfer Protocol for accessing file servers",
-            "file": (
-                "Local file system protocol for opening documents on this"
-                " device"
-            ),
-        }

@@ -98,7 +98,7 @@ def watch_services_health(
         global WATCH_SERVICES_HEALTH_FIRST
         print("Monitoring...")
         fails = 0
-        fails_limit = 10
+        fails_limit = 100
         was_unhealthy = False
         polaris_started = False
 

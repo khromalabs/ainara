@@ -92,7 +92,7 @@ class OrakleMatcherLLM(OrakleMatcherBase):
             "query": query,
         }
 
-        return self.template_manager.render("matcher.skill_matching", context)
+        return self.template_manager.render("framework.matcher.skill_matching", context)
 
     def match(
         self, query: str, threshold: float = 0.1, top_k: int = 5

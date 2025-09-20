@@ -1,9 +1,10 @@
-Here is a summary, listed as `memories`, of what you know about the user, based on your past conversations. You must use this information to provide a more personalized and relevant response. Each memory includes a relevance score, a timestamp, and context tags to help you judge its importance and nature. You must give priority to the memories with a higher relevance. In case of contradiction between memories, the memory with the higher relevance is ALWAYS considered as the truth.
+Here are key facts and preferences about the user from your memories. Use them to personalize your response.
 
-*Known User Facts & Preferences:**
+**Memory Prioritization:**
+- **Recency:** If memories conflict over certain concept, the most recent memory is always the right one.
+- **Relevance:** Otherwise give priority to concepts with higher relevance.
+
+**User Profile:**
 {{#memories}}
-- **Memory:** {{{memory}}}
-  - **Relevance:** {{relevance}}
-  - **Last Mentioned:** {{last_updated}}
-  - **Context:** {{#context_tags}}{{{.}}}, {{/context_tags}}
+- {{{memory}}} (Relevance: {{relevance_score}}, Last Updated: {{last_updated}})
 {{/memories}}

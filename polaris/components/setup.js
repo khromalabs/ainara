@@ -17,9 +17,9 @@
 // Lesser General Public License for more details.
 
 const { ipcRenderer } = require('electron');
-const ConfigManager = require('../../utils/config');
-const Logger = require('../../utils/logger');
-const ConfigHelper = require('../../utils/ConfigHelper');
+const ConfigManager = require('../framework/config');
+const Logger = require('../framework/logger');
+const ConfigHelper = require('../framework/ConfigHelper');
 // const fs = require('fs');
 // const path = require('path');
 // const yaml = require('js-yaml');
@@ -35,6 +35,8 @@ const config = new ConfigManager();
 const steps = ['welcome', 'ollama', 'llm', 'stt', 'skills', 'mcp', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 let providersData = null;
+let skillValidationStatus = {};
+let initialSkillValues = {};
 // Track modified fields
 const modifiedFields = {
     llm: new Set(),
@@ -50,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadProviders();
     updateLLMStepTitle(); // Update the LLM step title
+    updateButtonVisibility();
 });
 
 // Function to load the backend config via API
@@ -237,6 +240,10 @@ function getKeyDescription(pathArray) {
 
 // Function to generate the skills UI
 async function generateSkillsUI() {
+    // Reset validation status when UI is generated
+    initialSkillValues = {};
+    skillValidationStatus = {};
+
     try {
         // Load the sample config from the API instead of the file
         const response = await fetch(
@@ -314,9 +321,13 @@ async function generateSkillsUI() {
             `;
 
             keyGroups.forEach(group => {
+                // const pathParts = group.parentPath.split('.');
+                // const serviceName = pathParts[pathParts.length - 1];
+
                 html += `
-                    <div class="skill-item">
-                        <h4>${group.displayName}</h4>
+                    <div class="skill-item" data-group-path="${group.parentPath}">
+                        <h4>${group.displayName} <span class="skill-validation-status" id="status-${group.parentPath.replace(/\./g, '-')}"></span></h4>
+                        <div class="skill-validation-message" id="message-${group.parentPath.replace(/\./g, '-')}"></div>
                 `;
 
                 // Use the description from the first key in the group
@@ -353,6 +364,12 @@ async function generateSkillsUI() {
         const skillsListContainer = document.querySelector('.skills-list');
         if (skillsListContainer) {
             skillsListContainer.innerHTML = html;
+            skillsListContainer.insertAdjacentHTML('beforeend', `
+                <div class="validate-all-container" style="text-align: center; margin-top: 20px; margin-bottom: 10px; display: flex; justify-content: center; gap: 10px;">
+                    <button id="reset-skills-btn" class="btn btn-secondary">Reset Changes</button>
+                    <button id="validate-all-keys-btn" class="btn">Validate API Keys</button>
+                </div>
+            `);
         }
 
         // Add event listeners to all input fields
@@ -360,8 +377,26 @@ async function generateSkillsUI() {
             input.addEventListener('input', (event) => handleInputChange(event));
         });
 
+        // Add event listener for the main validation button
+        document.getElementById('validate-all-keys-btn').addEventListener('click', validateAllApiKeys);
+
+        // Add event listener for the reset button
+        document.getElementById('reset-skills-btn').addEventListener('click', resetApiKeys);
+
         // Load existing values from config
-        loadExistingApiKeys();
+        await loadExistingApiKeys();
+
+        // Store initial values and set initial validation status
+        document.querySelectorAll('.skills-list input[data-path]').forEach(input => {
+            initialSkillValues[input.dataset.path] = input.value;
+        });
+        document.querySelectorAll('.skill-item').forEach(item => {
+            const groupPath = item.dataset.groupPath;
+            // Initially, all skills are considered valid for navigation until changed.
+            skillValidationStatus[groupPath] = 'success';
+        });
+
+        updateSkillsNextButtonState();
 
     } catch (error) {
         console.error('Error generating skills UI:', error);
@@ -374,6 +409,36 @@ async function generateSkillsUI() {
             `;
         }
     }
+}
+
+function resetApiKeys() {
+    // Restore input values from stored initial state
+    document.querySelectorAll('.skills-list input[data-path]').forEach(input => {
+        const path = input.dataset.path;
+        input.value = initialSkillValues[path] || '';
+    });
+
+    // Reset all validation statuses and UI indicators
+    document.querySelectorAll('.skill-item').forEach(item => {
+        const groupPath = item.dataset.groupPath;
+        skillValidationStatus[groupPath] = 'success';
+
+        const statusElement = document.getElementById(`status-${groupPath.replace(/\./g, '-')}`);
+        if (statusElement) {
+            statusElement.className = 'skill-validation-status';
+        }
+        const messageElement = document.getElementById(`message-${groupPath.replace(/\./g, '-')}`);
+        if (messageElement) {
+            messageElement.textContent = '';
+            messageElement.className = 'skill-validation-message';
+        }
+    });
+
+    // Clear the set of modified fields for skills
+    modifiedFields.skills.clear();
+
+    // Re-enable the next button
+    updateSkillsNextButtonState();
 }
 
 async function updateOllamaProviders() {
@@ -412,9 +477,9 @@ async function updateOllamaProviders() {
             providersModified = true;
             // Check if the selected provider was removed
             const selectedProvider = backendConfig.llm.selected_provider;
-            if (selectedProvider && selectedProvider.startsWith('ollama/') && 
+            if (selectedProvider && selectedProvider.startsWith('ollama/') &&
                 !backendConfig.llm.providers.some(p => p.model === selectedProvider)) {
-                backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ? 
+                backendConfig.llm.selected_provider = backendConfig.llm.providers.length > 0 ?
                     backendConfig.llm.providers[0].model : null;
                 selectedProviderChanged = true;
             }
@@ -493,6 +558,33 @@ async function loadExistingApiKeys() {
     }
 }
 
+function updateButtonVisibility() {
+    const backBtn = document.getElementById('main-back-btn');
+    const nextBtn = document.getElementById('main-next-btn');
+    const finishBtn = document.getElementById('main-finish-btn');
+
+    // Visibility
+    backBtn.style.display = (currentStepIndex === 0) ? 'none' : 'inline-block';
+    nextBtn.style.display = (currentStepIndex === steps.length - 1) ? 'none' : 'inline-block';
+    finishBtn.style.display = (currentStepIndex === steps.length - 1) ? 'inline-block' : 'none';
+
+    // Disabled state
+    const currentStep = steps[currentStepIndex];
+
+    if (currentStep === 'llm') {
+        const testResult = document.getElementById('test-result');
+        const hasExistingSelection = document.querySelector('input[name="existing-provider"]:checked');
+        const isTestSuccessful = testResult.classList.contains('success') && !testResult.classList.contains('hidden');
+        nextBtn.disabled = !(hasExistingSelection || isTestSuccessful);
+    } else if (currentStep === 'stt') {
+        validateSTTForm();
+    } else if (currentStep === 'skills') {
+        updateSkillsNextButtonState();
+    } else {
+        nextBtn.disabled = false;
+    }
+}
+
 function setupEventListeners() {
     // Close button
     document.querySelector('.close-btn').addEventListener('click', () => {
@@ -529,8 +621,8 @@ function setupEventListeners() {
             padding: 15px;
             background-color: #f8f9fa;
             border-radius: 8px;
-            border-left: 4px solid #6c757d;
-        }
+            /* border-left: 4px solid #6c757d; */
+         }
 
         .success-message {
             color: #28a745;
@@ -674,6 +766,58 @@ function setupEventListeners() {
             margin-top: 4px;
         }
 
+        .skill-test-container {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .skill-test-status.success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .skill-test-status.error {
+            color: #dc3545;
+            font-weight: bold;
+            background-color: #00000000 !important;
+        }
+        .skill-validation-status {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            margin-left: 8px;
+            vertical-align: middle;
+            font-size: 16px;
+            line-height: 1;
+            background-color: transparent;
+        }
+        .skill-validation-status.success::after {
+            content: '✔';
+            color: #28a745;
+        }
+        .skill-validation-status.error::after {
+            content: '✖';
+            color: #dc3545;
+        }
+        .skill-validation-status.pending::after {
+            content: '...';
+            color: #6c757d;
+        }
+
+        .skill-validation-message {
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+
+        .skill-validation-message.success {
+            color: #28a745;
+        }
+
+        .skill-validation-message.error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
         /* Shortcuts panel styles */
         .shortcuts-container {
             display: flex;
@@ -685,7 +829,7 @@ function setupEventListeners() {
             background-color: #f8f9fa;
             padding: 15px;
             border-radius: 8px;
-            border-left: 4px solid #007bff;
+            /* border-left: 4px solid #007bff; */
         }
 
         .shortcut-group h3 {
@@ -703,7 +847,7 @@ function setupEventListeners() {
             background-color: #f8f9fa;
             padding: 15px;
             border-radius: 8px;
-            border-left: 4px solid #28a745;
+            /* border-left: 4px solid #28a745; */
         }
 
         .usage-instructions h3 {
@@ -748,18 +892,10 @@ function setupEventListeners() {
         }
     });
 
-    // Next buttons
-    document.querySelectorAll('.next-btn').forEach(btn => {
-        btn.addEventListener('click', goToNextStep);
-    });
-
-    // Back buttons
-    document.querySelectorAll('.back-btn').forEach(btn => {
-        btn.addEventListener('click', goToPreviousStep);
-    });
-
-    // Finish button
-    document.querySelector('.finish-btn').addEventListener('click', finishSetup);
+    // Navigation buttons
+    document.getElementById('main-next-btn').addEventListener('click', goToNextStep);
+    document.getElementById('main-back-btn').addEventListener('click', goToPreviousStep);
+    document.getElementById('main-finish-btn').addEventListener('click', finishSetup);
 
     // Test connection button
     document.getElementById('test-connection-btn').addEventListener('click', testLLMConnection);
@@ -833,7 +969,13 @@ function setupEventListeners() {
 
         const providerOptions = document.getElementById('provider-options');
         if (providerOptions) {
-            providerOptions.insertAdjacentHTML('beforebegin', filterHtml);
+            const addProviderHtml = `
+                <div class="add-provider-section">
+                    <h3>Add a New Provider</h3>
+                    ${filterHtml}
+                </div>
+            `;
+            providerOptions.insertAdjacentHTML('beforebegin', addProviderHtml);
 
             // Add event listeners for filter
             document.getElementById('apply-filter-btn').addEventListener('click', () => {
@@ -846,6 +988,51 @@ function setupEventListeners() {
                 startMinimizedCheckbox.addEventListener('change', (event) => handleInputChange(event));
                 startMinimizedCheckbox.checked = config.get('startup.startMinimized');
             }
+
+            // Add event listener for the review stt checkbox
+            const reviewSttCheckbox = document.getElementById('review-stt-checkbox');
+            if (reviewSttCheckbox) {
+                reviewSttCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                reviewSttCheckbox.checked = config.get('stt.review');
+            }
+
+            // Add event listener for the background notifications checkbox
+            const backgroundNotificationsCheckbox = document.getElementById('background-notifications-checkbox');
+            if (backgroundNotificationsCheckbox) {
+                backgroundNotificationsCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                backgroundNotificationsCheckbox.checked = config.get('ui.backgroundNotifications');
+            }
+
+            // Add event listener for the backup directory input and browse button
+            const backupDirectoryInput = document.getElementById('backup-directory-input');
+            const browseBackupDirectoryBtn = document.getElementById('browse-backup-directory-btn');
+
+            if (backupDirectoryInput) {
+                backupDirectoryInput.addEventListener('input', (event) => handleInputChange(event));
+                backupDirectoryInput.value = config.get('startup.backupDirectory', '');
+
+                // Make the input clickable to trigger browse
+                backupDirectoryInput.addEventListener('click', () => {
+                    if (browseBackupDirectoryBtn) {
+                        browseBackupDirectoryBtn.click();
+                    }
+                });
+            }
+
+            if (browseBackupDirectoryBtn) {
+                browseBackupDirectoryBtn.addEventListener('click', () => {
+                    ipcRenderer.send('select-backup-directory');
+                });
+            }
+
+            // Listen for backup directory selection response
+            ipcRenderer.on('backup-directory-selected', (event, directoryPath) => {
+                if (backupDirectoryInput) {
+                    backupDirectoryInput.value = directoryPath;
+                    // Trigger change event to mark as modified
+                    backupDirectoryInput.dispatchEvent(new Event('input'));
+                }
+            });
 
             // Add enter key support for filter input
             document.getElementById('model-filter').addEventListener('keypress', (e) => {
@@ -862,7 +1049,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat,deepseek-coder,llama,-8b,-7b,-3b,-1b';
+                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -923,7 +1110,7 @@ async function goToNextStep() {
     if (!validateCurrentStep()) return;
 
     // Show loading indicator
-    const nextButton = document.querySelector('.next-btn');
+    const nextButton = document.getElementById('main-next-btn');
     const originalText = nextButton.textContent;
     nextButton.textContent = 'Saving...';
     nextButton.disabled = true;
@@ -940,12 +1127,8 @@ async function goToNextStep() {
         currentStepIndex++;
         document.getElementById(`${steps[currentStepIndex]}-panel`).classList.add('active');
         document.querySelector(`.step[data-step="${steps[currentStepIndex]}"]`).classList.add('active');
+        updateButtonVisibility();
 
-        // Hide logo when leaving first slide
-        if (currentStepIndex === 1) {
-            const logo = document.querySelector('.setup-header .logo');
-            if (logo) logo.style.display = 'none';
-        }
     } catch (error) {
         console.error('Error saving step data:', error);
         alert(`Error saving configuration: ${error.message}`);
@@ -965,12 +1148,7 @@ function goToPreviousStep() {
     currentStepIndex--;
     document.getElementById(`${steps[currentStepIndex]}-panel`).classList.add('active');
     document.querySelector(`.step[data-step="${steps[currentStepIndex]}"]`).classList.add('active');
-
-    // Show logo when returning to first slide
-    if (currentStepIndex === 0) {
-        const logo = document.querySelector('.setup-header .logo');
-        if (logo) logo.style.display = 'block';
-    }
+    updateButtonVisibility();
 }
 
 function loadProvidersWithFilter(filter = '') {
@@ -1046,7 +1224,7 @@ function loadProvidersWithFilter(filter = '') {
                     radio.addEventListener('change', () => {
                         // Hide test result and disable next button when provider changes
                         const testResult = document.getElementById('test-result');
-                        const nextButton = document.getElementById('llm-next');
+                        const nextButton = document.getElementById('main-next-btn');
 
                         testResult.classList.add('hidden');
                         nextButton.disabled = true;
@@ -1080,7 +1258,7 @@ function loadProvidersWithFilter(filter = '') {
 // Replace the existing loadProviders function
 function loadProviders() {
     // First load existing providers from backend config
-    const nextButton = document.getElementById('llm-next');
+    const nextButton = document.getElementById('main-next-btn');
     const testResult = document.getElementById('test-result');
 
     // Reset UI state related to new provider testing and assume button is disabled initially.
@@ -1126,10 +1304,10 @@ async function loadExistingProviders() {
         // Create a container for existing providers if it doesn't exist
         let existingContainer = document.getElementById('existing-providers');
         if (!existingContainer) {
-            const providerOptions = document.getElementById('provider-options');
-            if (providerOptions) {
-                providerOptions.insertAdjacentHTML('beforebegin', `
-                    <div class="existing-providers-section">
+            const addProviderSection = document.querySelector('.add-provider-section');
+            if (addProviderSection) {
+                addProviderSection.insertAdjacentHTML('beforebegin', `
+         <div class="existing-providers-section">
                         <h3>Your Configured Providers</h3>
                         <p>Select one of your existing providers or configure a new one below.</p>
                         <div id="existing-providers"></div>
@@ -1182,7 +1360,7 @@ async function loadExistingProviders() {
 
             // If a provider is already selected (or we have providers but none selected), enable the next button
             if (hasSelectedProvider || selectedProvider) {
-                document.getElementById('llm-next').disabled = false;
+                document.getElementById('main-next-btn').disabled = false;
             }
         }
 
@@ -1190,8 +1368,8 @@ async function loadExistingProviders() {
         const style = document.createElement('style');
         style.textContent = `
             .ollama-provider {
-                background-color: #f0f8ff;
-                border-left: 3px solid #1e90ff;
+                background-color: #d0e8ff;
+                /*border-left: 3px solid #1e90ff;*/
             }
         `;
         if (!document.getElementById('ollama-provider-style')) {
@@ -1219,7 +1397,7 @@ async function loadExistingProviders() {
                     document.getElementById('provider-details').innerHTML = '';
 
                     // Enable the next button
-                    document.getElementById('llm-next').disabled = false;
+                    document.getElementById('main-next-btn').disabled = false;
 
                     // Hide test result
                     document.getElementById('test-result').classList.add('hidden');
@@ -1294,7 +1472,7 @@ function updateProviderDetailsUI() {
     const detailsContainer = document.getElementById('provider-details');
     const testButton = document.getElementById('test-connection-btn');
     const testResult = document.getElementById('test-result');
-    const nextButton = document.getElementById('llm-next');
+    const nextButton = document.getElementById('main-next-btn');
 
     // Hide test result and disable next button when provider changes
     testResult.classList.add('hidden');
@@ -1398,7 +1576,7 @@ function updateProviderDetailsUI() {
 function handleInputChange(event) {
     // Hide test result and disable next button when any input changes
     const testResult = document.getElementById('test-result');
-    const nextButton = document.getElementById('llm-next');
+    const nextButton = document.getElementById('main-next-btn');
 
     testResult.classList.add('hidden');
     nextButton.disabled = true;
@@ -1413,11 +1591,40 @@ function handleInputChange(event) {
             modifiedFields.shortcuts.add(fieldId);
         } else if (fieldId.includes('api-key-')) {
             modifiedFields.skills.add(field.dataset.path);
+
+            const groupItem = field.closest('.skill-item');
+            const groupPath = groupItem.dataset.groupPath;
+
+            let isGroupModified = false;
+            groupItem.querySelectorAll('input[data-path]').forEach(input => {
+                const path = input.dataset.path;
+                if (input.value && input.value !== initialSkillValues[path]) {
+                    isGroupModified = true;
+                }
+            });
+
+            const statusElement = document.getElementById(`status-${groupPath.replace(/\./g, '-')}`);
+            const messageElement = document.getElementById(`message-${groupPath.replace(/\./g, '-')}`);
+
+            if (isGroupModified) {
+                skillValidationStatus[groupPath] = 'unvalidated';
+            } else {
+                // All fields in the group are back to their initial state
+                skillValidationStatus[groupPath] = 'success';
+            }
+
+            // Always clear validation UI on change, forcing a re-validation for modified groups
+            if (statusElement) statusElement.className = 'skill-validation-status';
+            if (messageElement) {
+                messageElement.textContent = '';
+                messageElement.className = 'skill-validation-message';
+            }
+            updateSkillsNextButtonState();
         } else if (fieldId.includes('custom-api')) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -1463,6 +1670,100 @@ async function loadAndDisplayCapabilities() {
         console.error('Error loading capabilities:', error);
         listElement.innerHTML = `<li class="error">Failed to load capabilities: ${error.message}</li>`;
     }
+}
+
+async function validateAllApiKeys() {
+    const validateButton = document.getElementById('validate-all-keys-btn');
+    validateButton.disabled = true;
+    validateButton.textContent = 'Validating...';
+
+    const validationPromises = [];
+    const groupsToValidate = [];
+
+    document.querySelectorAll('.skill-item').forEach(item => {
+        const groupPath = item.dataset.groupPath;
+        const serviceName = groupPath.split('.').pop();
+        const statusElement = document.getElementById(`status-${groupPath.replace(/\./g, '-')}`);
+        const messageElement = document.getElementById(`message-${groupPath.replace(/\./g, '-')}`);
+        if (messageElement) {
+            messageElement.textContent = '';
+            messageElement.className = 'skill-validation-message';
+        }
+
+        let hasValue = false;
+        const keys = {};
+        item.querySelectorAll('input[data-path]').forEach(input => {
+            const value = input.value.trim();
+            if (value) {
+                hasValue = true;
+            }
+            const keyName = input.dataset.path.split('.').pop();
+            keys[keyName] = value;
+        });
+
+        if (hasValue) {
+            groupsToValidate.push({ groupPath, serviceName, keys, statusElement, messageElement });
+        } else {
+            // If no value, it's considered valid for progression, clear status
+            if (statusElement) statusElement.className = 'skill-validation-status';
+            if (messageElement) messageElement.textContent = '';
+            skillValidationStatus[groupPath] = 'success';
+        }
+    });
+
+    groupsToValidate.forEach(group => {
+        if (group.statusElement) {
+            group.statusElement.className = 'skill-validation-status pending';
+        }
+        skillValidationStatus[group.groupPath] = 'validating';
+
+        const promise = fetch(
+            config.get('pybridge.api_url') + '/test-skill-key',
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ service: group.serviceName, keys: group.keys })
+            }
+        )
+        .then(response => response.json())
+        .then(result => ({ ...group, result }))
+        .catch(error => ({ ...group, result: { success: false, message: error.message } }));
+
+        validationPromises.push(promise);
+    });
+
+    const results = await Promise.all(validationPromises);
+
+    results.forEach(res => {
+        if (res.result.success) {
+            if (res.statusElement) res.statusElement.className = 'skill-validation-status success';
+            skillValidationStatus[res.groupPath] = 'success';
+            if (res.messageElement) {
+                res.messageElement.textContent = 'Success!';
+                res.messageElement.className = 'skill-validation-message success';
+            }
+        } else {
+            if (res.statusElement) res.statusElement.className = 'skill-validation-status error';
+            skillValidationStatus[res.groupPath] = 'error';
+            if (res.messageElement) {
+                res.messageElement.textContent = `Failed: ${res.result.message || 'Unknown error'}`;
+                res.messageElement.className = 'skill-validation-message error';
+            }
+        }
+    });
+
+    updateSkillsNextButtonState();
+
+    validateButton.disabled = false;
+    validateButton.textContent = 'Validate API Keys';
+}
+
+function updateSkillsNextButtonState() {
+    const nextButton = document.getElementById('main-next-btn');
+    if (!nextButton) return;
+
+    const allValid = Object.values(skillValidationStatus).every(status => status === 'success');
+    nextButton.disabled = !allValid;
 }
 
 function validateProviderForm() {
@@ -1701,7 +2002,7 @@ async function testLLMConnectionFetch(llmConfig) {
                 testResult.classList.add('error');
             } else {
                 testResult.textContent += ' Provider registered.'; // Append registration message
-                document.getElementById('llm-next').disabled = false;
+                document.getElementById('main-next-btn').disabled = false;
             }
         } else {
             testResult.classList.add('error');
@@ -1766,13 +2067,13 @@ function validateCurrentStep() {
             return true; // No strict validation needed; user can skip if no models are downloaded
         case 'llm':
             // LLM step is valid if the next button is enabled (after successful test)
-            return !document.getElementById('llm-next').disabled;
+            return !document.getElementById('main-next-btn').disabled;
         case 'mcp':
             // Basic validation: ensure server names are unique if multiple servers
             return validateMcpStep();
         case 'stt':
             // STT step is valid if the next button is enabled
-            return !document.getElementById('stt-next').disabled;
+            return !document.getElementById('main-next-btn').disabled;
         case 'skills':
             return true; // Skills are optional
         default:
@@ -1799,7 +2100,7 @@ function validateMcpStep() {
 
 // Add event listeners for STT options
 function setupSTTEventListeners() {
-    const sttNextButton = document.getElementById('stt-next');
+    const sttNextButton = document.getElementById('main-next-btn');
     const sttPanel = document.getElementById('stt-panel');
 
     // Add hardware acceleration info section if it doesn't exist
@@ -1963,7 +2264,7 @@ function setupSTTEventListeners() {
 // Validate STT form inputs
 function validateSTTForm() {
     const selectedBackend = document.querySelector('input[name="stt-backend"]:checked')?.value;
-    const sttNextButton = document.getElementById('stt-next');
+    const sttNextButton = document.getElementById('main-next-btn');
     const testResult = document.getElementById('stt-test-result');
 
     // Reset validation state
@@ -2124,7 +2425,7 @@ async function updateUIAfterSave(newProvider) {
     }
 
     // Enable the Next button since we have a valid provider
-    document.getElementById('llm-next').disabled = false;
+    document.getElementById('main-next-btn').disabled = false;
 }
 
 function normalizeModelName(model, provider) {
@@ -2405,9 +2706,8 @@ async function saveSkillsConfig() {
             const path = input.dataset.path;
             if (modifiedFields.skills.has(path)) {
                 const value = input.value.trim();
-                if (value) {
-                    setValueAtPath(backendConfig, path, value);
-                }
+                // Save the value, even if it's empty, to allow clearing keys.
+                setValueAtPath(backendConfig, path, value);
             }
         });
 
@@ -2428,7 +2728,7 @@ async function saveSkillsConfig() {
 }
 
 // Function to save finish step configuration
-function saveFinishStepConfig() {
+async function saveFinishStepConfig() {
     // If no finish step fields were modified, skip saving
     if (modifiedFields.finish.size === 0) {
         return true;
@@ -2438,6 +2738,31 @@ function saveFinishStepConfig() {
         if (modifiedFields.finish.has('start-minimized-checkbox')) {
             const isChecked = document.getElementById('start-minimized-checkbox').checked;
             config.set('startup.startMinimized', isChecked);
+        }
+
+        if (modifiedFields.finish.has('review-stt-checkbox')) {
+            const isChecked = document.getElementById('review-stt-checkbox').checked;
+            config.set('stt.review', isChecked);
+        }
+
+        if (modifiedFields.finish.has('background-notifications-checkbox')) {
+            const isChecked = document.getElementById('background-notifications-checkbox').checked;
+            config.set('ui.backgroundNotifications', isChecked);
+        }
+
+        if (modifiedFields.finish.has('backup-directory-input')) {
+            const backupDirectory = document.getElementById('backup-directory-input').value.trim();
+            config.set('startup.backupDirectory', backupDirectory);
+
+            // Save to backend config
+            const backendConfig = await loadBackendConfig();
+            if (!backendConfig.backup) {
+                backendConfig.backup = {};
+            }
+            backendConfig.backup.directory = backupDirectory;
+            backendConfig.backup.enabled = !!backupDirectory; // Enable if directory is not empty
+
+            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         }
 
         config.saveConfig();
@@ -2592,23 +2917,62 @@ function updateLLMStepTitle() {
 
 // New function to initialize the Ollama step
 async function initializeOllamaStep() {
-    await displayOllamaModels();
-    // const serverIp = config.get('ollama.serverIp');
     const hardwareInfoElement = document.getElementById('ollama-hardware-info');
-    hardwareInfoElement.style.display = "none";
-    await displayHardwareInfo();
-    // if (serverIp == "127.0.0.1" || serverIp == "127.0.0.1") {
-    //     hardwareInfoElement.style.display = "block";
-    //     await displayHardwareInfo();
-    // } else {
-    //     if (hardwareInfoElement) {
-    //         hardwareInfoElement.style.display = "none";
-    //         // hardwareInfoElement.innerHTML = '<p>Hardware information is not displayed for remote Ollama servers.</p>';
-    //     }
-    // }
-    const serverConfigElement = document.getElementById('ollama-server-config');
-    serverConfigElement.style.display = "none";
-    displayOllamaServerConfig();
+    const modelsContainer = document.getElementById('ollama-models-container');
+
+    // Clear previous content and show loading message
+    if (modelsContainer) modelsContainer.innerHTML = '<p>Checking hardware requirements...</p>';
+    if (hardwareInfoElement) hardwareInfoElement.innerHTML = '';
+    const existingServerConfig = document.getElementById('ollama-server-config');
+    if (existingServerConfig) existingServerConfig.remove();
+
+    try {
+        const response = await fetch(config.get('pybridge.api_url') + '/hardware/acceleration');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch hardware info: ${response.statusText}`);
+        }
+        const hwInfo = await response.json();
+
+        const totalVram = hwInfo.details?.total_vram_gb || 0;
+        const isAppleSilicon = hwInfo.details?.is_apple_silicon || false;
+        const totalRam = hwInfo.details?.total_ram_gb || 0;
+
+        const meetsGpuRequirement = totalVram >= 12;
+        const meetsAppleRequirement = isAppleSilicon && totalRam >= 16;
+
+        if (meetsGpuRequirement || meetsAppleRequirement) {
+            // Hardware requirements met, proceed with normal setup
+            hardwareInfoElement.style.display = "block";
+            await displayHardwareInfo();
+            await displayOllamaModels();
+            const serverConfigElement = document.getElementById('ollama-server-config');
+            if (serverConfigElement) {
+                serverConfigElement.style.display = "none";
+            }
+            displayOllamaServerConfig();
+        } else {
+            // Hardware requirements not met, disable Ollama setup
+            hardwareInfoElement.style.display = "none";
+            if (modelsContainer) {
+                modelsContainer.innerHTML = `
+                    <div class="warning-block">
+                        Your system does not meet the recommended hardware requirements for running local LLMs with Ollama effectively.
+                        <ul>
+                            <li>Requirement 1: A dedicated GPU with at least 12 GB of VRAM. (Your system: ${totalVram.toFixed(1)} GB VRAM)</li>
+                            <li>Requirement 2: An Apple Silicon Mac with at least 16 GB of RAM. (Your system: ${isAppleSilicon ? `${totalRam.toFixed(1)} GB RAM on Apple Silicon` : 'Not an Apple Silicon Mac'})</li>
+                        </ul>
+                        <p>Running local models on this system for Ainara may result in very poor performance. It is recommended to use cloud-based LLM providers instead.</p>
+                        <p>The Ollama setup has been disabled. You can proceed to the next step to configure other providers.</p>
+                    </div>
+                `;
+            }
+        }
+    } catch (error) {
+        console.error('Error initializing Ollama step:', error);
+        if (modelsContainer) {
+            modelsContainer.innerHTML = `<div class="error">Could not check hardware requirements: ${error.message}</div>`;
+        }
+    }
 }
 
 // Function to display Ollama server configuration
@@ -2873,8 +3237,8 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
-        { id: 'qwen2.5-coder:14b', name: 'Qwen 2.5 Coder (14B)', size: 9, minVram: 12 },
-        { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder (32B)', size: 20, minVram: 24 },
+        { id: 'qwen3:14b', name: 'Qwen 3 (14B)', size: 9, minVram: 12 },
+        { id: 'qwen3:32b', name: 'Qwen 3 (32B)', size: 20, minVram: 24 },
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
@@ -2971,11 +3335,11 @@ async function loadOllamaModel(client, modelId) {
 async function finishSetup() {
     // Save any pending changes from the last configurable steps
     saveShortcutsConfig(); // Save shortcuts if modified
-    saveFinishStepConfig(); // Save finish step settings (like start minimized)
+    await saveFinishStepConfig(); // Save finish step settings (like start minimized)
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.6.0');
+    config.set('setup.version', '0.8.2');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

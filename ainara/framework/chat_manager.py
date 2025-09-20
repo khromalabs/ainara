@@ -27,7 +27,6 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from typing import Any, Generator, List, Literal, Optional, Union
 
 from pygame import mixer
@@ -38,7 +37,7 @@ from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.user_memories_manager import UserMemoriesManager
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -72,7 +71,7 @@ class ChatManager:
         self,
         llm,
         orakle_servers: List[str],
-        user_memories_manager: UserMemoriesManager,
+        green_memories: GREENMemories,
         flask_app=None,
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
@@ -89,6 +88,7 @@ class ChatManager:
         self.last_audio_file = None
         self.ndjson = ndjson
         self.new_summary = "-"
+        self.nexus_test = 0
 
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
@@ -98,34 +98,32 @@ class ChatManager:
 
         # Initialize chat memory
         self.chat_memory = chat_memory
-        self.user_memories_manager = user_memories_manager
+        self.green_memories = green_memories
         self.user_profile_summary = user_profile_summary
         self.memory_enabled = config.get("memory.enabled", False)
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
         # --- Memory Decay Tracking (persisted between sessions) ---
         self.memory_decay_interval = config.get(
-            "memories.decay_interval_turns", 10
+            "memories.decay_interval_turns", 5
         )
         self.turn_counter = 0
         self.decay_in_progress = False
         self.decay_lock = threading.Lock()
         if (
             self.memory_enabled
-            and self.user_memories_manager
+            and self.green_memories
             and self.memory_decay_interval > 0
         ):
-            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.turn_counter = self.green_memories.get_turn_counter()
 
         # Render the system message template
-        current_date = datetime.now().date()
         self.system_message = self.template_manager.render(
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": (
                     ""
                 ),  # Will be populated by middleware
-                "current_date": current_date,
             },
         )
 
@@ -152,8 +150,8 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         user_memories_empty = (
-            self.user_memories_manager
-            and self.user_memories_manager.is_empty()
+            self.green_memories
+            and self.green_memories.is_empty()
         )
         has_prior_user_messages = any(
             msg.get("role") == "user" for msg in self.chat_history[:-1]
@@ -171,7 +169,6 @@ class ChatManager:
             "framework.chat_manager.system_prompt",
             {
                 "skills_description_list": skills_description_list,
-                "current_date": current_date,
                 "is_new_profile": is_new_profile,
             },
         )
@@ -187,7 +184,7 @@ class ChatManager:
         self.decay_executor = None
         if (
             self.memory_enabled
-            and self.user_memories_manager
+            and self.green_memories
             and self.memory_decay_interval > 0
         ):
             self.decay_executor = ThreadPoolExecutor(
@@ -202,6 +199,12 @@ class ChatManager:
             self.summary_in_progress = False
             self.current_summary = "-"
 
+    def update_llm(self, llm):
+        self.llm = llm
+        self.orakle_middleware.update_llm(llm)
+        if self.green_memories:
+            self.green_memories.update_llm(llm)
+
     def _initialize_memory_if_needed(self):
         """Initializes memory components if they haven't been already."""
         if self.chat_memory is None:
@@ -209,23 +212,22 @@ class ChatManager:
             self.chat_memory = ChatMemory()
             logger.info("Chat memory initialized.")
 
-        if self.user_memories_manager is None:
-            logger.info("Initializing UserMemoriesManager on-demand...")
-            self.user_memories_manager = UserMemoriesManager(
+        if self.green_memories is None:
+            logger.info("Initializing GREENMemories on-demand...")
+            self.green_memories = GREENMemories(
                 llm=self.llm,
                 chat_memory=self.chat_memory,
-                context_window=self.llm.get_context_window(),
             )
             logger.info("User Memories Manager initialized.")
             # Perform initial consolidation
             logger.info("Processing existing messages for user profile...")
-            self.user_memories_manager.process_new_messages_for_update()
+            self.green_memories.process_new_messages_for_update()
             logger.info("Message processing complete.")
 
         # Always regenerate summary when enabling memory
-        if self.user_memories_manager:
+        if self.green_memories:
             self.user_profile_summary = (
-                self.user_memories_manager.generate_user_profile_summary()
+                self.green_memories.generate_user_profile_summary()
             )
             if self.user_profile_summary:
                 logger.info("User profile summary generated/updated.")
@@ -233,7 +235,7 @@ class ChatManager:
         # Initialize decay components if needed
         if self.memory_decay_interval > 0 and self.decay_executor is None:
             logger.info("Initializing Memory Decay executor on-demand...")
-            self.turn_counter = self.user_memories_manager.get_turn_counter()
+            self.turn_counter = self.green_memories.get_turn_counter()
             self.decay_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="DecayThread"
             )
@@ -416,20 +418,21 @@ class ChatManager:
             return
 
         try:
-            audio_file, duration = self.tts.generate_audio(sentence)
+            cleaned_sentence = re.sub(r"^\[\d{1,2}:\d{2}\]\s*", "", sentence)
+            audio_file, duration = self.tts.generate_audio(cleaned_sentence)
             if stream_type == "json":
                 event_data = self._create_audio_stream_event(
                     audio_file=audio_file,
-                    text_content=sentence,
+                    text_content=cleaned_sentence,
                     duration=duration,
                 )
                 yield ndjson("message", "stream", event_data)
             else:
                 # logger.info("_process_streaming_sentence 4 '" + sentence + "'")
-                char_delay = duration / len(sentence)
+                char_delay = duration / len(cleaned_sentence) if cleaned_sentence else 0
                 if not self.tts.play_audio(audio_file):
                     raise RuntimeError("Failed to start audio playback")
-                for char in sentence:
+                for char in cleaned_sentence:
                     sys.stdout.write(char)
                     sys.stdout.flush()
                     time.sleep(char_delay)
@@ -455,15 +458,18 @@ class ChatManager:
 
         # Handle non-TTS streaming directly to avoid sentence splitting logic
         if not self.tts:
+            cleaned_text = re.sub(
+                r"^\[\d{1,2}:\d{2}\]\s*", "", text, flags=re.MULTILINE
+            )
             if stream_type == "json":
                 event_data = {
-                    "content": text,
+                    "content": cleaned_text,
                     "flags": {"command": False, "audio": False},
                 }
                 yield ndjson("message", "stream", event_data)
                 return
             elif stream_type == "cli":
-                print(text, end="", flush=True)
+                print(cleaned_text, end="", flush=True)
                 return
 
         # Use the extracted method to split text into chunks
@@ -687,7 +693,7 @@ class ChatManager:
         """Background worker to decay memory relevance."""
         try:
             logger.info("Background task started: Decaying memory relevance.")
-            self.user_memories_manager.decay_all_memories()
+            self.green_memories.decay_all_memories()
             logger.info("Background task finished: Memory decay complete.")
         except Exception as e:
             logger.error(f"Error in background memory decay task: {e}")
@@ -879,6 +885,87 @@ class ChatManager:
             print(doc_content)
             print("---------------------------------")
 
+    def _handle_test_nexus_stream(self, command: str, stream: str):
+        """Handles streaming for the /testnexus command."""
+        parts = command.strip().split(" ", 2)
+        usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+
+        if len(parts) < 3:
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        _command, ui_parts_str, data_json_str = parts
+        ui_parts = ui_parts_str.split(',')
+
+        if len(ui_parts) != 3:
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        vendor, bundle, component = ui_parts
+
+        try:
+            data = json.loads(data_json_str)
+        except json.JSONDecodeError:
+            error_msg = "Error: Invalid JSON data provided."
+            if stream == "cli":
+                print(error_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson("signal", "error", {"message": error_msg})
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
+
+        if stream == "json":
+            yield ndjson("signal", "loading", {"state": "start"})
+            nexus_data = {
+                "component_path": component_path,
+                "data": data,
+                # "query": f"Test #{self.nexus_test} {vendor}/{bundle}/{component}",
+                "query": f"Test #{self.nexus_test}",
+            }
+            # Create a descriptive message for the chat history
+            history_message = (
+                "Nexus component data was generated and sent to the UI. "
+                f"Data: {json.dumps(nexus_data)}"
+            )
+            self.llm.add_msg(history_message, self.chat_history, "assistant")
+            yield ndjson(
+                "ui",
+                "renderNexus",
+                nexus_data
+            )
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+            self.nexus_test = self.nexus_test + 1
+        elif stream == "cli":
+            print("\n--- Nexus Component ---")
+            print(f"Path: {component_path}")
+            print(f"Data: {pprint.pformat(data)}")
+            print("-----------------------")
+
     def _handle_memory_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -928,6 +1015,27 @@ class ChatManager:
 
         return generator()
 
+    def _handle_test_nexus_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testnexus command for all stream types."""
+        if stream:  # cli or json
+            return self._handle_test_nexus_stream(command, stream)
+        else:  # no stream
+            parts = command.strip().split(" ", 2)
+            usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+            if len(parts) < 3:
+                return usage_msg
+
+            _command, ui_parts_str, data_json_str = parts
+            ui_parts = ui_parts_str.split(',')
+            if len(ui_parts) != 3:
+                return usage_msg
+
+            vendor, bundle, component = ui_parts
+            component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
+            return f'<nexus path="{component_path}" data=\'{data_json_str}\'/>'
+
     def _handle_test_doc_view_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -941,7 +1049,7 @@ class ChatManager:
 
             command_body = parts[1]
             doc_format, doc_content = command_body.split(",", 1)
-            return f'<doc format="{doc_format}">{doc_content}</doc>'
+            return f'```{doc_format}\n{doc_content}```'
 
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
@@ -956,6 +1064,9 @@ class ChatManager:
 
         if command.lower().startswith("/testdocview"):
             return self._handle_test_doc_view_command(command, stream)
+
+        if command.lower().startswith("/testnexus"):
+            return self._handle_test_nexus_command(command, stream)
 
         return None
 
@@ -1049,23 +1160,48 @@ class ChatManager:
                     f" responses. ---\n{self.user_profile_summary}"
                 )
 
+            # --- Recent Memories Summary Injection ---
+            if self.memory_enabled and self.green_memories:
+                recent_memories_summary = (
+                    self.green_memories.generate_recent_memories_summary()
+                )
+                if recent_memories_summary:
+                    final_system_content += (
+                        "\n\n--- This is a summary of topics and facts that have been"
+                        " discussed recently. Use this to maintain conversation"
+                        f" continuity. ---\n{recent_memories_summary}"
+                    )
+
             # --- Context Memories ---
-            if self.memory_enabled and self.user_memories_manager:
+            if self.memory_enabled and self.green_memories:
                 # 1. Create a search query from the last few turns for better context
                 history_for_search = self.prepare_chat_history_for_skill()[
-                    -4:
-                ]  # Last 2 exchanges
-                search_context = "\n".join(
+                    -10:
+                ]  # Last 5 exchanges
+
+                search_context_parts = []
+                if self.current_summary and self.current_summary != "-":
+                    # add the current conversation summary as the first element
+                    # of the search_context dict
+                    summary_text = (
+                        "This is a summary of the conversation so far:"
+                        f" {self.current_summary}"
+                    )
+                    search_context_parts.append(summary_text)
+
+                history_text = "\n".join(
                     [
                         f"{msg['role']}: {msg['content']}"
                         for msg in history_for_search
                     ]
                 )
+                search_context_parts.append(history_text)
+                search_context = "\n\n".join(search_context_parts)
 
                 # logger.info(f"search_context: {search_context}")
 
                 relevant_memories = (
-                    self.user_memories_manager.get_relevant_memories(
+                    self.green_memories.get_relevant_memories(
                         search_context
                     )
                 )
@@ -1110,6 +1246,39 @@ class ChatManager:
                 chat_history=turn_chat_history, stream=True
             )
 
+            def _stream_with_thinking_markers(raw_stream):
+                buffer = ""
+                in_thinking = False
+                for chunk in raw_stream:
+                    # logger.info(f"LLM raw chunk: {repr(chunk)}")
+                    buffer += chunk
+                    while True:
+                        if not in_thinking:
+                            start_pos = buffer.find("<think>")
+                            if start_pos != -1:
+                                yielded = buffer[:start_pos]
+                                # logger.info(f"yielded: {yielded}")
+                                yield yielded
+                                yield "\n_AINARA_THINKING_START_\n"
+                                buffer = buffer[start_pos + len("<think>"):]
+                                in_thinking = True
+                            else:
+                                yielded = buffer
+                                # logger.info(f"yielded: {yielded}")
+                                yield yielded
+                                buffer = ""
+                                break
+                        if in_thinking:
+                            end_pos = buffer.find("</think>")
+                            if end_pos != -1:
+                                yield "\n_AINARA_THINKING_STOP_\n"
+                                buffer = buffer[end_pos + len("</think>"):]
+                                in_thinking = False
+                            else:
+                                break
+                if buffer:
+                    yield buffer
+
             processed_answer = ""
             text_buffer = ""
             parsing_mode = "text"  # 'text' or 'doc'
@@ -1119,8 +1288,54 @@ class ChatManager:
             # Process the stream through the Orakle middleware
             # This now handles command execution and interpretation internally
             for chunk in self.orakle_middleware.process_stream(
-                llm_response_stream, self
+                _stream_with_thinking_markers(llm_response_stream), self
             ):
+                # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
+                if "_AINARA_THINKING_START_" in chunk:
+                    yield ndjson("signal", "thinking", {"state": "start"})
+                    continue
+                if "_AINARA_THINKING_STOP_" in chunk:
+                    yield ndjson("signal", "thinking", {"state": "stop"})
+                    continue
+
+                if isinstance(chunk, dict) and chunk.get("type") == "nexus_skill_result":
+                    vendor = chunk.get("vendor")
+                    bundle = chunk.get("bundle")
+                    component = chunk.get("component")
+                    query = chunk.get("query")
+                    skill_data = chunk.get("data", {})
+
+                    if not all([vendor, bundle, component]):
+                        logger.error(
+                            "Nexus skill result received with incomplete component info:"
+                            f" vendor='{vendor}', bundle='{bundle}', component='{component}'"
+                        )
+                        continue
+
+                    component_path = (
+                        f"/nexus/{vendor}/{bundle}/{component}/index.html"
+                    )
+
+                    nexus_data = {
+                            "component_path": component_path,
+                            "data": skill_data,
+                            "query": query
+                    }
+
+                    # Create a descriptive message for the chat history
+                    history_message = (
+                        "Nexus component data was generated and sent to the UI. "
+                        f"Data: {json.dumps(nexus_data)}"
+                    )
+                    self.llm.add_msg(history_message, self.chat_history, "assistant")
+
+                    yield ndjson(
+                        "ui",
+                        "renderNexus",
+                        nexus_data
+                    )
+                    continue
+
                 if not chunk:
                     continue
 
@@ -1138,7 +1353,7 @@ class ChatManager:
                     state_changed = False
                     if parsing_mode == "text":
                         doc_start_match = re.search(
-                            r'<doc format="([\w\d_.-]+)">', text_buffer
+                            r"```([\w\d_.-]*)\n", text_buffer
                         )
                         if doc_start_match:
                             pre_doc_text = text_buffer[
@@ -1149,7 +1364,7 @@ class ChatManager:
                                     pre_doc_text, stream
                                 )
 
-                            doc_format = doc_start_match.group(1)
+                            doc_format = doc_start_match.group(1) or "plaintext"
                             if stream == "json":
                                 yield ndjson(
                                     "ui",
@@ -1163,7 +1378,7 @@ class ChatManager:
                             state_changed = True
 
                     elif parsing_mode == "doc":
-                        doc_end_match = re.search(r"</doc>", doc_buffer)
+                        doc_end_match = re.search(r"```", doc_buffer)
                         if doc_end_match:
                             doc_content = doc_buffer[: doc_end_match.start()]
                             if stream == "json":
@@ -1268,11 +1483,11 @@ class ChatManager:
                         "limit, triggering decay"
                     )
                     self._trigger_memory_decay_in_background()
-                    self.user_memories_manager.reset_turn_counter()
+                    self.green_memories.reset_turn_counter()
                     self.turn_counter = 0  # Reset in-memory counter
                 logger.info(f"Saving turn counter state: {self.turn_counter}")
-                if self.user_memories_manager:
-                    self.user_memories_manager.save_turn_counter(
+                if self.green_memories:
+                    self.green_memories.save_turn_counter(
                         self.turn_counter
                     )
 

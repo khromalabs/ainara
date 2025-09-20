@@ -140,6 +140,17 @@ class ConfigManager:
                             self._get_cache_directory()
                         )
 
+                    # Set up sentence_transformers cache directory
+                    cache_dir = Path(self.config["cache"]["directory"])
+                    st_home = (
+                        self.config["cache"].get("sentence_transformers_home")
+                        or cache_dir / "transformers"
+                    )
+                    st_home = Path(os.path.expanduser(str(st_home)))
+                    os.makedirs(st_home, exist_ok=True)
+                    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(st_home)
+                    self.config["cache"]["sentence_transformers_home"] = str(st_home)
+
                     # Set up data directory in config
                     if "data" not in self.config:
                         self.config["data"] = {}
@@ -147,6 +158,20 @@ class ConfigManager:
                         self.config["data"]["directory"] = str(
                             self._get_data_directory()
                         )
+
+                    # Set up backup configuration with defaults if not present
+                    if "backup" not in self.config:
+                        self.config["backup"] = {}
+                    if "enabled" not in self.config["backup"]:
+                        self.config["backup"]["enabled"] = False
+                    if "directory" not in self.config["backup"]:
+                        self.config["backup"]["directory"] = ""
+                    if "interval_hours" not in self.config["backup"]:
+                        self.config["backup"]["interval_hours"] = 24
+                    if "versions_to_keep" not in self.config["backup"]:
+                        self.config["backup"]["versions_to_keep"] = 7
+                    if "password" not in self.config["backup"]:
+                        self.config["backup"]["password"] = ""
 
                     # Force correct orakle server URL (temporary enforcement)
                     if "orakle" in self.config and "servers" in self.config["orakle"]:

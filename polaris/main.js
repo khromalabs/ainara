@@ -16,21 +16,22 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const { EventEmitter } = require('events');
 const semver = require('semver');
 // const yargs = require('yargs/yargs');
 // const { hideBin } = require('yargs/helpers');
 const path = require('path');
-const ConfigManager = require('./utils/config');
+const ConfigManager = require('./framework/config');
 const { WindowManager } = require('./windows/WindowManager');
 const ComRingWindow = require('./windows/ComRingWindow');
 const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const SplashWindow = require('./windows/SplashWindow');
 const UpdateProgressWindow = require('./windows/UpdateProgressWindow');
-const ServiceManager = require('./utils/ServiceManager');
-const ConfigHelper = require('./utils/ConfigHelper');
-const Logger = require('./utils/logger');
+const ServiceManager = require('./framework/ServiceManager');
+const ConfigHelper = require('./framework/ConfigHelper');
+const Logger = require('./framework/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
 const debugMode = true;
@@ -51,6 +52,79 @@ let updateProgressWindow = null;
 let ollamaClient = null;
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
+const triggerKey = config.get('shortcuts.trigger', 'Space');
+const hideKey = config.get('shortcuts.hide', 'Escape');
+const myEmitter = new EventEmitter();
+
+// // Add service management to tray menu
+// const contextMenu = Menu.buildFromTemplate([
+//     {
+//         label: 'KK Setup',
+//         click: () => { windowManager.hideAll(true); showSetupWizard(); }
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'LLM Models',
+//         submenu: [
+//             {
+//                 label: 'Configure Providers',
+//                 click: () => showSetupWizard()
+//             },
+//             { type: 'separator' },
+//             {
+//                 label: 'Loading providers...',
+//                 enabled: false
+//             }
+//         ]
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Show',
+//         click: () => windowManager.showAll()
+//     },
+//     {
+//         label: 'Hide',
+//         click: () => windowManager.hideAll(true)
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Check for Updates',
+//         click: () => checkForUpdates(true)
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Help',
+//         click: () => {
+//             const comRing = windowManager.getWindow('comRing');
+//             if (comRing) {
+//                 if (!comRing.isVisible()) {
+//                     windowManager.showAll();
+//                 }
+//                 comRing.send('show-help');
+//             }
+//         }
+//     },
+//     {
+//         label: 'About',
+//         click: () => {
+//             const comRing = windowManager.getWindow('comRing');
+//             if (comRing) {
+//                 if (!comRing.isVisible()) {
+//                     windowManager.showAll();
+//                 }
+//                 comRing.send('show-about');
+//             }
+//         }
+//     },
+//     { type: 'separator' },
+//     {
+//         label: 'Quit',
+//         click: () => {
+//             app.isQuitting = true;
+//             app.quit();
+//         }
+//     }
+// ]);
 
 // Check if this is the first run of the application
 function isFirstRun() {
@@ -63,8 +137,8 @@ function showSetupWizard() {
 
    // Disable tray icon
     if (tray) {
-        tray.setContextMenu(null);
-        tray.removeAllListeners('click');
+        tray.destroy();
+        tray = null;
     }
 
     // Get the appropriate icon based on theme
@@ -72,13 +146,21 @@ function showSetupWizard() {
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
 
     wizardActive = true;
+    // Correction: Removed unnecessary setTimeout for unregistering a global shortcut.
+    // Improvement: `globalShortcut.unregister` is a synchronous operation. Removing the delay
+    // ensures the shortcut is disabled immediately when the setup wizard becomes active,
+    // preventing a race condition where the user could trigger it before it's disabled.
+    console.log("showSetupWizard: Disabled shortcutKey")
     globalShortcut.unregister(shortcutKey);
+    shortcutRegistered = false;
+
+    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+    Logger.info("Screen X " + screenWidth)
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        width: 950,
-        // width: 1350,
-        height: 750,
+        width: screenHeight,
+        height: Math.floor(screenHeight * 0.9),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
@@ -90,14 +172,15 @@ function showSetupWizard() {
         frame: false,
         skipTaskbar: false, // Show taskbar icon for setup window
         transparent: true,
-        iconPath: iconPath
+        iconPath: iconPath,
+        hasShadow: false
     });
     // setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
 
     // Load the setup page
-    setupWindow.loadFile(path.join(__dirname, 'windows', 'setup', 'index.html'));
+    setupWindow.loadFile(path.join(__dirname, 'components', 'setup.html'));
 
     setupWindow.once('ready-to-show', () => {
         setupWindow.show();
@@ -114,13 +197,11 @@ function showSetupWizard() {
         }
         wizardActive = false;
         appSetupShortcuts();
-        updateProviderSubmenu();
         // Re-enable tray icon
-        if (tray) {
-            tray.destroy();
-            await appCreateTray();
+        if (!tray) {
+             await appCreateTray();
+             // updateProviderSubmenu();
         }
-
         await restartWithSplash();
     }
 
@@ -228,7 +309,7 @@ function showSetupWizard() {
             // Read the start minimized setting
             if (!config.get('startup.startMinimized', false)) {
                 Logger.info('Starting with windows visible.');
-                showWindows(true);
+                windowManager.showAll(true);
             } else Logger.info('Starting minimized as per configuration.');
         }
     }
@@ -241,8 +322,11 @@ function showSetupWizard() {
             await ServiceManager.stopServices();
             app.quit(); // Hard exit without cleanup
         } else {
-            splashWindow.close();
-            await setupComplete();
+            // Correction: Prevented re-entrant call to setupComplete.
+            // Improvement: The 'close-setup-window' event is fired when the setup window closes.
+            // If setup was already completed, this was re-triggering the setup completion logic.
+            // Now, it only logs that the user closed the window, and the main flow continues as intended.
+            Logger.info('Setup complete, window closed by user. Main flow will continue.');
         }
     });
 }
@@ -256,6 +340,20 @@ function initializeOllamaClient() {
 
 async function appInitialization() {
     try {
+         const singleInstanceLock = app.requestSingleInstanceLock();
+
+        if (!singleInstanceLock) {
+            // App is already running this will force visibility
+            app.quit();
+            return;
+        }
+
+        app.on('second-instance', () => {
+            if (windowManager) {
+                windowManager.showAll();
+            }
+        });
+
         Logger.setDebugMode(debugMode);
         app.isQuitting = false;
         await app.whenReady();
@@ -265,10 +363,45 @@ async function appInitialization() {
 
         // Initialize window manager and windows
         windowManager = new WindowManager(config);
-        windowManager.initialize([ComRingWindow, ChatDisplayWindow], __dirname);
-        appSetupEventHandlers();
-        await appCreateTray();
+        windowManager.initialize(
+            [ComRingWindow, ChatDisplayWindow],
+            __dirname
+        );
 
+        // Listen for visibility changes to handle tray, shortcuts, and focus
+        windowManager.on('visibility-changed', (state) => {
+            if(updateTrayIcon) {
+                updateTrayIcon(state);
+            }
+
+            if (state === 'active') {
+                // Unregister shortcut and focus comRing (original showWindowsBackend logic)
+                globalShortcut.unregister(shortcutKey);
+                shortcutRegistered = false;
+                Logger.log('visibility-changed (active): unregistered globalShortcut');
+                const comRing = windowManager.getWindow('comRing');
+                setTimeout(() => {
+                    if (comRing) {
+                        comRing.focus();
+                        Logger.log('visibility-changed (active): focused comRing');
+                    }
+                }, 300);
+            } else if (state === 'inactive') {
+                // Register shortcut (original hideWindowsBackend logic)
+                if (!shortcutRegistered) {
+                    shortcutRegistered = globalShortcut.register(
+                        shortcutKey, 
+                        () => windowManager.showAll(true)
+                    );
+                    if (shortcutRegistered) {
+                        Logger.info('visibility-changed (inactive): Successfully registered shortcut:', shortcutKey);
+                    } else {
+                        Logger.error('visibility-changed (inactive): Failed to register shortcut:', shortcutKey);
+                    }
+                }
+            }
+        });
+        appSetupEventHandlers();
         await waitForWindowsAndComponentsReady();
 
         // --- Port Availability Check (Packaged App Only) ---
@@ -320,6 +453,7 @@ async function appInitialization() {
 
             // Set shortcut just before showing windows
             appSetupShortcuts();
+            await appCreateTray();
 
             // Read the start minimized setting
             const startMinimized = config.get('startup.startMinimized', false);
@@ -330,7 +464,7 @@ async function appInitialization() {
             } else {
                 if (!startMinimized) {
                     Logger.info('Starting with windows visible.');
-                    showWindows(true);
+                    windowManager.showAll(true);
                 } else Logger.info('Starting minimized as per configuration.');
             }
 
@@ -419,30 +553,52 @@ async function appInitialization() {
 
         // Close splash and show main window
         splashWindow.updateProgress('Ready!', 100);
-        await new Promise(resolve => setTimeout(resolve, 500));
-        splashWindow.close();
-
-        // Set shortcut just before showing windows
-        appSetupShortcuts();
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await splashWindow.close();
 
         // Check if this is the first run
         if (isFirstRun()) {
             showSetupWizard();
             return;
-        } else {
-            // Read the start minimized setting
-            if (!config.get('startup.startMinimized', false)) {
-                Logger.info('Starting with windows visible.');
-                showWindows(true);
-            } else Logger.info('Starting minimized as per configuration.');
         }
 
+        // Read the start minimized setting
+        await appCreateTray();
         let llmProviders = await ConfigHelper.getLLMProviders();
         if (llmProviders) {
             tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         }
 
         initializeAutoUpdater();
+        // New: Show one-time tray guidance notification on Windows
+        // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
+        if (config.get('setup.firstLaunch', true)) {
+            const notification2 = new Notification({
+                title: 'Ainara AI',
+                body: `Press ${shortcutKey} to show the Ainara UI, ${hideKey} to hide the UI and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
+                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+            });
+            notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
+            notification2.show();
+            const notification = new Notification({
+                title: 'Ainara AI',
+                body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
+                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+            });
+            notification.on('click', () => windowManager.showAll());  // Click notification to show UI
+            notification.show();
+            config.set('setup.firstLaunch', false);  // Mark as shown
+            config.saveConfig();
+        }
+
+        // Set shortcut just before showing windows
+        appSetupShortcuts();
+
+        // Show windows if not startMinimized
+        if (!config.get('startup.startMinimized', false)) {
+            Logger.info('Starting with windows visible.');
+            windowManager.showAll(true);
+        } else Logger.info('Starting minimized as per configuration.');
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
@@ -474,25 +630,12 @@ function handlePortConflictError(port, serviceName) {
     app.quit();
 }
 
-function showWindows(force=false) {
-    Logger.log('Shortcut pressed'); // Keep as debug log
-    if (force || !windowManager.isAnyVisible()) {
-        Logger.log('Windows were hidden - showing'); // Keep as debug log
-        // Disable shortcut before showing windows
-        globalShortcut.unregister(shortcutKey);
-        shortcutRegistered = false;
-        windowManager.showAll();
-        const comRing = windowManager.getWindow('comRing');
-        if (comRing) {
-            comRing.focus();
-        }
-        Logger.log('shown and focused, unregistered globalShortcut'); // Keep as debug log
-    }
-}
 
 function appSetupShortcuts() {
     if (!wizardActive && !shortcutRegistered) {
-        shortcutRegistered = globalShortcut.register(shortcutKey, showWindows);
+        shortcutRegistered = globalShortcut.register(
+            shortcutKey,
+            () => windowManager.showAll(true));
 
         if (shortcutRegistered) {
            Logger.info('Successfully registered shortcut:', shortcutKey);
@@ -573,66 +716,12 @@ async function appCreateTray() {
             Logger.info('appCreateTray: Set macOS highlight mode to selection');
         }
 
-        windowManager.setTray(tray, iconBasePath); // Pass iconBasePath for potential future use by windowManager
 
-    // Add service management to tray menu
-    const contextMenu = Menu.buildFromTemplate([
-        {
-            label: 'Setup',
-            click: () => { windowManager.hideAll(true); showSetupWizard(); }
-        },
-        { type: 'separator' },
-        // {
-        //     label: 'Auto-update',
-        //     type: 'checkbox',
-        //     checked: config.get('autoUpdate.enabled', true),
-        //     click: (menuItem) => {
-        //         config.set('autoUpdate.enabled', menuItem.checked);
-        //         autoUpdater.autoInstallOnAppQuit = menuItem.checked;
-        //     }
-        // },
-        {
-            label: 'LLM Models',
-            submenu: [
-                {
-                    label: 'Configure Providers',
-                    click: () => showSetupWizard()
-                },
-                { type: 'separator' },
-                {
-                    label: 'Loading providers...',
-                    enabled: false
-                }
-            ]
-        },
-        { type: 'separator' },
-        {
-            label: 'Show',
-            click: () => windowManager.showAll()
-        },
-        {
-            label: 'Hide',
-            click: () => windowManager.hideAll(true)
-        },
-        { type: 'separator' },
-        {
-            label: 'Check for Updates',
-            click: () => checkForUpdates(true)
-        },
-        { type: 'separator' },
-        {
-            label: 'Quit',
-            click: () => {
-                app.isQuitting = true;
-                app.quit();
-            }
-        }
-    ]);
-
-    tray.setContextMenu(contextMenu);
+        // tray.setContextMenu(contextMenu);
+        await updateProviderSubmenu();
         Logger.info('appCreateTray: Context menu set.');
 
-        // Optional: Single click to toggle windows
+        // A 'click' event now reliably corresponds to a left-click on all platforms.
         tray.on('click', () => {
             Logger.info('Tray clicked.');
             if (wizardActive) {
@@ -641,7 +730,7 @@ async function appCreateTray() {
             }
             windowManager.toggleVisibility();
         });
-        Logger.info('appCreateTray: Click listener added.');
+        Logger.info('appCreateTray: Click listeners added.');
 
         // Set initial tooltip
         let llmProviders = await ConfigHelper.getLLMProviders();
@@ -652,6 +741,18 @@ async function appCreateTray() {
         }
     } catch (error) {
         Logger.error(`appCreateTray: Error during tray setup: ${error.message}`, error);
+    }
+}
+
+function updateTrayIcon(state) {
+    const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+    if (tray && !tray.isDestroyed()) {
+        let iconFileName = process.platform === 'darwin'
+            ? `tray-icon-${state}-Template.png`
+            : `tray-icon-${state}-${theme}.png`;
+        const iconPath = path.join(__dirname, 'assets', iconFileName);
+        Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
+        tray.setImage(iconPath);
     }
 }
 
@@ -726,6 +827,8 @@ async function updateProviderSubmenu() {
                 type: 'radio',
                 checked: selected_provider === model,
                 click: async () => {
+                    windowManager.showAll(true);
+                    myEmitter.emit('visibility-changed', 'active');
                     const success = await ConfigHelper.selectLLMProvider(model);
                     if (success) {
                         // Update the menu
@@ -780,6 +883,31 @@ async function updateProviderSubmenu() {
             {
                 label: 'Check for Updates',
                 click: () => checkForUpdates(true)
+            },
+            { type: 'separator' },
+            {
+                label: 'Help',
+                click: () => {
+                    const comRing = windowManager.getWindow('comRing');
+                    if (comRing) {
+                        if (!comRing.isVisible()) {
+                            windowManager.showAll(true);
+                        }
+                        comRing.send('show-help');
+                    }
+                }
+            },
+            {
+                label: 'About',
+                click: () => {
+                    const comRing = windowManager.getWindow('comRing');
+                    if (comRing) {
+                        if (!comRing.isVisible()) {
+                            windowManager.showAll(true);
+                        }
+                        comRing.send('show-about');
+                    }
+                }
             },
             { type: 'separator' },
             {
@@ -866,6 +994,10 @@ function initializeAutoUpdater() {
 
         updateAvailable = info; // Keep track of the available update info
 
+        const comRing = windowManager.getWindow('comRing');
+        if ( comRing )
+            comRing.hide();
+
         dialog.showMessageBox({
             type: 'info',
             buttons: ['Download Now', 'Ignore This Version', 'Later'],
@@ -894,7 +1026,7 @@ function initializeAutoUpdater() {
                 // Read the start minimized setting
                 if (!config.get('startup.startMinimized', false)) {
                     Logger.info('Starting with windows visible.');
-                    showWindows(true);
+                    windowManager.showAll(true);
                 } else {
                     Logger.info('Starting minimized as per configuration.');
                 }
@@ -961,28 +1093,45 @@ function appSetupEventHandlers() {
         shell.openExternal(url);
     });
 
-    // Prevent app from closing when all windows are closed
-    app.on('window-all-closed', () => {
-        app.quit();
+    // Handle backup directory selection from setup wizard
+    ipcMain.on('select-backup-directory', async (event) => {
+        const window = BrowserWindow.fromWebContents(event.sender);
+        if (window) {
+            const result = await dialog.showOpenDialog(window, {
+                properties: ['openDirectory']
+            });
+
+            if (!result.canceled && result.filePaths.length > 0) {
+                event.sender.send('backup-directory-selected', result.filePaths[0]);
+            }
+        }
     });
+
+    // Correction: Modified 'window-all-closed' handler for tray application behavior.
+    // Improvement: A tray application should not quit when all its windows are closed.
+    // This handler is changed to do nothing, aligning with the app's design to run
+    // in the background. Individual window 'close' events are already handled to hide
+    // windows instead of quitting.
+    app.on('window-all-closed', () => { });
 
     // Handle app activation (e.g., clicking dock icon on macOS)
     app.on('activate', () => {
-        if (windowManager.isEmpty()) {
-            appInitialization();
-        } else {
-            // Update tray icon to active when app is activated via taskbar/dock click
-            windowManager.updateTrayIcon('active');
-            // Ensure windows are shown if they were hidden or minimized
-            if (!windowManager.isAnyVisible()) {
-                windowManager.showAll();
-            }
+        // Correction: Simplified the 'activate' event handler.
+        // Improvement: The `windowManager.isEmpty()` check is unreachable because windows are
+        // created at startup and never destroyed, only hidden. This simplifies the logic to
+        // always handle the case where the app is running but may not have visible windows.
+        // Update tray icon to active when app is activated via taskbar/dock click
+        updateTrayIcon('active');
+        // Ensure windows are shown if they were hidden or minimized
+        if (!windowManager.isAnyVisible()) {
+            windowManager.showAll();
         }
     });
 
     // Cleanup before quit
     app.on('before-quit', async () => {
         globalShortcut.unregisterAll();
+        shortcutRegistered = false;
 
         // Stop services
         try {
@@ -1000,15 +1149,10 @@ function appSetupEventHandlers() {
     // Remove browser-window-focus handler as it conflicts with hide/show logic
     app.removeAllListeners('browser-window-focus');
 
-    // Add handler for window hide
+    // Correction: Removed redundant 'hide' event handler.
+    // Improvement: Shortcut registration is now solely managed by the 'visibility-changed'
+    // event on the WindowManager, simplifying logic and preventing potential race conditions.
     windowManager.windows.forEach(window => {
-        window.window.on('hide', () => {
-            if (!shortcutRegistered) {
-                appSetupShortcuts();
-                Logger.log('Re-enabled global shortcut after window hide'); // Keep as debug log
-            }
-        });
-
         // Handle Alt+F4 and other OS window close events
         window.window.on('close', (event) => {
             // If this is not part of the app quitting process, prevent default and hide instead
@@ -1023,25 +1167,14 @@ function appSetupEventHandlers() {
     nativeTheme.on('updated', () => {
         const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
         Logger.info('System theme changed:', theme);
-        const iconStatus = windowManager && windowManager.currentState ? windowManager.currentState : 'inactive';
 
-        // Use platform-specific icon path
-        let iconPath;
-        if (process.platform === 'darwin') {
-            // On macOS, use template image regardless of theme change
-            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-Template.png`);
-        } else {
-            // On other platforms, update based on theme
-            iconPath = path.join(__dirname, 'assets', `tray-icon-${iconStatus}-${theme}.png`);
-        }
-
-        // Update tray icon
-        if (tray && !tray.isDestroyed()) {
-            tray.setImage(iconPath);
-        }
+        // Update tray based on current visibility (query WindowManager)
+        const currentState = windowManager.isAnyVisible() ? 'active' : 'inactive';
+        updateTrayIcon(currentState);
 
         // Update setup window icon if it exists
         if (setupWindow && !setupWindow.isDestroyed()) {
+            const iconPath = path.join(__dirname, 'assets', `tray-icon-${currentState}-${theme}.png`);
             setupWindow.setIcon(iconPath);
         }
     });

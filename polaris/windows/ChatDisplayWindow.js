@@ -17,7 +17,7 @@
 // Lesser General Public License for more details.
 
 const BaseWindow = require('./BaseWindow');
-const Logger = require('../utils/logger');
+const Logger = require('../framework/logger');
 
 class ChatDisplayWindow extends BaseWindow {
     static getHandlers() {
@@ -27,10 +27,11 @@ class ChatDisplayWindow extends BaseWindow {
                 if (chatDisplay.isTypingMode) {
                     chatDisplay.send('set-typing-mode-state', false);
                 }
-                // manager.hideAll();
+                chatDisplay.window.setFocusable(false);
             },
             onShow: (window, manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
+                chatDisplay.window.setFocusable(true);
                 if (chatDisplay) {
                     chatDisplay.send('ready-for-transcription');
                     if (chatDisplay.isTypingMode) {
@@ -44,6 +45,10 @@ class ChatDisplayWindow extends BaseWindow {
                     const comRing = manager.getWindow('comRing');
                     comRing.focus();
                 }
+            },
+            onHide: (window, manager) => {
+                const chatDisplay = manager.getWindow('chatDisplay');
+                chatDisplay.window.setFocusable(false);
             }
         };
     }
@@ -65,7 +70,7 @@ class ChatDisplayWindow extends BaseWindow {
             windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
         } else {
             // Linux: Position lower as before
-            windowY = Math.floor(screenHeight * (5/6)) - (windowHeight / 2);
+            windowY = Math.floor(screenHeight * (6/7)) - (windowHeight / 2);
         }
 
         Logger.log(`ChatDisplayWindow: Positioning at Y=${windowY} (${process.platform}, screen height=${screenHeight})`);
@@ -76,20 +81,22 @@ class ChatDisplayWindow extends BaseWindow {
             height: windowHeight,
             x: windowX,
             y: windowY,
-            type: 'toolbar',
+            // type: 'toolbar',
+            titleBarStyle: 'customButtonsOnHover', // macOS: Prevents ghost draggable area
             focusable: true,
             skipTaskbar: true, // Explicitly hide taskbar icon for ChatDisplayWindow
             frame: false,
             transparent: true,
-            backgroundColor: 'rgba(0,0,0,0)', // Explicit transparent background
+            // backgroundColor: 'rgba(0,0,0,0)', // Explicit transparent background
             opacity: 1.0, // Full window opacity
             alwaysOnTop: true,
             show: false,
-            skipTaskbar: true,
             hasShadow: false
         };
 
         super(config, 'chatDisplay', options, basePath);
+
+        this.window.setIgnoreMouseEvents(true);
 
         this.manager = manager; // Store reference to window manager
         this.loadContent('./components/chat-display.html');
@@ -134,6 +141,9 @@ class ChatDisplayWindow extends BaseWindow {
         ipcMain.handle('set-typing-mode-state', (event, isTyping) => {
             const oldState = this.isTypingMode;
             this.isTypingMode = isTyping;
+
+            // When typing, capture mouse events. Otherwise, let them pass through.
+            this.window.setIgnoreMouseEvents(!isTyping);
 
             // Only broadcast if state actually changed
             if (oldState !== isTyping) {

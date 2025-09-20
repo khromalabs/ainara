@@ -21,6 +21,9 @@ import os
 import platform
 from typing import Any, Dict, Optional
 
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import HfHubHTTPError
+
 from ainara.framework.config import ConfigManager
 from ainara.framework.stt.base import STTBackend
 
@@ -44,11 +47,13 @@ def get_optimal_whisper_config():
         "vad_filter": True,
         "vad_parameters": {
             "min_silence_duration_ms": 500,
-            "threshold": 0.5,
+            "threshold": 0.4,  # Lowered for better sensitivity
             "min_speech_duration_ms": 250
         },
         "word_timestamps": False,
-        "condition_on_previous_text": False
+        "condition_on_previous_text": False,
+        # Add a prompt to help recognize specific words
+        "initial_prompt": "Ainara is a personal AI assistant."
     }
 
     try:
@@ -65,7 +70,7 @@ def get_optimal_whisper_config():
             # Adjust model size based on VRAM
             if vram_gb >= 8:  # High-end GPUs
                 # Can use larger models with good performance
-                config["model_size"] = "medium"
+                config["model_size"] = "large-v3"
                 config["beam_size"] = 5
             elif vram_gb >= 4:  # Mid-range GPUs like GTX 1650 Ti
                 # Balance between speed and accuracy
@@ -150,7 +155,7 @@ class FasterWhisperSTT(STTBackend):
 
         # Check dependencies first
         try:
-            from ainara.framework.utils.dependency_checker import \
+            from ainara.framework.dependency_checker import \
                 DependencyChecker
 
             stt_deps = DependencyChecker.check_stt_dependencies()
@@ -222,6 +227,17 @@ class FasterWhisperSTT(STTBackend):
         })
         self.word_timestamps = optimal_config.get("word_timestamps", False)
         self.condition_on_previous_text = optimal_config.get("condition_on_previous_text", False)
+        self.initial_prompt = config_manager.get(
+            "stt.modules.faster_whisper.initial_prompt",
+            optimal_config.get("initial_prompt")
+        )
+        # VAD parameters for the listen() method
+        self.silence_threshold = config_manager.get(
+            "stt.modules.faster_whisper.silence_threshold", 500
+        )
+        self.silence_duration_s = config_manager.get(
+            "stt.modules.faster_whisper.silence_duration_s", 2
+        )
 
         # If using CPU, set number of threads
         if self.device == "cpu":
@@ -337,7 +353,8 @@ class FasterWhisperSTT(STTBackend):
                 vad_filter=self.vad_filter,
                 vad_parameters=self.vad_parameters,
                 word_timestamps=self.word_timestamps,
-                condition_on_previous_text=self.condition_on_previous_text
+                condition_on_previous_text=self.condition_on_previous_text,
+                initial_prompt=self.initial_prompt
             )
 
             # Combine all segments into a single transcript
@@ -382,7 +399,6 @@ class FasterWhisperSTT(STTBackend):
             CHANNELS = 1
             RATE = 16000
             CHUNK = 1024
-            SILENCE_THRESHOLD = 500  # Adjust based on testing
 
             # Create a temporary file for the recording
             fd, temp_file = tempfile.mkstemp(suffix=".wav")
@@ -423,14 +439,14 @@ class FasterWhisperSTT(STTBackend):
                         for i in range(0, len(data), 2)
                     )
 
-                    if amplitude > SILENCE_THRESHOLD:
+                    if amplitude > self.silence_threshold:
                         silent_chunks = 0
                         has_speech = True
                     else:
                         silent_chunks += 1
 
-                    # Stop after ~3 seconds of silence if we've detected speech before
-                    if has_speech and silent_chunks > RATE / CHUNK * 3:
+                    # Stop after N seconds of silence if we've detected speech before
+                    if has_speech and silent_chunks > RATE / CHUNK * self.silence_duration_s:
                         break
 
                     # Also stop if recording gets too long (30 seconds)
@@ -463,3 +479,56 @@ class FasterWhisperSTT(STTBackend):
         except Exception as e:
             logger.info(f"Error in Faster-Whisper listen: {e}")
             return ""
+
+    def check_model(self) -> Dict[str, Any]:
+        """Check if Whisper models are available locally."""
+        try:
+            cache_dir = config_manager.get_subdir("cache.directory", "whisper")
+            model_path = hf_hub_download(
+                repo_id=f"guillaumekln/faster-whisper-{self.model_size}",
+                filename="model.bin",
+                cache_dir=cache_dir,
+                local_files_only=True,
+            )
+            return {
+                "initialized": True,
+                "message": f"Whisper {self.model_size} model is available",
+                "path": model_path,
+            }
+        except HfHubHTTPError:
+            # This exception is raised when the file is not found in the cache with local_files_only=True
+            return {
+                "initialized": False,
+                "message": f"Whisper {self.model_size} model is not available",
+            }
+        except Exception as e:
+            logger.error(f"Error checking Whisper models: {e}")
+            return {
+                "initialized": False,
+                "message": f"Error checking Whisper models: {str(e)}",
+            }
+
+    def setup_model(self) -> Dict[str, Any]:
+        """Download and setup whisper models."""
+        try:
+            logger.info(f"Downloading Faster-Whisper {self.model_size} model...")
+            cache_dir = config_manager.get_subdir("cache.directory", "whisper")
+            model_path = hf_hub_download(
+                repo_id=f"guillaumekln/faster-whisper-{self.model_size}",
+                filename="model.bin",
+                cache_dir=cache_dir,
+            )
+            logger.info(
+                f"Faster-Whisper {self.model_size} model downloaded to {model_path}"
+            )
+            return {
+                "success": True,
+                "message": f"Whisper {self.model_size} model downloaded successfully",
+                "path": model_path,
+            }
+        except Exception as e:
+            logger.error(f"Error downloading whisper model: {e}")
+            return {
+                "success": False,
+                "message": f"Error downloading whisper model: {str(e)}",
+            }

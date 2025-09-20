@@ -159,8 +159,8 @@ class ChromaVectorStorage(VectorStorageBackend):
                         "content": results["documents"][0][i],
                         "metadata": metadata,
                         "similarity": (
-                            1 - results["distances"][0][i]
-                        ),  # Convert distance to similarity score
+                            1 - (results["distances"][0][i] / 2)
+                        ),  # Convert squared L2 distance to cosine similarity
                     }
                 )
         return formatted_results

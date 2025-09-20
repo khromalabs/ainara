@@ -18,10 +18,12 @@
 
 import json
 import os
-from typing import Generator, List, Optional, Tuple, Union
+import re
+from typing import Generator, List, Union
+from datetime import datetime
 
-import pkg_resources
 import litellm
+import pkg_resources
 
 from ainara.framework.config import ConfigManager
 
@@ -33,23 +35,32 @@ class LiteLLM(LLMBackend):
 
     def __init__(self, provider_config: dict = None):
         litellm.telemetry = False
-        self.global_config = ConfigManager() # For fallback or general settings
-        super().__init__(self.global_config) # Base class might need global config
+        self.global_config = (
+            ConfigManager()
+        )  # For fallback or general settings
+        super().__init__(
+            self.global_config
+        )  # Base class might need global config
         self.completion = litellm.completion
         self.acompletion = litellm.acompletion
 
         try:
             if provider_config and "model" in provider_config:
                 # If a specific provider_config is given (e.g., from evaluator), use it directly
-                self.logger.info(f"Initializing LiteLLM with specific provider config: {provider_config.get('name', provider_config.get('model'))}")
+                self.logger.info(
+                    "Initializing LiteLLM with specific provider config:"
+                    f" {provider_config.get('name', provider_config.get('model'))}"
+                )
                 # Ensure all necessary keys are present, potentially merging with some defaults if needed.
                 # The provider_config should already contain model, api_base, api_key etc.
-                self.provider = {**provider_config} # Make a copy
+                self.provider = {**provider_config}  # Make a copy
                 if not self.provider.get("model"):
                     raise ValueError("Model not specified in provider_config")
             else:
                 # Fallback to old behavior if no specific config is given (e.g., for normal app use)
-                self.provider = self.initialize_provider(config=self.global_config)
+                self.provider = self.initialize_provider(
+                    config=self.global_config
+                )
         except Exception as e:
             self.provider = {"_placeholder": True, "model": "gpt-3.5-turbo"}
             self.logger.warning(
@@ -68,14 +79,19 @@ class LiteLLM(LLMBackend):
 
             # First check if context_window is defined directly in the provider config
             configured_context = self.provider.get("context_window")
-            if configured_context is not None and isinstance(configured_context, int):
+            if configured_context is not None and isinstance(
+                configured_context, int
+            ):
                 self.logger.info(
                     f"Using configured context window for {model_name}:"
                     f" {configured_context} tokens"
                 )
                 return configured_context
             else:
-                self.logger.info(f"No context_window configured for {model_name} in provider settings.")
+                self.logger.info(
+                    f"No context_window configured for {model_name} in"
+                    " provider settings."
+                )
 
             # Otherwise try to get it from LiteLLM
             max_tokens = litellm.get_max_tokens(model_name)
@@ -114,8 +130,16 @@ class LiteLLM(LLMBackend):
             dict: Dictionary of provider information including models, keyed by provider name
         """
         try:
-            # Find the path to the LiteLLM package
+            # # Find the path to the LiteLLM package, handling PyInstaller bundling
+            # if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            #     # Running in a PyInstaller bundle
+            #     litellm_path = os.path.join(sys._MEIPASS, "litellm")
+            # else:
+            #     # Running in a normal Python environment
+            #     litellm_path = pkg_resources.resource_filename("litellm", "")
+
             litellm_path = pkg_resources.resource_filename("litellm", "")
+
             model_info_path = os.path.join(
                 litellm_path, "model_prices_and_context_window_backup.json"
             )
@@ -171,8 +195,8 @@ class LiteLLM(LLMBackend):
 
             self.logger.info(
                 f"Retrieved {len(providers)} providers with"
-                f" {sum(len(p['models']) for p in providers.values())} models from"
-                " LiteLLM"
+                f" {sum(len(p['models']) for p in providers.values())} models"
+                " from LiteLLM"
             )
             return providers
 
@@ -195,13 +219,20 @@ class LiteLLM(LLMBackend):
         current_config = config or self.global_config
 
         # Try each provider until we find one that works
-        for p_conf in current_config.get("llm.providers", []): # Ensure it's a list
-            config_selected_provider = current_config.get("llm.selected_provider")
+        for p_conf in current_config.get(
+            "llm.providers", []
+        ):  # Ensure it's a list
+            config_selected_provider = current_config.get(
+                "llm.selected_provider"
+            )
             # Check if this is the selected provider
-            if config_selected_provider == p_conf.get("model") or config_selected_provider == p_conf.get("name"):
+            if config_selected_provider == p_conf.get(
+                "model"
+            ) or config_selected_provider == p_conf.get("name"):
                 provider.update(p_conf)
                 self.logger.info(
-                    f"Using selected LLM provider: {p_conf.get('name', p_conf.get('model', 'unknown'))}"
+                    "Using selected LLM provider:"
+                    f" {p_conf.get('name', p_conf.get('model', 'unknown'))}"
                 )
                 return provider
 
@@ -225,6 +256,11 @@ class LiteLLM(LLMBackend):
         self, new_message: str, chat_history: List, role: str
     ) -> List[dict]:
         """Format user chat message for LLM processing with token count"""
+        if role == "user":
+            timestamp = datetime.now()
+            new_message = (
+                f"[{timestamp.strftime("%H:%M")}] {new_message}"
+            )
         token_count = self._get_token_count(new_message, role)
         chat_history.append(
             {"role": role, "content": new_message, "tokens": token_count}
@@ -261,7 +297,7 @@ class LiteLLM(LLMBackend):
             completion_kwargs = {
                 "model": provider["model"],
                 "messages": clean_messages,
-                "temperature": 0.2,
+                # "temperature": 0.2,
                 "stream": stream,
                 **(
                     {"api_base": provider["api_base"]}
@@ -294,7 +330,12 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response)
+                    full_response = self._handle_normal_response(response)
+                    # Strip <think> blocks for non-streaming responses
+                    cleaned_response = re.sub(
+                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
+                    ).strip()
+                    return cleaned_response
 
             except Exception as e:
                 self.logger.error(f"LiteLLM completion error: {str(e)}")
@@ -322,7 +363,9 @@ class LiteLLM(LLMBackend):
                 raise
 
         except Exception as e:
-            msg_error = f"Error: Unable to get a response from the AI: {str(e)}"
+            msg_error = (
+                f"Error: Unable to get a response from the AI: {str(e)}"
+            )
             self.logger.error(msg_error)
             raise ValueError(msg_error)
 
@@ -407,7 +450,12 @@ class LiteLLM(LLMBackend):
                     return self._handle_streaming_response(response)
                 else:
                     self.logger.info("Got complete response")
-                    return self._handle_normal_response(response)
+                    full_response = self._handle_normal_response(response)
+                    # Strip <think> blocks for non-streaming responses
+                    cleaned_response = re.sub(
+                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
+                    ).strip()
+                    return cleaned_response
 
             except Exception as e:
                 self.logger.error(f"LiteLLM async completion error: {str(e)}")

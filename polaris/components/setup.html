@@ -11,7 +11,6 @@
             <button title="Close setup wizard" class="close-btn">&times;</button>
             <h1>Welcome to Ainara Polaris</h1>
             <p>Let's get everything set up for you</p>
-            <img src="../../assets/logo.png" alt="Ainara Polaris Logo" class="logo">
         </div>
 
         <div class="setup-content">
@@ -31,12 +30,11 @@
             <div class="step-content">
                 <!-- Welcome step -->
                 <div class="step-panel active" id="welcome-panel">
+                    <div style="width: 100%; text-align: center">
+                    <img width="300px" src="../assets/logo3.png" alt="Ainara Polaris Logo" class="logo">
                     <h2>Welcome to Ainara Polaris Setup</h2>
                     <p>This wizard will help you configure Polaris for first use.</p>
-                    <p>We'll set up your LLM provider and configure API keys for various skills.</p>
-                    <div class="button-row">
-                        <div></div> <!-- Empty div to maintain spacing -->
-                        <button class="next-btn">Next</button>
+                    <p>We'll set up your LLM provider and configure API keys for various skills, among other options.</p>
                     </div>
                 </div>
 
@@ -46,17 +44,12 @@
                     <p>Ainara can optionally make use of local LLM models via Ollama. Download models based on your hardware capabilities.<br><br><span class="note-signal">&nbsp;</span>Any kind of local LLM server compatible with the OpenAI standard can be configured as well in the <b>LLM Providers</b> section using the <b>Custom API</b> option.</p><br>
                     <div id="ollama-hardware-info" class="hardware-info"></div>
                     <div id="ollama-models-container"></div>
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- LLM setup step -->
                 <div class="step-panel" id="llm-panel">
                     <h2>LLM Provider Setup</h2>
                     <p>Polaris needs access to a Large Language Model (LLM) to function.</p>
-                    <p>Please select your preferred provider:</p>
 
                     <div class="provider-options" id="provider-options">
                         <p>Loading providers...</p>
@@ -73,10 +66,6 @@
                         <br>
                     </div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn" id="llm-next" disabled>Next</button>
-                    </div>
                 </div>
 
                 <!-- STT setup step -->
@@ -113,28 +102,20 @@
 
                     <div id="stt-test-result" class="hidden"></div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn" id="stt-next">Next</button>
-                    </div>
                 </div>
 
                 <!-- Skills setup step -->
                 <div class="step-panel" id="skills-panel">
                     <h2>Skills API Keys</h2>
-                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities, simply ask her in a dialog.</b></br></br>
-                    <p>Some Ainara's skills require API keys to function properly.</p>
-                    <p>Configure the ones you plan to use (all are optional, but all the search services are highly recommended).</p>
+                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b></br></br>
+                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities at any moment, simply ask her.</b></br></br>
+                    <p>The following skills require API keys. All are optional, but especially the search services are highly recommended.</p>
 
                     <div class="skills-list">
                         <!-- This will be populated dynamically -->
                         <p>Loading available skills...</p>
                     </div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- MCP Servers setup step -->
@@ -149,10 +130,6 @@
                     </div>
                     <button id="add-mcp-server-btn" class="btn" style="margin-top: 15px;">Add MCP Server</button>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- Shortcuts setup step -->
@@ -195,10 +172,6 @@
                         </div>
                     </div>
 
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="next-btn">Next</button>
-                    </div>
                 </div>
 
                 <!-- Finish step -->
@@ -209,6 +182,20 @@
                     <div class="form-group">
                         <input type="checkbox" id="start-minimized-checkbox" style="width: auto; margin-right: 8px;">
                         <label for="start-minimized-checkbox" style="display: inline; font-weight: normal;">Start minimized in the system tray on launch</label>
+                        <br>
+                        <input type="checkbox" id="review-stt-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="review-stt-checkbox" style="display: inline; font-weight: normal;">Review speech-to-text before sending it to conversation</label>
+                        <br>
+                        <input type="checkbox" id="background-notifications-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="background-notifications-checkbox" style="display: inline; font-weight: normal;">Show Ainara's answers as system notifications in background mode</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="backup-directory-input">Backup Directory:</label>
+                        <div class="backup-directory-container">
+                            <input type="text" id="backup-directory-input" placeholder="Select a directory for backups..." readonly>
+                            <button type="button" id="browse-backup-directory-btn">Browse...</button>
+                        </div>
+                        <p class="field-description">Choose where Ainara will store configuration backups. Required to enable backups.</p>
                     </div>
                     <div id="capabilities-section" class="capabilities-section">
                         <h3>Available Ainara Local Capabilities</h3>
@@ -219,15 +206,20 @@
                     </div>
 
                     <p>Click the button below to start using Polaris.</p>
-                    <div class="button-row">
-                        <button class="back-btn">Back</button>
-                        <button class="finish-btn">Start Polaris</button>
-                    </div>
                 </div>
+            </div>
+        </div>
+        <div class="button-row">
+            <div>
+                <button class="back-btn" id="main-back-btn">Back</button>
+            </div>
+            <div>
+                <button class="next-btn" id="main-next-btn">Next</button>
+                <button class="finish-btn" id="main-finish-btn">Start Polaris</button>
             </div>
         </div>
     </div>
 
-    <script src="setup.js"></script>
+    <script src="../components/setup.js"></script>
 </body>
 </html>

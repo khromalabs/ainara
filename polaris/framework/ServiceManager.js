@@ -25,7 +25,7 @@ const { app } = require('electron');
 const { createEventSource } = require('eventsource-client');
 const net = require('net');
 
-const ConfigManager = require('../utils/config');
+const ConfigManager = require('../framework/config');
 const Logger = require('./logger');
 
 
@@ -173,7 +173,7 @@ class ServiceManager {
             this.startService('pybridge')
         ];
 
-        this.startProgress = 30;
+        this.startProgress = 10;
 
         this.updateProgress(this.initializeMsg, this.startProgress);
 
@@ -226,8 +226,8 @@ class ServiceManager {
                     }
                 });
 
-                // Check if service starts successfully in three minutes top
-                this.waitForHealth(serviceId, 180000)
+                // Check if service starts successfully in ten minutes top
+                this.waitForHealth(serviceId, 600000)
                     .then(() => resolve())
                     .catch(err => reject(err));
 
@@ -255,11 +255,11 @@ class ServiceManager {
                 // Ignore errors during startup
             }
 
-            this.startProgress++;
+            this.startProgress+=0.25;
             this.updateProgress(this.initializeMsg, this.startProgress);
 
             // Wait before next attempt
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         throw new Error(`Timeout waiting for ${service.name} to become healthy`);
@@ -342,7 +342,7 @@ class ServiceManager {
                     service.process.kill('SIGINT'); // Use SIGINT instead of SIGTERM
 
                     let pollingInterval = null;
-                    const maxWaitTime = 10000; // 10 seconds total wait time
+                    const maxWaitTime = 20000; // 20 seconds total wait time
                     const pollIntervalTime = 1000; // Check every 1 second
                     const startTime = Date.now();
 
@@ -549,7 +549,7 @@ class ServiceManager {
                             // Start the fake progress timer if still running
                             progressIntervalId = setInterval(() => {
                                 if (visualProgress < maxFakeProgress) {
-                                    visualProgress = Math.min(visualProgress + 0.3, maxFakeProgress);
+                                    visualProgress = Math.min(visualProgress + 0.05, maxFakeProgress);
                                     // Update UI with fake progress but last real message
                                     this.updateProgress(lastActualMessage, visualProgress);
                                     // console.log(`Fake progress incremented to ${visualProgress}%`);
@@ -558,7 +558,7 @@ class ServiceManager {
                                     // in case a real update resets it later.
                                     // console.log("Fake progress reached cap.");
                                 }
-                            }, 2000); // Increment every two seconds
+                            }, 1500); // Increment every second
                             // console.log("Started fake progress interval");
                         }
 

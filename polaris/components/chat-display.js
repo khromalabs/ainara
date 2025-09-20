@@ -31,7 +31,53 @@ class ChatDisplay extends BaseComponent {
         const { ipcRenderer } = require('electron');
         this.ipcRenderer = ipcRenderer;
         this.keydownHandler = null;
+        this.inputHandler = this.autoResizeTextArea.bind(this);
+        this.messageHistory = [];
+        this.historyIndex = 0;
     }
+
+    autoResizeTextArea() {
+        const textarea = this.textInput;
+        // const initialFontSize = '1.5em';
+        // const smallerFontSize = '1.2em';
+        const maxHeight = 200; // px
+
+        // Reset height to correctly calculate scrollHeight for line counting
+        textarea.style.height = 'auto';
+
+        // TODO temporally disabled
+        // const computedStyle = window.getComputedStyle(textarea);
+        // const lineHeight = parseFloat(computedStyle.lineHeight);
+        // scrollHeight includes padding, so we subtract it to get content height
+        // const paddingTop = parseFloat(computedStyle.paddingTop);
+        // const paddingBottom = parseFloat(computedStyle.paddingBottom);
+        // const contentHeight = textarea.scrollHeight - paddingTop - paddingBottom;
+        // const lines = Math.round(contentHeight / lineHeight);
+        // // Adjust font size based on lines
+        // if (lines > 2) {
+        //     textarea.style.fontSize = smallerFontSize;
+        // } else {
+        //     textarea.style.fontSize = initialFontSize;
+        // }
+
+        // After potential font size change, recalculate final height
+        textarea.style.height = 'auto';
+        const finalScrollHeight = textarea.scrollHeight;
+
+        if (finalScrollHeight > maxHeight) {
+            textarea.style.height = `${maxHeight}px`;
+            textarea.style.overflowY = 'auto';
+        } else {
+            textarea.style.height = `${finalScrollHeight}px`;
+            textarea.style.overflowY = 'hidden';
+        }
+    }
+
+    // Add paste event listener for proper resize handling
+    pasteHandler = () => {
+        // Use setTimeout to ensure the value is updated before resizing
+        setTimeout(() => this.autoResizeTextArea(), 1);
+    };
 
     async enterTypingMode() {
         // Set state in window first
@@ -43,19 +89,47 @@ class ChatDisplay extends BaseComponent {
         this.textInput.focus();
         this.container.style.marginBottom = '60px';
 
+        this.textInput.addEventListener('input', this.inputHandler);
+        this.textInput.addEventListener('paste', this.pasteHandler);
+        this.autoResizeTextArea();
+
+
         this.keydownHandler = async (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 const text = this.textInput.value.trim();
                 if (text) {
+                    this.messageHistory.push(text);
+                    this.historyIndex = this.messageHistory.length;
                     this.addMessage(text, 1, false);
                     console.log("SENDING process-typed-message");
                     ipcRenderer.send('process-typed-message', text);
                     this.textInput.value = '';
+                    this.autoResizeTextArea();
                 }
                 this.exitTypingMode();
             } else if (e.key === 'Escape') {
                 this.exitTypingMode();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (this.historyIndex > 0) {
+                    this.historyIndex--;
+                    this.textInput.value = this.messageHistory[this.historyIndex];
+                    this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
+                    this.autoResizeTextArea();
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (this.historyIndex < this.messageHistory.length) {
+                    this.historyIndex++;
+                    if (this.historyIndex < this.messageHistory.length) {
+                        this.textInput.value = this.messageHistory[this.historyIndex];
+                    } else {
+                        this.textInput.value = '';
+                    }
+                    this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
+                    this.autoResizeTextArea();
+                }
             }
         };
 
@@ -67,6 +141,8 @@ class ChatDisplay extends BaseComponent {
             this.textInput.removeEventListener('keydown', this.keydownHandler);
             this.keydownHandler = null;
         }
+        this.textInput.removeEventListener('input', this.inputHandler);
+        this.textInput.removeEventListener('paste', this.inputHandler);
 
         // Set state in window first
         await this.ipcRenderer.invoke('set-typing-mode-state', false);
@@ -75,6 +151,7 @@ class ChatDisplay extends BaseComponent {
         this.typingArea.style.opacity = '0';
         this.textInput.style.display = 'none';
         this.textInput.value = '';
+        this.autoResizeTextArea();
         this.container.style.marginBottom = '0';
         ipcRenderer.send('exit-typing-mode');
     }
@@ -218,15 +295,35 @@ class ChatDisplay extends BaseComponent {
                     this.exitTypingMode();
                 });
 
-                ipcRenderer.on('typing-key-pressed', (event, key) => {
+                ipcRenderer.on('hide', () => {
+                    console.log('ChatDisplay: Saving message in history');
+                    const text = this.textInput.value.trim();
+                    if (text) {
+                        console.log('ChatDisplay: Saving message in history');
+                        this.messageHistory.push(text);
+                        this.historyIndex = this.messageHistory.length;
+                    }
+                });
+
+                ipcRenderer.on('typing-key-pressed', async (event, key) => {
                     console.log('ChatDisplay: Received typing key:', key);
                     if (!this.isTypingMode) {
-                        this.enterTypingMode();
-                        this.textInput.value = key;
+                        await this.enterTypingMode();
+                        if (key == "ArrowUp" || key == "ArrowDown") {
+                            await this.keydownHandler({
+                                key: key, preventDefault: () => {}
+                            });
+                        } else {
+                            this.textInput.value = key;
+                        }
                     } else {
                         this.textInput.value += key;
                     }
+                    this.autoResizeTextArea();
                     this.textInput.focus();
+                });
+
+                ipcRenderer.on('save-text', () => {
                 });
 
                 console.log('ChatDisplay: IPC listeners setup complete');

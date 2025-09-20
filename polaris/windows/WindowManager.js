@@ -17,12 +17,14 @@
 // Lesser General Public License for more details.
 
 const { screen, ipcMain } = require('electron');
-const Logger = require('../utils/logger');
-const path = require('path');
-const { nativeTheme } = require('electron');
+const { EventEmitter } = require('events');
+const Logger = require('../framework/logger');
 
-class WindowManager {
+var me;
+
+class WindowManager extends EventEmitter {
     constructor(config) {
+        super();
         this.config = config;
         this.windows = new Map();
         this.handlers = {
@@ -32,10 +34,9 @@ class WindowManager {
             beforeHide: () => {},
             onFocus: () => {},
         };
-        this.tray = null;
-        this.iconPath = null;
-        this.currentState = 'inactive';
         this.basePath = null;
+        this.lastShowTimestamp = 0;  // Track when we last showed windows
+        me = this;
     }
 
     initialize(windowClasses, basePath) {
@@ -43,11 +44,6 @@ class WindowManager {
         this.handlers = this.collectHandlers(windowClasses);
         this.createWindows(windowClasses);
         this.setupWindowEvents();
-    }
-
-    setTray(tray, iconPath) {
-        this.tray = tray;
-        this.iconPath = iconPath;
     }
 
     collectHandlers() {  // ( windowClasses )
@@ -96,6 +92,12 @@ class WindowManager {
             window.handlers = window.constructor.getHandlers();
 
             window.on('blur', () => {
+                // Ignore blur for 500ms after show
+                const timeSinceShow = Date.now() - this.lastShowTimestamp;
+                if (timeSinceShow < 500) {
+                    Logger.log('Ignoring blur shortly after show');
+                    return;
+                }
                 // Add delay to allow focus to settle on another window
                 setTimeout(() => {
                     if (!this.isAnyApplicationWindowFocused()) {
@@ -108,8 +110,7 @@ class WindowManager {
                     } else {
                         Logger.log('WindowManager: Focus still within application windows');
                     }
-                }, 100);
-
+                }, 300);
             });
 
             window.window.webContents.on('crashed', () => {
@@ -171,7 +172,7 @@ class WindowManager {
                     const anyVisible = Array.from(this.windows.values()).some(w => w.isVisible());
                     if (anyVisible) {
                         Logger.log('At least one window is visible after restore - updating tray icon to active');
-                        this.updateTrayIcon('active');
+                        me.emit('visibility-changed', 'active');
                     }
                 }, 100); // Small delay to ensure state is updated
             });
@@ -184,21 +185,19 @@ class WindowManager {
             .some(window => window.isFocused());
     }
 
-    showAll() {
-        // Disable global shortcut when showing windows
-        if (global.shortcutRegistered) {
-            const shortcutKey = this.config.get('shortcuts.toggle', 'F1');
-            require('electron').globalShortcut.unregister(shortcutKey);
-            global.shortcutRegistered = false;
-            Logger.log('Disabled global shortcut while windows shown');
+    showAll(force = false) {
+        if (force || !me.isAnyVisible()) {
+            // Remove throttling before showing windows
+            me.applyBackgroundThrottling(false);
+            this.lastShowTimestamp = Date.now();  // Update timestamp on show
+            me.windows.forEach(window => {
+                window.show();
+                Logger.log("showAll: Shown window: " + window.prefix)
+            });
+            me.emit('visibility-changed', 'active');
+        } else {
+            Logger.log("showAll: No force and visible windows, skipping.")
         }
-
-        // Remove throttling before showing windows
-        this.applyBackgroundThrottling(false);
-
-        this.windows.forEach(window => window.show());
-        this.handlers.onShow(this);
-        this.updateTrayIcon('active'); // Update tray icon to active state
     }
 
     hideAll(force = false) {
@@ -213,7 +212,7 @@ class WindowManager {
                     // Background throttling is applied in the window.hide() method
                 }
             });
-            this.updateTrayIcon('inactive'); // Update tray icon to inactive state
+            this.emit('visibility-changed', 'inactive');
 
             // Apply additional throttling to all windows
             this.applyBackgroundThrottling(true);
@@ -223,8 +222,11 @@ class WindowManager {
     toggleVisibility() {
         if (this.isAnyVisible()) {
             this.hideAll(true);
+            return false;
         } else {
             this.showAll();
+            this.lastShowTimestamp = Date.now();  // Update timestamp on show
+            return true;
         }
     }
 
@@ -246,39 +248,8 @@ class WindowManager {
         return this.windows.get(prefix);
     }
 
-    updateTrayIcon(state) {
-        this.currentState = state;
-        const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-
-        // Check if iconPath and tray are properly initialized
-        if (this.iconPath && this.tray && !this.tray.isDestroyed()) {
-            let iconFileName;
-
-            // Use platform-specific icon naming
-            if (process.platform === 'darwin') {
-                // On macOS, use template image
-                iconFileName = `tray-icon-${state}-Template.png`;
-            } else {
-                // On other platforms, use theme-specific icons
-                iconFileName = `tray-icon-${state}-${theme}.png`;
-            }
-
-            const iconPath = path.join(this.iconPath, iconFileName);
-            Logger.log(`Setting tray icon: ${iconPath} (${theme} theme)`);
-            this.tray.setImage(iconPath);
-        } else {
-            Logger.warn(`Cannot update tray icon: iconPath=${this.iconPath}, tray=${!!this.tray}`);
-        }
-    }
-
     getWindows() {
         return Array.from(this.windows.values());
-    }
-
-    updateTheme() {
-        if (this.tray && this.iconPath) {
-            this.updateTrayIcon(this.currentState);
-        }
     }
 
     // New method to apply background throttling to all windows

@@ -43,10 +43,10 @@ class SystemFinder(Skill):
         "Use this skill when the user wants to find or search for files,"
         " documents, or folders on their system. This skill can handle queries"
         " related to locating files by name, type, content, date, size, or"
-        " location.\n\nExamples include: 'find PDF files from last week', 'search"
-        " for marketing presentation', 'locate budget spreadsheet in"
-        " Downloads', 'show me photos from yesterday'."
-        "Keywords: find, search,"
+        " location.\n\nExamples include: 'find PDF files from last week',"
+        " 'search for marketing presentation', 'locate budget spreadsheet in"
+        " Downloads', 'show me photos from yesterday'. Don't open the file"
+        " automatically unless the user requests that.Keywords: find, search,"
         " locate, file, document, folder, PDF, image, presentation,"
         " spreadsheet, recent, old, large, small, Downloads, Desktop."
     )
@@ -54,9 +54,6 @@ class SystemFinder(Skill):
     def __init__(self):
         super().__init__()
         self.backend = self._initialize_backend()
-
-        llm_config = config.get("llm", {})
-        self.llm = create_llm_backend(llm_config)
 
         # Query parsing prompt with action detection
         self.parse_prompt = """You are a file search query parser.
@@ -139,17 +136,22 @@ Output JSON in this format:
 
         # Fall back to basic implementation
         logging.info("Using basic search backend")
-        return BackendsCustom()
+        backend = BackendsCustom()
+        backend.initialize()
+        return backend
 
     async def parse_query(self, query: str) -> Dict[str, Any]:
         """Use LLM to parse natural language query"""
         try:
-            llm_response = await self.llm.aprocess_text(
-                text=query, system_message=self.parse_prompt
+            llm_response = await self.llm.achat(
+                # text=query, system_message=self.parse_prompt
+                [
+                    {"role": "system", "content": self.parse_prompt},
+                    {"role": "user", "content": query},
+                ],
+                stream=False,
             )
-            logging.debug(
-                f"Raw LLM response for query parsing: {llm_response}"
-            )
+            logging.info(f"Raw LLM response for query parsing: {llm_response}")
 
             if not llm_response or not isinstance(llm_response, str):
                 raise ValueError(f"Invalid LLM response: {llm_response}")
@@ -194,8 +196,12 @@ Output JSON in this format:
 
         try:
             # Get LLM analysis
-            llm_response = await self.llm.aprocess_text(
-                text=json.dumps(context), system_message=self.analysis_prompt
+            llm_response = await self.llm.achat(
+                [
+                    {"role": "system", "content": self.analysis_prompt},
+                    {"role": "user", "content": json.dumps(context)},
+                ],
+                stream=False,
             )
             logging.debug(f"Raw LLM response for analysis: {llm_response}")
 
@@ -268,7 +274,7 @@ Output JSON in this format:
         limit: Annotated[int, "Maximum number of results to return"] = 10,
         show_location: Annotated[
             Optional[bool], "Whether to show file location in file explorer"
-        ] = True,
+        ] = False,
     ) -> Dict[str, Any]:
         """Find files using natural language description and show their location
 
@@ -279,6 +285,9 @@ Output JSON in this format:
             "photos from yesterday larger than 5MB"
         """
         try:
+            # (re-)create llm instance
+            self.llm = create_llm_backend(config.get("llm", {}))
+
             # Parse query using LLM
             params = await self.parse_query(query)
 
@@ -298,7 +307,20 @@ Output JSON in this format:
                     "interpreted_as": params,
                     "shown_file": str(result.path),
                     "message": show_result["message"],
-                    "matches": [r.__dict__ for r in results],
+                    "matches": [
+                        {
+                            "path": str(r.path),
+                            "name": r.name,
+                            "type": r.type,
+                            "size": r.size,
+                            "created": r.created.isoformat(),
+                            "modified": r.modified.isoformat(),
+                            "snippet": r.snippet,
+                            "metadata": r.metadata,
+                            "score": r.score,
+                        }
+                        for r in results
+                    ],
                 }
 
             # When no files found
@@ -310,7 +332,20 @@ Output JSON in this format:
                 "interpreted_as": params,
                 "analysis": analysis,
                 "backend": self.backend.__class__.__name__,
-                "matches": [r.__dict__ for r in results],
+                "matches": [
+                    {
+                        "path": str(r.path),
+                        "name": r.name,
+                        "type": r.type,
+                        "size": r.size,
+                        "created": r.created.isoformat(),
+                        "modified": r.modified.isoformat(),
+                        "snippet": r.snippet,
+                        "metadata": r.metadata,
+                        "score": r.score,
+                    }
+                    for r in results
+                ],
             }
 
         except Exception as e:

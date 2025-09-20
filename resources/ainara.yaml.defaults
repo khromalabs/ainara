@@ -65,6 +65,20 @@ orakle:
 audio:
   buffer_size_mb: 10
 
+# Backup configuration
+backup:
+  # Enable or disable automatic backups
+  enabled: false
+  # Directory to store backup files (e.g., a folder synced with Dropbox/Google Drive)
+  # Leave empty to disable backups.
+  directory: ""
+  # Interval in hours between backups
+  interval_hours: 24
+  # Number of old backup versions to keep
+  versions_to_keep: 7
+  # Optional password to encrypt backups (leave empty for no encryption)
+  password: ""
+
 # Memory configuration
 memory:
   enabled: false
@@ -142,6 +156,8 @@ apis:
 #   # - macOS: ~/Library/Caches/Ainara
 #   # - Linux: ~/.cache/ainara
 #   directory: ""
+#   # Path for sentence-transformers models cache
+#   sentence_transformers_home: ""
 
 # Data configuration (uncomment to customize)
 # data:

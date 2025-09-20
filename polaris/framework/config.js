@@ -85,6 +85,9 @@ class ConfigManager {
                 this.config.pybridge.api_url = 'http://127.0.0.1:8101';
             }
 
+            this.config.stt = this.config.stt ?? {};
+            this.config.stt.review = this.config.stt.review ?? true;
+
             // Update the timestamp after successful load
             this.lastLoadTimestamp = this._getFileModificationTime();
             console.log('Configuration loaded successfully');

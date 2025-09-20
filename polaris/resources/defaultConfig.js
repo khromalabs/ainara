@@ -18,6 +18,7 @@
 
 module.exports = {
     stt: {
+        review: true,
         modules: {
             whisper: {
                 service: 'custom',
@@ -72,14 +73,19 @@ module.exports = {
     setup: {
         completed: false,
         version: 0,
-        timestamp: 0
+        timestamp: 0,
+        firstLaunch: true
     },
     startup: {
-        startMinimized: false
+        startMinimized: false,
+        backupDirectory: ""
     },
     ollama: {
         serverIp: "127.0.0.1",
         port: 11434,
         totalVram: 0
+    },
+    ui: {
+        backgroundNotifications: false
     }
 };

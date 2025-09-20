@@ -313,12 +313,15 @@ class DependencyChecker:
 
                 # Fallback: Check common CUDA paths if 'where' fails
                 program_files = os.environ.get('ProgramFiles', 'C:\\Program Files')
-                cuda_path = os.path.join(program_files, 'NVIDIA GPU Computing Toolkit', 'CUDA')
-                common_versions = ['v12.1', 'v12.0', 'v11.8', 'v11.7', 'v11.0'] # Example versions
-                for version in common_versions:
-                    bin_path = os.path.join(cuda_path, version, 'bin')
-                    if os.path.exists(os.path.join(bin_path, f"{library_name}.dll")):
-                        return True
+                cuda_base_path = os.path.join(program_files, 'NVIDIA GPU Computing Toolkit', 'CUDA')
+                if os.path.exists(cuda_base_path):
+                    # Dynamically find installed CUDA versions instead of hardcoding
+                    installed_versions = [d for d in os.listdir(cuda_base_path) if os.path.isdir(os.path.join(cuda_base_path, d)) and d.lower().startswith('v')]
+                    # Check in descending order to find the latest version first
+                    for version in sorted(installed_versions, reverse=True):
+                        bin_path = os.path.join(cuda_base_path, version, 'bin')
+                        if os.path.exists(os.path.join(bin_path, f"{library_name}.dll")):
+                            return True
                 return False # Return false if not found by 'where' or in common paths
             except (subprocess.SubprocessError, FileNotFoundError):
                 return False
@@ -341,8 +344,44 @@ class DependencyChecker:
             "cuda_version": None,
             "cudnn_version": None,
             "pytorch_cuda_available": False,
-            "driver_issue": False
+            "driver_issue": False,
+            "total_ram_gb": None,
+            "is_apple_silicon": False,
         }
+
+        # --- Get System RAM and check for Apple Silicon ---
+        try:
+            if sys.platform == 'darwin':
+                if platform.machine() == 'arm64':
+                    details['is_apple_silicon'] = True
+                # Get RAM on macOS
+                result = subprocess.run(
+                    ['sysctl', '-n', 'hw.memsize'],
+                    capture_output=True, text=True, check=True, timeout=2
+                )
+                mem_bytes = int(result.stdout.strip())
+                details['total_ram_gb'] = round(mem_bytes / (1024**3), 1)
+            elif sys.platform == 'linux':
+                # Get RAM on Linux
+                with open('/proc/meminfo', 'r') as f:
+                    for line in f:
+                        if 'MemTotal' in line:
+                            mem_kb = int(line.split()[1])
+                            details['total_ram_gb'] = round(mem_kb / (1024**2), 1)
+                            break
+            elif sys.platform == 'win32':
+                # Get RAM on Windows
+                result = subprocess.run(
+                    ['wmic', 'ComputerSystem', 'get', 'TotalPhysicalMemory', '/value'],
+                    capture_output=True, text=True, check=True, timeout=5
+                )
+                for line in result.stdout.splitlines():
+                    if 'TotalPhysicalMemory' in line:
+                        mem_bytes = int(line.split('=')[1].strip())
+                        details['total_ram_gb'] = round(mem_bytes / (1024**3), 1)
+                        break
+        except Exception as e:
+            logger.warning(f"Could not determine system RAM or architecture: {e}")
 
         # First detect if NVIDIA hardware is present
         has_nvidia_gpu, gpu_list = DependencyChecker.detect_nvidia_gpus()
@@ -442,6 +481,7 @@ class DependencyChecker:
                     except Exception as e:
                         error_msg = str(e)
                         details["error_message"] = error_msg
+                        logger.error(f"PyTorch CUDA initialization error: {error_msg}")
 
                         if "Found no NVIDIA driver" in error_msg:
                             missing_libs.append("NVIDIA driver")
