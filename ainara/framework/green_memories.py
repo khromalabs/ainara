@@ -909,6 +909,21 @@ class GREENMemories:
                         f" \"{memory['memory']}\""
                     )
 
+                # Format dates for display
+                for key in ["created_at", "last_updated"]:
+                    if memory.get(key):
+                        try:
+                            dt_obj = datetime.fromisoformat(memory[key])
+                            memory[f"{key}_formatted"] = dt_obj.strftime(
+                                "%Y-%m-%d %H:%M"
+                            )
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                "Could not parse date string for"
+                                f" {key}: {memory[key]}"
+                            )
+                            memory[f"{key}_formatted"] = None
+
             return semantic_memories
 
         except Exception as e:

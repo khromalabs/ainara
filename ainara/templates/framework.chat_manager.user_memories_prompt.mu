@@ -6,5 +6,5 @@ Here are key facts and preferences about the user from your memories. Use them t
 
 **User Profile:**
 {{#memories}}
-- {{{memory}}} (Relevance: {{relevance_score}}, Created: {{created_at}}, Last updated: {{last_updated}})
+- {{{memory}}} (Relevance: {{relevance_score}}, Created: {{created_at_formatted}}, Last updated: {{last_updated_formatted}})
 {{/memories}}

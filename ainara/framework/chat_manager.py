@@ -33,11 +33,11 @@ from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.green_memories import GREENMemories
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -150,8 +150,7 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         user_memories_empty = (
-            self.green_memories
-            and self.green_memories.is_empty()
+            self.green_memories and self.green_memories.is_empty()
         )
         has_prior_user_messages = any(
             msg.get("role") == "user" for msg in self.chat_history[:-1]
@@ -429,7 +428,9 @@ class ChatManager:
                 yield ndjson("message", "stream", event_data)
             else:
                 # logger.info("_process_streaming_sentence 4 '" + sentence + "'")
-                char_delay = duration / len(cleaned_sentence) if cleaned_sentence else 0
+                char_delay = (
+                    duration / len(cleaned_sentence) if cleaned_sentence else 0
+                )
                 if not self.tts.play_audio(audio_file):
                     raise RuntimeError("Failed to start audio playback")
                 for char in cleaned_sentence:
@@ -888,7 +889,9 @@ class ChatManager:
     def _handle_test_nexus_stream(self, command: str, stream: str):
         """Handles streaming for the /testnexus command."""
         parts = command.strip().split(" ", 2)
-        usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+        usage_msg = (
+            "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+        )
 
         if len(parts) < 3:
             if stream == "cli":
@@ -898,14 +901,17 @@ class ChatManager:
                 yield ndjson(
                     "message",
                     "stream",
-                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
                 )
                 yield ndjson("signal", "loading", {"state": "stop"})
                 yield ndjson("signal", "completed", None)
             return
 
         _command, ui_parts_str, data_json_str = parts
-        ui_parts = ui_parts_str.split(',')
+        ui_parts = ui_parts_str.split(",")
 
         if len(ui_parts) != 3:
             if stream == "cli":
@@ -915,7 +921,10 @@ class ChatManager:
                 yield ndjson(
                     "message",
                     "stream",
-                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
                 )
                 yield ndjson("signal", "loading", {"state": "stop"})
                 yield ndjson("signal", "completed", None)
@@ -952,11 +961,7 @@ class ChatManager:
                 f"Data: {json.dumps(nexus_data)}"
             )
             self.llm.add_msg(history_message, self.chat_history, "assistant")
-            yield ndjson(
-                "ui",
-                "renderNexus",
-                nexus_data
-            )
+            yield ndjson("ui", "renderNexus", nexus_data)
             yield ndjson("signal", "loading", {"state": "stop"})
             yield ndjson("signal", "completed", None)
             self.nexus_test = self.nexus_test + 1
@@ -1023,18 +1028,20 @@ class ChatManager:
             return self._handle_test_nexus_stream(command, stream)
         else:  # no stream
             parts = command.strip().split(" ", 2)
-            usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+            usage_msg = (
+                "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+            )
             if len(parts) < 3:
                 return usage_msg
 
             _command, ui_parts_str, data_json_str = parts
-            ui_parts = ui_parts_str.split(',')
+            ui_parts = ui_parts_str.split(",")
             if len(ui_parts) != 3:
                 return usage_msg
 
             vendor, bundle, component = ui_parts
             component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
-            return f'<nexus path="{component_path}" data=\'{data_json_str}\'/>'
+            return f"<nexus path=\"{component_path}\" data='{data_json_str}'/>"
 
     def _handle_test_doc_view_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
@@ -1049,7 +1056,7 @@ class ChatManager:
 
             command_body = parts[1]
             doc_format, doc_content = command_body.split(",", 1)
-            return f'```{doc_format}\n{doc_content}```'
+            return f"```{doc_format}\n{doc_content}```"
 
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
@@ -1167,9 +1174,10 @@ class ChatManager:
                 )
                 if recent_memories_summary:
                     final_system_content += (
-                        "\n\n--- This is a summary of topics and facts that have been"
-                        " discussed recently. Use this to maintain conversation"
-                        f" continuity. ---\n{recent_memories_summary}"
+                        "\n\n--- This is a summary of topics and facts that"
+                        " have been discussed recently. Use this to maintain"
+                        " conversation continuity."
+                        f" ---\n{recent_memories_summary}"
                     )
 
             # --- Context Memories ---
@@ -1200,10 +1208,8 @@ class ChatManager:
 
                 # logger.info(f"search_context: {search_context}")
 
-                relevant_memories = (
-                    self.green_memories.get_relevant_memories(
-                        search_context
-                    )
+                relevant_memories = self.green_memories.get_relevant_memories(
+                    search_context
                 )
                 # logger.info(f"relevant_memories: {relevant_memories}")
 
@@ -1298,7 +1304,10 @@ class ChatManager:
                     yield ndjson("signal", "thinking", {"state": "stop"})
                     continue
 
-                if isinstance(chunk, dict) and chunk.get("type") == "nexus_skill_result":
+                if (
+                    isinstance(chunk, dict)
+                    and chunk.get("type") == "nexus_skill_result"
+                ):
                     vendor = chunk.get("vendor")
                     bundle = chunk.get("bundle")
                     component = chunk.get("component")
@@ -1307,8 +1316,9 @@ class ChatManager:
 
                     if not all([vendor, bundle, component]):
                         logger.error(
-                            "Nexus skill result received with incomplete component info:"
-                            f" vendor='{vendor}', bundle='{bundle}', component='{component}'"
+                            "Nexus skill result received with incomplete"
+                            f" component info: vendor='{vendor}',"
+                            f" bundle='{bundle}', component='{component}'"
                         )
                         continue
 
@@ -1317,23 +1327,21 @@ class ChatManager:
                     )
 
                     nexus_data = {
-                            "component_path": component_path,
-                            "data": skill_data,
-                            "query": query
+                        "component_path": component_path,
+                        "data": skill_data,
+                        "query": query,
                     }
 
                     # Create a descriptive message for the chat history
                     history_message = (
-                        "Nexus component data was generated and sent to the UI. "
-                        f"Data: {json.dumps(nexus_data)}"
+                        "Nexus component data was generated and sent to the"
+                        f" UI. Data: {json.dumps(nexus_data)}"
                     )
-                    self.llm.add_msg(history_message, self.chat_history, "assistant")
+                    self.llm.add_msg(
+                        history_message, self.chat_history, "assistant"
+                    )
 
-                    yield ndjson(
-                        "ui",
-                        "renderNexus",
-                        nexus_data
-                    )
+                    yield ndjson("ui", "renderNexus", nexus_data)
                     continue
 
                 if not chunk:
@@ -1364,7 +1372,9 @@ class ChatManager:
                                     pre_doc_text, stream
                                 )
 
-                            doc_format = doc_start_match.group(1) or "plaintext"
+                            doc_format = (
+                                doc_start_match.group(1) or "plaintext"
+                            )
                             if stream == "json":
                                 yield ndjson(
                                     "ui",
@@ -1487,9 +1497,7 @@ class ChatManager:
                     self.turn_counter = 0  # Reset in-memory counter
                 logger.info(f"Saving turn counter state: {self.turn_counter}")
                 if self.green_memories:
-                    self.green_memories.save_turn_counter(
-                        self.turn_counter
-                    )
+                    self.green_memories.save_turn_counter(self.turn_counter)
 
             # For non-streaming mode, return the processed answer
             if not stream:
