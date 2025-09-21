@@ -379,6 +379,31 @@ class GREENMemories:
                     )
                     logger.info("Schema update complete.")
 
+                if "created_at" not in columns:
+                    logger.info(
+                        "Adding 'created_at' column to user_memories table."
+                    )
+                    # Add the column, allowing NULLs for now
+                    cursor.execute(
+                        "ALTER TABLE user_memories ADD COLUMN created_at TEXT"
+                    )
+                    # Populate with last_updated for existing records
+                    cursor.execute(
+                        "UPDATE user_memories SET created_at = last_updated"
+                        " WHERE created_at IS NULL"
+                    )
+                    logger.info(
+                        "Populated 'created_at' for existing memories."
+                    )
+                    # While we could add a NOT NULL constraint, it's complex in SQLite.
+                    # The application logic will ensure it's always populated for new rows.
+                    self.storage.set_metadata("vector_db_needs_reset", "true")
+                    logger.info(
+                        "Flagged vector DB for reset on next startup due to"
+                        " schema change."
+                    )
+                    logger.info("Schema update complete.")
+
                 # This is now safe to run in all cases, as the column is guaranteed to exist.
                 cursor.execute(
                     "CREATE INDEX IF NOT EXISTS idx_memories_status ON"
@@ -1145,7 +1170,7 @@ class GREENMemories:
             target_section = "extended_memories"
 
         memory_id = str(uuid.uuid4())
-        last_updated = datetime.now(timezone.utc).isoformat()
+        now_timestamp = datetime.now(timezone.utc).isoformat()
         source_ids = json.dumps(
             [
                 uid
@@ -1161,8 +1186,8 @@ class GREENMemories:
             with self.storage.conn:
                 self.storage.conn.execute(
                     """
-                    INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO user_memories (id, memory_type, topic, memory, relevance, created_at, last_updated, source_message_ids)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         memory_id,
@@ -1170,7 +1195,8 @@ class GREENMemories:
                         topic,
                         memory_text,
                         1.0,
-                        last_updated,
+                        now_timestamp,
+                        now_timestamp,
                         source_ids,
                     ),
                 )
@@ -1187,7 +1213,8 @@ class GREENMemories:
                     "topic": topic,
                     "memory": memory_text,
                     "relevance": 1.0,
-                    "last_updated": last_updated,
+                    "created_at": now_timestamp,
+                    "last_updated": now_timestamp,
                     "source_message_ids": json.loads(source_ids),
                     "status": "current",
                 }
