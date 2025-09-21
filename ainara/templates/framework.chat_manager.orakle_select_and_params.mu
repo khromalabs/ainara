@@ -6,7 +6,7 @@
 }}
 Analyze the user's request: "{{query}}"
 
-Here are the potentially relevant skills identified by a preliminary search, along with their detailed descriptions and parameters:
+Here are the potentially relevant skills ids identified by a preliminary search, along with their detailed descriptions and parameters:
 
 {{{candidate_skills}}}
 

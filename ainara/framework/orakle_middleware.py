@@ -130,17 +130,17 @@ class OrakleMiddleware:
         command_end_delimiter = "ORAKLE"
 
         for token in token_stream:
-            # logger.info(f"OrakleMiddleware received token: {repr(token)}")
+            logger.info(f"OrakleMiddleware received token: {repr(token)}")
             if token is None:
                 continue
 
             if in_command:
                 command_buffer += token
                 # Check if we've reached the end delimiter on a line by itself
-                # logger.info(
-                #     "OrakleMiddleware in_command=True, command_buffer:"
-                #     f" {repr(command_buffer)}"
-                # )
+                logger.info(
+                    "OrakleMiddleware in_command=True, command_buffer:"
+                    f" {repr(command_buffer)}"
+                )
                 # This handles both "ORAKLE" and "ORAKLE;" endings
                 if re.search(
                     re.escape(command_end_delimiter) + r"(?:;|\s*$)",
@@ -303,7 +303,7 @@ class OrakleMiddleware:
 
             # Format skill description with parameters
             skill_desc = (
-                f"## Skill {i}: {skill_id} (match score: {score:.2f})\n\n"
+                f"## Skill id {i}: {skill_id} (match score: {score:.2f})\n\n"
             )
             skill_desc += (
                 "Description:"

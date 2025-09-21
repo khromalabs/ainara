@@ -108,6 +108,27 @@ class LiteLLM(LLMBackend):
         """Return the cached context window size"""
         return self._context_window
 
+    def _strip_think_blocks(self, text: str) -> str:
+        """
+        Strips <think>...</think> blocks from the text.
+        If an opening <think> tag is found without a closing tag,
+        it logs an error and returns an empty string.
+        """
+        open_tags = text.count("<think>")
+        close_tags = text.count("</think>")
+
+        if open_tags > close_tags:
+            self.logger.warning(
+                "Incomplete <think> block found in LLM response "
+                f"({open_tags} open, {close_tags} close). "
+                "The response will be discarded."
+            )
+            # self.logger.info(f"Incomplete response: {text}")
+            return ""
+
+        # If tags are balanced or no tags, just strip them out
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     def normalize_model_name(self, model: str, provider: str) -> str:
         """Ensure model name follows <provider>/<model> format"""
         if not model or not provider or provider in ["custom", "custom_api"]:
@@ -332,9 +353,7 @@ class LiteLLM(LLMBackend):
                     self.logger.info("Got complete response")
                     full_response = self._handle_normal_response(response)
                     # Strip <think> blocks for non-streaming responses
-                    cleaned_response = re.sub(
-                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
-                    ).strip()
+                    cleaned_response = self._strip_think_blocks(full_response)
                     return cleaned_response
 
             except Exception as e:
@@ -418,7 +437,7 @@ class LiteLLM(LLMBackend):
             completion_kwargs = {
                 "model": provider["model"],
                 "messages": clean_messages,
-                "temperature": 0.2,
+                # "temperature": 0.2,
                 "stream": stream,
                 **(
                     {"api_base": provider["api_base"]}
@@ -452,9 +471,7 @@ class LiteLLM(LLMBackend):
                     self.logger.info("Got complete response")
                     full_response = self._handle_normal_response(response)
                     # Strip <think> blocks for non-streaming responses
-                    cleaned_response = re.sub(
-                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
-                    ).strip()
+                    cleaned_response = self._strip_think_blocks(full_response)
                     return cleaned_response
 
             except Exception as e:

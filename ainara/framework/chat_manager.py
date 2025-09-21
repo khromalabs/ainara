@@ -1250,7 +1250,7 @@ class ChatManager:
                 buffer = ""
                 in_thinking = False
                 for chunk in raw_stream:
-                    # logger.info(f"LLM raw chunk: {repr(chunk)}")
+                    logger.info(f"LLM raw chunk: {repr(chunk)}")
                     buffer += chunk
                     while True:
                         if not in_thinking:
@@ -1290,7 +1290,7 @@ class ChatManager:
             for chunk in self.orakle_middleware.process_stream(
                 _stream_with_thinking_markers(llm_response_stream), self
             ):
-                # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
+                logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
                 if "_AINARA_THINKING_START_" in chunk:
                     yield ndjson("signal", "thinking", {"state": "start"})
                     continue
