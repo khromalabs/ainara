@@ -38,7 +38,7 @@
     "start": "electron .",
     "build": "electron-builder build",
     "build:win": "electron-builder build --win nsis --publish always",
-    "build:win:msix": "electron-builder build --win msix --publish always",
+    "build:win:appx": "electron-builder build --win appx --publish always",
     "build:mac:x64": "electron-builder build --mac --x64 --publish always",
     "build:mac:arm64": "electron-builder build --mac --arm64 --publish always",
     "build:linux": "electron-builder build --linux --publish always"
@@ -93,14 +93,9 @@
     "win": {
       "target": [
         "nsis",
-        "msix"
+        "appx"
       ],
       "icon": "polaris/resources/icon.ico",
-      "msix": {
-        "identityName": "Khromalabs.AinaraPolaris",
-        "publisherDisplayName": "Khroma Labs",
-        "publisher": "CN=81427736-62D6-46C2-8466-EA597C0FFB41"
-      },
       "extraResources": [
         {
           "from": "dist/servers",
@@ -112,6 +107,11 @@
           ]
         }
       ]
+    },
+    "appx": {
+      "identityName": "Khromalabs.AinaraPolaris",
+      "publisherDisplayName": "Khromalabs",
+      "publisher": "CN=81427736-62D6-46C2-8466-EA597C0FFB41"
     },
     "linux": {
       "target": "AppImage",
