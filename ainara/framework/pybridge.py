@@ -614,7 +614,7 @@ def create_app():
         logger.info("Processing new messages for user profile...")
 
         def memory_progress_callback(progress):
-            # Scale progress from 0-100 to 80-100
+            # Scale progress from 0-100 to 70-90
             scaled_progress = 70 + int(progress * 0.20)
             _send_progress(
                 "running",
@@ -623,7 +623,8 @@ def create_app():
             )
 
         green_memories.process_new_messages_for_update(
-            progress_callback=memory_progress_callback
+            progress_callback=memory_progress_callback,
+            max_progress=90
         )
         logger.info("Message processing complete.")
 
