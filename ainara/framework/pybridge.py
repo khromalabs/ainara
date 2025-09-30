@@ -35,10 +35,10 @@ from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 
 from ainara import __version__
+from ainara.framework.config import config
 from ainara.framework.backup import BackupManager
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.chat_memory import ChatMemory
-from ainara.framework.config import ConfigManager
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.green_memories import GREENMemories
 from ainara.framework.llm import create_llm_backend
@@ -46,11 +46,11 @@ from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
+from ainara.framework.tts.elevenlabs import ElevenLabsTTS
 from ainara.framework.tts.piper import PiperTTS
 from ainara.framework.utils import check_embedding_model, setup_embedding_model
 
-# --- Global instances ---
-config = ConfigManager()
+
 config.load_config()
 
 
@@ -296,8 +296,190 @@ def _validate_skill_key(service: str, keys: dict):
         return False, str(e)
 
 
-def create_app():
+def _send_progress(status: str, progress: int, message: str):
+    """Sends a progress update to stdout for the parent process."""
+    update = {"status": status, "progress": progress, "message": message}
+    # Prefix to make it easy to parse from Node.js
+    print(f"PYBRIDGE_PROGRESS:{json.dumps(update)}")
+    sys.stdout.flush()
 
+
+def check_resources():
+    """Check if required resources are available"""
+    try:
+        results = {"status": "success", "initialized": False, "details": {}}
+
+        # Check Whisper models
+        whisper_status = {"initialized": False}
+        stt_selected_module = config.get("stt.selected_module", "faster_whisper")
+        if stt_selected_module == "faster_whisper":
+            try:
+                # FasterWhisperSTT reads config to determine model size
+                stt_checker = FasterWhisperSTT()
+                whisper_status = stt_checker.check_model()
+            except Exception as e:
+                logger.error(f"Error checking whisper model: {e}")
+                whisper_status["initialized"] = False
+                whisper_status["message"] = f"Error checking model: {e}"
+        else:  # whisper http
+            whisper_status["initialized"] = True
+        results["details"]["whisper"] = whisper_status
+
+        # Check embedding model
+        embedding_status = check_embedding_model()
+        results["details"]["embedding"] = embedding_status
+
+        # Review the overall status
+        if (
+            whisper_status["initialized"]
+            and embedding_status["initialized"]
+        ):
+            results["initialized"] = True
+
+        return results
+    except Exception as e:
+        logger.error(f"Error checking resources: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        return {
+            "status": "error",
+            "message": str(e),
+            "initialized": False,
+        }
+
+
+def initialize_resources(status: dict):
+    """
+    Initialize required resources and stream progress to stdout.
+    """
+    # Temporarily disable offline mode to allow downloads
+    original_hf_offline = os.environ.get("HF_HUB_OFFLINE")
+    if "HF_HUB_OFFLINE" in os.environ:
+        del os.environ["HF_HUB_OFFLINE"]
+    try:
+        _send_progress("running", 0, "Starting initialization...")
+
+        resources_to_init = []
+        if not status.get("details", {}).get("whisper", {}).get("initialized"):
+            resources_to_init.append("whisper")
+        if not status.get("details", {}).get("embedding", {}).get("initialized"):
+            resources_to_init.append("embedding")
+
+        # Check if embedding model needs initialization
+        embedding_check = check_embedding_model()
+        if not embedding_check.get("initialized"):
+            resources_to_init.append("embedding")
+        if not resources_to_init:
+            _send_progress(
+                "complete", 100, "All resources already initialized"
+            )
+            logger.info("Initialization: Resources already present.")
+            return True
+
+        completed_resources = 0
+        total_resources = len(resources_to_init)
+        progress_per_resource = (
+            100 / total_resources if total_resources > 0 else 100
+        )
+
+        # --- Initialize Whisper models if needed ---
+        if "whisper" in resources_to_init:
+            current_progress = int(
+                completed_resources * progress_per_resource
+            )
+            _send_progress(
+                "running", current_progress, "Setting up Whisper models..."
+            )
+            logger.info("Initialization: Setting up Whisper models...")
+            # Instantiating the class will trigger the download
+            stt = FasterWhisperSTT()
+            whisper_result = stt.setup_model()
+            if not whisper_result["success"]:
+                message = (
+                    "Whisper setup failed:"
+                    f" {whisper_result['message']}"
+                )
+                _send_progress("error", current_progress, message)
+                logger.error(message)
+                return False
+            completed_resources += 1
+            _send_progress(
+                "running",
+                int(completed_resources * progress_per_resource),
+                "Whisper setup complete.",
+            )
+
+        # --- Initialize Embedding model if needed ---
+        if "embedding" in resources_to_init:
+            current_progress = int(
+                completed_resources * progress_per_resource
+            )
+            _send_progress(
+                "running",
+                current_progress,
+                "Setting up embedding model...",
+            )
+            logger.info("Initialization: Setting up embedding model...")
+            embedding_result = setup_embedding_model()  # Blocking call
+            if not embedding_result["success"]:
+                message = (
+                    "Embedding model setup failed:"
+                    f" {embedding_result['message']}"
+                )
+                _send_progress("error", current_progress, message)
+                logger.error(message)
+                return False
+            completed_resources += 1
+            _send_progress(
+                "running",
+                int(completed_resources * progress_per_resource),
+                "Embedding model setup complete.",
+            )
+
+        # --- Final success message ---
+        _send_progress(
+            "complete", 100, "Initialization completed successfully"
+        )
+        logger.info("Initialization: Completed successfully.")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error during initialization: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        _send_progress("error", 0, f"Initialization error: {str(e)}")
+        return False
+
+    finally:
+        # Restore the original offline mode setting
+        if original_hf_offline is not None:
+            os.environ["HF_HUB_OFFLINE"] = original_hf_offline
+        else:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+
+
+def check_download_capability():
+    """Check if Hugging Face Hub is reachable for resource downloads."""
+    try:
+        # Use a lightweight HEAD request to check connectivity without downloading content
+        response = requests.head("https://huggingface.co", timeout=10)
+        response.raise_for_status()  # Raises HTTPError for 4xx/5xx status
+        logger.info("Hugging Face Hub is reachable.")
+        return {
+            "can_download": True,
+            "message": "Hugging Face Hub is reachable.",
+        }
+    except requests.RequestException as e:
+        logger.warning(f"Could not reach Hugging Face Hub: {e}")
+        return {
+            "can_download": False,
+            "message": f"Could not reach Hugging Face Hub: {str(e)}",
+        }
+
+
+def create_app():
     llm = create_llm_backend(config.get("llm", {}))
     app.llm = llm
     # # --- DEBUG: ChromaDB Dependency Check ---
@@ -365,9 +547,8 @@ def create_app():
             "Dependency checker not available, skipping dependency check"
         )
 
-    tts = PiperTTS()
-
-    # Choose STT backend based on configuration
+    # Choose STT backend based on configuration. This is safe now because
+    # the main script block ensures models are downloaded before this runs.
     stt_selected_module = config.get("stt.selected_module", "faster_whisper")
     if stt_selected_module == "faster_whisper":
         stt = FasterWhisperSTT()
@@ -379,7 +560,13 @@ def create_app():
     # Initialize TTS with auto-setup
     try:
         logger.info("Initializing TTS system...")
-        tts = PiperTTS()
+        tts_selected_module = config.get("tts.selected_module", "piper")
+        if tts_selected_module == "elevenlabs":
+            tts = ElevenLabsTTS()
+            logger.info("Using ElevenLabs TTS backend")
+        else:
+            tts = PiperTTS()
+            logger.info("Using PiperTTS backend")
         logger.info("TTS system initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize TTS system: {e}")
@@ -578,209 +765,6 @@ def create_app():
 
             logger.error(traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
-
-    @app.route("/setup/check", methods=["GET"])
-    def check_resources():
-        """Check if required resources are available"""
-        try:
-            results = {"status": "success", "initialized": True, "details": {}}
-
-            # Check Whisper models
-            whisper_status = stt.check_model()
-            results["details"]["whisper"] = whisper_status
-
-            # Check embedding model
-            embedding_status = check_embedding_model()
-            results["details"]["embedding"] = embedding_status
-
-            # If any resource is not initialized, set the overall status
-            if (
-                not whisper_status["initialized"]
-                or not embedding_status["initialized"]
-            ):
-                results["initialized"] = False
-
-            return jsonify(results)
-        except Exception as e:
-            logger.error(f"Error checking resources: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
-            return (
-                jsonify(
-                    {
-                        "status": "error",
-                        "message": str(e),
-                        "initialized": False,
-                    }
-                ),
-                500,
-            )
-
-    # --- SSE Event Formatting Helper ---
-    def format_sse(data: dict) -> str:
-        """Formats data as a Server-Sent Event string."""
-        json_data = json.dumps(data)
-        return f"data: {json_data}\n\n"
-
-    @app.route("/setup/initialize", methods=["GET"])  # Changed method to GET
-    def initialize_resources():
-        """
-        Initialize required resources and stream progress using SSE.
-        """
-
-        def generate():
-            try:
-                yield format_sse(
-                    {
-                        "status": "running",
-                        "progress": 0,
-                        "message": "Starting initialization...",
-                    }
-                )
-
-                # Check if whisper needs initialization
-                whisper_check = stt.check_model()
-                resources_to_init = (
-                    ["whisper"] if not whisper_check.get("initialized") else []
-                )
-
-                # Check if embedding model needs initialization
-                embedding_check = check_embedding_model()
-                if not embedding_check.get("initialized"):
-                    resources_to_init.append("embedding")
-
-                if not resources_to_init:
-                    yield format_sse(
-                        {
-                            "status": "complete",
-                            "progress": 100,
-                            "message": "All resources already initialized",
-                        }
-                    )
-                    logger.info(
-                        "SSE Initialization: Resources already present."
-                    )
-                    return  # End stream
-
-                completed_resources = 0
-                total_resources = len(resources_to_init)
-                progress_per_resource = (
-                    100 / total_resources if total_resources > 0 else 100
-                )
-
-                # --- Initialize Whisper models if needed ---
-                if "whisper" in resources_to_init:
-                    current_progress = int(
-                        completed_resources * progress_per_resource
-                    )
-                    yield format_sse(
-                        {
-                            "status": "running",
-                            "progress": current_progress,
-                            "message": "Setting up Whisper models...",
-                        }
-                    )
-                    logger.info(
-                        "SSE Initialization: Setting up Whisper models..."
-                    )
-                    whisper_result = stt.setup_model()  # Blocking call
-                    if not whisper_result["success"]:
-                        # Yield error and stop
-                        yield format_sse(
-                            {
-                                "status": "error",
-                                "progress": current_progress,
-                                "message": (
-                                    "Whisper setup failed:"
-                                    f" {whisper_result['message']}"
-                                ),
-                            }
-                        )
-                        return
-                    completed_resources += 1
-                    yield format_sse(
-                        {
-                            "status": "running",
-                            "progress": int(
-                                completed_resources * progress_per_resource
-                            ),
-                            "message": "Whisper setup complete.",
-                        }
-                    )
-
-                # --- Initialize Embedding model if needed ---
-                if "embedding" in resources_to_init:
-                    current_progress = int(
-                        completed_resources * progress_per_resource
-                    )
-                    yield format_sse(
-                        {
-                            "status": "running",
-                            "progress": current_progress,
-                            "message": "Setting up embedding model...",
-                        }
-                    )
-                    logger.info(
-                        "SSE Initialization: Setting up embedding model..."
-                    )
-                    embedding_result = setup_embedding_model()  # Blocking call
-                    if not embedding_result["success"]:
-                        # Yield error and stop
-                        yield format_sse(
-                            {
-                                "status": "error",
-                                "progress": current_progress,
-                                "message": (
-                                    "Embedding model setup failed:"
-                                    f" {embedding_result['message']}"
-                                ),
-                            }
-                        )
-                        return
-                    completed_resources += 1
-                    yield format_sse(
-                        {
-                            "status": "running",
-                            "progress": int(
-                                completed_resources * progress_per_resource
-                            ),
-                            "message": "Embedding model setup complete.",
-                        }
-                    )
-
-                # --- Final success message ---
-                yield format_sse(
-                    {
-                        "status": "complete",
-                        "progress": 100,
-                        "message": "Initialization completed successfully",
-                    }
-                )
-                logger.info("SSE Initialization: Completed successfully.")
-
-            except Exception as e:
-                logger.error(f"Error during SSE initialization stream: {e}")
-                import traceback
-
-                logger.error(traceback.format_exc())
-                # Yield a final error message
-                try:
-                    yield format_sse(
-                        {
-                            "status": "error",
-                            "progress": 0,
-                            "message": f"Initialization error: {str(e)}",
-                        }
-                    )
-                except Exception:
-                    # If yielding fails (e.g., client disconnected), just log
-                    logger.error(
-                        "Failed to yield final error message to client."
-                    )
-
-        # Return the generator function wrapped in a Response object
-        return Response(generate(), mimetype="text/event-stream")
 
     @app.route("/static/audio/<filename>")
     def serve_audio(filename):
@@ -1422,6 +1406,39 @@ if __name__ == "__main__":
         )
         profiler = cProfile.Profile()
         profiler.enable()
+
+    # --- Startup Resource Initialization ---
+    logger.info("--- Starting PyBridge Service ---")
+    logger.info("Step 1: Checking if local resources are initialized...")
+    resources_status = check_resources()
+    logger.info(json.dumps(resources_status))
+
+    if not resources_status.get("initialized"):
+        logger.info("Resources not initialized. Proceeding with setup.")
+        logger.info("Step 2: Checking download capability from Hugging Face Hub...")
+        download_check = check_download_capability()
+
+        if not download_check.get("can_download"):
+            error_msg = "Cannot download required models. No internet connection or Hugging Face Hub is unreachable."
+            logger.critical(error_msg)
+            # Send one final progress update for the UI before exiting
+            _send_progress("error", 100, error_msg)
+            sys.exit(1)  # Exit with error code
+
+        logger.info("Download is possible. Starting resource initialization...")
+        logger.info("Step 3: Initializing resources (this may take a while)...")
+        success = initialize_resources(resources_status)
+        if not success:
+            error_msg = "Failed to initialize required resources. The service cannot start."
+            logger.critical(error_msg)
+            # initialize_resources already sends a final progress update on error
+            sys.exit(1)  # Exit with error code
+        logger.info("Resource initialization complete.")
+    else:
+        logger.info("All resources are already initialized.")
+
+    # Prevent dynamic downloads from HuggingFace Hub
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
     app = create_app()
 

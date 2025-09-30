@@ -139,7 +139,10 @@ class GREENMemories:
         self.topic_matcher_model = None
         if SENTENCE_TRANSFORMERS_AVAILABLE:
             try:
-                self.topic_matcher_model = SentenceTransformer(embedding_model)
+                self.topic_matcher_model = SentenceTransformer(
+                    embedding_model,
+                    cache_folder=config.get("cache.directory")
+                )
                 logger.info(f"Loaded topic matcher model: {embedding_model}")
             except Exception as e:
                 logger.error(f"Failed to load topic matcher model: {e}")

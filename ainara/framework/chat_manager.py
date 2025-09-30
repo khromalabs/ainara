@@ -103,6 +103,7 @@ class ChatManager:
         self.memory_enabled = config.get("memory.enabled", False)
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
+        self.max_guardrail_retries = config.get("guardrails.max_retries", 2)
         # --- Memory Decay Tracking (persisted between sessions) ---
         self.memory_decay_interval = config.get(
             "memories.decay_interval_turns", 5
@@ -139,6 +140,16 @@ class ChatManager:
             system_message=self.system_message,
             capabilities=capabilities,
         )
+
+        # --- Reasoning Level Heuristic ---
+        self.reasoning_heuristic_enabled = config.get(
+            "reasoning_heuristic.enabled", True
+        )
+        if self.reasoning_heuristic_enabled:
+            self.reasoning_max_level = config.get(
+                "reasoning_heuristic.max_level", 0.8
+            )
+            logger.info("Reasoning level heuristic enabled.")
 
         # Get capabilities from middleware
         self.capabilities = self.orakle_middleware.capabilities
@@ -1077,6 +1088,100 @@ class ChatManager:
 
         return None
 
+    def _calculate_reasoning_level_heuristic(self, query: str) -> float:
+        """
+        Calculates a reasoning level based on linguistic analysis of the query using spaCy.
+        This rule-based approach identifies linguistic features that suggest a need for
+        reasoning, such as specific verbs, question structures, and comparative language.
+        """
+        if not self.reasoning_heuristic_enabled:
+            return 0.0
+
+        # Basic filter for very short queries that are unlikely to require reasoning
+        if len(query.split()) <= 3:
+            return 0.0
+
+        doc = self.nlp(query.lower())
+        score = 0.0
+
+        # --- Define linguistic features and their weights ---
+        # High-impact verbs that strongly suggest analysis, synthesis, or evaluation
+        reasoning_verbs = {
+            "analyze", "assess", "compare", "conduct", "contrast", "critique",
+            "describe", "design", "develop", "differentiate", "evaluate",
+            "explain", "find", "formulate", "investigate", "justify",
+            "predict", "recommend", "suggest", "summarize", "synthesize",
+            "write",
+        }
+        # Phrases that indicate hypothetical or causal reasoning
+        hypothetical_phrases = [
+            "what if", "what would", "what are the", "what is the",
+        ]
+        # Interrogatives that often require explanation
+        explanatory_interrogatives = {"why", "how"}
+
+        # --- Rule-based scoring ---
+        # Rule 1: Check for high-impact reasoning verbs (especially as the root)
+        root_verb = ""
+        for token in doc:
+            if token.dep_ == "ROOT" and token.pos_ == "VERB":
+                root_verb = token.lemma_
+                if token.lemma_ in reasoning_verbs:
+                    score += 1.0
+                    logger.debug(
+                        "Heuristic: Found root reasoning verb"
+                        f" '{token.lemma_}' (+1.0)"
+                    )
+                break
+
+        # Rule 2: Check for explanatory interrogatives at the start
+        if doc[0].lemma_ in explanatory_interrogatives:
+            score += 0.4
+            logger.debug(
+                f"Heuristic: Found explanatory interrogative '{doc[0].text}'"
+                " (+0.4)"
+            )
+
+        # Rule 3: Check for hypothetical phrases
+        for phrase in hypothetical_phrases:
+            if phrase in doc.text:
+                score += 1.0
+                logger.debug(
+                    f"Heuristic: Found hypothetical phrase '{phrase}' (+1.0)"
+                )
+                break  # Avoid double counting
+
+        # Rule 4: Check for any reasoning verb, even if not the root
+        if score < 0.5:  # Only apply if a strong signal hasn't been found
+            for token in doc:
+                if (
+                    token.lemma_ in reasoning_verbs
+                    and token.lemma_ != root_verb
+                ):
+                    score += 0.2
+                    logger.debug(
+                        "Heuristic: Found non-root reasoning verb"
+                        f" '{token.lemma_}' (+0.2)"
+                    )
+                    break
+
+        # Rule 5: Check for comparatives/superlatives as a weaker signal
+        has_comparative = any(tok.tag_ in ["JJR", "RBR"] for tok in doc)
+        has_superlative = any(tok.tag_ in ["JJS", "RBS"] for tok in doc)
+        if has_comparative or has_superlative:
+            score += 0.15
+            logger.debug("Heuristic: Found comparative/superlative (+0.15)")
+
+        # --- Finalize heuristic value ---
+        # Normalize score to be within [0, 1] and apply the configured max level
+        heuristic_value = min(score, 1.0) * self.reasoning_max_level
+        logger.info(
+            f"Reasoning heuristic score: {score:.4f}, final value:"
+            f" {heuristic_value:.4f}"
+        )
+
+        return heuristic_value
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -1103,6 +1208,15 @@ class ChatManager:
             yield from command_response
             return
 
+        # Calculate heuristic before any LLM call
+        reasoning_level_heuristic = self._calculate_reasoning_level_heuristic(
+            question
+        )
+        logger.info(
+            "chat_completion: Estimated reasoning_level_heuristic:"
+            f" {reasoning_level_heuristic}, query:\n> {question}"
+        )
+
         # Check if spaCy model is available
         if not self.nlp:
             raise RuntimeError("spacy model not available")
@@ -1113,7 +1227,11 @@ class ChatManager:
             loading = LoadingAnimation("")
             loading.start()
         elif stream == "json":
-            yield ndjson("signal", "loading", {"state": "start"})
+            yield ndjson(
+                "signal",
+                "loading",
+                {"state": "start", "reasoning": reasoning_level_heuristic},
+            )
 
         processed_answer = ""
         try:
@@ -1247,56 +1365,116 @@ class ChatManager:
             # Trim context *after* injecting memories to ensure we are within limits
             self.trim_context()
 
-            # --- LLM Call ---
-            llm_response_stream = self.llm.chat(
-                chat_history=turn_chat_history, stream=True
-            )
+            guardrail_retries = 0
+            final_chunks = []
 
-            def _stream_with_thinking_markers(raw_stream):
-                buffer = ""
-                in_thinking = False
-                for chunk in raw_stream:
-                    logger.info(f"LLM raw chunk: {repr(chunk)}")
-                    buffer += chunk
-                    while True:
-                        if not in_thinking:
-                            start_pos = buffer.find("<think>")
-                            if start_pos != -1:
-                                yielded = buffer[:start_pos]
-                                # logger.info(f"yielded: {yielded}")
-                                yield yielded
-                                yield "\n_AINARA_THINKING_START_\n"
-                                buffer = buffer[start_pos + len("<think>"):]
-                                in_thinking = True
-                            else:
-                                yielded = buffer
-                                # logger.info(f"yielded: {yielded}")
-                                yield yielded
-                                buffer = ""
-                                break
-                        if in_thinking:
-                            end_pos = buffer.find("</think>")
-                            if end_pos != -1:
-                                yield "\n_AINARA_THINKING_STOP_\n"
-                                buffer = buffer[end_pos + len("</think>"):]
-                                in_thinking = False
-                            else:
-                                break
-                if buffer:
-                    yield buffer
+            while guardrail_retries <= self.max_guardrail_retries:
+                # --- LLM Call ---
+                llm_response_stream = self.llm.chat(
+                    chat_history=turn_chat_history,
+                    stream=True,
+                    reasoning_level=reasoning_level_heuristic,
+                )
 
+                def _stream_with_thinking_markers(raw_stream):
+                    buffer = ""
+                    in_thinking = False
+                    for chunk in raw_stream:
+                        buffer += chunk
+                        while True:
+                            if not in_thinking:
+                                start_pos = buffer.find("<think>")
+                                if start_pos != -1:
+                                    yield buffer[:start_pos]
+                                    yield "\n_AINARA_THINKING_START_\n"
+                                    buffer = buffer[
+                                        start_pos + len("<think>"):
+                                    ]
+                                    in_thinking = True
+                                else:
+                                    yield buffer
+                                    buffer = ""
+                                    break
+                            if in_thinking:
+                                end_pos = buffer.find("</think>")
+                                if end_pos != -1:
+                                    yield "\n_AINARA_THINKING_STOP_\n"
+                                    buffer = buffer[
+                                        end_pos + len("</think>"):
+                                    ]
+                                    in_thinking = False
+                                else:
+                                    break
+                    if buffer:
+                        yield buffer
+
+                # Buffer response to check for guardrails before streaming to client
+                stream_processor = self.orakle_middleware.process_stream(
+                    _stream_with_thinking_markers(llm_response_stream),
+                    self,
+                    reasoning_level_heuristic=reasoning_level_heuristic,
+                )
+                buffered_chunks = list(stream_processor)
+
+                guardrail_message = ""
+                has_guardrail = False
+                for chunk in buffered_chunks:
+                    if (
+                        isinstance(chunk, str)
+                        and "[AINARA GUARDRAIL]" in chunk
+                    ):
+                        guardrail_message += chunk
+                        has_guardrail = True
+
+                if has_guardrail:
+                    guardrail_retries += 1
+                    logger.warning(
+                        "Guardrail triggered (attempt"
+                        f" {guardrail_retries}/{self.max_guardrail_retries + 1}):"
+                        f" {guardrail_message.strip()}"
+                    )
+                    if guardrail_retries > self.max_guardrail_retries:
+                        logger.error(
+                            "Max retries reached. Responding with error."
+                        )
+                        if stream == "json":
+                            error_content = guardrail_message.replace(
+                                "[AINARA GUARDRAIL]", ""
+                            ).strip()
+                            yield ndjson(
+                                "signal", "error", {"message": error_content}
+                            )
+                            final_chunks = []
+                        else:
+                            final_chunks = [guardrail_message]
+                        break  # Exit retry loop
+                    else:
+                        # Add correction message for the next attempt and retry
+                        self.llm.add_msg(
+                            guardrail_message, self.chat_history, "user"
+                        )
+                        continue  # Next attempt
+                else:
+                    # Success
+                    final_chunks = buffered_chunks
+                    break  # Exit retry loop
+
+            # Clean up any temporary guardrail messages from history
+            self.chat_history = [
+                msg
+                for msg in self.chat_history
+                if "[AINARA GUARDRAIL]" not in msg.get("content", "")
+            ]
+
+            # Now, process and stream the final response (successful or error)
             processed_answer = ""
             text_buffer = ""
-            parsing_mode = "text"  # 'text' or 'doc'
+            parsing_mode = "text"
             doc_buffer = ""
             doc_format = "plaintext"
 
-            # Process the stream through the Orakle middleware
-            # This now handles command execution and interpretation internally
-            for chunk in self.orakle_middleware.process_stream(
-                _stream_with_thinking_markers(llm_response_stream), self
-            ):
-                logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
+            for chunk in final_chunks:
+                # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
                 if "_AINARA_THINKING_START_" in chunk:
                     yield ndjson("signal", "thinking", {"state": "start"})
                     continue
@@ -1392,7 +1570,6 @@ class ChatManager:
                         if doc_end_match:
                             doc_content = doc_buffer[: doc_end_match.start()]
                             if stream == "json":
-                                # def ndjson(event_name: str, event_type: str, content: Any = None) -> str:
                                 yield ndjson(
                                     "content", "full", {"content": doc_content}
                                 )

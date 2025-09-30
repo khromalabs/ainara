@@ -233,18 +233,21 @@ function showSetupWizard() {
         });
         // Start services
         splashWindow.updateProgress('Starting services...', 10);
-        const servicesStarted = await ServiceManager.startServices();
+        const { success: servicesStarted, message } =
+            await ServiceManager.startServices();
+
         if (!servicesStarted) {
             splashWindow.close();
             dialog.showErrorBox(
                 'Service Error',
-                'Failed to start required services. Please check the logs for details.'
+                message + ' Please check the logs for details.'
             );
             app.quit();
             return;
         }
         // Wait for services to be healthy
         splashWindow.updateProgress('Waiting for services to be ready...', 40);
+
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
         const timeout = 300000; // 300 seconds timeout
@@ -254,7 +257,7 @@ function showSetupWizard() {
                 servicesHealthy = true;
                 break;
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 5000));
         }
         if (!servicesHealthy) {
             splashWindow?.close();
@@ -265,32 +268,10 @@ function showSetupWizard() {
             app.quit();
             return;
         }
+
         // Services are ready, initialize the rest of the app
         splashWindow.updateProgress('Initializing application...', 80);
-        // Check if required resources are available
-        splashWindow.updateProgress('Checking required resources...', 85);
-        const resourceCheck = await ServiceManager.checkResourcesInitialization();
-        // If resources are not initialized, initialize them
-        if (resourceCheck && !resourceCheck.initialized) {
-            Logger.info('Some resources need initialization, starting download process...');
-            // Start the initialization process
-            try {
-                Logger.info('Starting resource initialization via SSE (restartWithSplash)...');
-                // Progress updates are handled internally by ServiceManager via callback
-                const initResult = await ServiceManager.initializeResources();
-                Logger.info('Resource initialization successful (restartWithSplash):', initResult.message);
-            } catch (errorResult) {
-                splashWindow.close();
-                Logger.error('Failed to initialize resources (restartWithSplash):', errorResult.error || 'Unknown error');
-                dialog.showErrorBox(
-                    'Initialization Error',
-                    `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
-                );
-                app.quit();
-            }
-        } else {
-            Logger.info('All required resources are already initialized');
-        }
+
         // Update the provider submenu
         await updateProviderSubmenu();
         // Close splash and show main window
@@ -428,26 +409,6 @@ async function appInitialization() {
             startOllamaKeepAlive();
             // Alternate application start for dev purposes
             externallyManagedServices = true;
-            const resourceCheck = await ServiceManager.checkResourcesInitialization();
-            // If resources are not initialized, initialize them
-            if (resourceCheck && !resourceCheck.initialized) {
-                Logger.info('Some resources need initialization, starting download process...');
-                try {
-                    Logger.info('Starting resource initialization via SSE (external services)...');
-                    // Progress updates are handled internally by ServiceManager via callback
-                    const initResult = await ServiceManager.initializeResources();
-                    Logger.info('Resource initialization successful (external services):', initResult.message);
-                } catch (errorResult) {
-                    Logger.error('Failed to initialize resources (external services):', errorResult.error || 'Unknown error');
-                    dialog.showErrorBox(
-                        'Initialization Error',
-                        `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
-                    );
-                    app.quit();
-                }
-            } else {
-                Logger.info('All required resources are already initialized');
-            }
             await updateProviderSubmenu();
             initializeAutoUpdater();
 
@@ -478,13 +439,14 @@ async function appInitialization() {
 
         // Start services
         splashWindow.updateProgress('Starting services...', 10);
-        const servicesStarted = await ServiceManager.startServices();
+        const { success: servicesStarted, message } =
+            await ServiceManager.startServices();
 
         if (!servicesStarted) {
             splashWindow?.close();
             dialog.showErrorBox(
                 'Service Error',
-                'Failed to start required services. Please check the logs for details.'
+                message + ' Please check the logs for details.'
             );
             app.quit();
             return;
@@ -497,15 +459,13 @@ async function appInitialization() {
         const startTime = Date.now();
         const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
-
         while (Date.now() - startTime < timeout) {
             if (ServiceManager.isAllHealthy()) {
                 servicesHealthy = true;
                 break;
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 5000));
         }
-
         if (!servicesHealthy) {
             splashWindow?.close();
             dialog.showErrorBox(
@@ -518,32 +478,6 @@ async function appInitialization() {
 
         // Services are ready, initialize the rest of the app
         splashWindow.updateProgress('Initializing application...', 80);
-
-        // Check if required resources are available
-        splashWindow.updateProgress('Checking required resources...', 85);
-        const resourceCheck = await ServiceManager.checkResourcesInitialization();
-
-        // If resources are not initialized, initialize them
-        if (resourceCheck && !resourceCheck.initialized) {
-            Logger.info('Some resources need initialization, starting download process...');
-            // Start the initialization process
-            try {
-                Logger.info('Starting resource initialization via SSE (normal start)...');
-                // Progress updates are handled internally by ServiceManager via callback
-                const initResult = await ServiceManager.initializeResources();
-                Logger.info('Resource initialization successful (normal start):', initResult.message);
-            } catch (errorResult) {
-                splashWindow.close();
-                Logger.error('Failed to initialize resources (normal start):', errorResult.error || 'Unknown error');
-                dialog.showErrorBox(
-                    'Initialization Error',
-                    `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
-                );
-                app.quit();
-            }
-        } else {
-            Logger.info('All required resources are already initialized');
-        }
 
         // Update the provider submenu
         await updateProviderSubmenu();
@@ -792,9 +726,9 @@ async function loadOllamaModel(modelId) {
 async function startOllamaKeepAlive() {
     try {
         const { selected_provider } = await ConfigHelper.getLLMProviders();
-        Logger.info(`startOllamaKeepAlive: selected_provider: ${selected_provider}.`);
         if (selected_provider && selected_provider.startsWith('ollama/')) {
             const modelId = selected_provider.split('/')[1];
+            Logger.info(`startOllamaKeepAlive: ping to selected_provider: ${selected_provider}.`);
             await loadOllamaModel(modelId);
         }
         setTimeout(startOllamaKeepAlive, 290000);
@@ -1269,14 +1203,15 @@ process.on('SIGINT', async () => {
 
 app.on('before-quit', async (event) => {
   if (isForceShutdown) {
-    event.preventDefault();
-    return;
+      event.preventDefault();
+      return;
   }
-
   try {
-    await ServiceManager.stopServices();
+      await ServiceManager.stopServices();
+      // force
+      app.exit(0);
   } catch (err) {
-    Logger.error('Graceful shutdown failed:', err);
+      Logger.error('Graceful shutdown failed:', err);
   }
 });
 

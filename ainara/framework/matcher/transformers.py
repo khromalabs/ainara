@@ -53,6 +53,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         super().__init__()
         self.embeddings_cache = {}
         self.model = None
+        self.config = ConfigManager()
 
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             raise ImportError(
@@ -61,7 +62,10 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             )
 
         try:
-            self.model = SentenceTransformer(model_name)
+            self.model = SentenceTransformer(
+                model_name,
+                cache_folder=self.config.get("cache.directory")
+            )
             logger.info(
                 "Initialized OrakleMatcherTransformers with model:"
                 f" {model_name}"
@@ -73,8 +77,6 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         self.nlp = load_spacy_model()
         if not self.nlp:
             logger.error("Failed to load spaCy model. Some functionality may be limited.")
-
-        self.config = ConfigManager()
 
     def register_skill(
         self, skill_id: str, description: str, metadata: Optional[Dict] = None

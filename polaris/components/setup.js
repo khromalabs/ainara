@@ -2937,8 +2937,8 @@ async function initializeOllamaStep() {
         const isAppleSilicon = hwInfo.details?.is_apple_silicon || false;
         const totalRam = hwInfo.details?.total_ram_gb || 0;
 
-        const meetsGpuRequirement = totalVram >= 12;
-        const meetsAppleRequirement = isAppleSilicon && totalRam >= 16;
+        const meetsGpuRequirement = totalVram >= 4;
+        const meetsAppleRequirement = isAppleSilicon && totalRam >= 6;
 
         if (meetsGpuRequirement || meetsAppleRequirement) {
             // Hardware requirements met, proceed with normal setup
@@ -3132,16 +3132,16 @@ async function displayOllamaModels() {
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
     let modelsInfo = ""
-    const ollamaip = config.get('ollama.serverIp', '127.0.0.1');
-    const totalVram = config.get('ollama.totalVram', 0);
+    // const ollamaip = config.get('ollama.serverIp', '127.0.0.1');
+    // const totalVram = config.get('ollama.totalVram', 0);
 
-    if (totalVram > 0 && totalVram < 12 && (ollamaip == "127.0.0.1" || ollamaip == "127.0.0.1") ) {
-        modelsInfo += '<div class="warning-block">';
-        modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
-        modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
-        modelsInfo += 'Consider using cloud-based providers for better performance.';
-        modelsInfo += '</div>';
-    }
+    // if (totalVram > 0 && totalVram < 12 && (ollamaip == "127.0.0.1" || ollamaip == "127.0.0.1") ) {
+    //     modelsInfo += '<div class="warning-block">';
+    //     modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
+    //     modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
+    //     modelsInfo += 'Consider using cloud-based providers for better performance.';
+    //     modelsInfo += '</div>';
+    // }
 
     try {
         const serverIp = config.get('ollama.serverIp', '127.0.0.1');
@@ -3339,7 +3339,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.8.2');
+    config.set('setup.version', '0.9.0');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

@@ -16,7 +16,7 @@ Based on the user's request and the detailed skill descriptions provided above:
 2.  **Extract the necessary parameters** for the chosen skill from the user's request ("{{query}}"), following the parameter specifications listed in that skill's description.
 3.  NEVER add a parameter which is not present in the parameter specifications. If a potentially required parameter to fulfill the user's request is not present, simply discard that skill as a possible candidate. All the possible paramers will always be present in the parameter specifications.
 4.  Only add parameters identified as optional if they are REALLY required to fulfill the user's request.
-5.  Format your output as a single, complete JSON object. This JSON object MUST include the following top-level keys: `skill_id` (string), `parameters` (object), `skill_intention` (string), `frustration_level` (float), and `frustration_reason` (string or null). The specific content for these keys should be determined by following instructions 1-4, 6, and 7.
+5.  Format your output as a single, complete JSON object. This JSON object MUST include the following top-level keys: `skill_id` (string), `parameters` (object), `skill_intention` (string), `frustration_level` (float), `frustration_reason` (string or null), and `reasoning_level` (float). The specific content for these keys should be determined by following instructions 1-4, 6, 7 and 8.
 6. For the `skill_intention` key in the JSON object (defined in point 5), provide a phrase that a helpful assistant would say before performing the requested action. This should:
     - Be conversational and human-like (Don't introduce the request with a too standard declaration like "Processing request...")
     - Briefly indicate what you're about to do without technical jargon.
@@ -25,7 +25,11 @@ Based on the user's request and the detailed skill descriptions provided above:
 7. **Assess User Frustration** to populate the `frustration_level` and `frustration_reason` keys in the JSON object (defined in point 5): Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
     - The `frustration_level` key should contain: a float from 0.0 (no frustration) to 1.0 (high frustration).
     - The `frustration_reason` key should contain: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
-8. If none of the available skills seem to be directly related with the user query but the query is a request of information that could be likely found on the Internet, try to use a web search skill if available. Don't select an skill if none of the options seem to fit at all for the user query. In that case, add an additional `error_msg` property in the returned JSON object explaining in conversational style why the user request can't performed.
+8. **Assess Reasoning Effort**: Based on the user's query "{{query}}", determine if a more complex reasoning process is required to fulfill the request. The `reasoning_level` key in the JSON object should contain a float from 0.0 (for direct commands) to 1.0 (for highly abstract or strategic tasks).
+    - Set to `0.0` for simple, direct commands or questions (e.g., 'what is the weather?', 'calculate 2+2', 'copy this text').
+    - Assign a value between `0.1` and `1.0` for queries that imply comparison, analysis, summarization, or planning (e.g., 'analyze this document', 'compare these two products', 'devise a strategy for...').
+    - Use a higher value for more complex or abstract tasks. For example: `0.3` for a simple analysis, `0.6` for a detailed comparison, or `0.9` for a deep, creative, or strategic thought process.
+9. If none of the available skills seem to be directly related with the user query but the query is a request of information that could be likely found on the Internet, try to use a web search skill if available. Don't select an skill if none of the options seem to fit at all for the user query. In that case, add an additional `error_msg` property in the returned JSON object explaining in conversational style why the user request can't performed.
 
 
 Example Output Format:
@@ -38,6 +42,7 @@ Example Output Format:
   "skill_intention": "I'm looking in the local file system for the requested file...",
   "frustration_level": 0.1,
   "frustration_reason": "",
+  "reasoning_level": 0.0
 }
 
 Another Example:
@@ -48,7 +53,20 @@ Another Example:
   },
   "skill_intention": "I'm checking the calculator...",
   "frustration_level": 0.0,
-  "frustration_reason": null
+  "frustration_reason": null,
+  "reasoning_level": 0.0
+}
+
+Another Example for Reasoning:
+{
+  "skill_id": "search/web",
+  "parameters": {
+    "query": "analyze the pros and cons of nuclear energy for the environment"
+  },
+  "skill_intention": "Let me look into that for you and I'll prepare an analysis...",
+  "frustration_level": 0.0,
+  "frustration_reason": null,
+  "reasoning_level": 0.7
 }
 
 Ensure the output contains ONLY the JSON object, with no explanations, comments, backticks, or any other text before or after it. Use double quotes for all keys and string values within the JSON. For empty or null values, just use `null`.

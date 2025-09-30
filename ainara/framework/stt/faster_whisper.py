@@ -252,11 +252,7 @@ class FasterWhisperSTT(STTBackend):
             f"device={self.device}, compute_type={self.compute_type}, "
             f"beam_size={self.beam_size}"
         )
-
         self.model = None
-
-        # load model on start
-        self._load_model()
 
     def _load_model(self):
         """Load the model if not already loaded"""
@@ -341,6 +337,10 @@ class FasterWhisperSTT(STTBackend):
 
     def transcribe_file(self, audio_file: str) -> str:
         """Transcribe an audio file using Faster-Whisper"""
+
+        if not self.model:
+            self._load_model()
+
         # logger.info("transcribe_file 1")
         try:
             # logger.info("transcribe_file 2")
@@ -388,6 +388,10 @@ class FasterWhisperSTT(STTBackend):
         Cross-platform implementation using PyAudio
         """
         try:
+
+            if not self.model:
+                self._load_model()
+
             import os
             import tempfile
             import wave

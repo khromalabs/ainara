@@ -1564,7 +1564,12 @@ Visit our project site at: https://ainara.app
                         if (event.content?.type == "skill") {
                             sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
                         } else {
-                            sttStatus.textContent = 'Thinking...';
+                            // console.log("!!!!!!" + JSON.stringify(event));
+                            if ( event.content.reasoning ) {
+                                sttStatus.textContent = 'Reasoning...';
+                            } else {
+                                sttStatus.textContent = 'Thinking...';
+                            }
                         }
                         sttStatus.classList.add('active');
                     } else if (event.content.state === 'stop') {

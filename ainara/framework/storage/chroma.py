@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 
 from .vector_base import VectorStorageBackend
 
+from ainara.framework.config import config
+
 try:
     import chromadb
     from sentence_transformers import SentenceTransformer
@@ -65,7 +67,10 @@ class ChromaVectorStorage(VectorStorageBackend):
         self.collection_name = collection_name
 
         # Initialize embeddings
-        self.embedding_model = SentenceTransformer(embedding_model)
+        self.embedding_model = SentenceTransformer(
+            embedding_model,
+            cache_folder=config.get("cache.directory")
+        )
 
         # Initialize ChromaDB client and collection
         self.client = chromadb.PersistentClient(

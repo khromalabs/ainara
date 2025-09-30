@@ -63,22 +63,7 @@ class SystemApplauncher(Skill):
         super().__init__()
         # Cache existing apps
         self.discovered_apps = self._discover_apps()
-
         self.embedding_model = None
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
-            embedding_model_name = config.get(
-                "memory.vector_storage.embedding_model",
-                "sentence-transformers/all-mpnet-base-v2",
-            )
-            try:
-                self.embedding_model = SentenceTransformer(embedding_model_name)
-                logger.info(f"Loaded embedding model for app analysis: {embedding_model_name}")
-            except Exception as e:
-                logger.error(f"Failed to load embedding model: {e}")
-        else:
-            logger.warning(
-                "sentence_transformers not available. App candidate filtering will use all discovered apps."
-            )
 
         # Query parsing prompt for intent detection
         self.parse_prompt = """You are an app launcher query parser.
@@ -324,6 +309,25 @@ Output JSON in this format:
             "open /path/to/file.pdf" → {"success": True, "message": "Opened /path/to/file.pdf", ...}
             "open the browser" → {"success": False, "status": "multiple", "candidates": [...], ...}
         """
+
+        # Lazy initialization of SentenceTransformer
+        if not self.embedding_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+            embedding_model_name = config.get(
+                "memory.vector_storage.embedding_model"
+            )
+            try:
+                self.embedding_model = SentenceTransformer(
+                    embedding_model_name,
+                    cache_folder=config.get("cache.directory")
+                )
+                logger.info(f"Loaded embedding model for app analysis: {embedding_model_name}")
+            except Exception as e:
+                logger.error(f"Failed to load embedding model: {e}")
+        else:
+            logger.warning(
+                "sentence_transformers not available. App candidate filtering will use all discovered apps."
+            )
+
         params = await self.parse_query(query)
         intent = params.get("intent")
 
