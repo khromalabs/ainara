@@ -955,7 +955,7 @@ class GREENMemories:
         with self._db_lock:
             self.storage.set_metadata("profile_decay_turn_counter", "0")
 
-    def process_new_messages_for_update(self):
+    def process_new_messages_for_update(self, progress_callback=None):
         """
         Fetches all new messages since the last update, processes them in
         conversation turns, and updates the user profile.
@@ -1001,6 +1001,7 @@ class GREENMemories:
         logger.info(
             f"Processing {len(conversation_turns)} new conversation turns."
         )
+        total_turns = len(conversation_turns)
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
             # Create a sliding window of context. A value of 0 means no extra context.
             start_index = max(0, i - self.extraction_context_turns)
@@ -1009,6 +1010,10 @@ class GREENMemories:
             # The last turn in the window is the one we are primarily analyzing.
             # The preceding turns provide the context.
             self._extract_and_assimilate_memory(context_turns)
+
+            if progress_callback:
+                progress = int(((i + 1) / total_turns) * 100)
+                progress_callback(progress)
 
         # After processing all turns, update the timestamp to the last message processed
         latest_timestamp = new_messages[-1].get("timestamp")

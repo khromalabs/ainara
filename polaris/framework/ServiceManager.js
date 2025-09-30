@@ -37,6 +37,7 @@ class ServiceManager {
             return ServiceManager.instance;
         }
         ServiceManager.instance = this;
+        this.externalProgressReceived = false;
 
 
         // Determine executable paths based on platform
@@ -170,6 +171,7 @@ class ServiceManager {
         }
     }
     async startServices() {
+        this.externalProgressReceived = false;
         this.updateProgress('Starting services...', 10);
         Logger.info("--- starting services");
 
@@ -201,6 +203,7 @@ class ServiceManager {
                     try {
                         const jsonString = output.substring('PYBRIDGE_PROGRESS:'.length);
                         const progressUpdate = JSON.parse(jsonString);
+                        this.externalProgressReceived = true;
                         Logger.log(`[${service.name} Progress] ${progressUpdate.message} (${progressUpdate.progress}%)`);
                         this.updateProgress(progressUpdate.message || null, progressUpdate.progress);
                     } catch (e) {
@@ -215,6 +218,9 @@ class ServiceManager {
             });
 
             service.on('progress-tick', () => {
+                if (this.externalProgressReceived) {
+                    return;
+                }
                 this.startProgress += 0.25;
                 this.updateProgress(null, this.startProgress);
             });

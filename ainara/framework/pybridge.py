@@ -380,7 +380,7 @@ def initialize_resources(status: dict):
         completed_resources = 0
         total_resources = len(resources_to_init)
         progress_per_resource = (
-            100 / total_resources if total_resources > 0 else 100
+            80 / total_resources if total_resources > 0 else 80
         )
 
         # --- Initialize Whisper models if needed ---
@@ -439,7 +439,7 @@ def initialize_resources(status: dict):
 
         # --- Final success message ---
         _send_progress(
-            "complete", 100, "Initialization completed successfully"
+            "complete", 80, "Initialization completed successfully"
         )
         logger.info("Initialization: Completed successfully.")
         return True
@@ -612,7 +612,19 @@ def create_app():
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup
         logger.info("Processing new messages for user profile...")
-        green_memories.process_new_messages_for_update()
+
+        def memory_progress_callback(progress):
+            # Scale progress from 0-100 to 80-100
+            scaled_progress = 70 + int(progress * 0.20)
+            _send_progress(
+                "running",
+                scaled_progress,
+                "Learning from conversation history...",
+            )
+
+        green_memories.process_new_messages_for_update(
+            progress_callback=memory_progress_callback
+        )
         logger.info("Message processing complete.")
 
         # Generate the narrative user profile summary
