@@ -613,13 +613,13 @@ def create_app():
         # Perform initial consolidation at startup
         logger.info("Processing new messages for user profile...")
 
-        def memory_progress_callback(progress):
+        def memory_progress_callback(progress, current, total):
             # Scale progress from 0-100 to 70-90
             scaled_progress = 70 + int(progress * 0.20)
             _send_progress(
                 "running",
                 scaled_progress,
-                "Learning from conversation history...",
+                f"Learning from last chat... ({current}/{total})",
             )
 
         green_memories.process_new_messages_for_update(

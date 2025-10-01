@@ -1014,7 +1014,7 @@ class GREENMemories:
 
             if progress_callback:
                 progress = int(((i + 1) / total_turns) * max_progress)
-                progress_callback(progress)
+                progress_callback(progress, i + 1, total_turns)
 
         # After processing all turns, update the timestamp to the last message processed
         latest_timestamp = new_messages[-1].get("timestamp")
