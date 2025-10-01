@@ -35,7 +35,6 @@ const Logger = require('./framework/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
 const debugMode = true;
-const debugDisableWizard = false;
 const ollama = require('ollama');
 
 
@@ -133,11 +132,14 @@ function isFirstRun() {
 
 // Show the setup wizard for first-time users
 function showSetupWizard(validationErrors = []) {
+    console.trace();
     if (validationErrors && validationErrors.length > 0) {
+        // ServiceManager.stopServices({ force: true });
+        // app.exit(1)
+        Logger.warn('Configuration validation failed, invalidating setup.complete because of these errors:', validationErrors);
         config.set("setup.completed", false);
-        Logger.warn('Configuration validation failed, showing setup wizard with errors:', validationErrors);
     } else {
-        Logger.info('First run detected, showing setup wizard');
+        Logger.info('Showing setup wizard');
     }
 
    // Disable tray icon
@@ -341,7 +343,7 @@ async function checkConfigAndProceed() {
         const configStatus = await response.json();
 
         // Show wizard if it's the first run or if the original config was invalid
-        if (!debugDisableWizard && (isFirstRun() || !configStatus.initial_config_valid)) {
+        if (isFirstRun() || !configStatus.initial_config_valid) {
             if (splashWindow && !splashWindow.window.isDestroyed()) {
                 splashWindow.close();
             }

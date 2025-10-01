@@ -72,8 +72,8 @@ module.exports = {
     },
     setup: {
         completed: false,
-        version: 0,
-        timestamp: 0,
+        version: "",
+        timestamp: "",
         firstLaunch: true
     },
     startup: {

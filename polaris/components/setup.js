@@ -575,7 +575,10 @@ function updateButtonVisibility() {
         const testResult = document.getElementById('test-result');
         const hasExistingSelection = document.querySelector('input[name="existing-provider"]:checked');
         const isTestSuccessful = testResult.classList.contains('success') && !testResult.classList.contains('hidden');
+        // console.log("hasExistingSelection: " + hasExistingSelection);
+        // console.log("isTestSuccessful:" + isTestSuccessful);
         nextBtn.disabled = !(hasExistingSelection || isTestSuccessful);
+        // console.log("nextBtn.disabled:" + nextBtn.disabled);
     } else if (currentStep === 'stt') {
         validateSTTForm();
     } else if (currentStep === 'skills') {
@@ -1135,7 +1138,8 @@ async function goToNextStep() {
     } finally {
         // Reset button
         nextButton.textContent = originalText;
-        nextButton.disabled = false;
+        // TODO Unsure why this is here
+        // nextButton.disabled = false;
     }
 }
 
@@ -1294,9 +1298,6 @@ function loadProviders() {
 // Add new function to load existing providers
 async function loadExistingProviders() {
     try {
-        console.log("XXXXXXXXXXXXXXXX");
-        document.getElementById('main-next-btn').disabled = true;
-
         // First, update Ollama providers to ensure the list is current
         await updateOllamaProviders();
 
@@ -1326,7 +1327,7 @@ async function loadExistingProviders() {
         existingContainer.innerHTML = '';
 
         if (existingProviders.length === 0) {
-            existingContainer.innerHTML = '<p>No providers configured yet. Add a new provider below.</p>';
+            existingContainer.innerHTML = '<p>No providers configured yet.</p>';
             return;
         }
 
@@ -1360,7 +1361,8 @@ async function loadExistingProviders() {
         if (existingProviders.length > 0) {
             // Check if any existing provider is selected
             const hasSelectedProvider = document.querySelector('input[name="existing-provider"]:checked');
-            // If a provider is already selected (or we have providers but none selected), enable the next button
+
+            // If a provider is already selected enable the next button
             if (hasSelectedProvider) {
                 document.getElementById('main-next-btn').disabled = false;
             }
