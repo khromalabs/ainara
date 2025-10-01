@@ -68,7 +68,7 @@ module.exports = {
         }
     },
     updates: {
-        ignoredVersion: null
+        ignoredVersion: ""
     },
     setup: {
         completed: false,

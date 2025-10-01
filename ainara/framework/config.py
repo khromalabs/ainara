@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 # import traceback
 import yaml
+import json
+from jsonschema import validate, ValidationError, Draft7Validator
 
 from ainara.framework.platform_utils import (
     get_default_cache_dir,
@@ -41,6 +43,8 @@ class ConfigManager:
         self.config = {}
         self.config_file_path = None
         self.last_modified_time = 0
+        self.validation_errors = []
+        self.initial_config_valid = True
         self.load_config()
 
     def _get_config_paths(self):
@@ -70,6 +74,29 @@ class ConfigManager:
             / "resources/ainara.yaml.defaults",  # Relative to this file
             Path(
                 "/usr/share/ainara/ainara.yaml.defaults"
+            ),  # System-wide installation
+        ]
+
+        for path in possible_paths:
+            if path.exists():
+                return path
+
+        return None
+
+    def _get_schema_path(self):
+        """Get the path to the configuration schema"""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            path = Path(sys._MEIPASS + "/resources/config.schema.json")
+            if path.exists():
+                return path
+
+        possible_paths = [
+            Path("resources/config.schema.json"),  # Project root
+            Path("../resources/config.schema.json"),  # Project root
+            Path(__file__).parent.parent
+            / "resources/config.schema.json",  # Relative to this file
+            Path(
+                "/usr/share/ainara/config.schema.json"
             ),  # System-wide installation
         ]
 
@@ -119,7 +146,40 @@ class ConfigManager:
                         return  # File hasn't changed since last load
 
                     with open(config_path) as f:
-                        self.config = yaml.safe_load(f) or {}
+                        user_config = yaml.safe_load(f) or {}
+
+                    # --- Validate Configuration ---
+                    schema_path = self._get_schema_path()
+                    if not schema_path:
+                        print("WARNING: Schema not found, skipping validation.")
+                        self.config = user_config
+                    else:
+                        with open(schema_path) as f:
+                            schema = json.load(f)
+                        validator = Draft7Validator(schema)
+                        errors = sorted(
+                            validator.iter_errors(user_config),
+                            key=lambda e: e.path,
+                        )
+
+                        if errors:
+                            self.initial_config_valid = False
+                            self.validation_errors = [
+                                f"{'.'.join(map(str, e.path)) or 'root'}: {e.message}"
+                                for e in errors
+                            ]
+                            print("ERROR: Configuration validation failed. Restoring defaults.")
+                            for error in self.validation_errors:
+                                print(f" - {error}")
+
+                            # Overwrite bad config with defaults and reload
+                            self.create_default_config(config_path)
+                            with open(config_path) as f:
+                                self.config = yaml.safe_load(f) or {}
+                        else:
+                            self.config = user_config
+                    # --- End Validation ---
+
                     self.config_file_path = config_path
                     self.last_modified_time = os.path.getmtime(config_path)
                     print(f"Configuration loaded from: {config_path}")

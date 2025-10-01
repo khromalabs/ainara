@@ -1,0 +1,201 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Ainara Configuration Schema",
+    "type": "object",
+    "properties": {
+        "apis": {
+            "type": "object",
+            "description": "Container for various external API keys and settings.",
+            "properties": {
+                "finance": {
+                    "type": "object",
+                    "properties": {"alphavantage_api_key": {"type": "string"}},
+                    "required": ["alphavantage_api_key"]
+                },
+                "search": {
+                    "type": "object",
+                    "properties": {
+                        "google": {"type": "object", "properties": {"api_key": {"type": "string"}, "cx": {"type": "string"}}},
+                        "metaphor": {"type": "object", "properties": {"api_key": {"type": "string"}}},
+                        "newsapi": {"type": "object", "properties": {"api_key": {"type": "string"}}},
+                        "perplexity": {"type": "object", "properties": {"api_key": {"type": "string"}}},
+                        "tavily": {"type": "object", "properties": {"api_key": {"type": "string"}}}
+                    }
+                },
+                "weather": {
+                    "type": "object",
+                    "properties": {"openweathermap_api_key": {"type": "string"}},
+                    "required": ["openweathermap_api_key"]
+                }
+            }
+        },
+        "audio": {
+            "type": "object",
+            "properties": {
+                "buffer_size_mb": {"type": "integer", "minimum": 1}
+            }
+        },
+        "backup": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string"},
+                "enabled": {"type": "boolean"},
+                "interval_hours": {"type": "integer", "minimum": 1},
+                "password": {"type": "string"},
+                "versions_to_keep": {"type": "integer", "minimum": 0}
+            }
+        },
+        "cache": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string"},
+                "sentence_transformers_home": {"type": "string"}
+            }
+        },
+        "data": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string"}
+            }
+        },
+        "llm": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string"},
+                "logging": {"type": ["string", "null"]},
+                "model_contexts": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer"}
+                },
+                "providers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "model": {"type": "string"},
+                            "context_window": {"type": "integer"},
+                            "api_key": {"type": "string"},
+                            "api_base": {"type": "string", "format": "uri"},
+                            "enable_thinking": {"type": "boolean"}
+                        },
+                        "required": ["model", "context_window"]
+                    }
+                },
+                "selected_backend": {"type": "string"},
+                "selected_provider": {"type": "string"}
+            },
+            "required": ["providers", "selected_backend", "selected_provider"]
+        },
+        "logging": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string"}
+            }
+        },
+        "mcp_clients": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "prefix": {"type": "string"},
+                    "stdio_params": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "array", "items": {"type": "string"}},
+                            "env": {
+                                "type": "object",
+                                "additionalProperties": {"type": "string"}
+                            }
+                        },
+                        "required": ["command"]
+                    }
+                },
+                "required": ["stdio_params"]
+            }
+        },
+        "memory": {
+            "type": "object",
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "session_id": {"type": "string"},
+                "summary_enabled": {"type": "boolean"},
+                "vector_db_enabled": {"type": "boolean"}
+            }
+        },
+        "orakle": {
+            "type": "object",
+            "properties": {
+                "servers": {
+                    "type": "array",
+                    "items": {"type": "string", "format": "uri"}
+                }
+            },
+            "required": ["servers"]
+        },
+        "stt": {
+            "type": "object",
+            "properties": {
+                "backend": {"type": "string"},
+                "selected_module": {"type": "string", "enum": ["faster_whisper", "whisper"]},
+                "modules": {
+                    "type": "object",
+                    "properties": {
+                        "faster_whisper": {
+                            "type": "object",
+                            "properties": {
+                                "language": {"type": "string"},
+                                "model_size": {"type": "string"}
+                            }
+                        },
+                        "whisper": {
+                            "type": "object",
+                            "properties": {
+                                "custom": {
+                                    "type": "object",
+                                    "properties": {
+                                        "api_key": {"type": "string"},
+                                        "api_url": {"type": "string", "format": "uri"},
+                                        "headers": {"type": "object"},
+                                        "model": {"type": "string"}
+                                    }
+                                },
+                                "language": {"type": "string"},
+                                "service": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            },
+            "required": ["selected_module", "modules"]
+        },
+        "tts": {
+            "type": "object",
+            "properties": {
+                "selected_module": {"type": "string", "enum": ["piper", "elevenlabs"]},
+                "modules": {
+                    "type": "object",
+                    "properties": {
+                        "elevenlabs": {
+                            "type": "object",
+                            "properties": {
+                                "api_key": {"type": "string"},
+                                "voice": {"type": "string"}
+                            }
+                        },
+                        "piper": {
+                            "type": "object",
+                            "properties": {
+                                "binary": {"type": "string"},
+                                "model_dir": {"type": "string"},
+                                "options": {"type": "string"},
+                                "voice": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            },
+            "required": ["selected_module", "modules"]
+        }
+    },
+    "required": ["stt", "tts", "llm", "orakle"]
+}

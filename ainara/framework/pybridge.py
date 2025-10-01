@@ -650,6 +650,16 @@ def create_app():
     # Ensure the backup thread is stopped cleanly on exit
     atexit.register(app.backup_manager.stop)
 
+    @app.route("/config/status", methods=["GET"])
+    def get_config_status():
+        """Return the validation status of the initial user configuration."""
+        return jsonify(
+            {
+                "initial_config_valid": config.initial_config_valid,
+                "errors": config.validation_errors,
+            }
+        )
+
     @app.route("/health", methods=["GET"])
     def health_check():
         """Comprehensive health check endpoint"""

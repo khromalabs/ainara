@@ -132,8 +132,13 @@ function isFirstRun() {
 }
 
 // Show the setup wizard for first-time users
-function showSetupWizard() {
-    Logger.info('First run detected, showing setup wizard');
+function showSetupWizard(validationErrors = []) {
+    if (validationErrors && validationErrors.length > 0) {
+        config.set("setup.completed", false);
+        Logger.warn('Configuration validation failed, showing setup wizard with errors:', validationErrors);
+    } else {
+        Logger.info('First run detected, showing setup wizard');
+    }
 
    // Disable tray icon
     if (tray) {
@@ -175,7 +180,7 @@ function showSetupWizard() {
         iconPath: iconPath,
         hasShadow: false
     });
-    // setupWindow.webContents.openDevTools();
+    setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
 
@@ -184,6 +189,17 @@ function showSetupWizard() {
 
     setupWindow.once('ready-to-show', () => {
         setupWindow.show();
+        if (validationErrors && validationErrors.length > 0) {
+            dialog.showErrorBox(
+                'Configuration Error',
+                'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors,
+                // 'The configuration file contains the following errors:\n\n' + validationErrors + "\n\nThe setup wizard will be opened now."
+            );
+        }
+        // // Pass validation errors to the wizard window
+        // if (validationErrors && validationErrors.length > 0) {
+        //     setupWindow.webContents.send('config-validation-errors', validationErrors);
+        // }
     });
 
 
@@ -204,9 +220,6 @@ function showSetupWizard() {
         }
         await restartWithSplash();
     }
-
-    // Handle setup completion
-    ipcMain.once('setup-complete', setupComplete);
 
     // relies in external executables
     // TODO Unify this with splash window in appInitialization
@@ -298,18 +311,48 @@ function showSetupWizard() {
     // If the user closes the setup window without completing setup
     ipcMain.on('close-setup-window', async () => {
         Logger.info('close-setup-window event');
-        if (!config.get('setup.completed', false)) {
+        setupWindow?.close();
+        if (config.get('setup.completed', false)) {
+            // TODO: Don't know what this means, setupComplete is needed here
+            // Correction: Prevented re-entrant call to setupComplete.
+            Logger.info('Setup complete, window closed by user. Main flow will continue.');
+            setupComplete();
+        } else {
             Logger.info('Setup incomplete - forcing immediate exit');
             await ServiceManager.stopServices();
             app.quit(); // Hard exit without cleanup
-        } else {
-            // Correction: Prevented re-entrant call to setupComplete.
-            // Improvement: The 'close-setup-window' event is fired when the setup window closes.
-            // If setup was already completed, this was re-triggering the setup completion logic.
-            // Now, it only logs that the user closed the window, and the main flow continues as intended.
-            Logger.info('Setup complete, window closed by user. Main flow will continue.');
         }
     });
+
+    // Handle setup completion
+    ipcMain.on('setup-complete', setupComplete);
+}
+
+async function checkConfigAndProceed() {
+    const pybridgeUrl = config.get('pybridge.api_url', 'http://127.0.0.1:8101');
+    try {
+        // Use Electron's net module for requests to avoid external dependencies
+        const { net } = require('electron');
+        const response = await net.fetch(`${pybridgeUrl}/config/status`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const configStatus = await response.json();
+
+        // Show wizard if it's the first run or if the original config was invalid
+        if (!debugDisableWizard && (isFirstRun() || !configStatus.initial_config_valid)) {
+            if (splashWindow && !splashWindow.window.isDestroyed()) {
+                splashWindow.close();
+            }
+            showSetupWizard(configStatus.errors);
+            return false; // Indicates we should stop normal startup
+        }
+        return true; // Indicates we should proceed
+    } catch (error) {
+        appHandleCriticalError(new Error(`Could not verify configuration with PyBridge service. ${error.message}`));
+        return false;
+    }
 }
 
 function initializeOllamaClient() {
@@ -406,9 +449,15 @@ async function appInitialization() {
         await ServiceManager.checkServicesHealth();
         if (ServiceManager.isAllHealthy()) {
             splashWindow.close();
-            startOllamaKeepAlive();
             // Alternate application start for dev purposes
             externallyManagedServices = true;
+
+            // Check config validity before proceeding
+            if (!await checkConfigAndProceed()) {
+                return;
+            }
+
+            startOllamaKeepAlive();
             await updateProviderSubmenu();
             initializeAutoUpdater();
 
@@ -419,14 +468,11 @@ async function appInitialization() {
             // Read the start minimized setting
             const startMinimized = config.get('startup.startMinimized', false);
 
-            // Check if this is the first run
-            if (!debugDisableWizard && isFirstRun()) {
-                showSetupWizard();
+            if (!startMinimized) {
+                Logger.info('Starting with windows visible.');
+                windowManager.showAll(true);
             } else {
-                if (!startMinimized) {
-                    Logger.info('Starting with windows visible.');
-                    windowManager.showAll(true);
-                } else Logger.info('Starting minimized as per configuration.');
+                Logger.info('Starting minimized as per configuration.');
             }
 
             return;
@@ -476,7 +522,14 @@ async function appInitialization() {
             return;
         }
 
-        // Services are ready, initialize the rest of the app
+        // Services are ready, check config and initialize the rest of the app
+        splashWindow.updateProgress('Verifying configuration...', 75);
+
+        // Check config validity before proceeding
+        if (!await checkConfigAndProceed()) {
+            return;
+        }
+
         splashWindow.updateProgress('Initializing application...', 80);
 
         // Update the provider submenu
@@ -489,12 +542,6 @@ async function appInitialization() {
         splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 1000));
         await splashWindow.close();
-
-        // Check if this is the first run
-        if (isFirstRun()) {
-            showSetupWizard();
-            return;
-        }
 
         // Read the start minimized setting
         await appCreateTray();

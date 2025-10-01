@@ -1294,6 +1294,9 @@ function loadProviders() {
 // Add new function to load existing providers
 async function loadExistingProviders() {
     try {
+        console.log("XXXXXXXXXXXXXXXX");
+        document.getElementById('main-next-btn').disabled = true;
+
         // First, update Ollama providers to ensure the list is current
         await updateOllamaProviders();
 
@@ -1357,9 +1360,8 @@ async function loadExistingProviders() {
         if (existingProviders.length > 0) {
             // Check if any existing provider is selected
             const hasSelectedProvider = document.querySelector('input[name="existing-provider"]:checked');
-
             // If a provider is already selected (or we have providers but none selected), enable the next button
-            if (hasSelectedProvider || selectedProvider) {
+            if (hasSelectedProvider) {
                 document.getElementById('main-next-btn').disabled = false;
             }
         }
