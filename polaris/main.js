@@ -182,7 +182,7 @@ function showSetupWizard(validationErrors = []) {
         iconPath: iconPath,
         hasShadow: false
     });
-    setupWindow.webContents.openDevTools();
+    // setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
 
@@ -268,7 +268,7 @@ function showSetupWizard(validationErrors = []) {
         const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
-            if (ServiceManager.isAllHealthy()) {
+            if (await ServiceManager.checkServicesHealth()) {
                 servicesHealthy = true;
                 break;
             }
@@ -446,37 +446,37 @@ async function appInitialization() {
         splashWindow = new SplashWindow(config, null, null, __dirname);
         splashWindow.show();
 
-
         // If services are being managed externally alternate start without splash
-        await ServiceManager.checkServicesHealth();
-        if (ServiceManager.isAllHealthy()) {
+        if (
+            process.env.AINARA_ONLY_POLARIS === '1' ||
+            process.env.AINARA_ONLY_POLARIS === 'true'
+        ) {
+            Logger.info('AINARA_ONLY_POLARIS: Avoiding services launch');
             splashWindow.close();
+            if(!await ServiceManager.checkServicesHealth()) {
+                Logger.error('Services are not healthy');
+                app.quit()
+            }
             // Alternate application start for dev purposes
             externallyManagedServices = true;
-
             // Check config validity before proceeding
             if (!await checkConfigAndProceed()) {
                 return;
             }
-
             startOllamaKeepAlive();
             await updateProviderSubmenu();
             initializeAutoUpdater();
-
             // Set shortcut just before showing windows
             appSetupShortcuts();
             await appCreateTray();
-
             // Read the start minimized setting
             const startMinimized = config.get('startup.startMinimized', false);
-
             if (!startMinimized) {
                 Logger.info('Starting with windows visible.');
                 windowManager.showAll(true);
             } else {
                 Logger.info('Starting minimized as per configuration.');
             }
-
             return;
         }
 
@@ -508,7 +508,7 @@ async function appInitialization() {
         const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
-            if (ServiceManager.isAllHealthy()) {
+            if (await ServiceManager.checkServicesHealth()) {
                 servicesHealthy = true;
                 break;
             }
@@ -523,6 +523,9 @@ async function appInitialization() {
             app.quit();
             return;
         }
+
+        // Start background health monitoring now that services are up
+        ServiceManager.startHealthCheck();
 
         // Services are ready, check config and initialize the rest of the app
         splashWindow.updateProgress('Verifying configuration...', 75);

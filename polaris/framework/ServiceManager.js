@@ -95,7 +95,7 @@ class ServiceManager {
         }
 
         this.onProgressUpdate = null;
-        this.healthCheckInterval = null;
+        this.healthCheckTimeoutId = null;
     }
 
     /**
@@ -237,8 +237,6 @@ class ServiceManager {
             await Promise.all(startPromises);
             Logger.info("--- all services started successfully");
             this.updateProgress('Services started successfully', 70);
-            // Start health check monitoring
-            this.startHealthCheck();
             return { success: true };
         } catch (error) {
             let error_msg = 'Failed to start services: ' + error.message;
@@ -252,43 +250,42 @@ class ServiceManager {
     }
 
     startHealthCheck() {
-        if (this.healthCheckInterval) {
-            clearInterval(this.healthCheckInterval);
+        if (this.healthCheckTimeoutId) {
+            clearTimeout(this.healthCheckTimeoutId);
         }
 
-        this.healthCheckInterval = setInterval(async () => {
+        const monitor = async () => {
             await this.checkServicesHealth();
-        }, 5000);
+            // Schedule the next check only after the current one has completed
+            this.healthCheckTimeoutId = setTimeout(monitor, 5000);
+        };
+
+        // Start the monitoring loop
+        // We don't await this, as it's a long-running background task
+        monitor();
     }
 
     async checkServicesHealth() {
-        let allHealthy = true;
         let healthyCount = 0;
         const totalServices = Object.keys(this.services).length;
 
         for (const service of Object.values(this.services)) {
             const wasHealthy = service.healthy;
             service.healthy = await service.checkHealth();
-
-                if (service.healthy) {
-                    healthyCount++;
-                }
-
-                if (!wasHealthy && service.healthy) {
-                    Logger.log(`${service.name} is now healthy`);
-                }
-                else if (wasHealthy && !service.healthy) {
-                    // Only log error if it wasn't already unhealthy
-                    Logger.error(`${service.name} is no longer healthy`);
-                }
-
-                if (!service.healthy) {
-                    allHealthy = false;
-                }
+            if (service.healthy) {
+                healthyCount++;
+            }
+            if (!wasHealthy && service.healthy) {
+                Logger.log(`${service.name} is now healthy`);
+            }
+            else if (wasHealthy && !service.healthy) {
+                // Only log error if it wasn't already unhealthy
+                Logger.error(`${service.name} is no longer healthy`);
+            }
         }
 
         // Update progress based on health status
-        if (allHealthy) {
+        if (healthyCount == totalServices) {
             this.updateProgress('All services are ready', 100);
         } else {
             // Calculate progress: 40% for starting + up to 60% for health checks
@@ -296,13 +293,13 @@ class ServiceManager {
             this.updateProgress('Waiting for services to be ready...', 40 + healthProgress);
         }
 
-        return allHealthy;
+        return healthyCount == totalServices;
     }
 
     async stopServices({ force = false } = {}) {
-        if (this.healthCheckInterval) {
-            clearInterval(this.healthCheckInterval);
-            this.healthCheckInterval = null;
+        if (this.healthCheckTimeoutId) {
+            clearTimeout(this.healthCheckTimeoutId);
+            this.healthCheckTimeoutId = null;
         }
 
         const terminationPromises = Object.values(this.services).map(service => service.stop({ force }));
@@ -329,10 +326,6 @@ class ServiceManager {
             Logger.log('No active services to stop');
             return true;
         }
-    }
-
-    isAllHealthy() {
-        return Object.values(this.services).every(service => service.healthy);
     }
 
     async restartServices() {
