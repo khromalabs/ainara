@@ -43,7 +43,7 @@ class LiteLLM(LLMBackend):
         )  # Base class might need global config
         self.completion = litellm.completion
         self.acompletion = litellm.acompletion
-        self.supports_thinking = False
+        self.thinking_available = False
 
         try:
             if provider_config and "model" in provider_config:
@@ -237,7 +237,7 @@ class LiteLLM(LLMBackend):
                     "Using selected LLM provider:"
                     f" {p_conf.get('name', p_conf.get('model', 'unknown'))}"
                 )
-                self.supports_thinking = litellm.supports_reasoning(
+                self.thinking_available = litellm.supports_reasoning(
                     model=config_selected_provider
                 )
                 return provider
