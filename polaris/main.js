@@ -55,6 +55,16 @@ const triggerKey = config.get('shortcuts.trigger', 'Space');
 const hideKey = config.get('shortcuts.hide', 'Escape');
 const myEmitter = new EventEmitter();
 
+function applyAutoStartSetting() {
+    const autoStartEnabled = config.get('startup.autoStart', false);
+    Logger.info(`Applying auto-start setting. Enabled: ${autoStartEnabled}`);
+    // This API is cross-platform and handles the underlying OS specifics.
+    app.setLoginItemSettings({
+        openAtLogin: autoStartEnabled,
+        path: app.getPath('exe') // This is used by Windows and ignored by others.
+    });
+}
+
 // // Add service management to tray menu
 // const contextMenu = Menu.buildFromTemplate([
 //     {
@@ -383,6 +393,9 @@ async function appInitialization() {
         Logger.setDebugMode(debugMode);
         app.isQuitting = false;
         await app.whenReady();
+
+        // Apply auto-start setting on launch
+        applyAutoStartSetting();
 
         // Initialize Ollama client
         initializeOllamaClient();
@@ -1077,6 +1090,11 @@ function appSetupEventHandlers() {
     // Handle opening external links in the system browser
     ipcMain.on('open-external-url', (event, url) => {
         shell.openExternal(url);
+    });
+
+    // Handle auto-start setting changes from setup wizard
+    ipcMain.on('set-auto-start', () => {
+        applyAutoStartSetting();
     });
 
     // Handle backup directory selection from setup wizard

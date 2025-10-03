@@ -999,6 +999,13 @@ function setupEventListeners() {
                 reviewSttCheckbox.checked = config.get('stt.review');
             }
 
+            // Add event listener for the auto start checkbox
+            const autoStartCheckbox = document.getElementById('auto-start-checkbox');
+            if (autoStartCheckbox) {
+                autoStartCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                autoStartCheckbox.checked = config.get('startup.autoStart', false);
+            }
+
             // Add event listener for the background notifications checkbox
             const backgroundNotificationsCheckbox = document.getElementById('background-notifications-checkbox');
             if (backgroundNotificationsCheckbox) {
@@ -1628,7 +1635,7 @@ function handleInputChange(event) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input' || fieldId === 'auto-start-checkbox') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -2742,6 +2749,13 @@ async function saveFinishStepConfig() {
         if (modifiedFields.finish.has('start-minimized-checkbox')) {
             const isChecked = document.getElementById('start-minimized-checkbox').checked;
             config.set('startup.startMinimized', isChecked);
+        }
+
+        if (modifiedFields.finish.has('auto-start-checkbox')) {
+            const isChecked = document.getElementById('auto-start-checkbox').checked;
+            config.set('startup.autoStart', isChecked);
+            // Notify the main process to apply the setting immediately
+            ipcRenderer.send('set-auto-start');
         }
 
         if (modifiedFields.finish.has('review-stt-checkbox')) {

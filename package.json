@@ -108,16 +108,6 @@
         }
       ]
     },
-    "appx": {
-      "identityName": "Khromalabs.AinaraPolaris",
-      "publisherDisplayName": "Khromalabs",
-      "publisher": "CN=81427736-62D6-46C2-8466-EA597C0FFB41",
-      "backgroundColor": "#464646",
-      "logo": "polaris/resources/appx/StoreLogo.png",
-      "square44x44Logo": "polaris/resources/appx/Square44x44Logo.png",
-      "square150x150Logo": "polaris/resources/appx/Square150x150Logo.png",
-      "wide310x150Logo": "polaris/resources/appx/Wide310x150Logo.png"
-    },
     "linux": {
       "target": "AppImage",
       "icon": "polaris/assets/icon.png",
