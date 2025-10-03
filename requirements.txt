@@ -121,6 +121,8 @@ fastapi==0.115.12
     # via chromadb
 faster-whisper==1.1.1
     # via -r requirements.in
+fastuuid==0.13.5
+    # via litellm
 feedfinder2==0.0.4
     # via newspaper3k
 feedparser==6.0.11
@@ -245,7 +247,7 @@ langcodes==3.5.0
     # via spacy
 language-data==1.3.0
     # via langcodes
-litellm==1.76.0
+litellm==1.77.5
     # via -r requirements.in
 lxml==6.0.0
     # via
