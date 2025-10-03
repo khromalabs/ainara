@@ -19,8 +19,8 @@
 import json
 import os
 import re
-from typing import Generator, List, Optional, Union
 from datetime import datetime
+from typing import Generator, List, Optional, Union
 
 import litellm
 import pkg_resources
@@ -43,6 +43,7 @@ class LiteLLM(LLMBackend):
         )  # Base class might need global config
         self.completion = litellm.completion
         self.acompletion = litellm.acompletion
+        self.supports_thinking = False
 
         try:
             if provider_config and "model" in provider_config:
@@ -68,7 +69,8 @@ class LiteLLM(LLMBackend):
                 f" for initialization only. Exception: {str(e)}"
             )
         self._context_window = self._initialize_context_window(
-            model_name=self.provider.get("model"), provider_config=self.provider
+            model_name=self.provider.get("model"),
+            provider_config=self.provider,
         )
 
     def _fetch_backend_context_window(self, model_name: str) -> Optional[int]:
@@ -235,6 +237,9 @@ class LiteLLM(LLMBackend):
                     "Using selected LLM provider:"
                     f" {p_conf.get('name', p_conf.get('model', 'unknown'))}"
                 )
+                self.supports_thinking = litellm.supports_reasoning(
+                    model=config_selected_provider
+                )
                 return provider
 
         raise RuntimeError("No working LLM providers found")
@@ -259,9 +264,7 @@ class LiteLLM(LLMBackend):
         """Format user chat message for LLM processing with token count"""
         if role == "user":
             timestamp = datetime.now()
-            new_message = (
-                f"[{timestamp.strftime("%H:%M")}] {new_message}"
-            )
+            new_message = f"[{timestamp.strftime("%H:%M")}] {new_message}"
         token_count = self._get_token_count(new_message, role)
         chat_history.append(
             {"role": role, "content": new_message, "tokens": token_count}
@@ -323,7 +326,9 @@ class LiteLLM(LLMBackend):
                     elif reasoning_level > 0.33:
                         reasoning_effort_str = "medium"
 
-                    completion_kwargs["reasoning_effort"] = reasoning_effort_str
+                    completion_kwargs["reasoning_effort"] = (
+                        reasoning_effort_str
+                    )
                     self.logger.info(
                         f"Requesting '{reasoning_effort_str}' reasoning for"
                         f" model {provider['model']}"
@@ -463,7 +468,9 @@ class LiteLLM(LLMBackend):
                     elif reasoning_level > 0.33:
                         reasoning_effort_str = "medium"
 
-                    completion_kwargs["reasoning_effort"] = reasoning_effort_str
+                    completion_kwargs["reasoning_effort"] = (
+                        reasoning_effort_str
+                    )
                     self.logger.info(
                         f"Requesting '{reasoning_effort_str}' reasoning for"
                         f" model {provider['model']} (async)"

@@ -512,6 +512,10 @@ class OllamaLLM(LLMBackend):
 
             self.config_manager = original_cm  # Revert to original CM
 
+            self.thinking_available = self._check_model_thinking_capability(
+                self.model_name_for_api
+            )
+
         return {
             "model": self.model_name_for_api,
             "api_base": self.api_base,

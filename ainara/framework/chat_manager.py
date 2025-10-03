@@ -1211,7 +1211,7 @@ class ChatManager:
         # Calculate heuristic before any LLM call
         reasoning_level_heuristic = self._calculate_reasoning_level_heuristic(
             question
-        )
+        ) if self.llm.thinking_available else 0
         logger.info(
             "chat_completion: Estimated reasoning_level_heuristic:"
             f" {reasoning_level_heuristic}, query:\n> {question}"
