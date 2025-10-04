@@ -221,7 +221,8 @@ class ServiceManager {
                 if (this.externalProgressReceived) {
                     return;
                 }
-                this.startProgress += 0.25;
+                const remaining = 70 - this.startProgress;
+                this.startProgress += remaining * 0.05;
                 this.updateProgress(null, this.startProgress);
             });
         }
@@ -236,7 +237,6 @@ class ServiceManager {
         try {
             await Promise.all(startPromises);
             Logger.info("--- all services started successfully");
-            this.updateProgress('Services started successfully', 70);
             return { success: true };
         } catch (error) {
             let error_msg = 'Failed to start services: ' + error.message;
@@ -282,15 +282,6 @@ class ServiceManager {
                 // Only log error if it wasn't already unhealthy
                 Logger.error(`${service.name} is no longer healthy`);
             }
-        }
-
-        // Update progress based on health status
-        if (healthyCount == totalServices) {
-            this.updateProgress('All services are ready', 100);
-        } else {
-            // Calculate progress: 40% for starting + up to 60% for health checks
-            const healthProgress = Math.floor((healthyCount / totalServices) * 60);
-            this.updateProgress('Waiting for services to be ready...', 40 + healthProgress);
         }
 
         return healthyCount == totalServices;
