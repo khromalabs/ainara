@@ -3,7 +3,9 @@ name: Testing Release Build
 on:
   push:
     #    branches: [ testing ]
-    tags: [ 'testing-*' ]
+    tags:
+      - 'testing-*'
+      - 'v*'
     #  pull_request:
     #    branches: [ testing ]
 
@@ -288,20 +290,20 @@ jobs:
           cp "${{ env.ARCHIVE_FILENAME }}.yml" "${{ env.UPDATE_YAML }}"
         fi
 
-    - name: Create testing release
+    - name: Create Release
       # Only run this step if the workflow was triggered by a tag push
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        name: Testing Release
+        name: Release ${{ github.ref_name }}
         body: |
-          Automated testing release from testing branch
+          Automated release from tag.
           OS: ${{ matrix.os }}
           Python: ${{ matrix.python-version }}
           SHA: ${{ github.sha }}
         draft: false
-        prerelease: true
+        prerelease: ${{ startsWith(github.ref_name, 'testing-') }}
         files: |
           ${{ env.ARCHIVE_FILENAME }}
           ${{ env.ARCHIVE_FILENAME }}.yml

@@ -968,7 +968,7 @@ function checkForUpdates(interactive = false) {
 
 function initializeAutoUpdater() {
     autoUpdater.autoDownload = false;
-    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', true);
+    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', false);
     autoUpdater.logger = Logger;
 
     Logger.info(`AutoUpdater: Initializing with version ${app.getVersion()}`);
