@@ -178,6 +178,7 @@ common_imports = [
     'sounddevice',
     'soundfile',
     'pygame',
+    'elevenlabs',
 
     # Additional dependencies
     'telegram',
