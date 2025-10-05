@@ -485,6 +485,8 @@ pydantic-core==2.33.1
     #   pydantic
 pydantic-settings==2.8.1
     # via mcp
+pydub==0.25.1
+    # via -r requirements.in
 pyflakes==3.4.0
     # via -r requirements.in
 pygame==2.6.1
@@ -606,6 +608,8 @@ sgmllib3k==1.0.0
     # via feedparser
 shellingham==1.5.4
     # via typer
+simpleaudio==1.0.4
+    # via -r requirements.in
 six==1.17.0
     # via
     #   feedfinder2
