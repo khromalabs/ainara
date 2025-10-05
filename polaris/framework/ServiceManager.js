@@ -221,8 +221,8 @@ class ServiceManager {
                 if (this.externalProgressReceived) {
                     return;
                 }
-                const remaining = 70 - this.startProgress;
-                this.startProgress += remaining * 0.05;
+                const remaining_decay = (70 - this.startProgress) / 70;
+                this.startProgress += 0.25 * remaining_decay
                 this.updateProgress(null, this.startProgress);
             });
         }
