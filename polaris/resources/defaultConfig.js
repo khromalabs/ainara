@@ -77,6 +77,7 @@ module.exports = {
         firstLaunch: true
     },
     startup: {
+        autoStart: false,
         startMinimized: false,
         backupDirectory: ""
     },

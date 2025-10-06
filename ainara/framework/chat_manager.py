@@ -145,9 +145,10 @@ class ChatManager:
         self.reasoning_heuristic_enabled = config.get(
             "reasoning_heuristic.enabled", True
         )
+        # TODO Add this parameter to wizard configuration
         if self.reasoning_heuristic_enabled:
             self.reasoning_max_level = config.get(
-                "reasoning_heuristic.max_level", 0.8
+                "reasoning_heuristic.max_level", 0.6
             )
             logger.info("Reasoning level heuristic enabled.")
 

@@ -69,21 +69,23 @@ class ConfigManager {
                 try {
                     const fileContents = fs.readFileSync(this.configFile, 'utf8');
                     loadedConfig = JSON.parse(fileContents);
+                    // TODO disabled frontend config verification until v0.10
+                    this.config = loadedConfig;
                 } catch (e) {
-                    console.warn('Configuration file contains invalid JSON. Resetting to default.');
+                    console.warn('Configuration file contains invalid JSON. Resetting to default: ' + e.message);
                     // loadedConfig will be undefined, triggering the reset below
                 }
 
-                if (loadedConfig && this._isConfigValid(loadedConfig, defaultConfig)) {
-                    this.config = loadedConfig;
-                } else {
-                    if (loadedConfig) { // It was valid JSON but invalid structure/types
-                        console.warn('Configuration file has invalid structure or types. Resetting to default.');
-                    }
-                    this.config = JSON.parse(JSON.stringify(defaultConfig)); // Deep copy
-                    // Overwrite the invalid file with a valid one
-                    fs.writeFileSync(this.configFile, JSON.stringify(this.config, null, 2));
-                }
+                // if (loadedConfig && this._isConfigValid(loadedConfig, defaultConfig)) {
+                //     this.config = loadedConfig;
+                // } else {
+                //     if (loadedConfig) { // It was valid JSON but invalid structure/types
+                //         console.warn('Configuration file has invalid structure or types. Resetting to default.');
+                //     }
+                //     this.config = JSON.parse(JSON.stringify(defaultConfig)); // Deep copy
+                //     // Overwrite the invalid file with a valid one
+                //     fs.writeFileSync(this.configFile, JSON.stringify(this.config, null, 2));
+                // }
             }
 
             // Ensure Ollama settings are present in config
