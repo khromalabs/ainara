@@ -55,85 +55,16 @@ const triggerKey = config.get('shortcuts.trigger', 'Space');
 const hideKey = config.get('shortcuts.hide', 'Escape');
 const myEmitter = new EventEmitter();
 
-function applyAutoStartSetting() {
-    const autoStartEnabled = config.get('startup.autoStart', false);
-    Logger.info(`Applying auto-start setting. Enabled: ${autoStartEnabled}`);
-    // This API is cross-platform and handles the underlying OS specifics.
-    app.setLoginItemSettings({
-        openAtLogin: autoStartEnabled,
-        path: app.getPath('exe') // This is used by Windows and ignored by others.
-    });
-}
-
-// // Add service management to tray menu
-// const contextMenu = Menu.buildFromTemplate([
-//     {
-//         label: 'KK Setup',
-//         click: () => { windowManager.hideAll(true); showSetupWizard(); }
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'LLM Models',
-//         submenu: [
-//             {
-//                 label: 'Configure Providers',
-//                 click: () => showSetupWizard()
-//             },
-//             { type: 'separator' },
-//             {
-//                 label: 'Loading providers...',
-//                 enabled: false
-//             }
-//         ]
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Show',
-//         click: () => windowManager.showAll()
-//     },
-//     {
-//         label: 'Hide',
-//         click: () => windowManager.hideAll(true)
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Check for Updates',
-//         click: () => checkForUpdates(true)
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Help',
-//         click: () => {
-//             const comRing = windowManager.getWindow('comRing');
-//             if (comRing) {
-//                 if (!comRing.isVisible()) {
-//                     windowManager.showAll();
-//                 }
-//                 comRing.send('show-help');
-//             }
-//         }
-//     },
-//     {
-//         label: 'About',
-//         click: () => {
-//             const comRing = windowManager.getWindow('comRing');
-//             if (comRing) {
-//                 if (!comRing.isVisible()) {
-//                     windowManager.showAll();
-//                 }
-//                 comRing.send('show-about');
-//             }
-//         }
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Quit',
-//         click: () => {
-//             app.isQuitting = true;
-//             app.quit();
-//         }
-//     }
-// ]);
+// TODO delayed to v0.10
+// function applyAutoStartSetting() {
+//     const autoStartEnabled = config.get('startup.autoStart', false);
+//     Logger.info(`Applying auto-start setting. Enabled: ${autoStartEnabled}`);
+//     // This API is cross-platform and handles the underlying OS specifics.
+//     app.setLoginItemSettings({
+//         openAtLogin: autoStartEnabled,
+//         path: app.getPath('exe') // This is used by Windows and ignored by others.
+//     });
+// }
 
 // Check if this is the first run of the application
 function isFirstRun() {
@@ -143,9 +74,7 @@ function isFirstRun() {
 // Show the setup wizard for first-time users
 function showSetupWizard(validationErrors = []) {
     console.trace();
-    if (validationErrors && validationErrors.length > 0) {
-        // ServiceManager.stopServices({ force: true });
-        // app.exit(1)
+    if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
         Logger.warn('Configuration validation failed, invalidating setup.complete because of these errors:', validationErrors);
         config.set("setup.completed", false);
     } else {
@@ -200,14 +129,14 @@ function showSetupWizard(validationErrors = []) {
     setupWindow.loadFile(path.join(__dirname, 'components', 'setup.html'));
 
     setupWindow.once('ready-to-show', () => {
-        setupWindow.show();
-        if (validationErrors && validationErrors.length > 0) {
+        if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
             dialog.showErrorBox(
                 'Configuration Error',
                 'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors,
                 // 'The configuration file contains the following errors:\n\n' + validationErrors + "\n\nThe setup wizard will be opened now."
             );
         }
+        setupWindow.show();
         // // Pass validation errors to the wizard window
         // if (validationErrors && validationErrors.length > 0) {
         //     setupWindow.webContents.send('config-validation-errors', validationErrors);
@@ -394,8 +323,8 @@ async function appInitialization() {
         app.isQuitting = false;
         await app.whenReady();
 
-        // Apply auto-start setting on launch
-        applyAutoStartSetting();
+        // // Apply auto-start setting on launch
+        // applyAutoStartSetting();
 
         // Initialize Ollama client
         initializeOllamaClient();
@@ -1092,10 +1021,10 @@ function appSetupEventHandlers() {
         shell.openExternal(url);
     });
 
-    // Handle auto-start setting changes from setup wizard
-    ipcMain.on('set-auto-start', () => {
-        applyAutoStartSetting();
-    });
+    // // Handle auto-start setting changes from setup wizard
+    // ipcMain.on('set-auto-start', () => {
+    //     applyAutoStartSetting();
+    // });
 
     // Handle backup directory selection from setup wizard
     ipcMain.on('select-backup-directory', async (event) => {

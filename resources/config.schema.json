@@ -78,7 +78,7 @@
                             "api_base": {"type": "string", "format": "uri"},
                             "enable_thinking": {"type": "boolean"}
                         },
-                        "required": ["model", "context_window"]
+                        "required": ["model"]
                     }
                 },
                 "selected_backend": {"type": "string"},

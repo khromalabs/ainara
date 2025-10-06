@@ -19,14 +19,13 @@
 import copy
 # import logging
 import os
-import platform
 import shutil
 import sys
 from pathlib import Path
 # import traceback
 import yaml
 import json
-from jsonschema import validate, ValidationError, Draft7Validator
+from jsonschema import Draft7Validator
 
 from ainara.framework.platform_utils import (
     get_default_cache_dir,
@@ -108,6 +107,12 @@ class ConfigManager:
 
     def create_default_config(self, target_path):
         """Create a new configuration file from defaults"""
+        dry_run = False
+
+        if self.needs_load():
+            print("INFO: Configuration file has changed won't update")
+            dry_run = True
+
         default_path = self._get_default_config_path()
 
         if not default_path:
@@ -123,9 +128,10 @@ class ConfigManager:
         target_dir = os.path.dirname(target_path)
         os.makedirs(target_dir, exist_ok=True)
 
-        # Copy the default config
-        shutil.copy(default_path, target_path)
-        print(f"Created new configuration file at: {target_path}")
+        if not dry_run:
+            # Copy the default config
+            shutil.copy(default_path, target_path)
+            print(f"Created new configuration file at: {target_path}")
 
         return target_path
 
@@ -295,6 +301,11 @@ class ConfigManager:
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""
 
+        if self.needs_load():
+            print("INFO: Configuration file has changed, reloading.")
+            self.load_config()
+            return True
+
         # Recursively update the configuration
         def update_dict(target, source):
             # Update existing keys and add new ones from source
@@ -424,6 +435,10 @@ class ConfigManager:
         """Basic validation of configuration data"""
         # This is a simple validation - in a real implementation, you might want to use
         # a more formal schema validation
+
+        if self.needs_load():
+            print("INFO: Configuration file has changed, reloading.")
+            self.load_config()
 
         result = {"valid": True, "errors": []}
 
