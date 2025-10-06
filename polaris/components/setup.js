@@ -999,12 +999,13 @@ function setupEventListeners() {
                 reviewSttCheckbox.checked = config.get('stt.review');
             }
 
-            // Add event listener for the auto start checkbox
-            const autoStartCheckbox = document.getElementById('auto-start-checkbox');
-            if (autoStartCheckbox) {
-                autoStartCheckbox.addEventListener('change', (event) => handleInputChange(event));
-                autoStartCheckbox.checked = config.get('startup.autoStart', false);
-            }
+            // // Add event listener for the auto start checkbox
+            // TODO delayed for v0.10
+            // const autoStartCheckbox = document.getElementById('auto-start-checkbox');
+            // if (autoStartCheckbox) {
+            //     autoStartCheckbox.addEventListener('change', (event) => handleInputChange(event));
+            //     autoStartCheckbox.checked = config.get('startup.autoStart', false);
+            // }
 
             // Add event listener for the background notifications checkbox
             const backgroundNotificationsCheckbox = document.getElementById('background-notifications-checkbox');
@@ -2751,12 +2752,13 @@ async function saveFinishStepConfig() {
             config.set('startup.startMinimized', isChecked);
         }
 
-        if (modifiedFields.finish.has('auto-start-checkbox')) {
-            const isChecked = document.getElementById('auto-start-checkbox').checked;
-            config.set('startup.autoStart', isChecked);
-            // Notify the main process to apply the setting immediately
-            ipcRenderer.send('set-auto-start');
-        }
+        // TODO delayed for v0.10
+        // if (modifiedFields.finish.has('auto-start-checkbox')) {
+        //     const isChecked = document.getElementById('auto-start-checkbox').checked;
+        //     config.set('startup.autoStart', isChecked);
+        //     // Notify the main process to apply the setting immediately
+        //     ipcRenderer.send('set-auto-start');
+        // }
 
         if (modifiedFields.finish.has('review-stt-checkbox')) {
             const isChecked = document.getElementById('review-stt-checkbox').checked;
