@@ -34,7 +34,7 @@ Based on the user's request and the detailed skill descriptions provided above:
 
 Example Output Format:
 {
-  "skill_id": "system/finder",
+  "skill_id": "system_finder",
   "parameters": {
     "query": "recent documents about project X",
     "file_type": "pdf"
@@ -47,7 +47,7 @@ Example Output Format:
 
 Another Example:
 {
-  "skill_id": "tools/calculator",
+  "skill_id": "tools_calculator",
   "parameters": {
     "expression": "cos(3.14159) * 2"
   },
@@ -59,7 +59,7 @@ Another Example:
 
 Another Example for Reasoning:
 {
-  "skill_id": "search/web",
+  "skill_id": "search_web",
   "parameters": {
     "query": "analyze the pros and cons of nuclear energy for the environment"
   },

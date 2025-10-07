@@ -42,7 +42,7 @@ screen and are labeled as "nexus".
 {{/nexus_available}}
 
 Always use ORAKLE commands in this exact HEREDOC, multiline syntax, leaving an
-empty line both before and after the command:
+empty line both before and after the command. Notice the triple '<' character:
 
 <<<ORAKLE
 request to the Orakle server in natural language
