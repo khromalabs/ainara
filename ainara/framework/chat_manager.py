@@ -1137,7 +1137,7 @@ class ChatManager:
 
         # Rule 2: Check for explanatory interrogatives at the start
         if doc[0].lemma_ in explanatory_interrogatives:
-            score += 0.4
+            score += 0.6
             logger.debug(
                 f"Heuristic: Found explanatory interrogative '{doc[0].text}'"
                 " (+0.4)"
@@ -1159,7 +1159,7 @@ class ChatManager:
                     token.lemma_ in reasoning_verbs
                     and token.lemma_ != root_verb
                 ):
-                    score += 0.2
+                    score += 0.4
                     logger.debug(
                         "Heuristic: Found non-root reasoning verb"
                         f" '{token.lemma_}' (+0.2)"
@@ -1170,7 +1170,7 @@ class ChatManager:
         has_comparative = any(tok.tag_ in ["JJR", "RBR"] for tok in doc)
         has_superlative = any(tok.tag_ in ["JJS", "RBS"] for tok in doc)
         if has_comparative or has_superlative:
-            score += 0.15
+            score += 0.20
             logger.debug("Heuristic: Found comparative/superlative (+0.15)")
 
         # --- Finalize heuristic value ---

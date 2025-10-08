@@ -1060,7 +1060,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat';
+                filterInput.value = 'xai,qwen3,deepseek';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -1082,7 +1082,7 @@ function setupEventListeners() {
                     filterInput.dataset.previousValue = filterInput.value;
 
                     // Apply default filter - include recommended models but exclude smaller ones
-                    filterInput.value = 'qwen,deepseek-v3,deepseek-chat,llama,-8b,-3b';
+                    filterInput.value = 'qwen3,deepseek,-8b,-3b';
                     // Hide filter input, label and apply button
                     filterInput.style.display = 'none';
                     filterInputContainer.style.display = 'none';
@@ -3275,7 +3275,8 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
-        { id: 'qwen3:4b', name: 'Qwen 3 (4B)', size: 2.5, minVram: 4},
+        { id: 'qwen3:1.7b', name: 'Qwen 3 (1.7B)', size: 1.4, minVram: 4},
+        { id: 'qwen3:4b', name: 'Qwen 3 (4B)', size: 2.5, minVram: 8},
         { id: 'qwen3:8b', name: 'Qwen 3 (8B)', size: 5.2, minVram: 8},
         { id: 'qwen3:14b', name: 'Qwen 3 (14B)', size: 9, minVram: 12 },
         { id: 'qwen3:30b', name: 'Qwen 3 (30B)', size: 19, minVram: 24 },
