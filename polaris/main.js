@@ -192,11 +192,24 @@ function showSetupWizard(validationErrors = []) {
 
         if (!servicesStarted) {
             splashWindow.close();
-            dialog.showErrorBox(
-                'Service Error',
-                message + ' Please check the logs for details.'
+            const options = {
+                type: 'question',
+                buttons: ['Yes', 'No'],
+                title: 'Startup Error',
+                message: 'Error: ' + message  + '. Do you want to open the setup wizard? Maybe the LLM is not responding, please try another LLM provider.'
+            };
+            const response = dialog.showMessageBoxSync(
+                null,
+                options
             );
-            app.quit();
+            if (response === 0) { // Yes
+                if (splashWindow && !splashWindow.window.isDestroyed()) {
+                    splashWindow.close();
+                }
+                showSetupWizard();
+            } else { // No
+                app.quit();
+            }
             return;
         }
         // Wait for services to be healthy
@@ -433,12 +446,22 @@ async function appInitialization() {
             await ServiceManager.startServices();
 
         if (!servicesStarted) {
-            splashWindow?.close();
-            dialog.showErrorBox(
-                'Service Error',
-                message + ' Please check the logs for details.'
+            splashWindow.close();
+            const options = {
+                type: 'question',
+                buttons: ['Yes', 'No'],
+                title: 'Startup Error',
+                message: 'Error: ' + message  + '. Do you want to open the setup wizard? Maybe the LLM is not responding, please try another LLM provider.'
+            };
+            const response = dialog.showMessageBoxSync(
+                null,
+                options,
             );
-            app.quit();
+            if (response === 0) { // Yes
+                showSetupWizard();
+            } else { // No
+                app.quit();
+            }
             return;
         }
 

@@ -69,6 +69,12 @@ class DocumentView extends BaseComponent {
             controls.appendChild(copyButton);
         }
 
+        const helpElement = document.createElement('span');
+        helpElement.textContent = "Press Escape to exit document view";
+        helpElement.title = helpElement.textContent;
+        docInfo.appendChild(helpElement);
+
+
         const closeButton = document.createElement('button');
         closeButton.className = 'close-button';
         closeButton.innerHTML = '&times;';
