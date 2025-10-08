@@ -18,8 +18,8 @@ jobs:
 #          python-version: '3.12'
         - os: windows-latest
           python-version: '3.12'
-        - os: ubuntu-latest
-          python-version: '3.12'
+#        - os: ubuntu-latest
+#          python-version: '3.12'
     runs-on: ${{ matrix.os }}
     # Add permissions block here for the job
     permissions:
