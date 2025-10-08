@@ -1475,6 +1475,7 @@ class ChatManager:
             doc_format = "plaintext"
 
             for chunk in final_chunks:
+                # # --- TOKEN DEBUG
                 # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
                 if "_AINARA_THINKING_START_" in chunk:
                     yield ndjson("signal", "thinking", {"state": "start"})

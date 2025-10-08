@@ -249,6 +249,7 @@ class OrakleMiddleware:
         for token in token_stream:
             if token is None:
                 continue
+            # # --- TOKEN DEBUG
             # logger.info(f"ORAKLE Middleware received token: {repr(token)}")
 
             buffer += token
