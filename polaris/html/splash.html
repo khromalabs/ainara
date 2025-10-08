@@ -110,7 +110,7 @@
                 <div class="progress-bar" id="progress"></div>
             </div>
         </div>
-        <div class="version" id="version">Version 0.8.2</div>
+        <div class="version" id="version">Version 0.9.1</div>
     </div>
 
     <script>
@@ -120,8 +120,10 @@
         ipcRenderer.on('update-progress', (event, data) => {
             const { status, progress } = data;
 
-            // Update status text
-            document.getElementById('status').textContent = status;
+            if (status) {
+                // Update status text
+                document.getElementById('status').textContent = status;
+            }
 
             // Update progress bar
             document.getElementById('progress').style.width = `${progress}%`;

@@ -35,7 +35,6 @@ const Logger = require('./framework/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
 const debugMode = true;
-const debugDisableWizard = false;
 const ollama = require('ollama');
 
 
@@ -56,75 +55,16 @@ const triggerKey = config.get('shortcuts.trigger', 'Space');
 const hideKey = config.get('shortcuts.hide', 'Escape');
 const myEmitter = new EventEmitter();
 
-// // Add service management to tray menu
-// const contextMenu = Menu.buildFromTemplate([
-//     {
-//         label: 'KK Setup',
-//         click: () => { windowManager.hideAll(true); showSetupWizard(); }
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'LLM Models',
-//         submenu: [
-//             {
-//                 label: 'Configure Providers',
-//                 click: () => showSetupWizard()
-//             },
-//             { type: 'separator' },
-//             {
-//                 label: 'Loading providers...',
-//                 enabled: false
-//             }
-//         ]
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Show',
-//         click: () => windowManager.showAll()
-//     },
-//     {
-//         label: 'Hide',
-//         click: () => windowManager.hideAll(true)
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Check for Updates',
-//         click: () => checkForUpdates(true)
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Help',
-//         click: () => {
-//             const comRing = windowManager.getWindow('comRing');
-//             if (comRing) {
-//                 if (!comRing.isVisible()) {
-//                     windowManager.showAll();
-//                 }
-//                 comRing.send('show-help');
-//             }
-//         }
-//     },
-//     {
-//         label: 'About',
-//         click: () => {
-//             const comRing = windowManager.getWindow('comRing');
-//             if (comRing) {
-//                 if (!comRing.isVisible()) {
-//                     windowManager.showAll();
-//                 }
-//                 comRing.send('show-about');
-//             }
-//         }
-//     },
-//     { type: 'separator' },
-//     {
-//         label: 'Quit',
-//         click: () => {
-//             app.isQuitting = true;
-//             app.quit();
-//         }
-//     }
-// ]);
+// TODO delayed to v0.10
+// function applyAutoStartSetting() {
+//     const autoStartEnabled = config.get('startup.autoStart', false);
+//     Logger.info(`Applying auto-start setting. Enabled: ${autoStartEnabled}`);
+//     // This API is cross-platform and handles the underlying OS specifics.
+//     app.setLoginItemSettings({
+//         openAtLogin: autoStartEnabled,
+//         path: app.getPath('exe') // This is used by Windows and ignored by others.
+//     });
+// }
 
 // Check if this is the first run of the application
 function isFirstRun() {
@@ -132,8 +72,14 @@ function isFirstRun() {
 }
 
 // Show the setup wizard for first-time users
-function showSetupWizard() {
-    Logger.info('First run detected, showing setup wizard');
+function showSetupWizard(validationErrors = []) {
+    console.trace();
+    if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
+        Logger.warn('Configuration validation failed, invalidating setup.complete because of these errors:', validationErrors);
+        config.set("setup.completed", false);
+    } else {
+        Logger.info('Showing setup wizard');
+    }
 
    // Disable tray icon
     if (tray) {
@@ -183,7 +129,18 @@ function showSetupWizard() {
     setupWindow.loadFile(path.join(__dirname, 'components', 'setup.html'));
 
     setupWindow.once('ready-to-show', () => {
+        if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
+            dialog.showErrorBox(
+                'Configuration Error',
+                'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors,
+                // 'The configuration file contains the following errors:\n\n' + validationErrors + "\n\nThe setup wizard will be opened now."
+            );
+        }
         setupWindow.show();
+        // // Pass validation errors to the wizard window
+        // if (validationErrors && validationErrors.length > 0) {
+        //     setupWindow.webContents.send('config-validation-errors', validationErrors);
+        // }
     });
 
 
@@ -204,9 +161,6 @@ function showSetupWizard() {
         }
         await restartWithSplash();
     }
-
-    // Handle setup completion
-    ipcMain.once('setup-complete', setupComplete);
 
     // relies in external executables
     // TODO Unify this with splash window in appInitialization
@@ -233,28 +187,31 @@ function showSetupWizard() {
         });
         // Start services
         splashWindow.updateProgress('Starting services...', 10);
-        const servicesStarted = await ServiceManager.startServices();
+        const { success: servicesStarted, message } =
+            await ServiceManager.startServices();
+
         if (!servicesStarted) {
             splashWindow.close();
             dialog.showErrorBox(
                 'Service Error',
-                'Failed to start required services. Please check the logs for details.'
+                message + ' Please check the logs for details.'
             );
             app.quit();
             return;
         }
         // Wait for services to be healthy
         splashWindow.updateProgress('Waiting for services to be ready...', 40);
+
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
         const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
-            if (ServiceManager.isAllHealthy()) {
+            if (await ServiceManager.checkServicesHealth()) {
                 servicesHealthy = true;
                 break;
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 5000));
         }
         if (!servicesHealthy) {
             splashWindow?.close();
@@ -265,32 +222,10 @@ function showSetupWizard() {
             app.quit();
             return;
         }
+
         // Services are ready, initialize the rest of the app
         splashWindow.updateProgress('Initializing application...', 80);
-        // Check if required resources are available
-        splashWindow.updateProgress('Checking required resources...', 85);
-        const resourceCheck = await ServiceManager.checkResourcesInitialization();
-        // If resources are not initialized, initialize them
-        if (resourceCheck && !resourceCheck.initialized) {
-            Logger.info('Some resources need initialization, starting download process...');
-            // Start the initialization process
-            try {
-                Logger.info('Starting resource initialization via SSE (restartWithSplash)...');
-                // Progress updates are handled internally by ServiceManager via callback
-                const initResult = await ServiceManager.initializeResources();
-                Logger.info('Resource initialization successful (restartWithSplash):', initResult.message);
-            } catch (errorResult) {
-                splashWindow.close();
-                Logger.error('Failed to initialize resources (restartWithSplash):', errorResult.error || 'Unknown error');
-                dialog.showErrorBox(
-                    'Initialization Error',
-                    `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
-                );
-                app.quit();
-            }
-        } else {
-            Logger.info('All required resources are already initialized');
-        }
+
         // Update the provider submenu
         await updateProviderSubmenu();
         // Close splash and show main window
@@ -317,18 +252,48 @@ function showSetupWizard() {
     // If the user closes the setup window without completing setup
     ipcMain.on('close-setup-window', async () => {
         Logger.info('close-setup-window event');
-        if (!config.get('setup.completed', false)) {
+        setupWindow?.close();
+        if (config.get('setup.completed', false)) {
+            // TODO: Don't know what this means, setupComplete is needed here
+            // Correction: Prevented re-entrant call to setupComplete.
+            Logger.info('Setup complete, window closed by user. Main flow will continue.');
+            setupComplete();
+        } else {
             Logger.info('Setup incomplete - forcing immediate exit');
             await ServiceManager.stopServices();
             app.quit(); // Hard exit without cleanup
-        } else {
-            // Correction: Prevented re-entrant call to setupComplete.
-            // Improvement: The 'close-setup-window' event is fired when the setup window closes.
-            // If setup was already completed, this was re-triggering the setup completion logic.
-            // Now, it only logs that the user closed the window, and the main flow continues as intended.
-            Logger.info('Setup complete, window closed by user. Main flow will continue.');
         }
     });
+
+    // Handle setup completion
+    ipcMain.on('setup-complete', setupComplete);
+}
+
+async function checkConfigAndProceed() {
+    const pybridgeUrl = config.get('pybridge.api_url', 'http://127.0.0.1:8101');
+    try {
+        // Use Electron's net module for requests to avoid external dependencies
+        const { net } = require('electron');
+        const response = await net.fetch(`${pybridgeUrl}/config/status`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const configStatus = await response.json();
+
+        // Show wizard if it's the first run or if the original config was invalid
+        if (isFirstRun() || !configStatus.initial_config_valid) {
+            if (splashWindow && !splashWindow.window.isDestroyed()) {
+                splashWindow.close();
+            }
+            showSetupWizard(configStatus.errors);
+            return false; // Indicates we should stop normal startup
+        }
+        return true; // Indicates we should proceed
+    } catch (error) {
+        appHandleCriticalError(new Error(`Could not verify configuration with PyBridge service. ${error.message}`));
+        return false;
+    }
 }
 
 function initializeOllamaClient() {
@@ -357,6 +322,9 @@ async function appInitialization() {
         Logger.setDebugMode(debugMode);
         app.isQuitting = false;
         await app.whenReady();
+
+        // // Apply auto-start setting on launch
+        // applyAutoStartSetting();
 
         // Initialize Ollama client
         initializeOllamaClient();
@@ -420,54 +388,37 @@ async function appInitialization() {
         splashWindow = new SplashWindow(config, null, null, __dirname);
         splashWindow.show();
 
-
         // If services are being managed externally alternate start without splash
-        await ServiceManager.checkServicesHealth();
-        if (ServiceManager.isAllHealthy()) {
+        if (
+            process.env.AINARA_ONLY_POLARIS === '1' ||
+            process.env.AINARA_ONLY_POLARIS === 'true'
+        ) {
+            Logger.info('AINARA_ONLY_POLARIS: Avoiding services launch');
             splashWindow.close();
-            startOllamaKeepAlive();
+            if(!await ServiceManager.checkServicesHealth()) {
+                Logger.error('Services are not healthy');
+                app.quit()
+            }
             // Alternate application start for dev purposes
             externallyManagedServices = true;
-            const resourceCheck = await ServiceManager.checkResourcesInitialization();
-            // If resources are not initialized, initialize them
-            if (resourceCheck && !resourceCheck.initialized) {
-                Logger.info('Some resources need initialization, starting download process...');
-                try {
-                    Logger.info('Starting resource initialization via SSE (external services)...');
-                    // Progress updates are handled internally by ServiceManager via callback
-                    const initResult = await ServiceManager.initializeResources();
-                    Logger.info('Resource initialization successful (external services):', initResult.message);
-                } catch (errorResult) {
-                    Logger.error('Failed to initialize resources (external services):', errorResult.error || 'Unknown error');
-                    dialog.showErrorBox(
-                        'Initialization Error',
-                        `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
-                    );
-                    app.quit();
-                }
-            } else {
-                Logger.info('All required resources are already initialized');
+            // Check config validity before proceeding
+            if (!await checkConfigAndProceed()) {
+                return;
             }
+            startOllamaKeepAlive();
             await updateProviderSubmenu();
             initializeAutoUpdater();
-
             // Set shortcut just before showing windows
             appSetupShortcuts();
             await appCreateTray();
-
             // Read the start minimized setting
             const startMinimized = config.get('startup.startMinimized', false);
-
-            // Check if this is the first run
-            if (!debugDisableWizard && isFirstRun()) {
-                showSetupWizard();
+            if (!startMinimized) {
+                Logger.info('Starting with windows visible.');
+                windowManager.showAll(true);
             } else {
-                if (!startMinimized) {
-                    Logger.info('Starting with windows visible.');
-                    windowManager.showAll(true);
-                } else Logger.info('Starting minimized as per configuration.');
+                Logger.info('Starting minimized as per configuration.');
             }
-
             return;
         }
 
@@ -478,13 +429,14 @@ async function appInitialization() {
 
         // Start services
         splashWindow.updateProgress('Starting services...', 10);
-        const servicesStarted = await ServiceManager.startServices();
+        const { success: servicesStarted, message } =
+            await ServiceManager.startServices();
 
         if (!servicesStarted) {
             splashWindow?.close();
             dialog.showErrorBox(
                 'Service Error',
-                'Failed to start required services. Please check the logs for details.'
+                message + ' Please check the logs for details.'
             );
             app.quit();
             return;
@@ -497,15 +449,13 @@ async function appInitialization() {
         const startTime = Date.now();
         const timeout = 300000; // 300 seconds timeout
         let servicesHealthy = false;
-
         while (Date.now() - startTime < timeout) {
-            if (ServiceManager.isAllHealthy()) {
+            if (await ServiceManager.checkServicesHealth()) {
                 servicesHealthy = true;
                 break;
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 5000));
         }
-
         if (!servicesHealthy) {
             splashWindow?.close();
             dialog.showErrorBox(
@@ -516,34 +466,18 @@ async function appInitialization() {
             return;
         }
 
-        // Services are ready, initialize the rest of the app
-        splashWindow.updateProgress('Initializing application...', 80);
+        // Start background health monitoring now that services are up
+        ServiceManager.startHealthCheck();
 
-        // Check if required resources are available
-        splashWindow.updateProgress('Checking required resources...', 85);
-        const resourceCheck = await ServiceManager.checkResourcesInitialization();
+        // Services are ready, check config and initialize the rest of the app
+        splashWindow.updateProgress('Verifying configuration...', 75);
 
-        // If resources are not initialized, initialize them
-        if (resourceCheck && !resourceCheck.initialized) {
-            Logger.info('Some resources need initialization, starting download process...');
-            // Start the initialization process
-            try {
-                Logger.info('Starting resource initialization via SSE (normal start)...');
-                // Progress updates are handled internally by ServiceManager via callback
-                const initResult = await ServiceManager.initializeResources();
-                Logger.info('Resource initialization successful (normal start):', initResult.message);
-            } catch (errorResult) {
-                splashWindow.close();
-                Logger.error('Failed to initialize resources (normal start):', errorResult.error || 'Unknown error');
-                dialog.showErrorBox(
-                    'Initialization Error',
-                    `Failed to download required resources: ${errorResult.error || 'Unknown error'}`
-                );
-                app.quit();
-            }
-        } else {
-            Logger.info('All required resources are already initialized');
+        // Check config validity before proceeding
+        if (!await checkConfigAndProceed()) {
+            return;
         }
+
+        splashWindow.updateProgress('Initializing application...', 80);
 
         // Update the provider submenu
         await updateProviderSubmenu();
@@ -555,12 +489,6 @@ async function appInitialization() {
         splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 1000));
         await splashWindow.close();
-
-        // Check if this is the first run
-        if (isFirstRun()) {
-            showSetupWizard();
-            return;
-        }
 
         // Read the start minimized setting
         await appCreateTray();
@@ -792,9 +720,9 @@ async function loadOllamaModel(modelId) {
 async function startOllamaKeepAlive() {
     try {
         const { selected_provider } = await ConfigHelper.getLLMProviders();
-        Logger.info(`startOllamaKeepAlive: selected_provider: ${selected_provider}.`);
         if (selected_provider && selected_provider.startsWith('ollama/')) {
             const modelId = selected_provider.split('/')[1];
+            Logger.info(`startOllamaKeepAlive: ping to selected_provider: ${selected_provider}.`);
             await loadOllamaModel(modelId);
         }
         setTimeout(startOllamaKeepAlive, 290000);
@@ -969,7 +897,7 @@ function checkForUpdates(interactive = false) {
 
 function initializeAutoUpdater() {
     autoUpdater.autoDownload = false;
-    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', true);
+    autoUpdater.allowPrerelease = config.get('autoUpdate.allowPrerelease', false);
     autoUpdater.logger = Logger;
 
     Logger.info(`AutoUpdater: Initializing with version ${app.getVersion()}`);
@@ -1092,6 +1020,11 @@ function appSetupEventHandlers() {
     ipcMain.on('open-external-url', (event, url) => {
         shell.openExternal(url);
     });
+
+    // // Handle auto-start setting changes from setup wizard
+    // ipcMain.on('set-auto-start', () => {
+    //     applyAutoStartSetting();
+    // });
 
     // Handle backup directory selection from setup wizard
     ipcMain.on('select-backup-directory', async (event) => {
@@ -1269,14 +1202,15 @@ process.on('SIGINT', async () => {
 
 app.on('before-quit', async (event) => {
   if (isForceShutdown) {
-    event.preventDefault();
-    return;
+      event.preventDefault();
+      return;
   }
-
   try {
-    await ServiceManager.stopServices();
+      await ServiceManager.stopServices();
+      // force
+      app.exit(0);
   } catch (err) {
-    Logger.error('Graceful shutdown failed:', err);
+      Logger.error('Graceful shutdown failed:', err);
   }
 });
 

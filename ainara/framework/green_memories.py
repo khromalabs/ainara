@@ -139,7 +139,10 @@ class GREENMemories:
         self.topic_matcher_model = None
         if SENTENCE_TRANSFORMERS_AVAILABLE:
             try:
-                self.topic_matcher_model = SentenceTransformer(embedding_model)
+                self.topic_matcher_model = SentenceTransformer(
+                    embedding_model,
+                    cache_folder=config.get("cache.directory")
+                )
                 logger.info(f"Loaded topic matcher model: {embedding_model}")
             except Exception as e:
                 logger.error(f"Failed to load topic matcher model: {e}")
@@ -372,6 +375,31 @@ class GREENMemories:
                         "ALTER TABLE user_memories ADD COLUMN status TEXT NOT"
                         " NULL DEFAULT 'current'"
                     )
+                    self.storage.set_metadata("vector_db_needs_reset", "true")
+                    logger.info(
+                        "Flagged vector DB for reset on next startup due to"
+                        " schema change."
+                    )
+                    logger.info("Schema update complete.")
+
+                if "created_at" not in columns:
+                    logger.info(
+                        "Adding 'created_at' column to user_memories table."
+                    )
+                    # Add the column, allowing NULLs for now
+                    cursor.execute(
+                        "ALTER TABLE user_memories ADD COLUMN created_at TEXT"
+                    )
+                    # Populate with last_updated for existing records
+                    cursor.execute(
+                        "UPDATE user_memories SET created_at = last_updated"
+                        " WHERE created_at IS NULL"
+                    )
+                    logger.info(
+                        "Populated 'created_at' for existing memories."
+                    )
+                    # While we could add a NOT NULL constraint, it's complex in SQLite.
+                    # The application logic will ensure it's always populated for new rows.
                     self.storage.set_metadata("vector_db_needs_reset", "true")
                     logger.info(
                         "Flagged vector DB for reset on next startup due to"
@@ -884,6 +912,21 @@ class GREENMemories:
                         f" \"{memory['memory']}\""
                     )
 
+                # Format dates for display
+                for key in ["created_at", "last_updated"]:
+                    if memory.get(key):
+                        try:
+                            dt_obj = datetime.fromisoformat(memory[key])
+                            memory[f"{key}_formatted"] = dt_obj.strftime(
+                                "%Y-%m-%d %H:%M"
+                            )
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                "Could not parse date string for"
+                                f" {key}: {memory[key]}"
+                            )
+                            memory[f"{key}_formatted"] = None
+
             return semantic_memories
 
         except Exception as e:
@@ -912,7 +955,8 @@ class GREENMemories:
         with self._db_lock:
             self.storage.set_metadata("profile_decay_turn_counter", "0")
 
-    def process_new_messages_for_update(self):
+    def process_new_messages_for_update(
+            self, progress_callback=None, max_progress=100):
         """
         Fetches all new messages since the last update, processes them in
         conversation turns, and updates the user profile.
@@ -936,6 +980,15 @@ class GREENMemories:
 
         logger.info(f"Found {len(new_messages)} new messages to process.")
 
+        # Poison pill prevention: track repeated failures on the same message.
+        last_failure_timestamp = self.storage.get_metadata(
+            "memory_last_failure_timestamp"
+        )
+        failure_count_str = self.storage.get_metadata("memory_failure_count")
+        failure_count = int(failure_count_str) if failure_count_str else 0
+        # The number of times to retry a failing message before skipping it.
+        MAX_RETRIES = 3
+
         # Group messages into user/assistant turns
         conversation_turns = []
         for i, message in enumerate(new_messages):
@@ -958,6 +1011,9 @@ class GREENMemories:
         logger.info(
             f"Processing {len(conversation_turns)} new conversation turns."
         )
+        timestamp_to_set = last_timestamp
+        all_successful = True
+        total_turns = len(conversation_turns)
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
             # Create a sliding window of context. A value of 0 means no extra context.
             start_index = max(0, i - self.extraction_context_turns)
@@ -965,16 +1021,79 @@ class GREENMemories:
 
             # The last turn in the window is the one we are primarily analyzing.
             # The preceding turns provide the context.
-            self._extract_and_assimilate_memory(context_turns)
+            if not self._extract_and_assimilate_memory(context_turns):
+                failed_timestamp = assistant_msg.get("timestamp")
+
+                if last_failure_timestamp == failed_timestamp:
+                    failure_count += 1
+                    logger.warning(
+                        "Repeated failure processing message at timestamp"
+                        f" {failed_timestamp}. Attempt"
+                        f" {failure_count}/{MAX_RETRIES}."
+                    )
+                else:
+                    # This is a new message failing, reset the counter
+                    failure_count = 1
+                    logger.warning(
+                        "Failure processing message at timestamp"
+                        f" {failed_timestamp}. This is the first attempt."
+                    )
+
+                if failure_count >= MAX_RETRIES:
+                    logger.error(
+                        f"Message at {failed_timestamp} has failed processing"
+                        f" {MAX_RETRIES} times. Skipping this message to avoid"
+                        " getting stuck."
+                    )
+                    # To skip, we treat it as a success for timestamp purposes
+                    timestamp_to_set = failed_timestamp
+                    # Reset failure tracking and continue to the next message
+                    self.storage.delete_metadata(
+                        [
+                            "memory_last_failure_timestamp",
+                            "memory_failure_count",
+                        ]
+                    )
+                    continue
+                else:
+                    # It's a retryable failure. Save state and break.
+                    self.storage.set_metadata(
+                        "memory_last_failure_timestamp", failed_timestamp
+                    )
+                    self.storage.set_metadata(
+                        "memory_failure_count", str(failure_count)
+                    )
+                    all_successful = False
+                    logger.warning(
+                        "Halting memory processing for this session due to a"
+                        " fatal error. Progress has been saved. The process"
+                        " will resume from the failed message on the next run."
+                    )
+                    break
+
+            # On success, update the timestamp we would save in case of failure
+            timestamp_to_set = assistant_msg.get("timestamp")
+
+            if progress_callback:
+                progress = int(((i + 1) / total_turns) * max_progress)
+                progress_callback(progress, i + 1, total_turns)
 
         # After processing all turns, update the timestamp to the last message processed
-        latest_timestamp = new_messages[-1].get("timestamp")
-        self.storage.set_metadata(
-            "profile_last_processed_timestamp", latest_timestamp
-        )
-        logger.info(
-            f"Profile update complete. New timestamp: {latest_timestamp}"
-        )
+        if all_successful:
+            # If we finished everything without a fatal error, clear any stale failure markers
+            self.storage.delete_metadata(
+                ["memory_last_failure_timestamp", "memory_failure_count"]
+            )
+            if new_messages:
+                timestamp_to_set = new_messages[-1].get("timestamp")
+
+        if timestamp_to_set and timestamp_to_set != last_timestamp:
+            self.storage.set_metadata(
+                "profile_last_processed_timestamp", timestamp_to_set
+            )
+            logger.info(
+                f"Profile update complete. New timestamp: {timestamp_to_set}"
+            )
 
     def decay_all_memories(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
@@ -1145,7 +1264,7 @@ class GREENMemories:
             target_section = "extended_memories"
 
         memory_id = str(uuid.uuid4())
-        last_updated = datetime.now(timezone.utc).isoformat()
+        now_timestamp = datetime.now(timezone.utc).isoformat()
         source_ids = json.dumps(
             [
                 uid
@@ -1161,8 +1280,8 @@ class GREENMemories:
             with self.storage.conn:
                 self.storage.conn.execute(
                     """
-                    INSERT INTO user_memories (id, memory_type, topic, memory, relevance, last_updated, source_message_ids)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO user_memories (id, memory_type, topic, memory, relevance, created_at, last_updated, source_message_ids)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         memory_id,
@@ -1170,7 +1289,8 @@ class GREENMemories:
                         topic,
                         memory_text,
                         1.0,
-                        last_updated,
+                        now_timestamp,
+                        now_timestamp,
                         source_ids,
                     ),
                 )
@@ -1187,7 +1307,8 @@ class GREENMemories:
                     "topic": topic,
                     "memory": memory_text,
                     "relevance": 1.0,
-                    "last_updated": last_updated,
+                    "created_at": now_timestamp,
+                    "last_updated": now_timestamp,
                     "source_message_ids": json.loads(source_ids),
                     "status": "current",
                 }
@@ -1284,13 +1405,17 @@ class GREENMemories:
 
     def _extract_and_assimilate_memory(
         self, conversation_turns: List[tuple[Dict, Dict]]
-    ):
+    ) -> bool:
         """
         Analyzes a conversation turn, compares it with existing memories, and
         decides whether to ignore, reinforce, update, or create a memory using an LLM.
+
+        Returns:
+            bool: True if processing was successful (or a non-fatal error occurred),
+                  False if a fatal error occurred that should halt the batch.
         """
         if not conversation_turns:
-            return
+            return True
 
         user_message, assistant_message = conversation_turns[-1]
         llm_response_str = ""
@@ -1374,7 +1499,7 @@ class GREENMemories:
                 logger.info(
                     "LLM decided to ignore the conversation for memory."
                 )
-                return
+                return True
 
             elif action == "reinforce":
                 memory_id = decision.get("memory_id")
@@ -1406,5 +1531,11 @@ class GREENMemories:
                 "LLM returned invalid JSON for memory processing:"
                 f" {llm_response_str}"
             )
+            # This is a non-fatal error; we can continue with the next message.
+            return True
         except Exception as e:
             logger.error(f"Failed to assimilate memory from conversation: {e}")
+            # This is a fatal error (e.g., LLM down); stop processing the batch.
+            return False
+
+        return True

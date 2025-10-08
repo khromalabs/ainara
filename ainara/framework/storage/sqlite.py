@@ -330,6 +330,17 @@ class SQLiteStorage(StorageBackend):
                 (key, value),
             )
 
+    def delete_metadata(self, keys: List[str]):
+        """Delete one or more keys from the metadata table."""
+        if not keys:
+            return
+        placeholders = ",".join("?" for _ in keys)
+        with self.conn:
+            self.conn.execute(
+                f"DELETE FROM db_metadata WHERE key IN ({placeholders})",
+                keys,
+            )
+
     def get_messages_since(
         self, timestamp: Optional[str] = None
     ) -> List[Dict[str, Any]]:

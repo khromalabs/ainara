@@ -25,7 +25,7 @@ from ainara.framework.config import config
 
 try:
     from sentence_transformers import SentenceTransformer
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import hf_hub_download
     from huggingface_hub.utils import EntryNotFoundError
 
     SENTENCE_TRANSFORMERS_AVAILABLE = True
@@ -135,14 +135,21 @@ def check_embedding_model():
         return {
             "initialized": False,
             "message": "sentence-transformers library not found.",
+            "hi": "DARLING",
             "model_name": get_embedding_model_name(),
         }
 
     model_name = get_embedding_model_name()
+    cache_dir = config.get("cache.directory")
     try:
-        # This will check for the model in the cache without downloading it.
-        # It will raise an exception if not found locally.
-        snapshot_download(repo_id=model_name, local_files_only=True)
+        # Check for a core model file instead of the whole snapshot for reliability.
+        # This is less likely to be fooled by a partially deleted cache.
+        hf_hub_download(
+            repo_id=model_name,
+            filename="config.json",
+            local_files_only=True,
+            cache_dir=cache_dir,
+        )
         logger.info(f"Embedding model '{model_name}' found in cache.")
         return {
             "initialized": True,
@@ -176,19 +183,27 @@ def setup_embedding_model():
     Returns:
         dict: A dictionary with success status and a message.
     """
+    # logger.info("0")
     if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        # logger.info("SENTENCE_TRANSFORMERS_AVAILABLE NOT")
+        # logger.info("1")
         return {
             "success": False,
             "message": "sentence-transformers library not found.",
         }
 
     model_name = get_embedding_model_name()
+    cache_dir = config.get("cache.directory")
+    # logger.info("2")
     try:
         logger.info(f"Downloading and caching embedding model: {model_name}...")
         # Instantiating the model triggers the download and caching process.
-        SentenceTransformer(model_name)
+        # logger.info("3")
+        SentenceTransformer(model_name, cache_folder=cache_dir)
         logger.info(f"Successfully downloaded and cached model: {model_name}")
+        # logger.info("5")
         return {"success": True, "message": "Model downloaded successfully."}
     except Exception as e:
+        # logger.info("6")
         logger.error(f"Failed to download embedding model '{model_name}': {e}")
         return {"success": False, "message": str(e)}

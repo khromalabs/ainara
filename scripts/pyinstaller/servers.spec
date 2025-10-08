@@ -178,6 +178,7 @@ common_imports = [
     'sounddevice',
     'soundfile',
     'pygame',
+    'elevenlabs',
 
     # Additional dependencies
     'telegram',
@@ -261,6 +262,8 @@ common_imports = [
     'ainara.framework.stt.faster_whisper',
     'ainara.framework.stt.whisper',
     'ainara.framework.tts',
+
+    'ainara.nexus',
 ]
 
 # Add all the transformers models to common imports

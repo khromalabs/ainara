@@ -33,11 +33,11 @@ from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
+from ainara.framework.green_memories import GREENMemories
 from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.green_memories import GREENMemories
 from ainara.framework.utils import load_spacy_model
 
 # import pprint
@@ -103,6 +103,7 @@ class ChatManager:
         self.memory_enabled = config.get("memory.enabled", False)
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
+        self.max_guardrail_retries = config.get("guardrails.max_retries", 2)
         # --- Memory Decay Tracking (persisted between sessions) ---
         self.memory_decay_interval = config.get(
             "memories.decay_interval_turns", 5
@@ -140,6 +141,17 @@ class ChatManager:
             capabilities=capabilities,
         )
 
+        # --- Reasoning Level Heuristic ---
+        self.reasoning_heuristic_enabled = config.get(
+            "reasoning_heuristic.enabled", True
+        )
+        # TODO Add this parameter to wizard configuration
+        if self.reasoning_heuristic_enabled:
+            self.reasoning_max_level = config.get(
+                "reasoning_heuristic.max_level", 0.6
+            )
+            logger.info("Reasoning level heuristic enabled.")
+
         # Get capabilities from middleware
         self.capabilities = self.orakle_middleware.capabilities
 
@@ -150,8 +162,7 @@ class ChatManager:
 
         # Check if the user profile is new to show an onboarding message
         user_memories_empty = (
-            self.green_memories
-            and self.green_memories.is_empty()
+            self.green_memories and self.green_memories.is_empty()
         )
         has_prior_user_messages = any(
             msg.get("role") == "user" for msg in self.chat_history[:-1]
@@ -429,7 +440,9 @@ class ChatManager:
                 yield ndjson("message", "stream", event_data)
             else:
                 # logger.info("_process_streaming_sentence 4 '" + sentence + "'")
-                char_delay = duration / len(cleaned_sentence) if cleaned_sentence else 0
+                char_delay = (
+                    duration / len(cleaned_sentence) if cleaned_sentence else 0
+                )
                 if not self.tts.play_audio(audio_file):
                     raise RuntimeError("Failed to start audio playback")
                 for char in cleaned_sentence:
@@ -888,7 +901,9 @@ class ChatManager:
     def _handle_test_nexus_stream(self, command: str, stream: str):
         """Handles streaming for the /testnexus command."""
         parts = command.strip().split(" ", 2)
-        usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+        usage_msg = (
+            "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+        )
 
         if len(parts) < 3:
             if stream == "cli":
@@ -898,14 +913,17 @@ class ChatManager:
                 yield ndjson(
                     "message",
                     "stream",
-                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
                 )
                 yield ndjson("signal", "loading", {"state": "stop"})
                 yield ndjson("signal", "completed", None)
             return
 
         _command, ui_parts_str, data_json_str = parts
-        ui_parts = ui_parts_str.split(',')
+        ui_parts = ui_parts_str.split(",")
 
         if len(ui_parts) != 3:
             if stream == "cli":
@@ -915,7 +933,10 @@ class ChatManager:
                 yield ndjson(
                     "message",
                     "stream",
-                    {"content": usage_msg, "flags": {"command": False, "audio": False}},
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
                 )
                 yield ndjson("signal", "loading", {"state": "stop"})
                 yield ndjson("signal", "completed", None)
@@ -952,11 +973,7 @@ class ChatManager:
                 f"Data: {json.dumps(nexus_data)}"
             )
             self.llm.add_msg(history_message, self.chat_history, "assistant")
-            yield ndjson(
-                "ui",
-                "renderNexus",
-                nexus_data
-            )
+            yield ndjson("ui", "renderNexus", nexus_data)
             yield ndjson("signal", "loading", {"state": "stop"})
             yield ndjson("signal", "completed", None)
             self.nexus_test = self.nexus_test + 1
@@ -1023,18 +1040,20 @@ class ChatManager:
             return self._handle_test_nexus_stream(command, stream)
         else:  # no stream
             parts = command.strip().split(" ", 2)
-            usage_msg = "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+            usage_msg = (
+                "Usage: /testnexus <vendor>,<bundle>,<component> <json_data>"
+            )
             if len(parts) < 3:
                 return usage_msg
 
             _command, ui_parts_str, data_json_str = parts
-            ui_parts = ui_parts_str.split(',')
+            ui_parts = ui_parts_str.split(",")
             if len(ui_parts) != 3:
                 return usage_msg
 
             vendor, bundle, component = ui_parts
             component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
-            return f'<nexus path="{component_path}" data=\'{data_json_str}\'/>'
+            return f"<nexus path=\"{component_path}\" data='{data_json_str}'/>"
 
     def _handle_test_doc_view_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
@@ -1049,7 +1068,7 @@ class ChatManager:
 
             command_body = parts[1]
             doc_format, doc_content = command_body.split(",", 1)
-            return f'```{doc_format}\n{doc_content}```'
+            return f"```{doc_format}\n{doc_content}```"
 
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
@@ -1069,6 +1088,100 @@ class ChatManager:
             return self._handle_test_nexus_command(command, stream)
 
         return None
+
+    def _calculate_reasoning_level_heuristic(self, query: str) -> float:
+        """
+        Calculates a reasoning level based on linguistic analysis of the query using spaCy.
+        This rule-based approach identifies linguistic features that suggest a need for
+        reasoning, such as specific verbs, question structures, and comparative language.
+        """
+        if not self.reasoning_heuristic_enabled:
+            return 0.0
+
+        # Basic filter for very short queries that are unlikely to require reasoning
+        if len(query.split()) <= 3:
+            return 0.0
+
+        doc = self.nlp(query.lower())
+        score = 0.0
+
+        # --- Define linguistic features and their weights ---
+        # High-impact verbs that strongly suggest analysis, synthesis, or evaluation
+        reasoning_verbs = {
+            "analyze", "assess", "compare", "conduct", "contrast", "critique",
+            "describe", "design", "develop", "differentiate", "evaluate",
+            "explain", "find", "formulate", "investigate", "justify",
+            "predict", "recommend", "suggest", "summarize", "synthesize",
+            "write",
+        }
+        # Phrases that indicate hypothetical or causal reasoning
+        hypothetical_phrases = [
+            "what if", "what would", "what are the", "what is the",
+        ]
+        # Interrogatives that often require explanation
+        explanatory_interrogatives = {"why", "how"}
+
+        # --- Rule-based scoring ---
+        # Rule 1: Check for high-impact reasoning verbs (especially as the root)
+        root_verb = ""
+        for token in doc:
+            if token.dep_ == "ROOT" and token.pos_ == "VERB":
+                root_verb = token.lemma_
+                if token.lemma_ in reasoning_verbs:
+                    score += 1.0
+                    logger.debug(
+                        "Heuristic: Found root reasoning verb"
+                        f" '{token.lemma_}' (+1.0)"
+                    )
+                break
+
+        # Rule 2: Check for explanatory interrogatives at the start
+        if doc[0].lemma_ in explanatory_interrogatives:
+            score += 0.6
+            logger.debug(
+                f"Heuristic: Found explanatory interrogative '{doc[0].text}'"
+                " (+0.4)"
+            )
+
+        # Rule 3: Check for hypothetical phrases
+        for phrase in hypothetical_phrases:
+            if phrase in doc.text:
+                score += 1.0
+                logger.debug(
+                    f"Heuristic: Found hypothetical phrase '{phrase}' (+1.0)"
+                )
+                break  # Avoid double counting
+
+        # Rule 4: Check for any reasoning verb, even if not the root
+        if score < 0.5:  # Only apply if a strong signal hasn't been found
+            for token in doc:
+                if (
+                    token.lemma_ in reasoning_verbs
+                    and token.lemma_ != root_verb
+                ):
+                    score += 0.4
+                    logger.debug(
+                        "Heuristic: Found non-root reasoning verb"
+                        f" '{token.lemma_}' (+0.2)"
+                    )
+                    break
+
+        # Rule 5: Check for comparatives/superlatives as a weaker signal
+        has_comparative = any(tok.tag_ in ["JJR", "RBR"] for tok in doc)
+        has_superlative = any(tok.tag_ in ["JJS", "RBS"] for tok in doc)
+        if has_comparative or has_superlative:
+            score += 0.20
+            logger.debug("Heuristic: Found comparative/superlative (+0.15)")
+
+        # --- Finalize heuristic value ---
+        # Normalize score to be within [0, 1] and apply the configured max level
+        heuristic_value = min(score, 1.0) * self.reasoning_max_level
+        logger.info(
+            f"Reasoning heuristic score: {score:.4f}, final value:"
+            f" {heuristic_value:.4f}"
+        )
+
+        return heuristic_value
 
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
@@ -1096,6 +1209,15 @@ class ChatManager:
             yield from command_response
             return
 
+        # Calculate heuristic before any LLM call
+        reasoning_level_heuristic = self._calculate_reasoning_level_heuristic(
+            question
+        ) if self.llm.thinking_available else 0
+        logger.info(
+            "chat_completion: Estimated reasoning_level_heuristic:"
+            f" {reasoning_level_heuristic}, query:\n> {question}"
+        )
+
         # Check if spaCy model is available
         if not self.nlp:
             raise RuntimeError("spacy model not available")
@@ -1106,7 +1228,11 @@ class ChatManager:
             loading = LoadingAnimation("")
             loading.start()
         elif stream == "json":
-            yield ndjson("signal", "loading", {"state": "start"})
+            yield ndjson(
+                "signal",
+                "loading",
+                {"state": "start", "reasoning": reasoning_level_heuristic},
+            )
 
         processed_answer = ""
         try:
@@ -1167,9 +1293,10 @@ class ChatManager:
                 )
                 if recent_memories_summary:
                     final_system_content += (
-                        "\n\n--- This is a summary of topics and facts that have been"
-                        " discussed recently. Use this to maintain conversation"
-                        f" continuity. ---\n{recent_memories_summary}"
+                        "\n\n--- This is a summary of topics and facts that"
+                        " have been discussed recently. Use this to maintain"
+                        " conversation continuity."
+                        f" ---\n{recent_memories_summary}"
                     )
 
             # --- Context Memories ---
@@ -1200,10 +1327,8 @@ class ChatManager:
 
                 # logger.info(f"search_context: {search_context}")
 
-                relevant_memories = (
-                    self.green_memories.get_relevant_memories(
-                        search_context
-                    )
+                relevant_memories = self.green_memories.get_relevant_memories(
+                    search_context
                 )
                 # logger.info(f"relevant_memories: {relevant_memories}")
 
@@ -1241,55 +1366,116 @@ class ChatManager:
             # Trim context *after* injecting memories to ensure we are within limits
             self.trim_context()
 
-            # --- LLM Call ---
-            llm_response_stream = self.llm.chat(
-                chat_history=turn_chat_history, stream=True
-            )
+            guardrail_retries = 0
+            final_chunks = []
 
-            def _stream_with_thinking_markers(raw_stream):
-                buffer = ""
-                in_thinking = False
-                for chunk in raw_stream:
-                    # logger.info(f"LLM raw chunk: {repr(chunk)}")
-                    buffer += chunk
-                    while True:
-                        if not in_thinking:
-                            start_pos = buffer.find("<think>")
-                            if start_pos != -1:
-                                yielded = buffer[:start_pos]
-                                # logger.info(f"yielded: {yielded}")
-                                yield yielded
-                                yield "\n_AINARA_THINKING_START_\n"
-                                buffer = buffer[start_pos + len("<think>"):]
-                                in_thinking = True
-                            else:
-                                yielded = buffer
-                                # logger.info(f"yielded: {yielded}")
-                                yield yielded
-                                buffer = ""
-                                break
-                        if in_thinking:
-                            end_pos = buffer.find("</think>")
-                            if end_pos != -1:
-                                yield "\n_AINARA_THINKING_STOP_\n"
-                                buffer = buffer[end_pos + len("</think>"):]
-                                in_thinking = False
-                            else:
-                                break
-                if buffer:
-                    yield buffer
+            while guardrail_retries <= self.max_guardrail_retries:
+                # --- LLM Call ---
+                llm_response_stream = self.llm.chat(
+                    chat_history=turn_chat_history,
+                    stream=True,
+                    reasoning_level=reasoning_level_heuristic,
+                )
 
+                def _stream_with_thinking_markers(raw_stream):
+                    buffer = ""
+                    in_thinking = False
+                    for chunk in raw_stream:
+                        buffer += chunk
+                        while True:
+                            if not in_thinking:
+                                start_pos = buffer.find("<think>")
+                                if start_pos != -1:
+                                    yield buffer[:start_pos]
+                                    yield "\n_AINARA_THINKING_START_\n"
+                                    buffer = buffer[
+                                        start_pos + len("<think>"):
+                                    ]
+                                    in_thinking = True
+                                else:
+                                    yield buffer
+                                    buffer = ""
+                                    break
+                            if in_thinking:
+                                end_pos = buffer.find("</think>")
+                                if end_pos != -1:
+                                    yield "\n_AINARA_THINKING_STOP_\n"
+                                    buffer = buffer[
+                                        end_pos + len("</think>"):
+                                    ]
+                                    in_thinking = False
+                                else:
+                                    break
+                    if buffer:
+                        yield buffer
+
+                # Buffer response to check for guardrails before streaming to client
+                stream_processor = self.orakle_middleware.process_stream(
+                    _stream_with_thinking_markers(llm_response_stream),
+                    self,
+                    reasoning_level_heuristic=reasoning_level_heuristic,
+                )
+                buffered_chunks = list(stream_processor)
+
+                guardrail_message = ""
+                has_guardrail = False
+                for chunk in buffered_chunks:
+                    if (
+                        isinstance(chunk, str)
+                        and "[AINARA GUARDRAIL]" in chunk
+                    ):
+                        guardrail_message += chunk
+                        has_guardrail = True
+
+                if has_guardrail:
+                    guardrail_retries += 1
+                    logger.warning(
+                        "Guardrail triggered (attempt"
+                        f" {guardrail_retries}/{self.max_guardrail_retries + 1}):"
+                        f" {guardrail_message.strip()}"
+                    )
+                    if guardrail_retries > self.max_guardrail_retries:
+                        logger.error(
+                            "Max retries reached. Responding with error."
+                        )
+                        if stream == "json":
+                            error_content = guardrail_message.replace(
+                                "[AINARA GUARDRAIL]", ""
+                            ).strip()
+                            yield ndjson(
+                                "signal", "error", {"message": error_content}
+                            )
+                            final_chunks = []
+                        else:
+                            final_chunks = [guardrail_message]
+                        break  # Exit retry loop
+                    else:
+                        # Add correction message for the next attempt and retry
+                        self.llm.add_msg(
+                            guardrail_message, self.chat_history, "user"
+                        )
+                        continue  # Next attempt
+                else:
+                    # Success
+                    final_chunks = buffered_chunks
+                    break  # Exit retry loop
+
+            # Clean up any temporary guardrail messages from history
+            self.chat_history = [
+                msg
+                for msg in self.chat_history
+                if "[AINARA GUARDRAIL]" not in msg.get("content", "")
+            ]
+
+            # Now, process and stream the final response (successful or error)
             processed_answer = ""
             text_buffer = ""
-            parsing_mode = "text"  # 'text' or 'doc'
+            parsing_mode = "text"
             doc_buffer = ""
             doc_format = "plaintext"
 
-            # Process the stream through the Orakle middleware
-            # This now handles command execution and interpretation internally
-            for chunk in self.orakle_middleware.process_stream(
-                _stream_with_thinking_markers(llm_response_stream), self
-            ):
+            for chunk in final_chunks:
+                # # --- TOKEN DEBUG
                 # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
                 if "_AINARA_THINKING_START_" in chunk:
                     yield ndjson("signal", "thinking", {"state": "start"})
@@ -1298,7 +1484,10 @@ class ChatManager:
                     yield ndjson("signal", "thinking", {"state": "stop"})
                     continue
 
-                if isinstance(chunk, dict) and chunk.get("type") == "nexus_skill_result":
+                if (
+                    isinstance(chunk, dict)
+                    and chunk.get("type") == "nexus_skill_result"
+                ):
                     vendor = chunk.get("vendor")
                     bundle = chunk.get("bundle")
                     component = chunk.get("component")
@@ -1307,8 +1496,9 @@ class ChatManager:
 
                     if not all([vendor, bundle, component]):
                         logger.error(
-                            "Nexus skill result received with incomplete component info:"
-                            f" vendor='{vendor}', bundle='{bundle}', component='{component}'"
+                            "Nexus skill result received with incomplete"
+                            f" component info: vendor='{vendor}',"
+                            f" bundle='{bundle}', component='{component}'"
                         )
                         continue
 
@@ -1317,23 +1507,21 @@ class ChatManager:
                     )
 
                     nexus_data = {
-                            "component_path": component_path,
-                            "data": skill_data,
-                            "query": query
+                        "component_path": component_path,
+                        "data": skill_data,
+                        "query": query,
                     }
 
                     # Create a descriptive message for the chat history
                     history_message = (
-                        "Nexus component data was generated and sent to the UI. "
-                        f"Data: {json.dumps(nexus_data)}"
+                        "Nexus component data was generated and sent to the"
+                        f" UI. Data: {json.dumps(nexus_data)}"
                     )
-                    self.llm.add_msg(history_message, self.chat_history, "assistant")
+                    self.llm.add_msg(
+                        history_message, self.chat_history, "assistant"
+                    )
 
-                    yield ndjson(
-                        "ui",
-                        "renderNexus",
-                        nexus_data
-                    )
+                    yield ndjson("ui", "renderNexus", nexus_data)
                     continue
 
                 if not chunk:
@@ -1364,7 +1552,9 @@ class ChatManager:
                                     pre_doc_text, stream
                                 )
 
-                            doc_format = doc_start_match.group(1) or "plaintext"
+                            doc_format = (
+                                doc_start_match.group(1) or "plaintext"
+                            )
                             if stream == "json":
                                 yield ndjson(
                                     "ui",
@@ -1382,7 +1572,6 @@ class ChatManager:
                         if doc_end_match:
                             doc_content = doc_buffer[: doc_end_match.start()]
                             if stream == "json":
-                                # def ndjson(event_name: str, event_type: str, content: Any = None) -> str:
                                 yield ndjson(
                                     "content", "full", {"content": doc_content}
                                 )
@@ -1487,9 +1676,7 @@ class ChatManager:
                     self.turn_counter = 0  # Reset in-memory counter
                 logger.info(f"Saving turn counter state: {self.turn_counter}")
                 if self.green_memories:
-                    self.green_memories.save_turn_counter(
-                        self.turn_counter
-                    )
+                    self.green_memories.save_turn_counter(self.turn_counter)
 
             # For non-streaming mode, return the processed answer
             if not stream:

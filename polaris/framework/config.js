@@ -65,8 +65,27 @@ class ConfigManager {
                 fs.writeFileSync(this.configFile, JSON.stringify(defaultConfig, null, 2));
                 this.config = defaultConfig;
             } else {
-                const fileContents = fs.readFileSync(this.configFile, 'utf8');
-                this.config = JSON.parse(fileContents);
+                let loadedConfig;
+                try {
+                    const fileContents = fs.readFileSync(this.configFile, 'utf8');
+                    loadedConfig = JSON.parse(fileContents);
+                    // TODO disabled frontend config verification until v0.10
+                    this.config = loadedConfig;
+                } catch (e) {
+                    console.warn('Configuration file contains invalid JSON. Resetting to default: ' + e.message);
+                    // loadedConfig will be undefined, triggering the reset below
+                }
+
+                // if (loadedConfig && this._isConfigValid(loadedConfig, defaultConfig)) {
+                //     this.config = loadedConfig;
+                // } else {
+                //     if (loadedConfig) { // It was valid JSON but invalid structure/types
+                //         console.warn('Configuration file has invalid structure or types. Resetting to default.');
+                //     }
+                //     this.config = JSON.parse(JSON.stringify(defaultConfig)); // Deep copy
+                //     // Overwrite the invalid file with a valid one
+                //     fs.writeFileSync(this.configFile, JSON.stringify(this.config, null, 2));
+                // }
             }
 
             // Ensure Ollama settings are present in config
@@ -171,6 +190,42 @@ class ConfigManager {
             console.error('Error saving configuration:', error);
             throw error;
         }
+    }
+
+    _isConfigValid(config, defaultConfig, path = '') {
+        for (const key in defaultConfig) {
+            const currentPath = path ? `${path}.${key}` : key;
+            const defaultValue = defaultConfig[key];
+            const userValue = config[key];
+
+            // The sanitizer will add missing keys, so we only care about existing keys with wrong types.
+            if (userValue === undefined) {
+                continue;
+            }
+
+            const defaultType = typeof defaultValue;
+            const userType = typeof userValue;
+
+            // Special handling for null, since typeof null is 'object'
+            if (defaultValue === null) {
+                if (userValue !== null) {
+                    console.warn(`Invalid configuration at '${currentPath}'. Expected null, got ${userType}.`);
+                    return false;
+                }
+                continue; // Both are null, which is fine.
+            }
+
+            if (defaultType !== userType) {
+                console.warn(`Invalid configuration at '${currentPath}'. Type mismatch: expected ${defaultType}, got ${userType}.`);
+                return false;
+            }
+
+            // Recurse for nested objects
+            if (defaultType === 'object' && !Array.isArray(defaultValue) && !this._isConfigValid(userValue, defaultValue, currentPath)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     validateConfig(config, defaultConfig, path = '') {

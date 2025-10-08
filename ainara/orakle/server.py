@@ -26,10 +26,12 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+from ainara.framework.config import config
 from ainara.framework.capabilities.manager import CapabilitiesManager
-from ainara.framework.config import config  # Use the global config instance
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
+
+config.load_config()
 
 
 def parse_args():
@@ -184,29 +186,6 @@ if __name__ == "__main__":
     logging_manager.setup(log_level=args.log_level, log_name="orakle.log")
     # Get logger after setup
     logger = logging_manager.logger
-
-    # # Warm-up thread for SentenceTransformers to handle Windows cold-start delay
-    # def warmup_sentence_transformers():
-    #     try:
-    #         from sentence_transformers import SentenceTransformer
-    #         model_name = config.get(
-    #             "memory.vector_storage.embedding_model",
-    #             "sentence-transformers/all-mpnet-base-v2"
-    #         )
-    #         logger.info("Starting SentenceTransformers warm-up in background thread")
-    #         model = SentenceTransformer(model_name)
-    #         logger.info("SentenceTransformers warm-up complete")
-    #         del model  # Discard, as it's just for caching
-    #     except Exception as e:
-    #         logger.error(f"SentenceTransformers warm-up failed: {e}")
-
-    # # Check config to enable/disable warm-up (default: True)
-    # if config.get("performance.warmup_embeddings", True):
-    #     warmup_thread = threading.Thread(target=warmup_sentence_transformers, daemon=True)
-    #     warmup_thread.start()
-    #     # Continue without waiting for thread
-    # else:
-    #     logger.info("SentenceTransformers warm-up skipped per config")
 
     # Perform internet check after logger is configured
     is_online = check_internet_connection(logger)

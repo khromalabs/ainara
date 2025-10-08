@@ -575,7 +575,10 @@ function updateButtonVisibility() {
         const testResult = document.getElementById('test-result');
         const hasExistingSelection = document.querySelector('input[name="existing-provider"]:checked');
         const isTestSuccessful = testResult.classList.contains('success') && !testResult.classList.contains('hidden');
+        // console.log("hasExistingSelection: " + hasExistingSelection);
+        // console.log("isTestSuccessful:" + isTestSuccessful);
         nextBtn.disabled = !(hasExistingSelection || isTestSuccessful);
+        // console.log("nextBtn.disabled:" + nextBtn.disabled);
     } else if (currentStep === 'stt') {
         validateSTTForm();
     } else if (currentStep === 'skills') {
@@ -996,6 +999,14 @@ function setupEventListeners() {
                 reviewSttCheckbox.checked = config.get('stt.review');
             }
 
+            // // Add event listener for the auto start checkbox
+            // TODO delayed for v0.10
+            // const autoStartCheckbox = document.getElementById('auto-start-checkbox');
+            // if (autoStartCheckbox) {
+            //     autoStartCheckbox.addEventListener('change', (event) => handleInputChange(event));
+            //     autoStartCheckbox.checked = config.get('startup.autoStart', false);
+            // }
+
             // Add event listener for the background notifications checkbox
             const backgroundNotificationsCheckbox = document.getElementById('background-notifications-checkbox');
             if (backgroundNotificationsCheckbox) {
@@ -1049,7 +1060,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen,deepseek-v3,deepseek-chat';
+                filterInput.value = 'xai,qwen3,deepseek';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -1071,7 +1082,7 @@ function setupEventListeners() {
                     filterInput.dataset.previousValue = filterInput.value;
 
                     // Apply default filter - include recommended models but exclude smaller ones
-                    filterInput.value = 'qwen,deepseek-v3,deepseek-chat,llama,-8b,-3b';
+                    filterInput.value = 'qwen3,deepseek,-8b,-3b';
                     // Hide filter input, label and apply button
                     filterInput.style.display = 'none';
                     filterInputContainer.style.display = 'none';
@@ -1135,7 +1146,8 @@ async function goToNextStep() {
     } finally {
         // Reset button
         nextButton.textContent = originalText;
-        nextButton.disabled = false;
+        // TODO Unsure why this is here
+        // nextButton.disabled = false;
     }
 }
 
@@ -1323,7 +1335,7 @@ async function loadExistingProviders() {
         existingContainer.innerHTML = '';
 
         if (existingProviders.length === 0) {
-            existingContainer.innerHTML = '<p>No providers configured yet. Add a new provider below.</p>';
+            existingContainer.innerHTML = '<p>No providers configured yet.</p>';
             return;
         }
 
@@ -1358,8 +1370,8 @@ async function loadExistingProviders() {
             // Check if any existing provider is selected
             const hasSelectedProvider = document.querySelector('input[name="existing-provider"]:checked');
 
-            // If a provider is already selected (or we have providers but none selected), enable the next button
-            if (hasSelectedProvider || selectedProvider) {
+            // If a provider is already selected enable the next button
+            if (hasSelectedProvider) {
                 document.getElementById('main-next-btn').disabled = false;
             }
         }
@@ -1624,7 +1636,7 @@ function handleInputChange(event) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input' || fieldId === 'auto-start-checkbox') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -2740,6 +2752,14 @@ async function saveFinishStepConfig() {
             config.set('startup.startMinimized', isChecked);
         }
 
+        // TODO delayed for v0.10
+        // if (modifiedFields.finish.has('auto-start-checkbox')) {
+        //     const isChecked = document.getElementById('auto-start-checkbox').checked;
+        //     config.set('startup.autoStart', isChecked);
+        //     // Notify the main process to apply the setting immediately
+        //     ipcRenderer.send('set-auto-start');
+        // }
+
         if (modifiedFields.finish.has('review-stt-checkbox')) {
             const isChecked = document.getElementById('review-stt-checkbox').checked;
             config.set('stt.review', isChecked);
@@ -2918,10 +2938,8 @@ function updateLLMStepTitle() {
 // New function to initialize the Ollama step
 async function initializeOllamaStep() {
     const hardwareInfoElement = document.getElementById('ollama-hardware-info');
-    const modelsContainer = document.getElementById('ollama-models-container');
 
     // Clear previous content and show loading message
-    if (modelsContainer) modelsContainer.innerHTML = '<p>Checking hardware requirements...</p>';
     if (hardwareInfoElement) hardwareInfoElement.innerHTML = '';
     const existingServerConfig = document.getElementById('ollama-server-config');
     if (existingServerConfig) existingServerConfig.remove();
@@ -2937,8 +2955,8 @@ async function initializeOllamaStep() {
         const isAppleSilicon = hwInfo.details?.is_apple_silicon || false;
         const totalRam = hwInfo.details?.total_ram_gb || 0;
 
-        const meetsGpuRequirement = totalVram >= 12;
-        const meetsAppleRequirement = isAppleSilicon && totalRam >= 16;
+        const meetsGpuRequirement = totalVram >= 4;
+        const meetsAppleRequirement = isAppleSilicon && totalRam >= 6;
 
         if (meetsGpuRequirement || meetsAppleRequirement) {
             // Hardware requirements met, proceed with normal setup
@@ -2949,17 +2967,35 @@ async function initializeOllamaStep() {
             if (serverConfigElement) {
                 serverConfigElement.style.display = "none";
             }
-            displayOllamaServerConfig();
+            const performanceWarning = `<p>PLEASE NOTE: Ainara requires at very least a 4B model, but 7B at least is strongly recommended. Carefully select the size of the model accordingly to your available VRAM, your RAM performance for specific systems, or system RAM for Apple Silicon systems.<br>
+                        Ollama can run models fully on CPU and normal RAM on all supported systems, but that will give very bad performance in most scenarios.
+                        As a rule of thumb, unless owning very specific fast hardware, you should only choose models with an amount of parameters closely matching your available VRAM (eg. Qwen 14B is good for a RTX3060 with 12GB of VRAM available).</p>`
+            if (totalVram < 12 || (isAppleSilicon && totalRam < 16)) {
+                hardwareInfoElement.innerHTML += `
+                    <div class="warning-block">
+                        Your system hardware requirements are quite tight to run LLMs with Ollama effectively.
+                        <p>Running local models on this system for Ainara may result in poor performance. It is recommended to use cloud-based LLM providers instead.</p>
+                        ${performanceWarning}
+                    </div>
+                `;
+            } else {
+                hardwareInfoElement.innerHTML = `
+                    <div class="warning-block">
+                        ${performanceWarning}
+                    </div>
+                `;
+            }
+            // displayOllamaServerConfig();  // TODO: Disabled by now to not make things even more confusing to users
         } else {
             // Hardware requirements not met, disable Ollama setup
             hardwareInfoElement.style.display = "none";
-            if (modelsContainer) {
-                modelsContainer.innerHTML = `
+            if (hardwareInfoElement) {
+                hardwareInfoElement.innerHTML = `
                     <div class="warning-block">
                         Your system does not meet the recommended hardware requirements for running local LLMs with Ollama effectively.
                         <ul>
-                            <li>Requirement 1: A dedicated GPU with at least 12 GB of VRAM. (Your system: ${totalVram.toFixed(1)} GB VRAM)</li>
-                            <li>Requirement 2: An Apple Silicon Mac with at least 16 GB of RAM. (Your system: ${isAppleSilicon ? `${totalRam.toFixed(1)} GB RAM on Apple Silicon` : 'Not an Apple Silicon Mac'})</li>
+                            <li>Requirement 1: A dedicated GPU with at least 4 GB of VRAM. (Your system: ${totalVram.toFixed(1)} GB VRAM)</li>
+                            <li>Requirement 2: An Apple Silicon Mac with at least 8 GB of RAM. (Your system: ${isAppleSilicon ? `${totalRam.toFixed(1)} GB RAM on Apple Silicon` : 'Not an Apple Silicon Mac'})</li>
                         </ul>
                         <p>Running local models on this system for Ainara may result in very poor performance. It is recommended to use cloud-based LLM providers instead.</p>
                         <p>The Ollama setup has been disabled. You can proceed to the next step to configure other providers.</p>
@@ -2969,14 +3005,16 @@ async function initializeOllamaStep() {
         }
     } catch (error) {
         console.error('Error initializing Ollama step:', error);
-        if (modelsContainer) {
-            modelsContainer.innerHTML = `<div class="error">Could not check hardware requirements: ${error.message}</div>`;
+        if (hardwareInfoElement) {
+            hardwareInfoElement.innerHTML = `<div class="error">Could not check hardware requirements: ${error.message}</div>`;
         }
     }
 }
 
 // Function to display Ollama server configuration
-function displayOllamaServerConfig() {
+// TODO Keeping this function even if unused now for possible future use
+// eslint-disable-next-line no-unused-vars
+function _displayOllamaServerConfig() {
     const ollamaPanel = document.getElementById('ollama-panel');
     let existingConfig = document.getElementById('ollama-server-config');
     if (existingConfig) {
@@ -3132,16 +3170,16 @@ async function displayOllamaModels() {
 
     modelsContainer.innerHTML = '<p>Loading Ollama models...</p>';
     let modelsInfo = ""
-    const ollamaip = config.get('ollama.serverIp', '127.0.0.1');
-    const totalVram = config.get('ollama.totalVram', 0);
+    // const ollamaip = config.get('ollama.serverIp', '127.0.0.1');
+    // const totalVram = config.get('ollama.totalVram', 0);
 
-    if (totalVram > 0 && totalVram < 12 && (ollamaip == "127.0.0.1" || ollamaip == "127.0.0.1") ) {
-        modelsInfo += '<div class="warning-block">';
-        modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
-        modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
-        modelsInfo += 'Consider using cloud-based providers for better performance.';
-        modelsInfo += '</div>';
-    }
+    // if (totalVram > 0 && totalVram < 12 && (ollamaip == "127.0.0.1" || ollamaip == "127.0.0.1") ) {
+    //     modelsInfo += '<div class="warning-block">';
+    //     modelsInfo += 'Ollama is configured to run locally and your system has less than 12GB of VRAM (' + totalVram.toFixed(1) + 'GB detected). ';
+    //     modelsInfo += 'This may not be sufficient to run local LLMs effectively for the skills/tools system in this application. ';
+    //     modelsInfo += 'Consider using cloud-based providers for better performance.';
+    //     modelsInfo += '</div>';
+    // }
 
     try {
         const serverIp = config.get('ollama.serverIp', '127.0.0.1');
@@ -3166,7 +3204,7 @@ async function displayOllamaModels() {
         const recommendedModels = getRecommendedModels();
         const featuredModelsForDropdown = recommendedModels.filter(model => !localModelNames.some(name => name.includes(model.id.split(':')[0])));
 
-        modelsHtml += '<h3>Featured Models</h3>';
+        modelsHtml += '<h3>Recommended Models</h3>';
 
         if (featuredModelsForDropdown.length === 0) {
             modelsHtml += '<p>No featured models left to be added</p>';
@@ -3181,7 +3219,7 @@ async function displayOllamaModels() {
 
         // Add "Other models" section
         modelsHtml += '<h3>Other models</h3>';
-        modelsHtml += '<p>You can download any model from <a href="#" class="external-link" data-url="https://ollama.com/library">Ollama Hub</a>. Enter the model name (e.g., mistral:latest).</p>';
+        modelsHtml += '<p>You can download other models from <a href="#" class="external-link" data-url="https://ollama.com/library">Ollama Hub</a>. Please pay attention to the recommendations in the "Warning" section. Enter the model name (e.g., mistral:latest).</p>';
         modelsHtml += '<input type="text" id="ollama-other-model-input" placeholder="e.g., mistral:latest" style="width: 280px; margin-right: 10px;">';
         modelsHtml += '<button id="download-other-model-btn">Download Model</button>';
 
@@ -3237,8 +3275,20 @@ function getRecommendedModels() {
     const totalVram = config.get('ollama.totalVram', 0);
     console.log("Total VRAM for model recommendation:", totalVram);
     const models = [
+        { id: 'qwen3:1.7b', name: 'Qwen 3 (1.7B)', size: 1.4, minVram: 4},
+        { id: 'qwen3:4b', name: 'Qwen 3 (4B)', size: 2.5, minVram: 8},
+        { id: 'qwen3:8b', name: 'Qwen 3 (8B)', size: 5.2, minVram: 8},
         { id: 'qwen3:14b', name: 'Qwen 3 (14B)', size: 9, minVram: 12 },
+        { id: 'qwen3:30b', name: 'Qwen 3 (30B)', size: 19, minVram: 24 },
         { id: 'qwen3:32b', name: 'Qwen 3 (32B)', size: 20, minVram: 24 },
+        { id: 'gpt-oss:20b', name: 'gpt-oss (20B)', size: 14, minVram: 24 },
+        /*
+         * TODO test DeepSeek r1 models
+        { id: 'deepseeek-r1:7b', name: 'DeepSeek-R1 (7B)', size: 4.7, minVram: 8 },
+        { id: 'deepseeek-r1:8b', name: 'DeepSeek-R1 (8B)', size: 5.2, minVram: 8 },
+        { id: 'deepseeek-r1:14b', name: 'DeepSeek-R1 (14B)', size: 9, minVram: 8 },
+        { id: 'deepseeek-r1:32b', name: 'DeepSeek-R1 (32B)', size: 20, minVram: 24 },
+        */
     ];
 
     const filteredModels = models.filter(model => totalVram >= model.minVram);
@@ -3339,7 +3389,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.8.2');
+    config.set('setup.version', '0.9.1');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

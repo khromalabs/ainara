@@ -19,12 +19,13 @@
 import copy
 # import logging
 import os
-import platform
 import shutil
 import sys
 from pathlib import Path
 # import traceback
 import yaml
+import json
+from jsonschema import Draft7Validator
 
 from ainara.framework.platform_utils import (
     get_default_cache_dir,
@@ -41,6 +42,8 @@ class ConfigManager:
         self.config = {}
         self.config_file_path = None
         self.last_modified_time = 0
+        self.validation_errors = []
+        self.initial_config_valid = True
         self.load_config()
 
     def _get_config_paths(self):
@@ -79,8 +82,37 @@ class ConfigManager:
 
         return None
 
+    def _get_schema_path(self):
+        """Get the path to the configuration schema"""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            path = Path(sys._MEIPASS + "/resources/config.schema.json")
+            if path.exists():
+                return path
+
+        possible_paths = [
+            Path("resources/config.schema.json"),  # Project root
+            Path("../resources/config.schema.json"),  # Project root
+            Path(__file__).parent.parent
+            / "resources/config.schema.json",  # Relative to this file
+            Path(
+                "/usr/share/ainara/config.schema.json"
+            ),  # System-wide installation
+        ]
+
+        for path in possible_paths:
+            if path.exists():
+                return path
+
+        return None
+
     def create_default_config(self, target_path):
         """Create a new configuration file from defaults"""
+        dry_run = False
+
+        if self.needs_load():
+            print("INFO: Configuration file has changed won't update")
+            dry_run = True
+
         default_path = self._get_default_config_path()
 
         if not default_path:
@@ -96,9 +128,10 @@ class ConfigManager:
         target_dir = os.path.dirname(target_path)
         os.makedirs(target_dir, exist_ok=True)
 
-        # Copy the default config
-        shutil.copy(default_path, target_path)
-        print(f"Created new configuration file at: {target_path}")
+        if not dry_run:
+            # Copy the default config
+            shutil.copy(default_path, target_path)
+            print(f"Created new configuration file at: {target_path}")
 
         return target_path
 
@@ -119,7 +152,40 @@ class ConfigManager:
                         return  # File hasn't changed since last load
 
                     with open(config_path) as f:
-                        self.config = yaml.safe_load(f) or {}
+                        user_config = yaml.safe_load(f) or {}
+
+                    # --- Validate Configuration ---
+                    schema_path = self._get_schema_path()
+                    if not schema_path:
+                        print("WARNING: Schema not found, skipping validation.")
+                        self.config = user_config
+                    else:
+                        with open(schema_path) as f:
+                            schema = json.load(f)
+                        validator = Draft7Validator(schema)
+                        errors = sorted(
+                            validator.iter_errors(user_config),
+                            key=lambda e: e.path,
+                        )
+
+                        if errors:
+                            self.initial_config_valid = False
+                            self.validation_errors = [
+                                f"{'.'.join(map(str, e.path)) or 'root'}: {e.message}"
+                                for e in errors
+                            ]
+                            print("ERROR: Configuration validation failed. Restoring defaults.")
+                            for error in self.validation_errors:
+                                print(f" - {error}")
+
+                            # Overwrite bad config with defaults and reload
+                            self.create_default_config(config_path)
+                            with open(config_path) as f:
+                                self.config = yaml.safe_load(f) or {}
+                        else:
+                            self.config = user_config
+                    # --- End Validation ---
+
                     self.config_file_path = config_path
                     self.last_modified_time = os.path.getmtime(config_path)
                     print(f"Configuration loaded from: {config_path}")
@@ -234,6 +300,11 @@ class ConfigManager:
 
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""
+
+        if self.needs_load():
+            print("INFO: Configuration file has changed, reloading.")
+            self.load_config()
+            return True
 
         # Recursively update the configuration
         def update_dict(target, source):
@@ -364,6 +435,10 @@ class ConfigManager:
         """Basic validation of configuration data"""
         # This is a simple validation - in a real implementation, you might want to use
         # a more formal schema validation
+
+        if self.needs_load():
+            print("INFO: Configuration file has changed, reloading.")
+            self.load_config()
 
         result = {"valid": True, "errors": []}
 

@@ -19,8 +19,8 @@
 import json
 import os
 import re
-from typing import Generator, List, Union
 from datetime import datetime
+from typing import Generator, List, Optional, Union
 
 import litellm
 import pkg_resources
@@ -43,6 +43,7 @@ class LiteLLM(LLMBackend):
         )  # Base class might need global config
         self.completion = litellm.completion
         self.acompletion = litellm.acompletion
+        self.thinking_available = False
 
         try:
             if provider_config and "model" in provider_config:
@@ -67,46 +68,48 @@ class LiteLLM(LLMBackend):
                 "No LLM providers configured. Creating placeholder provider"
                 f" for initialization only. Exception: {str(e)}"
             )
-        self._context_window = self._get_context_window()
+        self._context_window = self._initialize_context_window(
+            model_name=self.provider.get("model"),
+            provider_config=self.provider,
+        )
 
-    def _get_context_window(self) -> int:
-        """Get the context window size for the current model"""
+    def _fetch_backend_context_window(self, model_name: str) -> Optional[int]:
+        """Fetch context window from LiteLLM."""
+        if not model_name:
+            return None
         try:
-            model_name = self.provider.get("model")
-            self.logger.info("Using model: " + model_name)
-            if not model_name:
-                raise ValueError("No model specified")
-
-            # First check if context_window is defined directly in the provider config
-            configured_context = self.provider.get("context_window")
-            if configured_context is not None and isinstance(
-                configured_context, int
-            ):
-                self.logger.info(
-                    f"Using configured context window for {model_name}:"
-                    f" {configured_context} tokens"
-                )
-                return configured_context
-            else:
-                self.logger.info(
-                    f"No context_window configured for {model_name} in"
-                    " provider settings."
-                )
-
-            # Otherwise try to get it from LiteLLM
             max_tokens = litellm.get_max_tokens(model_name)
-            self.logger.info(
-                f"Using LiteLLM-provided context window for {model_name}:"
-                f" {max_tokens} tokens"
-            )
             return max_tokens
         except Exception as e:
-            self.logger.warning(f"Unable to get context window size: {str(e)}")
-            return 4000  # Conservative default
+            self.logger.warning(
+                f"Unable to get context window size from LiteLLM: {str(e)}"
+            )
+            return None
 
     def get_context_window(self) -> int:
         """Return the cached context window size"""
         return self._context_window
+
+    def _strip_think_blocks(self, text: str) -> str:
+        """
+        Strips <think>...</think> blocks from the text.
+        If an opening <think> tag is found without a closing tag,
+        it logs an error and returns an empty string.
+        """
+        open_tags = text.count("<think>")
+        close_tags = text.count("</think>")
+
+        if open_tags > close_tags:
+            self.logger.warning(
+                "Incomplete <think> block found in LLM response "
+                f"({open_tags} open, {close_tags} close). "
+                "The response will be discarded."
+            )
+            # self.logger.info(f"Incomplete response: {text}")
+            return ""
+
+        # If tags are balanced or no tags, just strip them out
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     def normalize_model_name(self, model: str, provider: str) -> str:
         """Ensure model name follows <provider>/<model> format"""
@@ -234,6 +237,9 @@ class LiteLLM(LLMBackend):
                     "Using selected LLM provider:"
                     f" {p_conf.get('name', p_conf.get('model', 'unknown'))}"
                 )
+                self.thinking_available = litellm.supports_reasoning(
+                    model=config_selected_provider
+                )
                 return provider
 
         raise RuntimeError("No working LLM providers found")
@@ -258,9 +264,7 @@ class LiteLLM(LLMBackend):
         """Format user chat message for LLM processing with token count"""
         if role == "user":
             timestamp = datetime.now()
-            new_message = (
-                f"[{timestamp.strftime("%H:%M")}] {new_message}"
-            )
+            new_message = f"[{timestamp.strftime("%H:%M")}] {new_message}"
         token_count = self._get_token_count(new_message, role)
         chat_history.append(
             {"role": role, "content": new_message, "tokens": token_count}
@@ -273,6 +277,7 @@ class LiteLLM(LLMBackend):
         chat_history: list = None,
         stream: bool = False,
         provider: dict = None,
+        reasoning_level: Optional[float] = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM"""
         # Check if we're using the placeholder provider
@@ -312,6 +317,28 @@ class LiteLLM(LLMBackend):
                 "logger_fn": self.my_custom_logging_fn,
             }
 
+            # Add reasoning effort if requested and supported
+            if reasoning_level is not None and reasoning_level > 0:
+                if litellm.supports_reasoning(model=provider["model"]):
+                    reasoning_effort_str = "low"
+                    if reasoning_level > 0.66:
+                        reasoning_effort_str = "high"
+                    elif reasoning_level > 0.33:
+                        reasoning_effort_str = "medium"
+
+                    completion_kwargs["reasoning_effort"] = (
+                        reasoning_effort_str
+                    )
+                    self.logger.info(
+                        f"Requesting '{reasoning_effort_str}' reasoning for"
+                        f" model {provider['model']}"
+                    )
+                else:
+                    self.logger.warning(
+                        "Reasoning requested but not supported by model"
+                        f" {provider['model']}"
+                    )
+
             self.logger.info(
                 f"Sending completion request to model: {provider['model']}"
             )
@@ -332,9 +359,7 @@ class LiteLLM(LLMBackend):
                     self.logger.info("Got complete response")
                     full_response = self._handle_normal_response(response)
                     # Strip <think> blocks for non-streaming responses
-                    cleaned_response = re.sub(
-                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
-                    ).strip()
+                    cleaned_response = self._strip_think_blocks(full_response)
                     return cleaned_response
 
             except Exception as e:
@@ -374,6 +399,7 @@ class LiteLLM(LLMBackend):
         chat_history: list = None,
         stream: bool = False,
         provider: dict = None,
+        reasoning_level: Optional[float] = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM (async version)"""
         # Check if we're using the placeholder provider
@@ -418,7 +444,7 @@ class LiteLLM(LLMBackend):
             completion_kwargs = {
                 "model": provider["model"],
                 "messages": clean_messages,
-                "temperature": 0.2,
+                # "temperature": 0.2,
                 "stream": stream,
                 **(
                     {"api_base": provider["api_base"]}
@@ -432,6 +458,28 @@ class LiteLLM(LLMBackend):
                 ),
                 "logger_fn": self.my_custom_logging_fn,
             }
+
+            # Add reasoning effort if requested and supported
+            if reasoning_level is not None and reasoning_level > 0:
+                if litellm.supports_reasoning(model=provider["model"]):
+                    reasoning_effort_str = "low"
+                    if reasoning_level > 0.66:
+                        reasoning_effort_str = "high"
+                    elif reasoning_level > 0.33:
+                        reasoning_effort_str = "medium"
+
+                    completion_kwargs["reasoning_effort"] = (
+                        reasoning_effort_str
+                    )
+                    self.logger.info(
+                        f"Requesting '{reasoning_effort_str}' reasoning for"
+                        f" model {provider['model']} (async)"
+                    )
+                else:
+                    self.logger.warning(
+                        "Reasoning requested but not supported by model"
+                        f" {provider['model']} (async)"
+                    )
 
             self.logger.info(
                 "Sending async completion request to model:"
@@ -452,9 +500,7 @@ class LiteLLM(LLMBackend):
                     self.logger.info("Got complete response")
                     full_response = self._handle_normal_response(response)
                     # Strip <think> blocks for non-streaming responses
-                    cleaned_response = re.sub(
-                        r"<think>.*?</think>", "", full_response, flags=re.DOTALL
-                    ).strip()
+                    cleaned_response = self._strip_think_blocks(full_response)
                     return cleaned_response
 
             except Exception as e:

@@ -17,16 +17,21 @@
 # Lesser General Public License for more details.
 
 
+import importlib
+import inspect
 import json
 # import pprint
 import logging
-import re
-from typing import Generator, List, Optional
+# import re
+import os
+from typing import Generator, List, Optional, Union
 
 import requests
+from statemachine import State, StateMachine
 
 from ainara.framework.config import ConfigManager
 from ainara.framework.matcher.transformers import OrakleMatcherTransformers
+from ainara.framework.system_skills.base import BaseSystemSkill
 from ainara.framework.template_manager import TemplateManager
 
 # from ainara.framework.utils import format_orakle_command
@@ -78,10 +83,17 @@ class OrakleMiddleware:
             "orakle.matcher.threshold", 0.15
         )
         self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 5)
+        self.reasoning_effort_limit = self.config_manager.get(
+            "orakle.reasoning_effort_limit", 1.0
+        )
         logger.info(
             "Initialized OrakleMiddleware with Transformer Matcher:"
             f" model={matcher_model}, threshold={self.matcher_threshold},"
             f" top_k={self.matcher_top_k}"
+        )
+        logger.info(
+            "OrakleMiddleware reasoning effort limit set to:"
+            f" {self.reasoning_effort_limit}"
         )
 
         # Initialize capabilities
@@ -90,6 +102,11 @@ class OrakleMiddleware:
         else:
             self.capabilities = []
             self.capabilities = self.get_orakle_capabilities()
+
+        # --- System Skills ---
+        # Load system skills from the framework's system_skills directory
+        self.system_skills = {}
+        self._load_system_skills()
 
         # Register skills with the matcher
         for skill in self.capabilities:
@@ -106,158 +123,163 @@ class OrakleMiddleware:
         # logger.info("-----------------")
         # logger.info(pprint.pformat(skill))
 
+    def _get_correction_message(self) -> str:
+        """Returns a guardrail message for malformed ORAKLE commands."""
+        logger.info("GUARDRAIL correction message generated")
+        return (
+            "\n\n[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected. "
+            "The `<<<ORAKLE` and `ORAKLE` delimiters must be on their own "
+            "lines with no surrounding text. The command was not executed. "
+            "Please try again with the correct format.\n\n"
+        )
+
     def update_llm(self, llm):
         self.llm = llm
 
+    class _OrakleParser(StateMachine):
+        """A state machine to parse ORAKLE commands from a stream."""
+
+        # States
+        streaming_text = State(initial=True)
+        buffering_command = State()
+
+        def __init__(self, middleware, chat_manager, reasoning_level_heuristic=0.0):
+            self.middleware = middleware
+            self.chat_manager = chat_manager
+            self.command_buffer = ""
+            self.start_delimiter = "<<<ORAKLE"
+            self.end_delimiter = "ORAKLE"
+            self.reasoning_level_heuristic = reasoning_level_heuristic
+            super().__init__()
+
+        def process_line(self, line: str) -> Generator[str, None, None]:
+            """Process a single line of input from the stream."""
+            stripped_line = line.strip()
+
+            if self.current_state == self.streaming_text:
+                # Check for single-line command first
+                if (
+                    stripped_line != self.start_delimiter
+                    and stripped_line.startswith(self.start_delimiter)
+                ) and (
+                    stripped_line.endswith(self.end_delimiter)
+                    or stripped_line.endswith(self.end_delimiter + ";")
+                ):
+                    end_len = len(self.end_delimiter)
+                    if stripped_line.endswith(";"):
+                        end_len += 1
+                    command_content = stripped_line[
+                        len(self.start_delimiter): -end_len
+                    ].strip()
+                    yield from self._execute_command(command_content)
+                    # Preserve the newline from the original line
+                    if line.endswith("\n"):
+                        yield "\n"
+                elif stripped_line == self.start_delimiter:
+                    self.start_command()
+                elif self.start_delimiter in stripped_line:
+                    yield line
+                    yield self.middleware._get_correction_message()
+                else:
+                    yield line
+            elif self.current_state == self.buffering_command:
+                if (
+                    stripped_line == self.end_delimiter
+                    or stripped_line == self.end_delimiter + ";"
+                ):
+                    yield from self.end_command()
+                    # Preserve the newline from the original line
+                    if line.endswith("\n"):
+                        yield "\n"
+                elif self.end_delimiter in stripped_line:
+                    yield self.command_buffer
+                    yield line
+                    yield self.middleware._get_correction_message()
+                    self.malformed_end()
+                else:
+                    self.command_buffer += line
+
+        # Transitions
+        start_command = streaming_text.to(buffering_command)
+        end_command = buffering_command.to(streaming_text, on="_on_end_command")
+        malformed_end = buffering_command.to(streaming_text, on="_reset_buffer")
+
+        # Transition Actions
+        def _on_end_command(self) -> Generator[str, None, None]:
+            """Action to execute when a command block is properly closed."""
+            command_to_process = self.command_buffer.strip()
+            self._reset_buffer()
+            yield from self._execute_command(command_to_process)
+
+        def _reset_buffer(self):
+            """Reset the command buffer."""
+            self.command_buffer = ""
+
+        def _execute_command(self, command: str) -> Generator[str, None, None]:
+            """Wrapper to call the middleware's processing method."""
+            logger.info(f"ORAKLE command to process: '{command}'")
+            if command:
+                yield from self.middleware._process_orakle_request(
+                    command,
+                    self.chat_manager,
+                    reasoning_level_heuristic=self.reasoning_level_heuristic,
+                )
+
     def process_stream(
-        self, token_stream: Generator[str, None, None], chat_manager=None
-    ) -> Generator[str, None, None]:
+        self,
+        token_stream: Generator[str, None, None],
+        chat_manager=None,
+        reasoning_level_heuristic: float = 0.0,
+    ) -> Generator[Union[str, dict], None, None]:
         """
-        Process a stream of tokens, detecting, executing, and interpreting Orakle commands.
+        Process a stream of tokens using a state machine to handle Orakle commands.
 
         Args:
             token_stream: Generator yielding tokens from the LLM
             chat_manager: Optional ChatManager instance to get chat history
+            reasoning_level_heuristic: A reasoning level calculated by a heuristic
+                                       based on the user's query.
 
         Yields:
-            Processed tokens with executed and interpreted command results
+            Processed tokens, including command results and guardrail messages.
         """
+        parser = self._OrakleParser(self, chat_manager, reasoning_level_heuristic)
         buffer = ""
-        command_buffer = ""
-        in_command = False
-        # PHP-style HEREDOC delimiters
-        command_start_delimiter = "<<<ORAKLE"
-        command_end_delimiter = "ORAKLE"
 
         for token in token_stream:
-            # logger.info(f"OrakleMiddleware received token: {repr(token)}")
             if token is None:
                 continue
+            # # --- TOKEN DEBUG
+            # logger.info(f"ORAKLE Middleware received token: {repr(token)}")
 
-            if in_command:
-                command_buffer += token
-                # Check if we've reached the end delimiter on a line by itself
-                # logger.info(
-                #     "OrakleMiddleware in_command=True, command_buffer:"
-                #     f" {repr(command_buffer)}"
-                # )
-                # This handles both "ORAKLE" and "ORAKLE;" endings
-                if re.search(
-                    re.escape(command_end_delimiter) + r"(?:;|\s*$)",
-                    command_buffer,
-                ):
-                    # logger.info("OrakleMiddleware found end delimiter.")
-                    # Extract the command content up to the end delimiter
-                    match = re.search(
-                        r"(.*?)" + re.escape(command_end_delimiter) + r"(?:;|\s*$)",
-                        command_buffer,
-                        re.DOTALL,
-                    )
-                    if match:
-                        command_content = match.group(1).strip()
+            buffer += token
 
-                        # Process the command and yield results
-                        for chunk in self._process_orakle_request(
-                            command_content, chat_manager
-                        ):
-                            yield chunk
+            while "\n" in buffer:
+                line_end_pos = buffer.find("\n")
+                # Include the newline in the processed line
+                line = buffer[: line_end_pos + 1]
+                buffer = buffer[line_end_pos + 1:]
+                yield from parser.process_line(line)
 
-                        # Find where the end delimiter ends
-                        end_match = re.search(
-                            re.escape(command_end_delimiter)
-                            + r"(?:;|\s*$)",
-                            command_buffer,
-                        )
-                        end_pos = end_match.end()
-
-                        # Yield any content after the end delimiter
-                        remaining = command_buffer[end_pos:]
-                        if remaining:
-                            yield remaining
-
-                        # Reset for next command
-                        command_buffer = ""
-                        in_command = False
-            else:
-                # Add token to buffer
-                buffer += token
-
-                # logger.info(
-                #     f"OrakleMiddleware in_command=False, buffer: {repr(buffer)}"
-                # )
-                # Check if buffer contains the start delimiter
-                if command_start_delimiter in buffer:
-                    # Extract everything up to the command
-                    command_start = buffer.find(command_start_delimiter)
-                    # logger.info(
-                    #     f"OrakleMiddleware found start delimiter at pos {command_start}."
-                    # )
-                    yield buffer[:command_start]
-
-                    # Start collecting the command, excluding the start delimiter
-                    after_delimiter = buffer[
-                        command_start + len(command_start_delimiter):
-                    ]
-                    command_buffer = after_delimiter
-                    buffer = ""
-                    in_command = True
-                elif len(buffer) > len(command_start_delimiter) + 10:
-                    # Check if the end of the buffer could be the start of a delimiter
-                    for i in reversed(range(
-                        1, min(len(buffer), len(command_start_delimiter))
-                    )):
-                        if buffer.endswith(command_start_delimiter[:i]):
-                            # Found a partial match at the end
-                            yield buffer[:-i]
-                            buffer = buffer[-i:]  # Keep only the partial match
-                            break
-                    else:
-                        # No partial match found, safe to yield the entire buffer
-                        yield buffer
-                        buffer = ""
-
-        # Yield any remaining content
+        # After the loop, process any remaining content in the buffer as a final line.
         if buffer:
-            yield buffer
+            yield from parser.process_line(buffer)
 
-        # If we are still in a command, it means the stream ended before the
-        # command was closed (or the full command was in the last chunk).
-        # Let's try to process what we have in command_buffer.
-        if in_command and command_buffer:
-            # logger.info(
-            #     "OrakleMiddleware processing command_buffer at end of stream:"
-            #     f" {repr(command_buffer)}"
-            # )
-            # This logic is the same as inside the loop's `if in_command:` block
-            if re.search(
-                re.escape(command_end_delimiter) + r"(?:;|\s*$)",
-                command_buffer,
-            ):
-                match = re.search(
-                    r"(.*?)" + re.escape(command_end_delimiter) + r"(?:;|\s*$)",
-                    command_buffer,
-                    re.DOTALL,
-                )
-                if match:
-                    command_content = match.group(1).strip()
-                    for chunk in self._process_orakle_request(
-                        command_content, chat_manager
-                    ):
-                        yield chunk
-                    # Command is processed, so we can clear the buffer
-                    command_buffer = ""
-
-        # Process any remaining command buffer
-        if command_buffer and not in_command:
-            # logger.info(
-            #     "OrakleMiddleware yielding leftover command_buffer:"
-            #     f" {repr(command_buffer)}"
-            # )
-            yield command_buffer
+        # After all processing, if the parser is still in a command state, it's unterminated.
+        if parser.current_state == parser.buffering_command:
+            yield parser.command_buffer
+            logger.info("GUARDRAIL generated: unterminated ORAKLE command")
+            yield (
+                "\n\n[AINARA GUARDRAIL] Error: Stream ended with an"
+                " unterminated ORAKLE command.\n\n"
+            )
 
     def _process_orakle_request(
-        self, query: str, chat_manager=None
-    ) -> Generator[str, None, None]:
+        self,
+        query: str,
+        chat_manager=None,
+        reasoning_level_heuristic: float = 0.0,
+    ) -> Generator[Union[str, dict], None, None]:
         """
         Process an Orakle request from the user.
 
@@ -270,6 +292,8 @@ class OrakleMiddleware:
         Args:
             query: The natural language query from the user
             chat_manager: Optional ChatManager instance to get chat history
+            reasoning_level_heuristic: A reasoning level calculated by a heuristic
+                                       based on the user's query.
 
         Yields:
             Processed results as a stream
@@ -303,7 +327,7 @@ class OrakleMiddleware:
 
             # Format skill description with parameters
             skill_desc = (
-                f"## Skill {i}: {skill_id} (match score: {score:.2f})\n\n"
+                f"## Skill id {i}: {skill_id} (match score: {score:.2f})\n\n"
             )
             skill_desc += (
                 "Description:"
@@ -377,6 +401,27 @@ class OrakleMiddleware:
             frustration_level = selection_data.get("frustration_level", 0.0)
             frustration_reason = selection_data.get("frustration_reason", "")
 
+            # Prioritize reasoning level from Orakle, fall back to heuristic
+            orakle_reasoning_level = selection_data.get("reasoning_level")
+            if orakle_reasoning_level is not None:
+                reasoning_level = orakle_reasoning_level
+                logger.info(
+                    f"ORAKLE: Reasoning level from skill selection: {reasoning_level}"
+                )
+            else:
+                reasoning_level = reasoning_level_heuristic
+                logger.info(
+                    f"ORAKLE: Reasoning level from heuristic: {reasoning_level}"
+                )
+
+            # Apply the global reasoning effort limit
+            final_reasoning_level = min(reasoning_level, self.reasoning_effort_limit)
+            if final_reasoning_level < reasoning_level:
+                logger.info(
+                    f"ORAKLE: Capping reasoning level from {reasoning_level} to"
+                    f" {final_reasoning_level} due to global limit."
+                )
+
             logger.info(
                 f"ORAKLE: Detected frustration level: {frustration_level:.2f}. "
                 f"Reason: '{frustration_reason}'. Query: '{query}'"
@@ -398,6 +443,28 @@ class OrakleMiddleware:
                 f" {parameters}"
             )
 
+            # --- Handle System Skills ---
+            if selected_skill_id in self.system_skills:
+                logger.info(
+                    f"ORAKLE: Executing system skill: {selected_skill_id}"
+                )
+                yield f"\n{skill_intention}\n\n"
+                yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
+
+                skill_instance = self.system_skills[selected_skill_id]
+                result = skill_instance.run(query, parameters, chat_manager)
+
+                chat_context = self._get_chat_context(chat_manager)
+                for chunk in self.stream_command_interpretation(
+                    result,
+                    query,
+                    chat_context=chat_context,
+                    reasoning_level=final_reasoning_level,
+                ):
+                    yield chunk
+                return  # Stop processing, as we've handled this system skill
+
+            # --- Handle Regular Skills ---
             # Yield processing message
             yield f"\n{skill_intention}\n\n"
             yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
@@ -430,45 +497,13 @@ class OrakleMiddleware:
                     yield f"\nError: {error_msg}\n\n"
                     return
             else:
-                # Prepare context for interpretation
-                chat_context = {}
-                if chat_manager:
-                    # User profile summary
-                    if hasattr(chat_manager, "user_profile_summary") and getattr(
-                        chat_manager, "user_profile_summary"
-                    ):
-                        chat_context["user_profile_summary"] = getattr(
-                            chat_manager, "user_profile_summary"
-                        )
-
-                    # Conversation summary
-                    if hasattr(chat_manager, "current_summary") and getattr(
-                        chat_manager, "current_summary"
-                    ):
-                        chat_context["conversation_summary"] = getattr(
-                            chat_manager, "current_summary"
-                        )
-
-                    # Recent chat history (e.g., last 4 messages / 2 rounds)
-                    if hasattr(chat_manager, "chat_history") and getattr(
-                        chat_manager, "chat_history"
-                    ):
-                        history_text = ""
-                        # Take last 4 messages
-                        recent_messages = getattr(chat_manager, "chat_history")[-4:]
-                        for msg in recent_messages:
-                            # Skip system messages to avoid redundant context
-                            if msg.get("role") == "system":
-                                continue
-                            role = msg.get("role", "unknown").capitalize()
-                            content = msg.get("content", "")
-                            history_text += f"{role}: {content}\n"
-                        if history_text:
-                            chat_context["recent_history"] = history_text.strip()
-
+                chat_context = self._get_chat_context(chat_manager)
                 # Get interpretation as a stream for regular skills
                 for interpretation_chunk in self.stream_command_interpretation(
-                    [result], query, chat_context=chat_context
+                    [result],
+                    query,
+                    chat_context=chat_context,
+                    reasoning_level=final_reasoning_level,
                 ):
                     yield interpretation_chunk
 
@@ -594,6 +629,77 @@ class OrakleMiddleware:
                 return skill
         return {}
 
+    def _load_system_skills(self):
+        """Dynamically loads system skills from the system_skills directory."""
+        skills_dir = os.path.join(os.path.dirname(__file__), "system_skills")
+        if not os.path.isdir(skills_dir):
+            logger.warning(f"System skills directory not found: {skills_dir}")
+            return
+
+        for filename in os.listdir(skills_dir):
+            if filename.endswith(".py") and not filename.startswith("__"):
+                module_name = f"ainara.framework.system_skills.{filename[:-3]}"
+                try:
+                    module = importlib.import_module(module_name)
+                    for name, obj in inspect.getmembers(module, inspect.isclass):
+                        if (
+                            issubclass(obj, BaseSystemSkill)
+                            and obj is not BaseSystemSkill
+                        ):
+                            skill_instance = obj()
+                            skill_definition = skill_instance.get_definition()
+                            self.capabilities.append(skill_definition)
+                            self.system_skills[
+                                skill_instance.name
+                            ] = skill_instance
+                            logger.info(
+                                f"Loaded system skill: {skill_instance.name}"
+                            )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to load system skill from {filename}: {e}"
+                    )
+
+    def _get_chat_context(self, chat_manager) -> dict:
+        """Extracts relevant context from the ChatManager."""
+        chat_context = {}
+        if not chat_manager:
+            return chat_context
+
+        # User profile summary
+        if hasattr(chat_manager, "user_profile_summary") and getattr(
+            chat_manager, "user_profile_summary"
+        ):
+            chat_context["user_profile_summary"] = getattr(
+                chat_manager, "user_profile_summary"
+            )
+
+        # Conversation summary
+        if hasattr(chat_manager, "current_summary") and getattr(
+            chat_manager, "current_summary"
+        ):
+            chat_context["conversation_summary"] = getattr(
+                chat_manager, "current_summary"
+            )
+
+        # Recent chat history (e.g., last 4 messages / 2 rounds)
+        if hasattr(chat_manager, "chat_history") and getattr(
+            chat_manager, "chat_history"
+        ):
+            history_text = ""
+            # Take last 4 messages
+            recent_messages = getattr(chat_manager, "chat_history")[-4:]
+            for msg in recent_messages:
+                # Skip system messages to avoid redundant context
+                if msg.get("role") == "system":
+                    continue
+                role = msg.get("role", "unknown").capitalize()
+                content = msg.get("content", "")
+                history_text += f"{role}: {content}\n"
+            if history_text:
+                chat_context["recent_history"] = history_text.strip()
+        return chat_context
+
     def _strip_think_blocks_from_stream(
         self, raw_stream: Generator[str, None, None]
     ) -> Generator[str, None, None]:
@@ -628,6 +734,7 @@ class OrakleMiddleware:
         results: List[str],
         query: str,
         chat_context: Optional[dict] = None,
+        reasoning_level: float = 0.0,
     ) -> Generator[str, None, None]:
         """
         Stream LLM interpretation of command results.
@@ -666,6 +773,7 @@ class OrakleMiddleware:
                 new_message=interpretation_prompt,
             ),
             stream=True,
+            reasoning_level=reasoning_level,
         )
 
         # Wrap the stream to strip out <think> blocks

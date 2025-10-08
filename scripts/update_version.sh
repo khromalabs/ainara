@@ -16,22 +16,37 @@ escaped_old_version=$(echo "$old_version" | sed 's/\./\\./g')
 old_tuple=$(echo "$old_version" | tr '.' ', ')
 new_tuple=$(echo "$new_version" | tr '.' ', ')
 
+# Grep for both dot-separated and comma-separated versions
+old_tuple_grep=$(echo "$old_version" | tr '.' ',')
+
 # Find and update files
-for file in $(bin/agrep "$escaped_old_version" | awk -F: '{print $1}'); do
+for file in $( (scripts/agrep "$escaped_old_version"; scripts/agrep "$old_tuple_grep") | awk -F: '{print $1}' | sort -u); do
     # Handle different version formats based on file type
     case "$file" in
         *__init__.py)
             replace "$old_version" "$new_version" -- "$file"
-            replace "($old_tuple)" "($new_tuple)" -- "$file"
+            # Handle tuples with or without spaces
+            old_tuple_regex=$(echo "$old_version" | sed 's/\./, */g')
+            sed -i -E "s/\($old_tuple_regex\)/($new_tuple)/" "$file"
             ;;
         pyproject.toml)
             replace "version = \"$old_version\"" "version = \"$new_version\"" -- "$file"
             ;;
+        *package.json*)
+            replace "\"version\": \"$old_version\"" "\"version\": \"$new_version\"" -- "$file"
+            ;;
+        *splash.html)
+            replace ">Version $old_version<" ">Version $new_version<" -- "$file"
+            ;;
+        *setup.js)
+            replace "'setup.version', '$old_version'" "'setup.version', '$new_version'" -- "$file"
+            ;;
         *)
-            replace "$old_version" "$new_version" -- "$file"
+            echo "Warning: Unhandled file with version string: $file"
             ;;
     esac
 done
+
 
 # Handle virtual environment
 VENV_PATH="venv"

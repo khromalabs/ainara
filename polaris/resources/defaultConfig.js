@@ -68,15 +68,16 @@ module.exports = {
         }
     },
     updates: {
-        ignoredVersion: null
+        ignoredVersion: ""
     },
     setup: {
         completed: false,
-        version: 0,
-        timestamp: 0,
+        version: "",
+        timestamp: "",
         firstLaunch: true
     },
     startup: {
+        autoStart: false,
         startMinimized: false,
         backupDirectory: ""
     },

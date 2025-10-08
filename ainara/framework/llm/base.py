@@ -113,6 +113,59 @@ class LLMBackend(ABC):
     #         return False
     #     return self.check_provider_availability(self.provider["api_base"])
 
+    def _initialize_context_window(
+        self, model_name: str, provider_config: dict
+    ) -> int:
+        """
+        Initializes the context window size for the current model.
+        Priority:
+        1. Explicitly configured 'context_window' in provider settings.
+        2. Value fetched from the specific LLM backend (e.g., API call).
+        3. A conservative default value.
+        """
+        if not model_name:
+            self.logger.warning(
+                "No model name provided, using default context window."
+            )
+            return 4096
+
+        # 1. Check for configured context window
+        configured_context = provider_config.get("context_window")
+        if configured_context is not None and isinstance(configured_context, int):
+            self.logger.info(
+                f"Using configured context window for {model_name}:"
+                f" {configured_context} tokens"
+            )
+            return configured_context
+        else:
+            self.logger.info(
+                f"No context_window configured for {model_name} in"
+                " provider settings. Trying backend."
+            )
+
+        # 2. Fetch from backend
+        try:
+            backend_context = self._fetch_backend_context_window(model_name)
+            if backend_context:
+                self.logger.info(
+                    f"Using backend-provided context window for {model_name}:"
+                    f" {backend_context} tokens"
+                )
+                return backend_context
+        except Exception as e:
+            self.logger.warning(
+                "Could not fetch context window from backend for"
+                f" {model_name}: {e}"
+            )
+
+        # 3. Default
+        default_window = 4096
+        self.logger.warning(
+            f"Unable to determine context window for {model_name}. Falling back to"
+            f" default: {default_window} tokens"
+        )
+        return default_window
+
     def get_available_providers(self):
         """
         Get a list of available LLM providers and their models.
@@ -121,6 +174,14 @@ class LLMBackend(ABC):
             list: List of provider information including models
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def _fetch_backend_context_window(self, model_name: str) -> Optional[int]:
+        """
+        Backend-specific implementation to get the context window size.
+        Should return an integer or None if not found.
+        """
+        pass
 
     @abstractmethod
     def add_msg(self):
@@ -140,6 +201,7 @@ class LLMBackend(ABC):
         self,
         chat_history: list = None,
         stream: bool = False,
+        reasoning_level: Optional[float] = None,
     ) -> Union[Tuple[str, Optional[str]], Generator]:
         """Process text using the LLM backend
 

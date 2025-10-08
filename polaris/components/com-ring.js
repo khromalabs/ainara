@@ -1002,6 +1002,7 @@ class ComRing extends BaseComponent {
 - **Escape**: Abort current action or hide the window.
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
+- **Typing mode**: Type any letter/number key to bring up the text input control, press <Esc> to close it.
 ### Commands
 - **/help**: Shows this help message.
 - **/history**: View your chat history.
@@ -1564,7 +1565,12 @@ Visit our project site at: https://ainara.app
                         if (event.content?.type == "skill") {
                             sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
                         } else {
-                            sttStatus.textContent = 'Thinking...';
+                            // console.log("!!!!!!" + JSON.stringify(event));
+                            if ( event.content.reasoning ) {
+                                sttStatus.textContent = 'Reasoning...';
+                            } else {
+                                sttStatus.textContent = 'Thinking...';
+                            }
                         }
                         sttStatus.classList.add('active');
                     } else if (event.content.state === 'stop') {

@@ -1,10 +1,8 @@
-Here are key facts and preferences about the user from your memories. Use them to personalize your response.
+Here are some relevant memories about the user. Please use them to enrich your understanding of the conversation's context. Don't introduce new topics based on these memories unless that could bring something significant to an already started conversation. However, always feel empowered to express care—gently and briefly, if you perceive any issue related with the user well-being.
 
-**Memory Prioritization:**
-- **Recency:** If memories conflict over certain concept, the most recent memory is always the right one.
-- **Relevance:** Otherwise give priority to concepts with higher relevance.
+IMPORTANT: If memories conflict over a certain concept, the one with the most recent 'Last updated' timestamp is the correct one.
 
-**User Profile:**
+**User Context Memories:**
 {{#memories}}
-- {{{memory}}} (Relevance: {{relevance_score}}, Last Updated: {{last_updated}})
+- {{{memory}}} (Created: {{created_at_formatted}}, Last updated: {{last_updated_formatted}})
 {{/memories}}

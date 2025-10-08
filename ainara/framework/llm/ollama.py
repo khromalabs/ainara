@@ -17,9 +17,8 @@
 # Lesser General Public License for more details.
 
 import logging
-from typing import (Any, AsyncGenerator, Dict, Generator, List, Optional,
-                    Union)
 from datetime import datetime
+from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 
 import ollama
 from litellm import token_counter
@@ -100,13 +99,10 @@ class OllamaLLM(LLMBackend):
         self.request_timeout = float(
             self.provider_config.get("request_timeout", 120.0)
         )  # ollama lib uses 'timeout'
-        self.enable_thinking = self.provider_config.get(
-            "enable_thinking", False
-        )
         self.keep_alive = self.provider_config.get("keep_alive", "5m")
         self.ollama_options = self.provider_config.get("options", {})
 
-        # Initialize Ollama clients
+        # Initialize Ollama clients to check model capabilities before setting all params
         # The 'host' parameter in ollama.Client corresponds to api_base
         # The 'timeout' parameter is for the HTTP request timeout
         self.client = ollama.Client(
@@ -116,14 +112,69 @@ class OllamaLLM(LLMBackend):
             host=self.api_base, timeout=self.request_timeout
         )
 
-        self._context_window = self._fetch_model_context_window()
+        # Set 'thinking' capability. Default to False if not explicitly configured.
+        self.enable_thinking = self.provider_config.get(
+            "enable_thinking", False
+        )
+        self.thinking_available = self._check_model_thinking_capability(
+            self.model_name_for_api
+        )
+
+        self._context_window = self._initialize_context_window(
+            model_name=self.model_name_for_api,
+            provider_config=self.provider_config,
+        )
 
         logger.info(
             f"OllamaLLM initialized for model '{self.model_name_for_api}' at"
             f" {self.api_base} using 'ollama' library. Context:"
             f" {self._context_window}. Options: {self.ollama_options}."
             f" Thinking enabled: {self.enable_thinking}."
+            f" Thinking available: {self.thinking_available}."
         )
+
+    def _check_model_thinking_capability(self, model_name: str) -> bool:
+        """
+        Check if the Ollama model supports 'thinking' by making a test call.
+        """
+        try:
+            logger.info(
+                f"Testing model '{model_name}' for 'thinking' capability..."
+            )
+            # Perform a minimal, non-streaming chat call with thinking enabled.
+            self.client.chat(
+                model=model_name,
+                messages=[{"role": "user", "content": "hello"}],
+                stream=False,
+                think=True,
+                options={"num_predict": 1},  # Minimize generation
+            )
+            logger.info(
+                f"Model '{model_name}' supports 'thinking'. Enabling by"
+                " default."
+            )
+            return True
+        except ollama.ResponseError as e:
+            # Check if the error indicates that the model does not support thinking
+            if "does not support thinking" in e.error.lower():
+                logger.info(
+                    f"Model '{model_name}' does not support 'thinking'."
+                    " Disabling by default."
+                )
+                return False
+            else:
+                # Some other API error occurred
+                logger.warning(
+                    "Ollama API error while testing for 'thinking' capability"
+                    f" for {model_name}: {e}. Disabling by default."
+                )
+                return False
+        except Exception as e:
+            logger.warning(
+                "Unexpected error while testing for 'thinking' capability"
+                f" for {model_name}: {e}. Disabling by default."
+            )
+            return False
 
     def _get_token_count(self, text: str, role: str) -> int:
         """Get accurate token count using LiteLLM"""
@@ -144,9 +195,7 @@ class OllamaLLM(LLMBackend):
     ) -> List[dict]:
         """Format user chat message for LLM processing with token count"""
         timestamp = datetime.now()
-        new_message_ts = (
-            f"[{timestamp.strftime("%H:%M")}] {new_message}"
-        )
+        new_message_ts = f"[{timestamp.strftime("%H:%M")}] {new_message}"
         token_count = self._get_token_count(new_message_ts, role)
         chat_history.append(
             {"role": role, "content": new_message_ts, "tokens": token_count}
@@ -178,35 +227,26 @@ class OllamaLLM(LLMBackend):
                 return provider_conf
         return None
 
-    def _fetch_model_context_window(self) -> int:
+    def _fetch_backend_context_window(self, model_name: str) -> Optional[int]:
+        """Fetch context window from Ollama model details."""
         try:
-            # Use the synchronous client for initialization
-            details = self.client.show(model=self.model_name_for_api)
+            details = self.client.show(model=model_name)
             params_str = details.get("parameters", "")
             for line in params_str.split("\n"):
                 if "num_ctx" in line:
                     try:
-                        context_len = int(line.split()[-1])
-                        logger.info(
-                            "Context window for Ollama model"
-                            f" {self.model_name_for_api}: {context_len}"
-                        )
-                        return context_len
+                        return int(line.split()[-1])
                     except (ValueError, IndexError):
-                        logger.warning(
+                        self.logger.warning(
                             f"Could not parse num_ctx from line: {line}"
                         )
-            logger.warning(
-                "Could not determine context window for"
-                f" {self.model_name_for_api}. Defaulting to 4096."
+            return None
+        except Exception as e:
+            self.logger.error(
+                f"Error getting context window for {model_name} using ollama"
+                f" lib: {e}."
             )
-        except Exception as e:  # Catch ollama.ResponseError and others
-            logger.error(
-                "Error getting context window for"
-                f" {self.model_name_for_api} using ollama lib: {e}. Defaulting"
-                " to 4096."
-            )
-        return 4096
+            return None
 
     def get_context_window(self) -> int:
         return self._context_window
@@ -227,17 +267,32 @@ class OllamaLLM(LLMBackend):
         chat_history: List[Dict],
         stream: bool = True,
         provider: Optional[Dict] = None,
+        reasoning_level: Optional[float] = None,
     ) -> Union[str, Generator[str, None, None]]:
         messages = self._prepare_messages_for_ollama(chat_history)
 
         logger.info(
             "Sending request to ollama.chat for model"
-            f" {self.model_name_for_api}."
+            f" {self.model_name_for_api}, reasoning_level: {reasoning_level}."
         )
         logger.debug(
             f"Ollama chat options: {self.ollama_options}, keep_alive:"
             f" {self.keep_alive}"
         )
+
+        use_thinking = self.enable_thinking or (
+            self.thinking_available
+            and reasoning_level is not None
+            and reasoning_level > 0
+        )
+        if use_thinking:
+            logger.info(
+                f"Requesting thinking for model {self.model_name_for_api}"
+            )
+        else:
+            logger.info(
+                f"Avoiding thinking for model {self.model_name_for_api}"
+            )
 
         try:
             if stream:
@@ -247,7 +302,7 @@ class OllamaLLM(LLMBackend):
                         model=self.model_name_for_api,
                         messages=messages,
                         stream=True,
-                        think=self.enable_thinking,
+                        think=use_thinking,
                         options=self.ollama_options,
                         keep_alive=self.keep_alive,
                     )
@@ -262,7 +317,7 @@ class OllamaLLM(LLMBackend):
                     model=self.model_name_for_api,
                     messages=messages,
                     stream=False,
-                    think=self.enable_thinking,
+                    think=use_thinking,
                     options=self.ollama_options,
                     keep_alive=self.keep_alive,
                 )
@@ -289,17 +344,30 @@ class OllamaLLM(LLMBackend):
         chat_history: List[Dict],
         stream: bool = True,
         provider: Optional[Dict] = None,
+        reasoning_level: Optional[float] = None,
     ) -> Union[str, AsyncGenerator[str, None]]:
         messages = self._prepare_messages_for_ollama(chat_history)
 
         logger.info(
             "Sending async request to ollama.chat for model"
-            f" {self.model_name_for_api}. Stream: {stream}."
+            f" {self.model_name_for_api}. Stream: {stream}. reasoning_level:"
+            f" {reasoning_level}"
         )
         logger.debug(
             f"Ollama async chat options: {self.ollama_options}, keep_alive:"
             f" {self.keep_alive}"
         )
+
+        use_thinking = (
+            self.enable_thinking
+            and reasoning_level is not None
+            and reasoning_level > 0
+        )
+        if use_thinking:
+            logger.info(
+                "Requesting thinking for model"
+                f" {self.model_name_for_api} (async)"
+            )
 
         try:
             if stream:
@@ -309,7 +377,7 @@ class OllamaLLM(LLMBackend):
                         model=self.model_name_for_api,
                         messages=messages,
                         stream=stream,
-                        think=self.enable_thinking,
+                        think=use_thinking,
                         options=self.ollama_options,
                         keep_alive=self.keep_alive,
                     )
@@ -327,7 +395,7 @@ class OllamaLLM(LLMBackend):
                     model=self.model_name_for_api,
                     messages=messages,
                     stream=False,
-                    think=self.enable_thinking,
+                    think=use_thinking,
                     options=self.ollama_options,
                     keep_alive=self.keep_alive,
                 )
@@ -447,6 +515,10 @@ class OllamaLLM(LLMBackend):
             )
 
             self.config_manager = original_cm  # Revert to original CM
+
+            self.thinking_available = self._check_model_thinking_capability(
+                self.model_name_for_api
+            )
 
         return {
             "model": self.model_name_for_api,

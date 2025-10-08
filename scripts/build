@@ -11,6 +11,7 @@ usage() {
     echo "  --skip-npm-build      Skip the npm build step"
     echo "  --skip-git-tag        Skip the Git tag creation and push step"
     echo "  --force               Force rebuild for PyInstaller even if executables exist"
+    echo "  --release             Create a final release tag (e.g., v1.2.3) instead of a branch-based one"
     echo "  --help                Display this help message"
     exit 1
 }
@@ -20,12 +21,14 @@ SKIP_PYINSTALLER=false
 SKIP_NPM_BUILD=false
 SKIP_GIT_TAG=false
 FORCE_BUILD=false
+RELEASE_TAG=false
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --skip-pyinstaller) SKIP_PYINSTALLER=true ;;
         --skip-npm-build) SKIP_NPM_BUILD=true ;;
         --skip-git-tag) SKIP_GIT_TAG=true ;;
+        --release) RELEASE_TAG=true ;;
         --force) FORCE_BUILD=true ;;
         --help) usage ;;
         *) echo "Unknown parameter passed: $1"; usage ;;
@@ -79,8 +82,13 @@ if [ "$SKIP_GIT_TAG" = false ]; then
     VERSION=$(cd $PROJECT_ROOT && python -c "import ainara; print(ainara.__version__)")
     # Dynamically get the current Git branch
     BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    TAG="${BRANCH}-v${VERSION}"
-    echo "Updating Git tag: ${TAG}"
+
+    if [ "$RELEASE_TAG" = true ]; then
+        TAG="v${VERSION}"
+    else
+        TAG="${BRANCH}-v${VERSION}"
+    fi
+    echo "Creating/Updating Git tag: ${TAG}"
     git tag -d "${TAG}" 2>/dev/null || true
     git tag "${TAG}"
     git push origin ":${TAG}" 2>/dev/null || true
