@@ -1002,6 +1002,7 @@ class ComRing extends BaseComponent {
 - **Escape**: Abort current action or hide the window.
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
+- **Typing mode**: Type any letter/number key to bring up the text input control, press <Esc> to close it.
 ### Commands
 - **/help**: Shows this help message.
 - **/history**: View your chat history.

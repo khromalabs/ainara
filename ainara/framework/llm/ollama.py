@@ -289,6 +289,10 @@ class OllamaLLM(LLMBackend):
             logger.info(
                 f"Requesting thinking for model {self.model_name_for_api}"
             )
+        else:
+            logger.info(
+                f"Avoiding thinking for model {self.model_name_for_api}"
+            )
 
         try:
             if stream:
