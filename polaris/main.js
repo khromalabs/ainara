@@ -526,7 +526,7 @@ async function appInitialization() {
         if (config.get('setup.firstLaunch', true)) {
             const notification2 = new Notification({
                 title: 'Ainara AI',
-                body: `Press ${shortcutKey} to show the Ainara UI, ${hideKey} to hide the UI and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
+                body: `Press ${shortcutKey} to show Ainara Polaris, ${hideKey} to hide it and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
                 icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
             });
             notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
