@@ -1643,13 +1643,14 @@ class ChatManager:
                     self.chat_memory.add_entry(processed_answer, "assistant")
             else:
                 # If there's no processed answer, add a placeholder
-                logger.warning("No answer from the LLM, adding placeholder")
+                yield ndjson("signal", "error", {"message": "LLM is not answering"})
+                logger.warning("No answer from the LLM")
                 self.llm.add_msg(
-                    "No response generated", self.chat_history, "assistant"
+                    "-", self.chat_history, "assistant"
                 )
                 if self.memory_enabled and self.chat_memory:
                     self.chat_memory.add_entry(
-                        "No response generated", "assistant"
+                        "-", "assistant"
                     )
 
             # Stop loading animation

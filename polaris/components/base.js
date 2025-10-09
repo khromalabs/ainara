@@ -16,12 +16,23 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
+const { shell } = require('electron');
+
 class BaseComponent extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
         this.state = {};
         this._eventHandlers = new Map();
+
+        // Open external links in the default browser
+        this.delegate('click', 'a', (event, target) => {
+            const href = target.getAttribute('href');
+            if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                event.preventDefault();
+                shell.openExternal(href);
+            }
+        });
     }
 
     // Utility methods
@@ -115,7 +126,8 @@ class BaseComponent extends HTMLElement {
         });
     }
 
-    stateChanged(newState, oldState) {
+    // stateChanged(newState, oldState) {
+    stateChanged() {
         // Override in child classes if needed
     }
 
@@ -183,6 +195,20 @@ class BaseComponent extends HTMLElement {
             // Create a properly formatted HTML string
             return '"' + linkText + '"' +
                    (domain ? ' [' + domain + ']' : '');
+        });
+
+        // Autolink URLs
+        const urlPattern = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
+        text = text.replace(urlPattern, (url) => {
+            let cleanUrl = url;
+            // Strip trailing punctuation that is unlikely to be part of the URL
+            while (/[.,;!?\)\]\}]$/.test(cleanUrl)) {
+                cleanUrl = cleanUrl.slice(0, -1);
+            }
+            const trailingChars = url.substring(cleanUrl.length);
+
+            const href = cleanUrl.startsWith('www.') ? `http://${cleanUrl}` : cleanUrl;
+            return `<a href="${href}">${cleanUrl}</a>` + trailingChars;
         });
 
         return text;

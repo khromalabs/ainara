@@ -999,7 +999,7 @@ class ComRing extends BaseComponent {
 ### Keyboard Shortcuts
 - **${this.triggerKey}**: Hold to record your voice.
 - **Tab**: Switch between Ring and Document view.
-- **Escape**: Abort current action or hide the window.
+- **Escape**: Abort current action, hide Polaris, in document view exit view."
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
 - **Typing mode**: Type any letter/number key to bring up the text input control, press <Esc> to close it.
