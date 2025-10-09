@@ -349,6 +349,8 @@ async function appInitialization() {
             __dirname
         );
 
+	let firstTimeShow = true;
+
         // Listen for visibility changes to handle tray, shortcuts, and focus
         windowManager.on('visibility-changed', (state) => {
             if(updateTrayIcon) {
@@ -363,9 +365,15 @@ async function appInitialization() {
                 const comRing = windowManager.getWindow('comRing');
                 setTimeout(() => {
                     if (comRing) {
+		        if(firstTimeShow && process.platform == 'win32') {
+                            // ugly hack to force focus on Windows
+                            comRing.minimize();
+                            comRing.restore();
+                            firstTimeShow = false;
+                        }
                         comRing.focus();
                         Logger.log('visibility-changed (active): focused comRing');
-                    }
+                           }
                 }, 300);
             } else if (state === 'inactive') {
                 // Register shortcut (original hideWindowsBackend logic)
