@@ -153,6 +153,14 @@ class BaseWindow {
         this.window.focus();
     }
 
+    minimize() {
+        this.window.minimize();
+    }
+
+    restore() {
+        this.window.restore();
+    }
+
     isFocused() {
         return this.window.isFocused();
     }

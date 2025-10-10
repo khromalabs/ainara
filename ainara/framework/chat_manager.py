@@ -100,7 +100,7 @@ class ChatManager:
         self.chat_memory = chat_memory
         self.green_memories = green_memories
         self.user_profile_summary = user_profile_summary
-        self.memory_enabled = config.get("memory.enabled", False)
+        self.memory_enabled = config.get("memory.enabled", True)
         self.summary_enabled = config.get("memory.summary_enabled", True)
 
         self.max_guardrail_retries = config.get("guardrails.max_retries", 2)

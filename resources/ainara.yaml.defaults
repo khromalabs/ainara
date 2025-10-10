@@ -81,8 +81,9 @@ backup:
 
 # Memory configuration
 memory:
-  enabled: false
-  vector_db_enabled: false
+  enabled: true
+  vector_db_enabled: true
+  summary_enabled: true
   session_id: "default_session"
 #  embedding_model: "sentence-transformers/all-mpnet-base-v2"
 #  storage_path: "~/.config/ainara/chat_memory.db"
