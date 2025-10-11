@@ -27,6 +27,27 @@ const ConfigHelper = require('../framework/ConfigHelper');
 
 const ollama = require('ollama');
 
+const providerWebsites = {
+    'openai': 'https://platform.openai.com/api-keys',
+    'anthropic': 'https://console.anthropic.com/settings/keys',
+    'cohere': 'https://dashboard.cohere.com/api-keys',
+    'groq': 'https://console.groq.com/keys',
+    'xai': 'https://console.x.ai/',
+    'google': 'https://aistudio.google.com/app/apikey',
+    'mistral': 'https://console.mistral.ai/api-keys/',
+    'deepmind': 'https://aistudio.google.com/app/apikey',
+    'deepseek': 'https://platform.deepseek.com/api_keys',
+    'perplexity': 'https://www.perplexity.ai/settings/api',
+    'fireworks': 'https://fireworks.ai/api-keys',
+    'together_ai': 'https://api.together.xyz/settings/api-keys',
+    'openrouter': 'https://openrouter.ai/keys',
+    'anyscale': 'https://console.anyscale.com/credentials',
+    'voyage': 'https://dash.voyageai.com/api-keys',
+    'bedrock': 'https://console.aws.amazon.com/bedrock/',
+    'azure': 'https://portal.azure.com/',
+    'sagemaker': 'https://console.aws.amazon.com/sagemaker/',
+    'vertex_ai': 'https://console.cloud.google.com/vertex-ai',
+};
 
 // Create a ConfigManager instance
 const config = new ConfigManager();
@@ -1199,6 +1220,31 @@ function loadProvidersWithFilter(filter = '') {
                     throw new Error('No providers available');
                 }
 
+                // Manually add website URLs
+                for (const providerId in providersData) {
+                    if (providerWebsites[providerId]) {
+                        providersData[providerId].website = providerWebsites[providerId];
+                    }
+                }
+
+                // Generate API key info
+                const apiKeyInfoContainer = document.getElementById('api-key-info-container');
+                if (apiKeyInfoContainer) {
+                    // let linksHtml = `
+                    //     <div class="api-key-info">
+                    //         <p>You can get API keys from the following providers:</p>
+                    //         <ul>`;
+                    // const sortedProvidersForLinks = Object.values(data.providers)
+                    //     .filter(p => p.website)
+                    //     .sort((a, b) => a.name.localeCompare(b.name));
+                    //
+                    // for (const provider of sortedProvidersForLinks) {
+                    //     linksHtml += `<li><a href="#" class="external-link" data-url="${provider.website}">${provider.name}</a></li>`;
+                    // }
+                    // linksHtml += `</ul></div>`;
+                    // apiKeyInfoContainer.innerHTML = linksHtml;
+                }
+
                 // Generate provider options
                 let html = '';
 
@@ -1271,10 +1317,16 @@ async function displayFeaturedModels(existingProviders = []) {
     const container = document.getElementById('featured-providers-container');
     if (!container) return;
 
+    let tags = {
+        "high_speed": { text: 'HIGH SPEED', color: '#ffc107' },
+        "low_price": { text: 'LOW PRICE', color: '#9ACD32' },
+        "high_intelligence": { text: 'HIGH INTELLIGENCE', color: '#007bff' },
+        "free_access": { text: 'FREE ACCESS', color: '#287725' },
+    }
+
     const featured = [
-        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', apiKeyUrl: 'https://x.ai/api', imageUrl: '../assets/providers/grok-4-fast.png', tags: [{ text: 'HIGH INTELLIGENCE', color: '#007bff' }, { text: 'LOW PRICE', color: '#9ACD32' }, { text: 'HIGH SPEED', color: '#ffc107' }] },
-        { id: 'anthropic-claude-3-haiku', name: 'Claude 3 Haiku', providerId: 'anthropic', modelId: 'anthropic/claude-3-haiku-20240307', description: 'Anthropic\'s fastest and most compact model.', apiKeyUrl: 'https://console.anthropic.com/settings/keys', imageUrl: '../assets/providers/anthropic.png', tags: [{ text: 'LOW PRICE', color: '#9ACD32' }] },
-        { id: 'groq-llama3-8b', name: 'Llama3 8B (via Groq)', providerId: 'groq', modelId: 'groq/llama3-8b-8192', description: 'Extremely fast inference on open models.', apiKeyUrl: 'https://console.groq.com/keys', imageUrl: '../assets/providers/groq.png', tags: [{ text: 'HIGH SPEED', color: '#ffc107' }, { text: 'FREE QUOTA', color: '#287725' }] }
+        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "low_price", "high_intelligence" ] },
+        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'high_intelligence', 'low_price'  ] },
     ];
 
     const existingModelIds = new Set(existingProviders.map(p => p.model));
@@ -1284,27 +1336,27 @@ async function displayFeaturedModels(existingProviders = []) {
         const isConfigured = existingModelIds.has(model.modelId);
         const bannerClass = isConfigured ? 'provider-banner configured' : 'provider-banner not-configured';
         const dataAttributes = isConfigured ? '' : `data-provider-id="${model.providerId}" data-model-id="${model.modelId}"`;
-        const tagsHtml = model.tags.map(tag => `<span class="provider-tag" style="background-color: ${tag.color};">${tag.text}</span>`).join('');
+        const contextWindowData = isConfigured || !model.contextWindow ? '' : `data-context-window="${model.contextWindow}"`;
+        const tagsHtml = model.tags.map(tag => `<span class="provider-tag" style="background-color: ${tags[tag].color};">${tags[tag].text}</span>`).join('');
 
         html += `
-            <div class="${bannerClass}" ${dataAttributes} style="background-image: url('${model.imageUrl}');">
-                <div class="provider-banner-overlay">
-                    <div class="provider-banner-content">
-                        <h4>${model.name}</h4>
-                        ${isConfigured ? `
-                            <div class="configured-status">
-                                <span class="checkmark">✔</span>
-                                <p>Model Configured</p>
-                            </div>
-                        ` : `
+            <div class="provider-banner-wrapper">
+                <div class="${bannerClass}" ${dataAttributes} ${contextWindowData}  style="background-image: url('${model.imageUrl}');">
+                    <div class="provider-banner-overlay">
+                        <div class="provider-banner-content">
+                            <h4>${model.name}</h4>
                             <p>${model.description}</p>
-                            <a href="#" class="external-link" data-url="${model.apiKeyUrl}">Get API Key</a>
-                        `}
-                    </div>
-                    <div class="provider-tags">
-                        ${tagsHtml}
+                        </div>
+                        <div class="provider-tags">
+                            ${tagsHtml}
+                        </div>
                     </div>
                 </div>
+                ${isConfigured ? `
+                    <div class="configured-status">
+                        <span class="checkmark">✔</span> <p>Model Configured</p>
+                    </div>
+                ` : ''}
             </div>
         `;
     });
@@ -1330,12 +1382,17 @@ async function displayFeaturedModels(existingProviders = []) {
                 if (modelSelect) {
                     modelSelect.value = modelId;
                 }
-
+                const modelWindow = document.getElementById(`${providerId}-context_window`);
+                if (banner.dataset.contextWindow && modelWindow) {
+                    modelWindow.value = banner.dataset.contextWindow;
+                }
                 // Scroll to the details section
                 const details = document.getElementById('provider-details');
                 if (details) {
                     details.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
+                const apiKeyInput = document.getElementById(`${providerId}-api_key`);
+                apiKeyInput?.focus();
             }
         });
     });
@@ -1432,7 +1489,7 @@ async function loadExistingProviders() {
                     <label for="${providerId}">
                         <strong>${providerModel}</strong><br>
                         ${provider.api_base ? `API: ${provider.api_base}` : ''}
-                        ${provider.context_window ? `Context: ${provider.context_window / 1024}K` : ''}
+                        ${provider.context_window ? `Context: ${(provider.context_window / 1024).toFixed(2)}K` : ''}
                     </label>
                     <button class="delete-provider-btn" data-index="${index}" title="Delete this provider">
                         &times;
@@ -1579,10 +1636,6 @@ function updateProviderDetailsUI() {
         <h3>${provider.name} Configuration</h3>
     `;
 
-    if (provider.website) {
-        html += `<p>Get your API key from <a href="${provider.website}" target="_blank">${provider.website}</a></p>`;
-    }
-
     // Add fields
     provider.fields.forEach(field => {
         // Check if this is an API Base URL field and if we should show it
@@ -1598,9 +1651,15 @@ function updateProviderDetailsUI() {
             return;
         }
 
+        const isApiKeyField = field.id.toLowerCase().includes('api_key');
+        let apiKeyLink = '';
+        if (isApiKeyField && provider.website) {
+            apiKeyLink = ` <a href="#" class="external-link get-api-key-link" data-url="${provider.website}">Get a new API key</a>`;
+        }
+
         html += `
             <div class="form-group">
-                <label for="${selectedProviderId}-${field.id}">${field.name}:</label>
+                <label for="${selectedProviderId}-${field.id}">${field.name}:${apiKeyLink}</label>
                 <input
                     type="${field.type}"
                     id="${selectedProviderId}-${field.id}"
@@ -1637,7 +1696,7 @@ function updateProviderDetailsUI() {
     // Add optional context window override field
     html += `
         <div class="form-group">
-            <label for="${selectedProviderId}-context_window">Context Window (Optional):</label>
+            <label for="${selectedProviderId}-context_window">Context Window (Optional, don't change unless confident about it):</label>
             <input
                 type="number"
                 step="2048"
@@ -3466,7 +3525,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.9.2');
+    config.set('setup.version', '0.9.3');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

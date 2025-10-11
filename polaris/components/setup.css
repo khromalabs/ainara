@@ -256,7 +256,7 @@ button {
 }
 
 .form-group input, .form-group select {
-    width: 100%;
+    width: 98%;
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -694,6 +694,10 @@ input:disabled, button:disabled {
     margin-bottom: 20px;
 }
 
+.provider-banner-wrapper {
+    position: relative;
+}
+
 .featured-providers-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -721,6 +725,7 @@ input:disabled, button:disabled {
 .provider-banner.not-configured:hover {
     transform: translateY(-5px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    opacity: 0.8;
 }
 
 .provider-banner.configured {
@@ -754,11 +759,45 @@ input:disabled, button:disabled {
 
 .provider-banner a {
     font-weight: bold;
-    text-decoration: none;
+    text-decoration: underline;
     color: #82c3ff;
+    margin: 2px;
+    border-radius: 5px;
 }
 
 .provider-banner a:hover {
+    text-decoration: underline;
+}
+
+.api-key-info {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.api-key-info p {
+    margin-top: 0;
+    font-weight: bold;
+}
+
+.api-key-info ul {
+    padding-left: 20px;
+    margin-bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 5px;
+    list-style: none;
+}
+
+.get-api-key-link {
+    font-size: 0.8em;
+    font-weight: normal;
+    margin-left: 10px;
+    text-decoration: none;
+}
+
+.get-api-key-link:hover {
     text-decoration: underline;
 }
 
@@ -766,11 +805,24 @@ input:disabled, button:disabled {
     display: flex;
     align-items: center;
     gap: 8px;
+    position: absolute;
+    top: 5%;
+    left: 87%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(40, 167, 69, 0.85);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 2px;
+    text-align: center;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    font-size: 0.75em;
 }
 
 .configured-status .checkmark {
     font-size: 1.5em;
-    color: #28a745;
+    color: #fff;
 }
 
 .configured-status p {
