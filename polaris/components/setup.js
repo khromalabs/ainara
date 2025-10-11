@@ -1267,6 +1267,80 @@ function loadProvidersWithFilter(filter = '') {
     }
 }
 
+async function displayFeaturedModels(existingProviders = []) {
+    const container = document.getElementById('featured-providers-container');
+    if (!container) return;
+
+    const featured = [
+        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', apiKeyUrl: 'https://x.ai/api', imageUrl: '../assets/providers/grok-4-fast.png', tags: [{ text: 'HIGH INTELLIGENCE', color: '#007bff' }, { text: 'LOW PRICE', color: '#9ACD32' }, { text: 'HIGH SPEED', color: '#ffc107' }] },
+        { id: 'anthropic-claude-3-haiku', name: 'Claude 3 Haiku', providerId: 'anthropic', modelId: 'anthropic/claude-3-haiku-20240307', description: 'Anthropic\'s fastest and most compact model.', apiKeyUrl: 'https://console.anthropic.com/settings/keys', imageUrl: '../assets/providers/anthropic.png', tags: [{ text: 'LOW PRICE', color: '#9ACD32' }] },
+        { id: 'groq-llama3-8b', name: 'Llama3 8B (via Groq)', providerId: 'groq', modelId: 'groq/llama3-8b-8192', description: 'Extremely fast inference on open models.', apiKeyUrl: 'https://console.groq.com/keys', imageUrl: '../assets/providers/groq.png', tags: [{ text: 'HIGH SPEED', color: '#ffc107' }, { text: 'FREE QUOTA', color: '#287725' }] }
+    ];
+
+    const existingModelIds = new Set(existingProviders.map(p => p.model));
+
+    let html = '<h3>Featured Models</h3><div class="featured-providers-grid">';
+    featured.forEach(model => {
+        const isConfigured = existingModelIds.has(model.modelId);
+        const bannerClass = isConfigured ? 'provider-banner configured' : 'provider-banner not-configured';
+        const dataAttributes = isConfigured ? '' : `data-provider-id="${model.providerId}" data-model-id="${model.modelId}"`;
+        const tagsHtml = model.tags.map(tag => `<span class="provider-tag" style="background-color: ${tag.color};">${tag.text}</span>`).join('');
+
+        html += `
+            <div class="${bannerClass}" ${dataAttributes} style="background-image: url('${model.imageUrl}');">
+                <div class="provider-banner-overlay">
+                    <div class="provider-banner-content">
+                        <h4>${model.name}</h4>
+                        ${isConfigured ? `
+                            <div class="configured-status">
+                                <span class="checkmark">✔</span>
+                                <p>Model Configured</p>
+                            </div>
+                        ` : `
+                            <p>${model.description}</p>
+                            <a href="#" class="external-link" data-url="${model.apiKeyUrl}">Get API Key</a>
+                        `}
+                    </div>
+                    <div class="provider-tags">
+                        ${tagsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+
+    container.innerHTML = html;
+    container.style.display = 'block';
+
+    // Add event listeners only to non-configured banners
+    document.querySelectorAll('.provider-banner.not-configured').forEach(banner => {
+        banner.addEventListener('click', (event) => {
+            // Don't trigger if the link was clicked
+            if (event.target.tagName === 'A') return;
+
+            const providerId = banner.dataset.providerId;
+            const modelId = banner.dataset.modelId;
+            const radio = document.getElementById(providerId);
+            if (radio) {
+                radio.click();
+
+                // Now, select the model in the dropdown
+                const modelSelect = document.getElementById(`${providerId}-model`);
+                if (modelSelect) {
+                    modelSelect.value = modelId;
+                }
+
+                // Scroll to the details section
+                const details = document.getElementById('provider-details');
+                if (details) {
+                    details.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        });
+    });
+}
+
 // Replace the existing loadProviders function
 function loadProviders() {
     // First load existing providers from backend config
@@ -1312,6 +1386,9 @@ async function loadExistingProviders() {
         const backendConfig = await loadBackendConfig();
         let existingProviders = backendConfig?.llm?.providers || [];
         const selectedProvider = backendConfig?.llm?.selected_provider;
+
+        // Display recommended models if they are not configured
+        await displayFeaturedModels(existingProviders);
 
         // Create a container for existing providers if it doesn't exist
         let existingContainer = document.getElementById('existing-providers');
@@ -1529,12 +1606,12 @@ function updateProviderDetailsUI() {
                     id="${selectedProviderId}-${field.id}"
                     ${field.placeholder ? `placeholder="${field.placeholder}"` : ''}
                     ${field.required ? 'required' : ''}
-                    ${isCustomProvider && isApiBaseField ? `value="http://192.168.1.200:7080"` : ``}
-                    ${isCustomProvider && field.id === 'model' ? `value="openai/gamingpc"` : ``}
                 >
             </div>
         `;
     });
+                    // ${isCustomProvider && isApiBaseField ? `value="http://192.168.1.200:7080"` : ``}
+                    // ${isCustomProvider && field.id === 'model' ? `value="openai/gamingpc"` : ``}
 
     // Add model selection if available
     if (provider.models && provider.models.length > 0) {
