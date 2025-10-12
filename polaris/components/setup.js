@@ -1322,11 +1322,12 @@ async function displayFeaturedModels(existingProviders = []) {
         "low_price": { text: 'LOW PRICE', color: '#9ACD32' },
         "high_intelligence": { text: 'HIGH INTELLIGENCE', color: '#007bff' },
         "free_access": { text: 'FREE ACCESS', color: '#287725' },
+        "open_model": { text: 'OPEN MODEL', color: '#CD32A8' },
     }
 
     const featured = [
-        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "low_price", "high_intelligence" ] },
-        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'high_intelligence', 'low_price'  ] },
+        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
+        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
     ];
 
     const existingModelIds = new Set(existingProviders.map(p => p.model));
