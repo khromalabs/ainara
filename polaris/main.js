@@ -153,7 +153,6 @@ function showSetupWizard(validationErrors = []) {
             Logger.error('Error closing setupWindow:' + error);
         }
         wizardActive = false;
-        appSetupShortcuts();
         // Re-enable tray icon
         if (!tray) {
              await appCreateTray();
@@ -245,6 +244,8 @@ function showSetupWizard(validationErrors = []) {
         splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 500));
         splashWindow.close();
+
+	checkFirstRunTasks();
 
         // Set shortcut just before showing windows
         appSetupShortcuts();
@@ -529,26 +530,7 @@ async function appInitialization() {
         }
 
         initializeAutoUpdater();
-        // New: Show one-time tray guidance notification on Windows
-        // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
-        if (config.get('setup.firstLaunch', true)) {
-            const notification2 = new Notification({
-                title: 'Ainara AI',
-                body: `Press ${shortcutKey} to show Ainara Polaris, ${hideKey} to hide it and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
-                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
-            });
-            notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
-            notification2.show();
-            const notification = new Notification({
-                title: 'Ainara AI',
-                body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
-                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
-            });
-            notification.on('click', () => windowManager.showAll());  // Click notification to show UI
-            notification.show();
-            config.set('setup.firstLaunch', false);  // Mark as shown
-            config.saveConfig();
-        }
+	checkFirstRunTasks();
 
         // Set shortcut just before showing windows
         appSetupShortcuts();
@@ -561,6 +543,29 @@ async function appInitialization() {
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
+    }
+}
+
+function checkFirstRunTasks() {
+    // New: Show one-time tray guidance notification on Windows
+    // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
+    if (config.get('setup.firstLaunch', true)) {
+        const notification2 = new Notification({
+            title: 'Ainara AI',
+            body: `Press ${shortcutKey} to show Ainara Polaris, ${hideKey} to hide it and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
+            icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+        });
+        notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
+        notification2.show();
+        const notification = new Notification({
+            title: 'Ainara AI',
+            body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
+            icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+        });
+        notification.on('click', () => windowManager.showAll());  // Click notification to show UI
+        notification.show();
+        config.set('setup.firstLaunch', false);  // Mark as shown
+        config.saveConfig();
     }
 }
 

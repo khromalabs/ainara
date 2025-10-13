@@ -231,6 +231,10 @@ button {
     margin-top: 20px;
 }
 
+.provider-details h3::first-letter {
+    text-transform: capitalize;
+}
+
 .tip-signal:before {
     color: #007bff;
     content: '🛈 TIP';
@@ -716,6 +720,7 @@ input:disabled, button:disabled {
     flex-direction: column;
     justify-content: flex-end;
     transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    font-size: 0.9em;
 }
 
 .provider-banner.not-configured {
@@ -840,7 +845,7 @@ input:disabled, button:disabled {
 .provider-tag {
     padding: 3px 8px;
     border-radius: 5px;
-    font-size: 0.68em;
+    font-size: 0.66em;
     font-weight: bold;
     color: white;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);

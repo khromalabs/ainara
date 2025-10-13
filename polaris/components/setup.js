@@ -1081,7 +1081,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen3,deepseek';
+                filterInput.value = 'xai,qwen-3,qwen3,deepseek,-3b';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -1103,7 +1103,7 @@ function setupEventListeners() {
                     filterInput.dataset.previousValue = filterInput.value;
 
                     // Apply default filter - include recommended models but exclude smaller ones
-                    filterInput.value = 'qwen3,deepseek,-8b,-3b';
+                    filterInput.value = 'xai,qwen-3,qwen3,deepseek,-3b';
                     // Hide filter input, label and apply button
                     filterInput.style.display = 'none';
                     filterInputContainer.style.display = 'none';
@@ -1282,10 +1282,9 @@ function loadProvidersWithFilter(filter = '') {
                     radio.addEventListener('change', () => {
                         // Hide test result and disable next button when provider changes
                         const testResult = document.getElementById('test-result');
-                        const nextButton = document.getElementById('main-next-btn');
-
                         testResult.classList.add('hidden');
-                        nextButton.disabled = true;
+                        // const nextButton = document.getElementById('main-next-btn');
+                        // nextButton.disabled = true;
 
                         updateProviderDetailsUI();
                     });
@@ -1327,12 +1326,12 @@ async function displayFeaturedModels(existingProviders = []) {
 
     const featured = [
         { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
-        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
+        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3 (Chat)', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
     ];
 
     const existingModelIds = new Set(existingProviders.map(p => p.model));
 
-    let html = '<h3>Featured Models</h3><div class="featured-providers-grid">';
+    let html = '<h3>Featured Models</h3><p style="font-size:0.9em;position:relative;margin-top:-10px;margin-bottom:10px;">Quick and easy setup, great user experience.</p><br><div class="featured-providers-grid">';
     featured.forEach(model => {
         const isConfigured = existingModelIds.has(model.modelId);
         const bannerClass = isConfigured ? 'provider-banner configured' : 'provider-banner not-configured';
@@ -1368,13 +1367,21 @@ async function displayFeaturedModels(existingProviders = []) {
 
     // Add event listeners only to non-configured banners
     document.querySelectorAll('.provider-banner.not-configured').forEach(banner => {
-        banner.addEventListener('click', (event) => {
-            // Don't trigger if the link was clicked
-            if (event.target.tagName === 'A') return;
+        // banner.addEventListener('click', async (event) => {
+        banner.addEventListener('click', async () => {
+            const defaultFilterCheckbox = document.getElementById('default-filter');
+            // ensure filter configuration is default, this assumes featured models 
+            // always will be present in the default configuration 
+            if (defaultFilterCheckbox && !defaultFilterCheckbox.checked) {
+                defaultFilterCheckbox.click();
+                // Wait for the DOM to update
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
 
             const providerId = banner.dataset.providerId;
             const modelId = banner.dataset.modelId;
             const radio = document.getElementById(providerId);
+
             if (radio) {
                 radio.click();
 
@@ -1394,6 +1401,10 @@ async function displayFeaturedModels(existingProviders = []) {
                 }
                 const apiKeyInput = document.getElementById(`${providerId}-api_key`);
                 apiKeyInput?.focus();
+                if (apiKeyInput) {
+                    apiKeyInput.disabled = false;
+                }
+                if (apiKeyInput) apiKeyInput.value = "";
             }
         });
     });
@@ -1619,11 +1630,11 @@ function updateProviderDetailsUI() {
     const detailsContainer = document.getElementById('provider-details');
     const testButton = document.getElementById('test-connection-btn');
     const testResult = document.getElementById('test-result');
-    const nextButton = document.getElementById('main-next-btn');
 
     // Hide test result and disable next button when provider changes
     testResult.classList.add('hidden');
-    nextButton.disabled = true;
+    // const nextButton = document.getElementById('main-next-btn');
+    // nextButton.disabled = true;
 
     if (!selectedProviderId || !providersData || !providersData[selectedProviderId]) {
         detailsContainer.innerHTML = '';
@@ -1664,7 +1675,7 @@ function updateProviderDetailsUI() {
                 <input
                     type="${field.type}"
                     id="${selectedProviderId}-${field.id}"
-                    ${field.placeholder ? `placeholder="${field.placeholder}"` : ''}
+                    ${field.placeholder ? `placeholder="<custom server url:port>"` : ''}
                     ${field.required ? 'required' : ''}
                 >
             </div>
@@ -1715,20 +1726,22 @@ function updateProviderDetailsUI() {
 
     // Add input event listeners for validation
     detailsContainer.querySelectorAll('input, select').forEach(input => {
-        input.addEventListener('input', (event) => handleInputChange(event));
+        input.addEventListener('input', (event) => handleInputChange(event,false));
     });
 
     validateProviderForm();
 }
 
 // New function to handle input changes
-function handleInputChange(event) {
+function handleInputChange(event, disableNext = true) {
     // Hide test result and disable next button when any input changes
     const testResult = document.getElementById('test-result');
     const nextButton = document.getElementById('main-next-btn');
 
     testResult.classList.add('hidden');
-    nextButton.disabled = true;
+    if (disableNext) {
+        nextButton.disabled = true;
+    }
 
     // Track the modified field
     if (event && event.target) {
@@ -2516,6 +2529,9 @@ async function deleteProvider(index) {
             } else {
                 // No providers left, remove the selected key
                 delete backendConfig.llm.selected_provider;
+                // Disable the next button as well
+                const nextButton = document.getElementById('main-next-btn');
+                nextButton.disabled = true;
             }
             changedSelectedProvider = true;
         }
@@ -3067,7 +3083,7 @@ function updateLLMStepTitle() {
     if (llmPanelElement) {
         const titleElement = llmPanelElement.querySelector('h2');
         if (titleElement) {
-            titleElement.textContent = 'LLM Provider Selection';
+            titleElement.textContent = 'LLM Providers';
         }
     }
 }
@@ -3104,13 +3120,13 @@ async function initializeOllamaStep() {
             if (serverConfigElement) {
                 serverConfigElement.style.display = "none";
             }
-            const performanceWarning = `<p>PLEASE NOTE: Ainara requires at very least a 4B model, but 7B at least is strongly recommended. Carefully select the size of the model accordingly to your available VRAM, your RAM performance for specific systems, or system RAM for Apple Silicon systems.<br>
-                        Ollama can run models fully on CPU and normal RAM on all supported systems, but that will give very bad performance in most scenarios.
-                        As a rule of thumb, unless owning very specific fast hardware, you should only choose models with an amount of parameters closely matching your available VRAM (eg. Qwen 14B is good for a RTX3060 with 12GB of VRAM available).</p>`
-            if (totalVram < 12 || (isAppleSilicon && totalRam < 16)) {
+            const performanceWarning = `<p>PLEASE NOTE: Ainara has proved to work even with the very small Qwen 3 1.7B model, but at least a 8B model is strongly recommended. Carefully select the size of the model accordingly to your available GPU VRAM, or your RAM in specific systems, eg Apple Silicon systems.<br>
+                        Ollama can always run models fully on CPU and normal RAM, but that will give very bad performance in most scenarios.
+                        As a rule of thumb, unless owning very specific fast hardware, you should only choose models with an amount of parameters closely matching your available GPU VRAM (eg. Qwen 14B is good for an Nvidia RTX3060 with 12GB of VRAM available).</p>`
+            if (totalVram < 8 || (isAppleSilicon && totalRam < 16)) {
                 hardwareInfoElement.innerHTML += `
                     <div class="warning-block">
-                        Your system hardware requirements are quite tight to run LLMs with Ollama effectively.
+                        Your system hardware requirements look quite tight to run LLMs with Ollama effectively.
                         <p>Running local models on this system for Ainara may result in poor performance. It is recommended to use cloud-based LLM providers instead.</p>
                         ${performanceWarning}
                     </div>
@@ -3135,7 +3151,7 @@ async function initializeOllamaStep() {
                             <li>Requirement 2: An Apple Silicon Mac with at least 8 GB of RAM. (Your system: ${isAppleSilicon ? `${totalRam.toFixed(1)} GB RAM on Apple Silicon` : 'Not an Apple Silicon Mac'})</li>
                         </ul>
                         <p>Running local models on this system for Ainara may result in very poor performance. It is recommended to use cloud-based LLM providers instead.</p>
-                        <p>The Ollama setup has been disabled. You can proceed to the next step to configure other providers.</p>
+                        <p>The Ollama wizard setup has been disabled. You can proceed to the next step to configure other providers, or set up manually with the Custom API option.</p>
                     </div>
                 `;
             }
@@ -3276,7 +3292,7 @@ async function displayHardwareInfo() {
         } else if (totalVram >= 7) {
             recommendationText += "<li>Suitable for smaller models (e.g., 13B Q4, 7B).</li>";
         } else if (totalVram >= 3.5) {
-            recommendationText += "<li>Suitable for tiny models (e.g., 7B Q4, 3B).</li>";
+            recommendationText += "<li>Suitable for tiny models (e.g. 4B or less).</li>";
         } else {
             recommendationText += "<li>Limited VRAM. May only run very small models or rely heavily on CPU/RAM.</li>";
         }
