@@ -24,8 +24,8 @@ Based on your analysis, choose one of the following actions:
 2.  **"reinforce"**: If the conversation confirms, restates, or adds new details to an existing memory.
     - Provide the `memory_id` of the memory to reinforce.
     - **If the memory text needs to be updated** with new information, also provide the `new_memory_text` which synthesizes the old memory with the new details.
-    - If you find duplicate memories, provide a `duplicates` list with their IDs to be deleted. Keep the memory with the highest relevance.
-    - These two actions can be optionally combined, as it is shown in the examples below.
+    - **IMPORTANT RULE for duplicates**: If you find multiple memories covering the same fact, you MUST identify the one with the highest relevance score to be the one that is kept and reinforced. Optionally, it could be updated as well. All other duplicate memories MUST be listed in a `duplicates` list with their IDs for deletion.
+
 3.  **"create"**: If the conversation introduces a completely new piece of information not covered by existing memories. Provide the new `memory_data`, a `target` section, and a `past_memory_ids` list if this new memory makes others outdated.
 
 **Step 4: Provide JSON Output**
@@ -35,6 +35,6 @@ Examples:
 - For ignoring: `{"action": "ignore"}`
 - For simple reinforcement: `{"action": "reinforce", "memory_id": "some-uuid-1234"}`
 - For reinforcement with an update: `{"action": "reinforce", "memory_id": "some-uuid-4567", "new_memory_text": "The user's favorite color is deep blue, especially navy blue."}`
-- For reinforcement with finding duplicates: `{"action": "reinforce", "memory_id": "some-uuid-1234", duplicates: [ "uuid-of-duplicate-memory-1", "uuid-of-duplicate-memory-2" ]}`
-- For reinforcement with finding duplicates AND an update: `{"action": "reinforce", "memory_id": "some-uuid-1234", "new_memory_text": "The user's favorite color is deep blue, especially navy blue.", duplicates: [ "uuid-of-duplicate-memory-1", "uuid-of-duplicate-memory-2" ]}`
+- For consolidating duplicates: `{"action": "reinforce", "memory_id": "uuid-of-highest-relevance-memory", "duplicates": ["uuid-of-duplicate-1", "uuid-of-duplicate-2"]}`
+- For consolidating duplicates AND updating text: `{"action": "reinforce", "memory_id": "uuid-of-highest-relevance-memory", "new_memory_text": "The new, consolidated fact.", "duplicates": ["uuid-of-duplicate-1", "uuid-of-duplicate-2"]}`
 - For creation: `{"action": "create", "target": "key_memories", "memory_data": {"topic": "Location", "memory": "The user has moved to a new city."}, "past_memory_ids": ["uuid-of-old-location"]}`

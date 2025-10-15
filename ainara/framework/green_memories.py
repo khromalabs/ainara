@@ -1466,8 +1466,13 @@ class GREENMemories:
             # Step 2: Find potentially related memories via semantic search
             # We use the last user message as the query to find relevant context.
             query_text = user_message.get("content", "")
+            # # !!! DEBUG
+            # logger.info(f"Memory assimilation query: '{query_text}'")
             existing_memories = []
-            if self.vector_storage and self._is_query_substantive(query_text):
+            is_substantive = self._is_query_substantive(query_text)
+            # # !!! DEBUG
+            # logger.info(f"Is query substantive? {is_substantive}")
+            if self.vector_storage and is_substantive:
                 # Fetch a few relevant memories to provide context to the LLM
                 if self.context_window <= 8192:
                     search_limit = 20
@@ -1485,6 +1490,10 @@ class GREENMemories:
                     query_text,
                     limit=search_limit,
                 )
+                # # !!! DEBUG
+                # logger.info(
+                #     f"Vector search raw results: {search_results}"
+                # )
                 if search_results:
                     existing_memories = [
                         doc.get("metadata", {})
@@ -1522,16 +1531,16 @@ class GREENMemories:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": processing_prompt},
             ]
-            logger.info(
-                "Asking LLM to process conversation for memory update..."
-                # f"Asking LLM to process conversation for memory update...\n-------{processing_history}\n--------"
-            )
+            # # !!! DEBUG
+            # logger.info(
+            #     "Sending memory processing request to LLM with user prompt:\n---"
+            #     f"-----\n{processing_prompt}\n--------"
+            # )
             llm_response_str = self.llm.chat(
                 chat_history=processing_history, stream=False
             )
-            logger.info(
-                f"\nLLM ANSWER:\n-------{llm_response_str}\n--------"
-            )
+            # # !!! DEBUG
+            # logger.info(f"LLM raw response for memory processing: {llm_response_str}")
             decision = json.loads(llm_response_str)
             action = decision.get("action")
 
