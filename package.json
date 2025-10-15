@@ -88,7 +88,10 @@
             "!**/_internal/resources/bin/linux/**"
           ]
         }
-      ]
+      ],
+      "nsis": {
+        "include": "resources/installer.nsh"
+      }
     },
     "win": {
       "target": [
@@ -112,7 +115,11 @@
       "identityName": "Khromalabs.AinaraPolaris",
       "publisherDisplayName": "Khromalabs",
       "publisher": "CN=81427736-62D6-46C2-8466-EA597C0FFB41",
-      "backgroundColor": "#464646"
+      "backgroundColor": "#464646",
+      "capabilities": [
+          "privateNetworkClientServer",
+          "internetClient"
+      ]
     },
     "linux": {
       "target": "AppImage",
