@@ -1539,8 +1539,8 @@ class GREENMemories:
             llm_response_str = self.llm.chat(
                 chat_history=processing_history, stream=False
             )
-            # # !!! DEBUG
-            # logger.info(f"LLM raw response for memory processing: {llm_response_str}")
+            # !!! DEBUG
+            logger.info(f"LLM raw response for memory processing:\n--------------\n{llm_response_str}\n-----------")
             decision = json.loads(llm_response_str)
             action = decision.get("action")
 
