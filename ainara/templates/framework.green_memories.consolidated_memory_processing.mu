@@ -21,14 +21,17 @@ No similar memories found.
 Based on your analysis, choose one of the following actions:
 
 1.  **"ignore"**: If the conversation contains no new lasting information, or if the information is already perfectly captured by an existing memory.
-2.  **"reinforce"**: If the conversation confirms or restates an existing memory. Provide the 'memory_id' of the memory to reinforce. If several memories contain exactly the same concept, chose the memory with the highest relevance score to be reinforced, and add all the duplicates in an array which will mark them to be erased.
-3.  **"create"**: If the conversation introduces a new piece of information. Provide the new 'memory_data', a 'target' section, and if this memory makes outdated other memories, a 'past_memory_ids' list containing the IDs of any memories that this new fact make outdated.
+2.  **"reinforce"**: If the conversation confirms, restates, or adds new details to an existing memory.
+    - Provide the `memory_id` of the memory to reinforce.
+    - **If the memory text needs to be updated** with new information, also provide the `new_memory_text` which synthesizes the old memory with the new details.
+    - If you find duplicate memories, provide a `duplicates` list with their IDs to be deleted. Keep the memory with the highest relevance.
+3.  **"create"**: If the conversation introduces a completely new piece of information not covered by existing memories. Provide the new `memory_data`, a `target` section, and a `past_memory_ids` list if this new memory makes others outdated.
 
 **Step 4: Provide JSON Output**
 Respond with a single JSON object containing your decision.
 
 Examples:
 - For ignoring: `{"action": "ignore"}`
-- For reinforcement without finding duplicates: `{"action": "reinforce", "memory_id": "some-uuid-1234"}`
-- For reinforcement with finding duplicates: `{"action": "reinforce", "memory_id": "some-uuid-1234", duplicates: [ "uuid-of-duplicate-memory-1", "uuid-of-duplicate-memory-2" ]}`
+- For simple reinforcement: `{"action": "reinforce", "memory_id": "some-uuid-1234"}`
+- For reinforcement with an update: `{"action": "reinforce", "memory_id": "some-uuid-4567", "new_memory_text": "The user's favorite color is deep blue, especially navy blue."}`
 - For creation: `{"action": "create", "target": "key_memories", "memory_data": {"topic": "Location", "memory": "The user has moved to a new city."}, "past_memory_ids": ["uuid-of-old-location"]}`

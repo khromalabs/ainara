@@ -1014,14 +1014,46 @@ class GREENMemories:
         timestamp_to_set = last_timestamp
         all_successful = True
         total_turns = len(conversation_turns)
+        newly_created_or_updated_memories_in_batch = []
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
-            # Create a sliding window of context. A value of 0 means no extra context.
-            start_index = max(0, i - self.extraction_context_turns)
-            context_turns = conversation_turns[start_index: i + 1]
+            try:
+                # Create a sliding window of context. A value of 0 means no extra context.
+                start_index = max(0, i - self.extraction_context_turns)
+                context_turns = conversation_turns[start_index: i + 1]
 
-            # The last turn in the window is the one we are primarily analyzing.
-            # The preceding turns provide the context.
-            if not self._extract_and_assimilate_memory(context_turns):
+                # The last turn in the window is the one we are primarily analyzing.
+                # The preceding turns provide the context.
+                processed_memory = self._extract_and_assimilate_memory(
+                    context_turns, newly_created_or_updated_memories_in_batch
+                )
+
+                if processed_memory:
+                    # If a memory was created or updated, update our batch context list
+                    existing_index = next(
+                        (
+                            idx
+                            for idx, mem in enumerate(
+                                newly_created_or_updated_memories_in_batch
+                            )
+                            if mem["id"] == processed_memory["id"]
+                        ),
+                        -1,
+                    )
+                    if existing_index != -1:
+                        # It was an update, replace the old version
+                        newly_created_or_updated_memories_in_batch[
+                            existing_index
+                        ] = processed_memory
+                    else:
+                        # It was a creation, add it
+                        newly_created_or_updated_memories_in_batch.append(
+                            processed_memory
+                        )
+
+                # On success, update the timestamp we would save in case of failure
+                timestamp_to_set = assistant_msg.get("timestamp")
+
+            except Exception:  # Catches fatal errors raised from assimilate
                 failed_timestamp = assistant_msg.get("timestamp")
 
                 if last_failure_timestamp == failed_timestamp:
@@ -1070,9 +1102,6 @@ class GREENMemories:
                         " will resume from the failed message on the next run."
                     )
                     break
-
-            # On success, update the timestamp we would save in case of failure
-            timestamp_to_set = assistant_msg.get("timestamp")
 
             if progress_callback:
                 progress = int(((i + 1) / total_turns) * max_progress)
@@ -1156,7 +1185,7 @@ class GREENMemories:
         new_text: str,
         user_message: Dict,
         assistant_message: Dict,
-    ) -> bool:
+    ) -> Optional[Dict]:
         """Updates an existing memory's text and boosts its relevance."""
         try:
             # First, get the existing memory to preserve other metadata
@@ -1169,7 +1198,7 @@ class GREENMemories:
                 logger.error(
                     f"Attempted to update non-existent memory: {memory_id}"
                 )
-                return False
+                return None
 
             existing_memory = self._dict_from_row(row)
             new_last_updated = datetime.now(timezone.utc).isoformat()
@@ -1207,7 +1236,7 @@ class GREENMemories:
                 )
 
             if cursor.rowcount == 0:
-                return False  # Should not happen if row was found
+                return None  # Should not happen if row was found
 
             logger.info(f"Updated memory {memory_id} in SQLite.")
 
@@ -1235,14 +1264,14 @@ class GREENMemories:
                 self.vector_storage.add_documents([document_to_update])
                 logger.info(f"Updated memory {memory_id} in vector store.")
 
-            return True
+            return updated_memory_obj
         except Exception as e:
             logger.error(f"Failed to update memory {memory_id}: {e}")
-            return False
+            return None
 
     def _create_new_memory(
         self, memory_data: Dict, user_message: Dict, assistant_message: Dict
-    ):
+    ) -> Optional[Dict]:
         """Adds a new memory to the profile and vector store."""
         target_section = memory_data.get("target", "extended_memories")
         new_memory = memory_data.get("memory_data", {})
@@ -1254,7 +1283,7 @@ class GREENMemories:
             logger.warning(
                 "Attempted to create a memory with no text. Skipping."
             )
-            return
+            return None
 
         if target_section not in ["key_memories", "extended_memories"]:
             logger.warning(
@@ -1298,6 +1327,7 @@ class GREENMemories:
                 f"Added new memory to '{target_section}' under topic: {topic}"
             )
 
+            full_memory_obj = None
             # Add to vector store regardless of type for de-duplication
             if self.vector_storage:
                 # We need the full memory object for metadata
@@ -1324,8 +1354,10 @@ class GREENMemories:
                 logger.info(
                     f"Indexed new memory (ID: {memory_id}) in vector store."
                 )
+            return full_memory_obj
         except Exception as e:
             logger.error(f"Failed to create new memory in database: {e}")
+            return None
 
     def _mark_memories_as_past(self, memory_ids: List[str]):
         """Marks memories as 'past' in SQLite and updates them in the vector store."""
@@ -1404,18 +1436,20 @@ class GREENMemories:
             logger.error(f"Failed to delete memories: {e}")
 
     def _extract_and_assimilate_memory(
-        self, conversation_turns: List[tuple[Dict, Dict]]
-    ) -> bool:
+        self,
+        conversation_turns: List[tuple[Dict, Dict]],
+        batch_context_memories: List[Dict] = None,
+    ) -> Optional[Dict]:
         """
         Analyzes a conversation turn, compares it with existing memories, and
         decides whether to ignore, reinforce, update, or create a memory using an LLM.
 
         Returns:
-            bool: True if processing was successful (or a non-fatal error occurred),
-                  False if a fatal error occurred that should halt the batch.
+            Optional[Dict]: The created or updated memory object, or None if no
+                            change was made or a non-fatal error occurred.
         """
         if not conversation_turns:
-            return True
+            return None
 
         user_message, assistant_message = conversation_turns[-1]
         llm_response_str = ""
@@ -1461,6 +1495,18 @@ class GREENMemories:
                         " context."
                     )
 
+            # Merge memories created/updated earlier in this same batch run.
+            # This gives the LLM immediate context to prevent duplicates.
+            if batch_context_memories:
+                existing_ids = {mem["id"] for mem in existing_memories}
+                for mem in batch_context_memories:
+                    if mem["id"] not in existing_ids:
+                        existing_memories.append(mem)
+                logger.info(
+                    f"Added {len(batch_context_memories)} memories from"
+                    " current batch to LLM context."
+                )
+
             # Step 3: Use the LLM to decide on the action
             processing_prompt = self.template_manager.render(
                 "framework.green_memories.consolidated_memory_processing",
@@ -1499,19 +1545,31 @@ class GREENMemories:
                 logger.info(
                     "LLM decided to ignore the conversation for memory."
                 )
-                return True
+                return None
 
             elif action == "reinforce":
                 memory_id = decision.get("memory_id")
-                if memory_id:
+                new_text = decision.get("new_memory_text")
+
+                if not memory_id:
+                    logger.warning(
+                        "LLM chose 'reinforce' but provided no memory_id."
+                    )
+                elif new_text:
+                    # This is a reinforcement that also updates the memory text.
+                    logger.info(f"LLM decided to update memory: {memory_id}")
+                    # The return from _update_memory is the updated memory object
+                    # which needs to be passed back to the main loop.
+                    return self._update_memory(
+                        memory_id, new_text, user_message, assistant_message
+                    )
+                else:
+                    # This is a simple reinforcement, just boosting the score.
                     logger.info(
                         f"LLM decided to reinforce memory: {memory_id}"
                     )
                     self._reinforce_memory(memory_id)
-                else:
-                    logger.warning(
-                        "LLM chose 'reinforce' but provided no memory_id."
-                    )
+
                 # Handle duplicates for deletion
                 duplicates_to_delete = decision.get("duplicates", [])
                 if duplicates_to_delete:
@@ -1519,23 +1577,21 @@ class GREENMemories:
 
             elif action == "create":
                 logger.info("LLM decided to create a new memory.")
-                self._create_new_memory(
+                return self._create_new_memory(
                     decision, user_message, assistant_message
                 )
 
             else:
                 logger.warning(f"LLM returned an unknown action: '{action}'")
 
+            return None
         except json.JSONDecodeError:
             logger.warning(
                 "LLM returned invalid JSON for memory processing:"
                 f" {llm_response_str}"
             )
-            # This is a non-fatal error; we can continue with the next message.
-            return True
+            return None
         except Exception as e:
             logger.error(f"Failed to assimilate memory from conversation: {e}")
-            # This is a fatal error (e.g., LLM down); stop processing the batch.
-            return False
-
-        return True
+            # Re-raise to be caught by the main loop for poison-pill handling
+            raise
