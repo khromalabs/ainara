@@ -108,9 +108,6 @@
         }
       ]
     },
-    "nsis": {
-      "include": "resources/installer.nsh"
-    },
     "appx": {
       "identityName": "Khromalabs.AinaraPolaris",
       "publisherDisplayName": "Khromalabs",
