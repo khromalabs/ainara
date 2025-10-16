@@ -116,10 +116,7 @@
       "publisherDisplayName": "Khromalabs",
       "publisher": "CN=81427736-62D6-46C2-8466-EA597C0FFB41",
       "backgroundColor": "#464646",
-      "capabilities": [
-          "privateNetworkClientServer",
-          "internetClient"
-      ]
+      "customManifestPath": "polaris/resources/appxmanifest.xml"
     },
     "linux": {
       "target": "AppImage",
