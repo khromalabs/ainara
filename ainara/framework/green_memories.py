@@ -1409,8 +1409,13 @@ class GREENMemories:
         except Exception as e:
             logger.error(f"Failed to mark memories as past: {e}")
 
-    def _delete_memories(self, memory_ids: List[str]):
-        """Deletes memories from SQLite and the vector store."""
+    def _delete_memories(
+        self, memory_ids: List[str], consolidate_into_id: Optional[str] = None
+    ):
+        """
+        Deletes memories from SQLite and the vector store.
+        Optionally consolidates their relevance into another memory before deletion.
+        """
         if not memory_ids:
             return
 
@@ -1418,6 +1423,33 @@ class GREENMemories:
         try:
             placeholders = ",".join("?" for _ in memory_ids)
             with self.storage.conn:
+                if consolidate_into_id:
+                    cursor = self.storage.conn.cursor()
+                    # Sum relevance from duplicates
+                    cursor.execute(
+                        "SELECT SUM(relevance) FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        memory_ids,
+                    )
+                    total_relevance_from_duplicates = cursor.fetchone()[0]
+
+                    if total_relevance_from_duplicates:
+                        # Add to the kept memory
+                        cursor.execute(
+                            "UPDATE user_memories SET relevance = relevance +"
+                            " ? WHERE id = ?",
+                            (
+                                total_relevance_from_duplicates,
+                                consolidate_into_id,
+                            ),
+                        )
+                        logger.info(
+                            f"Transferred {total_relevance_from_duplicates:.2f}"
+                            " relevance from"
+                            f" {len(memory_ids)} duplicates to memory"
+                            f" {consolidate_into_id}."
+                        )
+
                 cursor = self.storage.conn.execute(
                     f"DELETE FROM user_memories WHERE id IN ({placeholders})",
                     memory_ids,
@@ -1582,7 +1614,9 @@ class GREENMemories:
                 # Handle duplicates for deletion
                 duplicates_to_delete = decision.get("duplicates", [])
                 if duplicates_to_delete:
-                    self._delete_memories(duplicates_to_delete)
+                    self._delete_memories(
+                        duplicates_to_delete, consolidate_into_id=memory_id
+                    )
 
             elif action == "create":
                 logger.info("LLM decided to create a new memory.")
