@@ -216,7 +216,7 @@ function showSetupWizard(validationErrors = []) {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 300000; // 300 seconds timeout
+        const timeout = 1200000; // 1200 seconds timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (await ServiceManager.checkServicesHealth()) {
