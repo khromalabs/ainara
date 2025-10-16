@@ -88,10 +88,7 @@
             "!**/_internal/resources/bin/linux/**"
           ]
         }
-      ],
-      "nsis": {
-        "include": "resources/installer.nsh"
-      }
+      ]
     },
     "win": {
       "target": [
@@ -110,6 +107,9 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "include": "resources/installer.nsh"
     },
     "appx": {
       "identityName": "Khromalabs.AinaraPolaris",
