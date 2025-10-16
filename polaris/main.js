@@ -245,7 +245,7 @@ function showSetupWizard(validationErrors = []) {
         await new Promise(resolve => setTimeout(resolve, 500));
         splashWindow.close();
 
-	checkFirstRunTasks();
+        checkFirstRunTasks();
 
         // Set shortcut just before showing windows
         appSetupShortcuts();

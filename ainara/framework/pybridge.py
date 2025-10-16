@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 import requests
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -41,6 +42,7 @@ from ainara.framework.chat_manager import ChatManager
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.green_memories import GREENMemories
+from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
@@ -67,6 +69,14 @@ def cleanup_audio_directory(static_folder: str) -> None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def shutdown_server():
+    """Gracefully shut down the server."""
+    logger.info("Shutdown signal received. Shutting down server.")
+    # Use os.kill to send SIGINT to the current process
+    # This is more reliable for stopping Flask's development server
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 def get_directory_size(directory):
@@ -650,6 +660,10 @@ def create_app():
     # Ensure the backup thread is stopped cleanly on exit
     atexit.register(app.backup_manager.stop)
 
+    # --- Health Monitor ---
+    app.health_monitor = HealthMonitor(shutdown_callback=shutdown_server)
+    atexit.register(app.health_monitor.stop)
+
     @app.route("/config/status", methods=["GET"])
     def get_config_status():
         """Return the validation status of the initial user configuration."""
@@ -729,6 +743,9 @@ def create_app():
 
         # Add response time measurement
         status["response_time_ms"] = (time.time() - start_time) * 1000
+
+        # Record health check status to conditionally start the monitor
+        app.health_monitor.record_health_check(status=status["status"])
 
         return status
 

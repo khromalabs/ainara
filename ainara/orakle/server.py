@@ -18,6 +18,10 @@
 
 
 import argparse
+import atexit
+import logging
+import os
+import signal
 import socket
 # import threading
 import time
@@ -28,10 +32,18 @@ from flask_cors import CORS
 
 from ainara.framework.config import config
 from ainara.framework.capabilities.manager import CapabilitiesManager
+from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
 
 config.load_config()
+logger = logging.getLogger(__name__)
+
+
+def shutdown_server():
+    """Gracefully shut down the server."""
+    logger.info("Shutdown signal received. Shutting down server.")
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 def parse_args():
@@ -131,6 +143,9 @@ def health_check():
     # Add response time measurement
     status["response_time_ms"] = (time.time() - start_time) * 1000
 
+    # Record health check status to conditionally start the monitor
+    app.health_monitor.record_health_check(status=status["status"])
+
     return status
 
 
@@ -141,6 +156,10 @@ def create_app(internet_available: bool):
 
     # Store reference to capabilities manager, passing the global config
     app.capabilities_manager = CapabilitiesManager(app, config, internet_available)
+
+    # --- Health Monitor ---
+    app.health_monitor = HealthMonitor(shutdown_callback=shutdown_server)
+    atexit.register(app.health_monitor.stop)
 
     @app.route("/config", methods=["PUT"])
     def update_config():
