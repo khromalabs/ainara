@@ -216,7 +216,7 @@ function showSetupWizard(validationErrors = []) {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 1200000; // 1200 seconds timeout
+        const timeout = 900000; // 900 seconds/15 min timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (await ServiceManager.checkServicesHealth()) {
@@ -460,7 +460,7 @@ async function appInitialization() {
                 type: 'question',
                 buttons: ['Yes', 'No'],
                 title: 'Startup Error',
-                message: 'Error: ' + message  + '. Do you want to open the setup wizard? Maybe the LLM is not responding, please try another LLM provider.'
+                message: 'Error: ' + message  + '. Do you want to open the setup wizard? Maybe the LLM is not responding, please try another LLM provider, if possible a faster one.'
             };
             const response = dialog.showMessageBoxSync(
                 null,
@@ -479,7 +479,7 @@ async function appInitialization() {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 300000; // 300 seconds timeout
+        const timeout = 900000; // 900 seconds/15 min timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (await ServiceManager.checkServicesHealth()) {

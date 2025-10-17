@@ -980,15 +980,6 @@ class GREENMemories:
 
         logger.info(f"Found {len(new_messages)} new messages to process.")
 
-        # Poison pill prevention: track repeated failures on the same message.
-        last_failure_timestamp = self.storage.get_metadata(
-            "memory_last_failure_timestamp"
-        )
-        failure_count_str = self.storage.get_metadata("memory_failure_count")
-        failure_count = int(failure_count_str) if failure_count_str else 0
-        # The number of times to retry a failing message before skipping it.
-        MAX_RETRIES = 3
-
         # Group messages into user/assistant turns
         conversation_turns = []
         for i, message in enumerate(new_messages):
@@ -1011,11 +1002,17 @@ class GREENMemories:
         logger.info(
             f"Processing {len(conversation_turns)} new conversation turns."
         )
-        timestamp_to_set = last_timestamp
-        all_successful = True
         total_turns = len(conversation_turns)
         newly_created_or_updated_memories_in_batch = []
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
+            # Move timestamp forward BEFORE processing to avoid getting stuck.
+            # If processing fails, this message will be skipped on the next run.
+            current_timestamp = assistant_msg.get("timestamp")
+            if current_timestamp:
+                self.storage.set_metadata(
+                    "profile_last_processed_timestamp", current_timestamp
+                )
+
             try:
                 # Create a sliding window of context. A value of 0 means no extra context.
                 start_index = max(0, i - self.extraction_context_turns)
@@ -1050,79 +1047,23 @@ class GREENMemories:
                             processed_memory
                         )
 
-                # On success, update the timestamp we would save in case of failure
-                timestamp_to_set = assistant_msg.get("timestamp")
-
-            except Exception:  # Catches fatal errors raised from assimilate
-                failed_timestamp = assistant_msg.get("timestamp")
-
-                if last_failure_timestamp == failed_timestamp:
-                    failure_count += 1
-                    logger.warning(
-                        "Repeated failure processing message at timestamp"
-                        f" {failed_timestamp}. Attempt"
-                        f" {failure_count}/{MAX_RETRIES}."
-                    )
-                else:
-                    # This is a new message failing, reset the counter
-                    failure_count = 1
-                    logger.warning(
-                        "Failure processing message at timestamp"
-                        f" {failed_timestamp}. This is the first attempt."
-                    )
-
-                if failure_count >= MAX_RETRIES:
-                    logger.error(
-                        f"Message at {failed_timestamp} has failed processing"
-                        f" {MAX_RETRIES} times. Skipping this message to avoid"
-                        " getting stuck."
-                    )
-                    # To skip, we treat it as a success for timestamp purposes
-                    timestamp_to_set = failed_timestamp
-                    # Reset failure tracking and continue to the next message
-                    self.storage.delete_metadata(
-                        [
-                            "memory_last_failure_timestamp",
-                            "memory_failure_count",
-                        ]
-                    )
-                    continue
-                else:
-                    # It's a retryable failure. Save state and break.
-                    self.storage.set_metadata(
-                        "memory_last_failure_timestamp", failed_timestamp
-                    )
-                    self.storage.set_metadata(
-                        "memory_failure_count", str(failure_count)
-                    )
-                    all_successful = False
-                    logger.warning(
-                        "Halting memory processing for this session due to a"
-                        " fatal error. Progress has been saved. The process"
-                        " will resume from the failed message on the next run."
-                    )
-                    break
+            except Exception as e:
+                logger.error(
+                    "Failed to process memory for turn ending with message at"
+                    f" timestamp {current_timestamp}. This turn will be"
+                    f" skipped. Error: {e}"
+                )
+                # The timestamp is already updated, so we just continue to the next turn.
+                continue
 
             if progress_callback:
                 progress = int(((i + 1) / total_turns) * max_progress)
                 progress_callback(progress, i + 1, total_turns)
 
-        # After processing all turns, update the timestamp to the last message processed
-        if all_successful:
-            # If we finished everything without a fatal error, clear any stale failure markers
-            self.storage.delete_metadata(
-                ["memory_last_failure_timestamp", "memory_failure_count"]
-            )
-            if new_messages:
-                timestamp_to_set = new_messages[-1].get("timestamp")
-
-        if timestamp_to_set and timestamp_to_set != last_timestamp:
-            self.storage.set_metadata(
-                "profile_last_processed_timestamp", timestamp_to_set
-            )
-            logger.info(
-                f"Profile update complete. New timestamp: {timestamp_to_set}"
-            )
+        logger.info(
+            "Profile update processing loop complete. Final timestamp is set"
+            " to the last message processed or attempted."
+        )
 
     def decay_all_memories(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
