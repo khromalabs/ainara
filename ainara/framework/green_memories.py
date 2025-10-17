@@ -980,15 +980,6 @@ class GREENMemories:
 
         logger.info(f"Found {len(new_messages)} new messages to process.")
 
-        # Poison pill prevention: track repeated failures on the same message.
-        last_failure_timestamp = self.storage.get_metadata(
-            "memory_last_failure_timestamp"
-        )
-        failure_count_str = self.storage.get_metadata("memory_failure_count")
-        failure_count = int(failure_count_str) if failure_count_str else 0
-        # The number of times to retry a failing message before skipping it.
-        MAX_RETRIES = 3
-
         # Group messages into user/assistant turns
         conversation_turns = []
         for i, message in enumerate(new_messages):
@@ -1011,89 +1002,68 @@ class GREENMemories:
         logger.info(
             f"Processing {len(conversation_turns)} new conversation turns."
         )
-        timestamp_to_set = last_timestamp
-        all_successful = True
         total_turns = len(conversation_turns)
+        newly_created_or_updated_memories_in_batch = []
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
-            # Create a sliding window of context. A value of 0 means no extra context.
-            start_index = max(0, i - self.extraction_context_turns)
-            context_turns = conversation_turns[start_index: i + 1]
+            # Move timestamp forward BEFORE processing to avoid getting stuck.
+            # If processing fails, this message will be skipped on the next run.
+            current_timestamp = assistant_msg.get("timestamp")
+            if current_timestamp:
+                self.storage.set_metadata(
+                    "profile_last_processed_timestamp", current_timestamp
+                )
 
-            # The last turn in the window is the one we are primarily analyzing.
-            # The preceding turns provide the context.
-            if not self._extract_and_assimilate_memory(context_turns):
-                failed_timestamp = assistant_msg.get("timestamp")
+            try:
+                # Create a sliding window of context. A value of 0 means no extra context.
+                start_index = max(0, i - self.extraction_context_turns)
+                context_turns = conversation_turns[start_index: i + 1]
 
-                if last_failure_timestamp == failed_timestamp:
-                    failure_count += 1
-                    logger.warning(
-                        "Repeated failure processing message at timestamp"
-                        f" {failed_timestamp}. Attempt"
-                        f" {failure_count}/{MAX_RETRIES}."
-                    )
-                else:
-                    # This is a new message failing, reset the counter
-                    failure_count = 1
-                    logger.warning(
-                        "Failure processing message at timestamp"
-                        f" {failed_timestamp}. This is the first attempt."
-                    )
+                # The last turn in the window is the one we are primarily analyzing.
+                # The preceding turns provide the context.
+                processed_memory = self._extract_and_assimilate_memory(
+                    context_turns, newly_created_or_updated_memories_in_batch
+                )
 
-                if failure_count >= MAX_RETRIES:
-                    logger.error(
-                        f"Message at {failed_timestamp} has failed processing"
-                        f" {MAX_RETRIES} times. Skipping this message to avoid"
-                        " getting stuck."
+                if processed_memory:
+                    # If a memory was created or updated, update our batch context list
+                    existing_index = next(
+                        (
+                            idx
+                            for idx, mem in enumerate(
+                                newly_created_or_updated_memories_in_batch
+                            )
+                            if mem["id"] == processed_memory["id"]
+                        ),
+                        -1,
                     )
-                    # To skip, we treat it as a success for timestamp purposes
-                    timestamp_to_set = failed_timestamp
-                    # Reset failure tracking and continue to the next message
-                    self.storage.delete_metadata(
-                        [
-                            "memory_last_failure_timestamp",
-                            "memory_failure_count",
-                        ]
-                    )
-                    continue
-                else:
-                    # It's a retryable failure. Save state and break.
-                    self.storage.set_metadata(
-                        "memory_last_failure_timestamp", failed_timestamp
-                    )
-                    self.storage.set_metadata(
-                        "memory_failure_count", str(failure_count)
-                    )
-                    all_successful = False
-                    logger.warning(
-                        "Halting memory processing for this session due to a"
-                        " fatal error. Progress has been saved. The process"
-                        " will resume from the failed message on the next run."
-                    )
-                    break
+                    if existing_index != -1:
+                        # It was an update, replace the old version
+                        newly_created_or_updated_memories_in_batch[
+                            existing_index
+                        ] = processed_memory
+                    else:
+                        # It was a creation, add it
+                        newly_created_or_updated_memories_in_batch.append(
+                            processed_memory
+                        )
 
-            # On success, update the timestamp we would save in case of failure
-            timestamp_to_set = assistant_msg.get("timestamp")
+            except Exception as e:
+                logger.error(
+                    "Failed to process memory for turn ending with message at"
+                    f" timestamp {current_timestamp}. This turn will be"
+                    f" skipped. Error: {e}"
+                )
+                # The timestamp is already updated, so we just continue to the next turn.
+                continue
 
             if progress_callback:
                 progress = int(((i + 1) / total_turns) * max_progress)
                 progress_callback(progress, i + 1, total_turns)
 
-        # After processing all turns, update the timestamp to the last message processed
-        if all_successful:
-            # If we finished everything without a fatal error, clear any stale failure markers
-            self.storage.delete_metadata(
-                ["memory_last_failure_timestamp", "memory_failure_count"]
-            )
-            if new_messages:
-                timestamp_to_set = new_messages[-1].get("timestamp")
-
-        if timestamp_to_set and timestamp_to_set != last_timestamp:
-            self.storage.set_metadata(
-                "profile_last_processed_timestamp", timestamp_to_set
-            )
-            logger.info(
-                f"Profile update complete. New timestamp: {timestamp_to_set}"
-            )
+        logger.info(
+            "Profile update processing loop complete. Final timestamp is set"
+            " to the last message processed or attempted."
+        )
 
     def decay_all_memories(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
@@ -1156,7 +1126,7 @@ class GREENMemories:
         new_text: str,
         user_message: Dict,
         assistant_message: Dict,
-    ) -> bool:
+    ) -> Optional[Dict]:
         """Updates an existing memory's text and boosts its relevance."""
         try:
             # First, get the existing memory to preserve other metadata
@@ -1169,7 +1139,7 @@ class GREENMemories:
                 logger.error(
                     f"Attempted to update non-existent memory: {memory_id}"
                 )
-                return False
+                return None
 
             existing_memory = self._dict_from_row(row)
             new_last_updated = datetime.now(timezone.utc).isoformat()
@@ -1207,7 +1177,7 @@ class GREENMemories:
                 )
 
             if cursor.rowcount == 0:
-                return False  # Should not happen if row was found
+                return None  # Should not happen if row was found
 
             logger.info(f"Updated memory {memory_id} in SQLite.")
 
@@ -1235,14 +1205,14 @@ class GREENMemories:
                 self.vector_storage.add_documents([document_to_update])
                 logger.info(f"Updated memory {memory_id} in vector store.")
 
-            return True
+            return updated_memory_obj
         except Exception as e:
             logger.error(f"Failed to update memory {memory_id}: {e}")
-            return False
+            return None
 
     def _create_new_memory(
         self, memory_data: Dict, user_message: Dict, assistant_message: Dict
-    ):
+    ) -> Optional[Dict]:
         """Adds a new memory to the profile and vector store."""
         target_section = memory_data.get("target", "extended_memories")
         new_memory = memory_data.get("memory_data", {})
@@ -1254,7 +1224,7 @@ class GREENMemories:
             logger.warning(
                 "Attempted to create a memory with no text. Skipping."
             )
-            return
+            return None
 
         if target_section not in ["key_memories", "extended_memories"]:
             logger.warning(
@@ -1298,6 +1268,7 @@ class GREENMemories:
                 f"Added new memory to '{target_section}' under topic: {topic}"
             )
 
+            full_memory_obj = None
             # Add to vector store regardless of type for de-duplication
             if self.vector_storage:
                 # We need the full memory object for metadata
@@ -1324,8 +1295,10 @@ class GREENMemories:
                 logger.info(
                     f"Indexed new memory (ID: {memory_id}) in vector store."
                 )
+            return full_memory_obj
         except Exception as e:
             logger.error(f"Failed to create new memory in database: {e}")
+            return None
 
     def _mark_memories_as_past(self, memory_ids: List[str]):
         """Marks memories as 'past' in SQLite and updates them in the vector store."""
@@ -1377,8 +1350,13 @@ class GREENMemories:
         except Exception as e:
             logger.error(f"Failed to mark memories as past: {e}")
 
-    def _delete_memories(self, memory_ids: List[str]):
-        """Deletes memories from SQLite and the vector store."""
+    def _delete_memories(
+        self, memory_ids: List[str], consolidate_into_id: Optional[str] = None
+    ):
+        """
+        Deletes memories from SQLite and the vector store.
+        Optionally consolidates their relevance into another memory before deletion.
+        """
         if not memory_ids:
             return
 
@@ -1386,6 +1364,33 @@ class GREENMemories:
         try:
             placeholders = ",".join("?" for _ in memory_ids)
             with self.storage.conn:
+                if consolidate_into_id:
+                    cursor = self.storage.conn.cursor()
+                    # Sum relevance from duplicates
+                    cursor.execute(
+                        "SELECT SUM(relevance) FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        memory_ids,
+                    )
+                    total_relevance_from_duplicates = cursor.fetchone()[0]
+
+                    if total_relevance_from_duplicates:
+                        # Add to the kept memory
+                        cursor.execute(
+                            "UPDATE user_memories SET relevance = relevance +"
+                            " ? WHERE id = ?",
+                            (
+                                total_relevance_from_duplicates,
+                                consolidate_into_id,
+                            ),
+                        )
+                        logger.info(
+                            f"Transferred {total_relevance_from_duplicates:.2f}"
+                            " relevance from"
+                            f" {len(memory_ids)} duplicates to memory"
+                            f" {consolidate_into_id}."
+                        )
+
                 cursor = self.storage.conn.execute(
                     f"DELETE FROM user_memories WHERE id IN ({placeholders})",
                     memory_ids,
@@ -1404,18 +1409,20 @@ class GREENMemories:
             logger.error(f"Failed to delete memories: {e}")
 
     def _extract_and_assimilate_memory(
-        self, conversation_turns: List[tuple[Dict, Dict]]
-    ) -> bool:
+        self,
+        conversation_turns: List[tuple[Dict, Dict]],
+        batch_context_memories: List[Dict] = None,
+    ) -> Optional[Dict]:
         """
         Analyzes a conversation turn, compares it with existing memories, and
         decides whether to ignore, reinforce, update, or create a memory using an LLM.
 
         Returns:
-            bool: True if processing was successful (or a non-fatal error occurred),
-                  False if a fatal error occurred that should halt the batch.
+            Optional[Dict]: The created or updated memory object, or None if no
+                            change was made or a non-fatal error occurred.
         """
         if not conversation_turns:
-            return True
+            return None
 
         user_message, assistant_message = conversation_turns[-1]
         llm_response_str = ""
@@ -1432,8 +1439,13 @@ class GREENMemories:
             # Step 2: Find potentially related memories via semantic search
             # We use the last user message as the query to find relevant context.
             query_text = user_message.get("content", "")
+            # # !!! DEBUG
+            # logger.info(f"Memory assimilation query: '{query_text}'")
             existing_memories = []
-            if self.vector_storage and self._is_query_substantive(query_text):
+            is_substantive = self._is_query_substantive(query_text)
+            # # !!! DEBUG
+            # logger.info(f"Is query substantive? {is_substantive}")
+            if self.vector_storage and is_substantive:
                 # Fetch a few relevant memories to provide context to the LLM
                 if self.context_window <= 8192:
                     search_limit = 20
@@ -1451,6 +1463,10 @@ class GREENMemories:
                     query_text,
                     limit=search_limit,
                 )
+                # # !!! DEBUG
+                # logger.info(
+                #     f"Vector search raw results: {search_results}"
+                # )
                 if search_results:
                     existing_memories = [
                         doc.get("metadata", {})
@@ -1460,6 +1476,18 @@ class GREENMemories:
                         f"Found {len(existing_memories)} related memories for"
                         " context."
                     )
+
+            # Merge memories created/updated earlier in this same batch run.
+            # This gives the LLM immediate context to prevent duplicates.
+            if batch_context_memories:
+                existing_ids = {mem["id"] for mem in existing_memories}
+                for mem in batch_context_memories:
+                    if mem["id"] not in existing_ids:
+                        existing_memories.append(mem)
+                logger.info(
+                    f"Added {len(batch_context_memories)} memories from"
+                    " current batch to LLM context."
+                )
 
             # Step 3: Use the LLM to decide on the action
             processing_prompt = self.template_manager.render(
@@ -1476,16 +1504,16 @@ class GREENMemories:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": processing_prompt},
             ]
-            logger.info(
-                "Asking LLM to process conversation for memory update..."
-                # f"Asking LLM to process conversation for memory update...\n-------{processing_history}\n--------"
-            )
+            # # !!! DEBUG
+            # logger.info(
+            #     "Sending memory processing request to LLM with user prompt:\n---"
+            #     f"-----\n{processing_prompt}\n--------"
+            # )
             llm_response_str = self.llm.chat(
                 chat_history=processing_history, stream=False
             )
-            logger.info(
-                f"\nLLM ANSWER:\n-------{llm_response_str}\n--------"
-            )
+            # !!! DEBUG
+            logger.info(f"LLM raw response for memory processing:\n--------------\n{llm_response_str}\n-----------")
             decision = json.loads(llm_response_str)
             action = decision.get("action")
 
@@ -1499,43 +1527,55 @@ class GREENMemories:
                 logger.info(
                     "LLM decided to ignore the conversation for memory."
                 )
-                return True
+                return None
 
             elif action == "reinforce":
                 memory_id = decision.get("memory_id")
-                if memory_id:
+                new_text = decision.get("new_memory_text")
+
+                if not memory_id:
+                    logger.warning(
+                        "LLM chose 'reinforce' but provided no memory_id."
+                    )
+                elif new_text:
+                    # This is a reinforcement that also updates the memory text.
+                    logger.info(f"LLM decided to update memory: {memory_id}")
+                    # The return from _update_memory is the updated memory object
+                    # which needs to be passed back to the main loop.
+                    return self._update_memory(
+                        memory_id, new_text, user_message, assistant_message
+                    )
+                else:
+                    # This is a simple reinforcement, just boosting the score.
                     logger.info(
                         f"LLM decided to reinforce memory: {memory_id}"
                     )
                     self._reinforce_memory(memory_id)
-                else:
-                    logger.warning(
-                        "LLM chose 'reinforce' but provided no memory_id."
-                    )
+
                 # Handle duplicates for deletion
                 duplicates_to_delete = decision.get("duplicates", [])
                 if duplicates_to_delete:
-                    self._delete_memories(duplicates_to_delete)
+                    self._delete_memories(
+                        duplicates_to_delete, consolidate_into_id=memory_id
+                    )
 
             elif action == "create":
                 logger.info("LLM decided to create a new memory.")
-                self._create_new_memory(
+                return self._create_new_memory(
                     decision, user_message, assistant_message
                 )
 
             else:
                 logger.warning(f"LLM returned an unknown action: '{action}'")
 
+            return None
         except json.JSONDecodeError:
             logger.warning(
                 "LLM returned invalid JSON for memory processing:"
                 f" {llm_response_str}"
             )
-            # This is a non-fatal error; we can continue with the next message.
-            return True
+            return None
         except Exception as e:
             logger.error(f"Failed to assimilate memory from conversation: {e}")
-            # This is a fatal error (e.g., LLM down); stop processing the batch.
-            return False
-
-        return True
+            # Re-raise to be caught by the main loop for poison-pill handling
+            raise

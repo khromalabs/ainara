@@ -231,6 +231,10 @@ button {
     margin-top: 20px;
 }
 
+.provider-details h3::first-letter {
+    text-transform: capitalize;
+}
+
 .tip-signal:before {
     color: #007bff;
     content: '🛈 TIP';
@@ -256,7 +260,7 @@ button {
 }
 
 .form-group input, .form-group select {
-    width: 100%;
+    width: 98%;
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -624,8 +628,8 @@ input:disabled, button:disabled {
     background-color: #f8f9fa;
     border-radius: 8px;
     /*border-left: 4px solid #17a2b8; */ /* Info color */
-    /* max-height: 150px; /* Limit height */ */
-    /* overflow-y: auto; /* Add scroll if needed */ */
+    /* max-height: 150px; */ /* Limit height */
+    /* overflow-y: auto; */ /* Add scroll if needed */
 }
 
 .capabilities-section h3 {
@@ -688,4 +692,161 @@ input:disabled, button:disabled {
     background-color: #ccc;
     border-color: #ccc;
     cursor: not-allowed;
+}
+
+#featured-providers-container {
+    margin-bottom: 20px;
+}
+
+.provider-banner-wrapper {
+    position: relative;
+}
+
+.featured-providers-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+}
+
+.provider-banner {
+    position: relative;
+    height: 150px;
+    border-radius: 8px;
+    background-size: cover;
+    background-position: center;
+    overflow: hidden;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    font-size: 0.9em;
+}
+
+.provider-banner.not-configured {
+    cursor: pointer;
+}
+
+.provider-banner.not-configured:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    opacity: 0.8;
+}
+
+.provider-banner.configured {
+    filter: grayscale(100%);
+}
+
+.provider-banner-overlay {
+    background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.2) 70%, rgba(0,0,0,0) 100%);
+    padding: 15px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.provider-banner-content {
+    /* Groups the main text content */
+}
+
+.provider-banner h4 {
+    margin-top: 0;
+    margin-bottom: 5px;
+    font-size: 1.2em;
+}
+
+.provider-banner p {
+    margin-bottom: 10px;
+    font-size: 0.9em;
+    flex-grow: 1;
+}
+
+.provider-banner a {
+    font-weight: bold;
+    text-decoration: underline;
+    color: #82c3ff;
+    margin: 2px;
+    border-radius: 5px;
+}
+
+.provider-banner a:hover {
+    text-decoration: underline;
+}
+
+.api-key-info {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.api-key-info p {
+    margin-top: 0;
+    font-weight: bold;
+}
+
+.api-key-info ul {
+    padding-left: 20px;
+    margin-bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 5px;
+    list-style: none;
+}
+
+.get-api-key-link {
+    font-size: 0.8em;
+    font-weight: normal;
+    margin-left: 10px;
+    text-decoration: none;
+}
+
+.get-api-key-link:hover {
+    text-decoration: underline;
+}
+
+.configured-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: absolute;
+    top: 5%;
+    left: 87%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(40, 167, 69, 0.85);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 2px;
+    text-align: center;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    font-size: 0.75em;
+}
+
+.configured-status .checkmark {
+    font-size: 1.5em;
+    color: #fff;
+}
+
+.configured-status p {
+    margin: 0;
+    font-weight: bold;
+}
+
+.provider-tags {
+    display: flex;
+    justify-content: flex-end;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.provider-tag {
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 0.66em;
+    font-weight: bold;
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
 }

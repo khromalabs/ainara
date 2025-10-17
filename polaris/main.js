@@ -153,7 +153,6 @@ function showSetupWizard(validationErrors = []) {
             Logger.error('Error closing setupWindow:' + error);
         }
         wizardActive = false;
-        appSetupShortcuts();
         // Re-enable tray icon
         if (!tray) {
              await appCreateTray();
@@ -217,7 +216,7 @@ function showSetupWizard(validationErrors = []) {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 300000; // 300 seconds timeout
+        const timeout = 900000; // 900 seconds/15 min timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (await ServiceManager.checkServicesHealth()) {
@@ -245,6 +244,8 @@ function showSetupWizard(validationErrors = []) {
         splashWindow.updateProgress('Ready!', 100);
         await new Promise(resolve => setTimeout(resolve, 500));
         splashWindow.close();
+
+        checkFirstRunTasks();
 
         // Set shortcut just before showing windows
         appSetupShortcuts();
@@ -349,7 +350,7 @@ async function appInitialization() {
             __dirname
         );
 
-	let firstTimeShow = true;
+        let firstTimeShow = true;
 
         // Listen for visibility changes to handle tray, shortcuts, and focus
         windowManager.on('visibility-changed', (state) => {
@@ -365,7 +366,7 @@ async function appInitialization() {
                 const comRing = windowManager.getWindow('comRing');
                 setTimeout(() => {
                     if (comRing) {
-		        if(firstTimeShow && process.platform == 'win32') {
+                        if(firstTimeShow && process.platform == 'win32') {
                             // ugly hack to force focus on Windows
                             comRing.minimize();
                             comRing.restore();
@@ -373,7 +374,7 @@ async function appInitialization() {
                         }
                         comRing.focus();
                         Logger.log('visibility-changed (active): focused comRing');
-                           }
+                    }
                 }, 300);
             } else if (state === 'inactive') {
                 // Register shortcut (original hideWindowsBackend logic)
@@ -459,7 +460,7 @@ async function appInitialization() {
                 type: 'question',
                 buttons: ['Yes', 'No'],
                 title: 'Startup Error',
-                message: 'Error: ' + message  + '. Do you want to open the setup wizard? Maybe the LLM is not responding, please try another LLM provider.'
+                message: 'Error: ' + message  + '. Do you want to open the setup wizard? Maybe the LLM is not responding, please try another LLM provider, if possible a faster one.'
             };
             const response = dialog.showMessageBoxSync(
                 null,
@@ -478,7 +479,7 @@ async function appInitialization() {
 
         // Poll until all services are healthy or timeout
         const startTime = Date.now();
-        const timeout = 300000; // 300 seconds timeout
+        const timeout = 900000; // 900 seconds/15 min timeout
         let servicesHealthy = false;
         while (Date.now() - startTime < timeout) {
             if (await ServiceManager.checkServicesHealth()) {
@@ -529,26 +530,7 @@ async function appInitialization() {
         }
 
         initializeAutoUpdater();
-        // New: Show one-time tray guidance notification on Windows
-        // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
-        if (config.get('setup.firstLaunch', true)) {
-            const notification2 = new Notification({
-                title: 'Ainara AI',
-                body: `Press ${shortcutKey} to show Ainara Polaris, ${hideKey} to hide it and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
-                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
-            });
-            notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
-            notification2.show();
-            const notification = new Notification({
-                title: 'Ainara AI',
-                body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
-                icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
-            });
-            notification.on('click', () => windowManager.showAll());  // Click notification to show UI
-            notification.show();
-            config.set('setup.firstLaunch', false);  // Mark as shown
-            config.saveConfig();
-        }
+	checkFirstRunTasks();
 
         // Set shortcut just before showing windows
         appSetupShortcuts();
@@ -561,6 +543,29 @@ async function appInitialization() {
         Logger.info('Polaris initialized successfully');
     } catch (error) {
         appHandleCriticalError(error);
+    }
+}
+
+function checkFirstRunTasks() {
+    // New: Show one-time tray guidance notification on Windows
+    // if (process.platform === 'win32' && config.get('setup.firstLaunch', true)) {
+    if (config.get('setup.firstLaunch', true)) {
+        const notification2 = new Notification({
+            title: 'Ainara AI',
+            body: `Press ${shortcutKey} to show Ainara Polaris, ${hideKey} to hide it and enter in background mode, ${triggerKey} to push-to-talk to Ainara`,
+            icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+        });
+        notification2.on('click', () => windowManager.showAll());  // Click notification to show UI
+        notification2.show();
+        const notification = new Notification({
+            title: 'Ainara AI',
+            body: 'On top of the available keyboard shortcuts, click the tray icon (left button) to toggle visibility, right button will show a contextual menu.',
+            icon: path.join(__dirname, 'assets/icon.png')  // Use your app icon
+        });
+        notification.on('click', () => windowManager.showAll());  // Click notification to show UI
+        notification.show();
+        config.set('setup.firstLaunch', false);  // Mark as shown
+        config.saveConfig();
     }
 }
 

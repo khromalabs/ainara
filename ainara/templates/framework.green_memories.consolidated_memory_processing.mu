@@ -21,14 +21,20 @@ No similar memories found.
 Based on your analysis, choose one of the following actions:
 
 1.  **"ignore"**: If the conversation contains no new lasting information, or if the information is already perfectly captured by an existing memory.
-2.  **"reinforce"**: If the conversation confirms or restates an existing memory. Provide the 'memory_id' of the memory to reinforce. If several memories contain exactly the same concept, chose the memory with the highest relevance score to be reinforced, and add all the duplicates in an array which will mark them to be erased.
-3.  **"create"**: If the conversation introduces a new piece of information. Provide the new 'memory_data', a 'target' section, and if this memory makes outdated other memories, a 'past_memory_ids' list containing the IDs of any memories that this new fact make outdated.
+2.  **"reinforce"**: If the conversation confirms, restates, or adds new details to an existing memory.
+    - Provide the `memory_id` of the memory to reinforce.
+    - **If the memory text can to be updated** as an improvement, with an SMALL AMOUNT of new information directly related with the memory content, also provide the `new_memory_text` which synthesizes the old memory with the new details. If the amount of information to be added to a memory is larger than simple phrase or a few terms, create a new memory instead.
+    - **IMPORTANT RULE for duplicates**: If you find multiple memories covering the same fact, you MUST identify the one with the highest relevance score to be the one that is kept and reinforced. Optionally, it could be updated as well. All other duplicate memories MUST be listed in a `duplicates` list with their IDs for deletion.
+
+3.  **"create"**: If the conversation introduces a completely new piece of information not covered by existing memories. Provide the new `memory_data`, a `target` section, and a `past_memory_ids` list if this new memory makes others outdated.
 
 **Step 4: Provide JSON Output**
 Respond with a single JSON object containing your decision.
 
 Examples:
 - For ignoring: `{"action": "ignore"}`
-- For reinforcement without finding duplicates: `{"action": "reinforce", "memory_id": "some-uuid-1234"}`
-- For reinforcement with finding duplicates: `{"action": "reinforce", "memory_id": "some-uuid-1234", duplicates: [ "uuid-of-duplicate-memory-1", "uuid-of-duplicate-memory-2" ]}`
+- For simple reinforcement: `{"action": "reinforce", "memory_id": "some-uuid-1234"}`
+- For reinforcement with an update: `{"action": "reinforce", "memory_id": "some-uuid-4567", "new_memory_text": "The user's favorite color is deep blue, especially navy blue."}`
+- For consolidating duplicates: `{"action": "reinforce", "memory_id": "uuid-of-highest-relevance-memory", "duplicates": ["uuid-of-duplicate-1", "uuid-of-duplicate-2"]}`
+- For consolidating duplicates AND updating text: `{"action": "reinforce", "memory_id": "uuid-of-highest-relevance-memory", "new_memory_text": "The new, consolidated fact.", "duplicates": ["uuid-of-duplicate-1", "uuid-of-duplicate-2"]}`
 - For creation: `{"action": "create", "target": "key_memories", "memory_data": {"topic": "Location", "memory": "The user has moved to a new city."}, "past_memory_ids": ["uuid-of-old-location"]}`

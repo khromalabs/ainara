@@ -17,5 +17,5 @@
 # Lesser General Public License for more details.
 
 
-__version__ = "0.9.2"
-__version_info__ = (0,9,2)
+__version__ = "0.9.4"
+__version_info__ = (0,9,4)

@@ -27,6 +27,27 @@ const ConfigHelper = require('../framework/ConfigHelper');
 
 const ollama = require('ollama');
 
+const providerWebsites = {
+    'openai': 'https://platform.openai.com/api-keys',
+    'anthropic': 'https://console.anthropic.com/settings/keys',
+    'cohere': 'https://dashboard.cohere.com/api-keys',
+    'groq': 'https://console.groq.com/keys',
+    'xai': 'https://console.x.ai/',
+    'google': 'https://aistudio.google.com/app/apikey',
+    'mistral': 'https://console.mistral.ai/api-keys/',
+    'deepmind': 'https://aistudio.google.com/app/apikey',
+    'deepseek': 'https://platform.deepseek.com/api_keys',
+    'perplexity': 'https://www.perplexity.ai/settings/api',
+    'fireworks': 'https://fireworks.ai/api-keys',
+    'together_ai': 'https://api.together.xyz/settings/api-keys',
+    'openrouter': 'https://openrouter.ai/keys',
+    'anyscale': 'https://console.anyscale.com/credentials',
+    'voyage': 'https://dash.voyageai.com/api-keys',
+    'bedrock': 'https://console.aws.amazon.com/bedrock/',
+    'azure': 'https://portal.azure.com/',
+    'sagemaker': 'https://console.aws.amazon.com/sagemaker/',
+    'vertex_ai': 'https://console.cloud.google.com/vertex-ai',
+};
 
 // Create a ConfigManager instance
 const config = new ConfigManager();
@@ -1060,7 +1081,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen3,deepseek';
+                filterInput.value = 'xai,qwen-3,qwen3,deepseek,-3b';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -1082,7 +1103,7 @@ function setupEventListeners() {
                     filterInput.dataset.previousValue = filterInput.value;
 
                     // Apply default filter - include recommended models but exclude smaller ones
-                    filterInput.value = 'qwen3,deepseek,-8b,-3b';
+                    filterInput.value = 'xai,qwen-3,qwen3,deepseek,-3b';
                     // Hide filter input, label and apply button
                     filterInput.style.display = 'none';
                     filterInputContainer.style.display = 'none';
@@ -1199,6 +1220,31 @@ function loadProvidersWithFilter(filter = '') {
                     throw new Error('No providers available');
                 }
 
+                // Manually add website URLs
+                for (const providerId in providersData) {
+                    if (providerWebsites[providerId]) {
+                        providersData[providerId].website = providerWebsites[providerId];
+                    }
+                }
+
+                // Generate API key info
+                const apiKeyInfoContainer = document.getElementById('api-key-info-container');
+                if (apiKeyInfoContainer) {
+                    // let linksHtml = `
+                    //     <div class="api-key-info">
+                    //         <p>You can get API keys from the following providers:</p>
+                    //         <ul>`;
+                    // const sortedProvidersForLinks = Object.values(data.providers)
+                    //     .filter(p => p.website)
+                    //     .sort((a, b) => a.name.localeCompare(b.name));
+                    //
+                    // for (const provider of sortedProvidersForLinks) {
+                    //     linksHtml += `<li><a href="#" class="external-link" data-url="${provider.website}">${provider.name}</a></li>`;
+                    // }
+                    // linksHtml += `</ul></div>`;
+                    // apiKeyInfoContainer.innerHTML = linksHtml;
+                }
+
                 // Generate provider options
                 let html = '';
 
@@ -1236,10 +1282,9 @@ function loadProvidersWithFilter(filter = '') {
                     radio.addEventListener('change', () => {
                         // Hide test result and disable next button when provider changes
                         const testResult = document.getElementById('test-result');
-                        const nextButton = document.getElementById('main-next-btn');
-
                         testResult.classList.add('hidden');
-                        nextButton.disabled = true;
+                        // const nextButton = document.getElementById('main-next-btn');
+                        // nextButton.disabled = true;
 
                         updateProviderDetailsUI();
                     });
@@ -1265,6 +1310,104 @@ function loadProvidersWithFilter(filter = '') {
     } catch (error) {
         console.error('Error in loadProvidersWithFilter:', error);
     }
+}
+
+async function displayFeaturedModels(existingProviders = []) {
+    const container = document.getElementById('featured-providers-container');
+    if (!container) return;
+
+    let tags = {
+        "high_speed": { text: 'HIGH SPEED', color: '#ffc107' },
+        "low_price": { text: 'LOW PRICE', color: '#9ACD32' },
+        "high_intelligence": { text: 'HIGH INTELLIGENCE', color: '#007bff' },
+        "free_access": { text: 'FREE ACCESS', color: '#287725' },
+        "open_model": { text: 'OPEN MODEL', color: '#CD32A8' },
+    }
+
+    const featured = [
+        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
+        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3 (Chat)', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
+    ];
+
+    const existingModelIds = new Set(existingProviders.map(p => p.model));
+
+    let html = '<h3>Featured Models</h3><p style="font-size:0.9em;position:relative;margin-top:-10px;margin-bottom:10px;">Quick and easy setup, great user experience.</p><br><div class="featured-providers-grid">';
+    featured.forEach(model => {
+        const isConfigured = existingModelIds.has(model.modelId);
+        const bannerClass = isConfigured ? 'provider-banner configured' : 'provider-banner not-configured';
+        const dataAttributes = isConfigured ? '' : `data-provider-id="${model.providerId}" data-model-id="${model.modelId}"`;
+        const contextWindowData = isConfigured || !model.contextWindow ? '' : `data-context-window="${model.contextWindow}"`;
+        const tagsHtml = model.tags.map(tag => `<span class="provider-tag" style="background-color: ${tags[tag].color};">${tags[tag].text}</span>`).join('');
+
+        html += `
+            <div class="provider-banner-wrapper">
+                <div class="${bannerClass}" ${dataAttributes} ${contextWindowData}  style="background-image: url('${model.imageUrl}');">
+                    <div class="provider-banner-overlay">
+                        <div class="provider-banner-content">
+                            <h4>${model.name}</h4>
+                            <p>${model.description}</p>
+                        </div>
+                        <div class="provider-tags">
+                            ${tagsHtml}
+                        </div>
+                    </div>
+                </div>
+                ${isConfigured ? `
+                    <div class="configured-status">
+                        <span class="checkmark">✔</span> <p>Model Configured</p>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    });
+    html += '</div>';
+
+    container.innerHTML = html;
+    container.style.display = 'block';
+
+    // Add event listeners only to non-configured banners
+    document.querySelectorAll('.provider-banner.not-configured').forEach(banner => {
+        // banner.addEventListener('click', async (event) => {
+        banner.addEventListener('click', async () => {
+            const defaultFilterCheckbox = document.getElementById('default-filter');
+            // ensure filter configuration is default, this assumes featured models 
+            // always will be present in the default configuration 
+            if (defaultFilterCheckbox && !defaultFilterCheckbox.checked) {
+                defaultFilterCheckbox.click();
+                // Wait for the DOM to update
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            const providerId = banner.dataset.providerId;
+            const modelId = banner.dataset.modelId;
+            const radio = document.getElementById(providerId);
+
+            if (radio) {
+                radio.click();
+
+                // Now, select the model in the dropdown
+                const modelSelect = document.getElementById(`${providerId}-model`);
+                if (modelSelect) {
+                    modelSelect.value = modelId;
+                }
+                const modelWindow = document.getElementById(`${providerId}-context_window`);
+                if (banner.dataset.contextWindow && modelWindow) {
+                    modelWindow.value = banner.dataset.contextWindow;
+                }
+                // Scroll to the details section
+                const details = document.getElementById('provider-details');
+                if (details) {
+                    details.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                const apiKeyInput = document.getElementById(`${providerId}-api_key`);
+                apiKeyInput?.focus();
+                if (apiKeyInput) {
+                    apiKeyInput.disabled = false;
+                }
+                if (apiKeyInput) apiKeyInput.value = "";
+            }
+        });
+    });
 }
 
 // Replace the existing loadProviders function
@@ -1313,6 +1456,9 @@ async function loadExistingProviders() {
         let existingProviders = backendConfig?.llm?.providers || [];
         const selectedProvider = backendConfig?.llm?.selected_provider;
 
+        // Display recommended models if they are not configured
+        await displayFeaturedModels(existingProviders);
+
         // Create a container for existing providers if it doesn't exist
         let existingContainer = document.getElementById('existing-providers');
         if (!existingContainer) {
@@ -1355,7 +1501,7 @@ async function loadExistingProviders() {
                     <label for="${providerId}">
                         <strong>${providerModel}</strong><br>
                         ${provider.api_base ? `API: ${provider.api_base}` : ''}
-                        ${provider.context_window ? `Context: ${provider.context_window / 1024}K` : ''}
+                        ${provider.context_window ? `Context: ${(provider.context_window / 1024).toFixed(2)}K` : ''}
                     </label>
                     <button class="delete-provider-btn" data-index="${index}" title="Delete this provider">
                         &times;
@@ -1484,11 +1630,11 @@ function updateProviderDetailsUI() {
     const detailsContainer = document.getElementById('provider-details');
     const testButton = document.getElementById('test-connection-btn');
     const testResult = document.getElementById('test-result');
-    const nextButton = document.getElementById('main-next-btn');
 
     // Hide test result and disable next button when provider changes
     testResult.classList.add('hidden');
-    nextButton.disabled = true;
+    // const nextButton = document.getElementById('main-next-btn');
+    // nextButton.disabled = true;
 
     if (!selectedProviderId || !providersData || !providersData[selectedProviderId]) {
         detailsContainer.innerHTML = '';
@@ -1501,10 +1647,6 @@ function updateProviderDetailsUI() {
     let html = `
         <h3>${provider.name} Configuration</h3>
     `;
-
-    if (provider.website) {
-        html += `<p>Get your API key from <a href="${provider.website}" target="_blank">${provider.website}</a></p>`;
-    }
 
     // Add fields
     provider.fields.forEach(field => {
@@ -1521,20 +1663,26 @@ function updateProviderDetailsUI() {
             return;
         }
 
+        const isApiKeyField = field.id.toLowerCase().includes('api_key');
+        let apiKeyLink = '';
+        if (isApiKeyField && provider.website) {
+            apiKeyLink = ` <a href="#" class="external-link get-api-key-link" data-url="${provider.website}">Get a new API key</a>`;
+        }
+
         html += `
             <div class="form-group">
-                <label for="${selectedProviderId}-${field.id}">${field.name}:</label>
+                <label for="${selectedProviderId}-${field.id}">${field.name}:${apiKeyLink}</label>
                 <input
                     type="${field.type}"
                     id="${selectedProviderId}-${field.id}"
-                    ${field.placeholder ? `placeholder="${field.placeholder}"` : ''}
+                    ${field.placeholder ? `placeholder="<custom server url:port>"` : ''}
                     ${field.required ? 'required' : ''}
-                    ${isCustomProvider && isApiBaseField ? `value="http://192.168.1.200:7080"` : ``}
-                    ${isCustomProvider && field.id === 'model' ? `value="openai/gamingpc"` : ``}
                 >
             </div>
         `;
     });
+                    // ${isCustomProvider && isApiBaseField ? `value="http://192.168.1.200:7080"` : ``}
+                    // ${isCustomProvider && field.id === 'model' ? `value="openai/gamingpc"` : ``}
 
     // Add model selection if available
     if (provider.models && provider.models.length > 0) {
@@ -1560,7 +1708,7 @@ function updateProviderDetailsUI() {
     // Add optional context window override field
     html += `
         <div class="form-group">
-            <label for="${selectedProviderId}-context_window">Context Window (Optional):</label>
+            <label for="${selectedProviderId}-context_window">Context Window (Optional, don't change unless confident about it):</label>
             <input
                 type="number"
                 step="2048"
@@ -1578,20 +1726,22 @@ function updateProviderDetailsUI() {
 
     // Add input event listeners for validation
     detailsContainer.querySelectorAll('input, select').forEach(input => {
-        input.addEventListener('input', (event) => handleInputChange(event));
+        input.addEventListener('input', (event) => handleInputChange(event,false));
     });
 
     validateProviderForm();
 }
 
 // New function to handle input changes
-function handleInputChange(event) {
+function handleInputChange(event, disableNext = true) {
     // Hide test result and disable next button when any input changes
     const testResult = document.getElementById('test-result');
     const nextButton = document.getElementById('main-next-btn');
 
     testResult.classList.add('hidden');
-    nextButton.disabled = true;
+    if (disableNext) {
+        nextButton.disabled = true;
+    }
 
     // Track the modified field
     if (event && event.target) {
@@ -2379,6 +2529,9 @@ async function deleteProvider(index) {
             } else {
                 // No providers left, remove the selected key
                 delete backendConfig.llm.selected_provider;
+                // Disable the next button as well
+                const nextButton = document.getElementById('main-next-btn');
+                nextButton.disabled = true;
             }
             changedSelectedProvider = true;
         }
@@ -2930,7 +3083,7 @@ function updateLLMStepTitle() {
     if (llmPanelElement) {
         const titleElement = llmPanelElement.querySelector('h2');
         if (titleElement) {
-            titleElement.textContent = 'LLM Provider Selection';
+            titleElement.textContent = 'LLM Providers';
         }
     }
 }
@@ -2967,13 +3120,13 @@ async function initializeOllamaStep() {
             if (serverConfigElement) {
                 serverConfigElement.style.display = "none";
             }
-            const performanceWarning = `<p>PLEASE NOTE: Ainara requires at very least a 4B model, but 7B at least is strongly recommended. Carefully select the size of the model accordingly to your available VRAM, your RAM performance for specific systems, or system RAM for Apple Silicon systems.<br>
-                        Ollama can run models fully on CPU and normal RAM on all supported systems, but that will give very bad performance in most scenarios.
-                        As a rule of thumb, unless owning very specific fast hardware, you should only choose models with an amount of parameters closely matching your available VRAM (eg. Qwen 14B is good for a RTX3060 with 12GB of VRAM available).</p>`
-            if (totalVram < 12 || (isAppleSilicon && totalRam < 16)) {
+            const performanceWarning = `<p>PLEASE NOTE: Ainara has proved to work even with the very small Qwen 3 1.7B model, but at least a 8B model is strongly recommended. Carefully select the size of the model accordingly to your available GPU VRAM, or your RAM in specific systems, eg Apple Silicon systems.<br>
+                        Ollama can always run models fully on CPU and normal RAM, but that will give very bad performance in most scenarios.
+                        As a rule of thumb, unless owning very specific fast hardware, you should only choose models with an amount of parameters closely matching your available GPU VRAM (eg. Qwen 14B is good for an Nvidia RTX3060 with 12GB of VRAM available).</p>`
+            if (totalVram < 8 || (isAppleSilicon && totalRam < 16)) {
                 hardwareInfoElement.innerHTML += `
                     <div class="warning-block">
-                        Your system hardware requirements are quite tight to run LLMs with Ollama effectively.
+                        Your system hardware requirements look quite tight to run LLMs with Ollama effectively.
                         <p>Running local models on this system for Ainara may result in poor performance. It is recommended to use cloud-based LLM providers instead.</p>
                         ${performanceWarning}
                     </div>
@@ -2998,7 +3151,7 @@ async function initializeOllamaStep() {
                             <li>Requirement 2: An Apple Silicon Mac with at least 8 GB of RAM. (Your system: ${isAppleSilicon ? `${totalRam.toFixed(1)} GB RAM on Apple Silicon` : 'Not an Apple Silicon Mac'})</li>
                         </ul>
                         <p>Running local models on this system for Ainara may result in very poor performance. It is recommended to use cloud-based LLM providers instead.</p>
-                        <p>The Ollama setup has been disabled. You can proceed to the next step to configure other providers.</p>
+                        <p>The Ollama wizard setup has been disabled. You can proceed to the next step to configure other providers, or set up manually with the Custom API option.</p>
                     </div>
                 `;
             }
@@ -3139,7 +3292,7 @@ async function displayHardwareInfo() {
         } else if (totalVram >= 7) {
             recommendationText += "<li>Suitable for smaller models (e.g., 13B Q4, 7B).</li>";
         } else if (totalVram >= 3.5) {
-            recommendationText += "<li>Suitable for tiny models (e.g., 7B Q4, 3B).</li>";
+            recommendationText += "<li>Suitable for tiny models (e.g. 4B or less).</li>";
         } else {
             recommendationText += "<li>Limited VRAM. May only run very small models or rely heavily on CPU/RAM.</li>";
         }
@@ -3389,7 +3542,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.9.2');
+    config.set('setup.version', '0.9.4');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

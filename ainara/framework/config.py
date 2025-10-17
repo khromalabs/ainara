@@ -174,14 +174,48 @@ class ConfigManager:
                                 f"{'.'.join(map(str, e.path)) or 'root'}: {e.message}"
                                 for e in errors
                             ]
-                            print("ERROR: Configuration validation failed. Restoring defaults.")
+                            print("ERROR: Configuration validation failed. Attempting to restore invalid sections from defaults.")
                             for error in self.validation_errors:
                                 print(f" - {error}")
 
-                            # Overwrite bad config with defaults and reload
-                            self.create_default_config(config_path)
-                            with open(config_path) as f:
-                                self.config = yaml.safe_load(f) or {}
+                            default_path = self._get_default_config_path()
+                            if not default_path:
+                                print("ERROR: Default configuration not found. Re-creating entire configuration file.")
+                                self.create_default_config(config_path)
+                                with open(config_path) as f:
+                                    self.config = yaml.safe_load(f) or {}
+                                return
+
+                            with open(default_path) as f:
+                                default_config = yaml.safe_load(f) or {}
+
+                            corrected_config = copy.deepcopy(user_config)
+
+                            def get_nested(d, path):
+                                for key in path:
+                                    d = d[key]
+                                return d
+
+                            def set_nested(d, path, value):
+                                for key in path[:-1]:
+                                    d = d.setdefault(key, {})
+                                d[path[-1]] = value
+
+                            for e in {tuple(e.path) for e in errors}:
+                                path = list(e)
+                                if not path:
+                                    corrected_config = default_config
+                                    break
+                                try:
+                                    default_value = get_nested(default_config, path)
+                                    set_nested(corrected_config, path, default_value)
+                                except (KeyError, IndexError):
+                                    continue
+
+                            self.config = corrected_config
+                            with open(config_path, "w") as f:
+                                yaml.dump(self.config, f, default_flow_style=False)
+                            print(f"Configuration automatically corrected and saved to: {config_path}")
                         else:
                             self.config = user_config
                     # --- End Validation ---

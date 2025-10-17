@@ -326,11 +326,11 @@ class LiteLLM(LLMBackend):
                     elif reasoning_level > 0.33:
                         reasoning_effort_str = "medium"
 
-                    completion_kwargs["reasoning_effort"] = (
-                        reasoning_effort_str
-                    )
+                    # completion_kwargs["reasoning_effort"] = (
+                    #     reasoning_effort_str
+                    # )
                     self.logger.info(
-                        f"Requesting '{reasoning_effort_str}' reasoning for"
+                        f"[DISABLED] Requesting '{reasoning_effort_str}' reasoning for"
                         f" model {provider['model']}"
                     )
                 else:
@@ -468,11 +468,11 @@ class LiteLLM(LLMBackend):
                     elif reasoning_level > 0.33:
                         reasoning_effort_str = "medium"
 
-                    completion_kwargs["reasoning_effort"] = (
-                        reasoning_effort_str
-                    )
+                    # completion_kwargs["reasoning_effort"] = (
+                    #     reasoning_effort_str
+                    # )
                     self.logger.info(
-                        f"Requesting '{reasoning_effort_str}' reasoning for"
+                        f"[DISABLED] Requesting '{reasoning_effort_str}' reasoning for"
                         f" model {provider['model']} (async)"
                     )
                 else:

@@ -33,8 +33,8 @@
                     <div style="width: 100%; text-align: center">
                     <img width="300px" src="../assets/logo3.png" alt="Ainara Polaris Logo" class="logo">
                     <h2>Welcome to Ainara Polaris Setup</h2>
-                    <p>This wizard will help you configure Ainara Polaris for first use. Ainara Polaris is a friendly conversational AI assistant capable of generating memories about the user, and with MCP support and many useful skills available by default (see a full list in the last step of this assistant). </p>
-                    <p>We'll set up your LLM provider and configure API keys for various skills, among other options.</p>
+                    <p>This wizard will help you configure Ainara Polaris for its first use. Ainara Polaris is a friendly conversational AI assistant capable of generating memories about the user, with MCP support and many useful skills available by default (see a full list in the last step of this assistant). </p>
+                    <p>We'll help you to set up your LLM provider and configure API keys for various skills, among other options.</p>
                     </div>
                 </div>
 
@@ -49,7 +49,11 @@
                 <!-- LLM setup step -->
                 <div class="step-panel" id="llm-panel">
                     <h2>LLM Provider Setup</h2>
-                    <p>Polaris needs access to a Large Language Model (LLM) to function. Cloud providers require an API key, which can be obtained in the API section of their website. Most require buying some credit in order to access LLMs (this is generally much cheaper than a subscription), and even some providers allow free access up to some fair use quota. Polaris allow to seamless switch among providers, even mid-conversation. Data is always kept on user's system.</p>
+                    <p><b>At least one provider, local (via Ollama) or remote, must be correctly configured and selected</b>. In order to use any commercial LLM provider <b>an API key must be obtained</b>. Some providers offer free access, most require purchasing some credit.</p>
+
+                    <div id="api-key-info-container"></div>
+
+                    <div id="featured-providers-container"></div>
 
                     <div class="provider-options" id="provider-options">
                         <p>Loading providers...</p>
