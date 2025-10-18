@@ -47,6 +47,12 @@ from ainara.framework.utils import load_spacy_model
 logger = logging.getLogger(__name__)
 
 
+class _GuardrailRetrySignal:
+    """Internal signal to indicate a guardrail-triggered retry."""
+
+    pass
+
+
 def ndjson(event_type: str, event_name: str, content: Any = None) -> str:
     """Create a standardized NDJSON event string.
 
@@ -1183,6 +1189,137 @@ class ChatManager:
 
         return heuristic_value
 
+    def _process_thinking_markers(
+        self, raw_stream: Generator[str, None, None]
+    ) -> Generator[str, None, None]:
+        """
+        Processes a raw LLM stream to handle <think> blocks.
+
+        It strips the content between <think> and </think> tags and replaces
+        the tags themselves with special signal markers for the client.
+        """
+        buffer = ""
+        in_thinking = False
+        for chunk in raw_stream:
+            if chunk is None:
+                continue
+            buffer += chunk
+            while True:
+                if not in_thinking:
+                    start_pos = buffer.find("<think>")
+                    if start_pos != -1:
+                        yield buffer[:start_pos]
+                        yield "\n_AINARA_THINKING_START_\n"
+                        buffer = buffer[start_pos + len("<think>") :]
+                        in_thinking = True
+                    else:
+                        yield buffer
+                        buffer = ""
+                        break
+                if in_thinking:
+                    end_pos = buffer.find("</think>")
+                    if end_pos != -1:
+                        yield "\n_AINARA_THINKING_STOP_\n"
+                        buffer = buffer[end_pos + len("</think>") :]
+                        in_thinking = False
+                    else:
+                        # Not enough data in buffer to find the end tag, wait for more chunks
+                        break
+        if buffer:
+            yield buffer
+
+    def _stream_and_process_with_guardrails(
+        self,
+        turn_chat_history: List[dict],
+        reasoning_level_heuristic: float,
+    ) -> Generator[Union[str, dict, _GuardrailRetrySignal], None, None]:
+        """
+        Streams LLM response, checks for guardrail violations, and handles retries.
+
+        This generator yields chunks of the response as they are generated. If a
+        guardrail violation is detected, it yields a retry signal, stops the current
+        stream, prepares for a retry, and continues the process.
+
+        Args:
+            turn_chat_history: The chat history for the current turn.
+            reasoning_level_heuristic: The calculated reasoning level for the query.
+
+        Yields:
+            Union[str, dict, _GuardrailRetrySignal]: Chunks of the processed LLM
+            response, or a signal to indicate a retry is happening.
+        """
+        guardrail_retries = 0
+
+        while guardrail_retries <= self.max_guardrail_retries:
+            llm_response_stream = self.llm.chat(
+                chat_history=turn_chat_history,
+                stream=True,
+                reasoning_level=reasoning_level_heuristic,
+            )
+
+            processed_stream = self._process_thinking_markers(llm_response_stream)
+
+            stream_processor = self.orakle_middleware.process_stream(
+                processed_stream,
+                self,
+                reasoning_level_heuristic=reasoning_level_heuristic,
+            )
+
+            has_guardrail = False
+            guardrail_message = ""
+
+            for chunk in stream_processor:
+                if isinstance(chunk, str) and "[AINARA GUARDRAIL]" in chunk:
+                    has_guardrail = True
+                    guardrail_message += chunk
+                    # Stop streaming to the client for this attempt
+                    break
+                else:
+                    yield chunk
+
+            if has_guardrail:
+                guardrail_retries += 1
+                logger.warning(
+                    "Guardrail triggered (attempt"
+                    f" {guardrail_retries}/{self.max_guardrail_retries}):"
+                    f" {guardrail_message.strip()}"
+                )
+
+                # Clean up any temporary guardrail messages from history for the next attempt
+                turn_chat_history[:] = [
+                    msg
+                    for msg in turn_chat_history
+                    if "[AINARA GUARDRAIL]" not in msg.get("content", "")
+                ]
+
+                if guardrail_retries > self.max_guardrail_retries:
+                    logger.error("Max retries reached. Responding with error.")
+                    error_message = guardrail_message.replace(
+                        "[AINARA GUARDRAIL]", ""
+                    ).strip()
+                    # Yield a final error message to the client
+                    yield f"\n\nError: {error_message}\n\n"
+                    break  # Exit retry loop
+                else:
+                    # Signal the caller that a retry is about to happen
+                    yield _GuardrailRetrySignal()
+                    # Add correction message for the next attempt and retry
+                    self.llm.add_msg(
+                        guardrail_message, turn_chat_history, "user"
+                    )
+                    continue  # Next attempt in the while loop
+            else:
+                # Success, no guardrail violation in this stream
+                break  # Exit retry loop
+
+        # Clean up any temporary guardrail messages from the main chat history
+        # at the very end of all attempts.
+        self.chat_history[:] = [
+            msg
+            for msg in self.chat_history
+            if "[AINARA GUARDRAIL]" not in msg.get("content", "")
+        ]
+
     def chat_completion(
         self, question: str, stream: Optional[Literal["cli", "json"]] = "cli"
     ) -> Union[str, Generator[str, None, None], dict]:
@@ -1210,9 +1347,11 @@ class ChatManager:
             return
 
         # Calculate heuristic before any LLM call
-        reasoning_level_heuristic = self._calculate_reasoning_level_heuristic(
-            question
-        ) if self.llm.thinking_available else 0
+        reasoning_level_heuristic = (
+            self._calculate_reasoning_level_heuristic(question)
+            if self.llm.thinking_available
+            else 0
+        )
         logger.info(
             "chat_completion: Estimated reasoning_level_heuristic:"
             f" {reasoning_level_heuristic}, query:\n> {question}"
@@ -1366,107 +1505,6 @@ class ChatManager:
             # Trim context *after* injecting memories to ensure we are within limits
             self.trim_context()
 
-            guardrail_retries = 0
-            final_chunks = []
-
-            while guardrail_retries <= self.max_guardrail_retries:
-                # --- LLM Call ---
-                llm_response_stream = self.llm.chat(
-                    chat_history=turn_chat_history,
-                    stream=True,
-                    reasoning_level=reasoning_level_heuristic,
-                )
-
-                def _stream_with_thinking_markers(raw_stream):
-                    buffer = ""
-                    in_thinking = False
-                    for chunk in raw_stream:
-                        buffer += chunk
-                        while True:
-                            if not in_thinking:
-                                start_pos = buffer.find("<think>")
-                                if start_pos != -1:
-                                    yield buffer[:start_pos]
-                                    yield "\n_AINARA_THINKING_START_\n"
-                                    buffer = buffer[
-                                        start_pos + len("<think>"):
-                                    ]
-                                    in_thinking = True
-                                else:
-                                    yield buffer
-                                    buffer = ""
-                                    break
-                            if in_thinking:
-                                end_pos = buffer.find("</think>")
-                                if end_pos != -1:
-                                    yield "\n_AINARA_THINKING_STOP_\n"
-                                    buffer = buffer[
-                                        end_pos + len("</think>"):
-                                    ]
-                                    in_thinking = False
-                                else:
-                                    break
-                    if buffer:
-                        yield buffer
-
-                # Buffer response to check for guardrails before streaming to client
-                stream_processor = self.orakle_middleware.process_stream(
-                    _stream_with_thinking_markers(llm_response_stream),
-                    self,
-                    reasoning_level_heuristic=reasoning_level_heuristic,
-                )
-                buffered_chunks = list(stream_processor)
-
-                guardrail_message = ""
-                has_guardrail = False
-                for chunk in buffered_chunks:
-                    if (
-                        isinstance(chunk, str)
-                        and "[AINARA GUARDRAIL]" in chunk
-                    ):
-                        guardrail_message += chunk
-                        has_guardrail = True
-
-                if has_guardrail:
-                    guardrail_retries += 1
-                    logger.warning(
-                        "Guardrail triggered (attempt"
-                        f" {guardrail_retries}/{self.max_guardrail_retries + 1}):"
-                        f" {guardrail_message.strip()}"
-                    )
-                    if guardrail_retries > self.max_guardrail_retries:
-                        logger.error(
-                            "Max retries reached. Responding with error."
-                        )
-                        if stream == "json":
-                            error_content = guardrail_message.replace(
-                                "[AINARA GUARDRAIL]", ""
-                            ).strip()
-                            yield ndjson(
-                                "signal", "error", {"message": error_content}
-                            )
-                            final_chunks = []
-                        else:
-                            final_chunks = [guardrail_message]
-                        break  # Exit retry loop
-                    else:
-                        # Add correction message for the next attempt and retry
-                        self.llm.add_msg(
-                            guardrail_message, self.chat_history, "user"
-                        )
-                        continue  # Next attempt
-                else:
-                    # Success
-                    final_chunks = buffered_chunks
-                    break  # Exit retry loop
-
-            # Clean up any temporary guardrail messages from history
-            self.chat_history = [
-                msg
-                for msg in self.chat_history
-                if "[AINARA GUARDRAIL]" not in msg.get("content", "")
-            ]
-
             # Now, process and stream the final response (successful or error)
             processed_answer = ""
             text_buffer = ""
@@ -1474,7 +1512,21 @@ class ChatManager:
             doc_buffer = ""
             doc_format = "plaintext"
 
-            for chunk in final_chunks:
+            stream_generator = self._stream_and_process_with_guardrails(
+                turn_chat_history, reasoning_level_heuristic
+            )
+
+            for chunk in stream_generator:
+                if isinstance(chunk, _GuardrailRetrySignal):
+                    # Reset buffers for the retry. The client will see a pause,
+                    # then new content will start streaming in.
+                    processed_answer = ""
+                    text_buffer = ""
+                    parsing_mode = "text"
+                    doc_buffer = ""
+                    doc_format = "plaintext"
+                    continue
+                # for chunk in final_chunks:
                 # # --- TOKEN DEBUG
                 # logger.info(f"Chunk from Orakle Middleware: {repr(chunk)}")
                 if "_AINARA_THINKING_START_" in chunk:
@@ -1517,9 +1569,7 @@ class ChatManager:
                         "Nexus component data was generated and sent to the"
                         f" UI. Data: {json.dumps(nexus_data)}"
                     )
-                    self.llm.add_msg(
-                        history_message, self.chat_history, "assistant"
-                    )
+                    processed_answer += f"\n{history_message}\n"
 
                     yield ndjson("ui", "renderNexus", nexus_data)
                     continue
@@ -1643,15 +1693,13 @@ class ChatManager:
                     self.chat_memory.add_entry(processed_answer, "assistant")
             else:
                 # If there's no processed answer, add a placeholder
-                yield ndjson("signal", "error", {"message": "LLM is not answering"})
-                logger.warning("No answer from the LLM")
-                self.llm.add_msg(
-                    "-", self.chat_history, "assistant"
+                yield ndjson(
+                    "signal", "error", {"message": "LLM is not answering"}
                 )
+                logger.warning("No answer from the LLM")
+                self.llm.add_msg("-", self.chat_history, "assistant")
                 if self.memory_enabled and self.chat_memory:
-                    self.chat_memory.add_entry(
-                        "-", "assistant"
-                    )
+                    self.chat_memory.add_entry("-", "assistant")
 
             # Stop loading animation
             if stream == "cli":
