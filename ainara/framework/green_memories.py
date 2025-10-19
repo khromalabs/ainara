@@ -529,8 +529,10 @@ class GREENMemories:
         """
         if top_k is None:
             # Dynamically set top_k for profile summary based on context window
-            if self.context_window <= 8192:
-                top_k = 25
+            if self.context_window <= 4000:
+                top_k = 35
+            if self.context_window <= 8000:
+                top_k = 35
             elif self.context_window <= 32768:
                 top_k = 50
             else:
@@ -593,8 +595,10 @@ class GREENMemories:
         """
         if top_k is None:
             # Dynamically set top_k for profile summary based on context window
-            if self.context_window <= 8192:
-                top_k = 25
+            if self.context_window <= 4000:
+                top_k = 35
+            if self.context_window <= 8000:
+                top_k = 35
             elif self.context_window <= 32768:
                 top_k = 50
             else:
@@ -795,8 +799,8 @@ class GREENMemories:
         if top_k is None:
             # Dynamically determine top_k for memories based on context window
             if self.context_window <= 4096:
-                top_k = 5
-            elif self.context_window <= 8192:
+                top_k = 6
+            elif self.context_window <= 8000:
                 top_k = 10
             elif self.context_window <= 32768:
                 top_k = 15

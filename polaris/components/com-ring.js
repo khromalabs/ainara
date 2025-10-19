@@ -266,7 +266,8 @@ class ComRing extends BaseComponent {
             try {
                 backendConfig = await ConfigHelper.fetchBackendConfig();
             } catch {
-                this.showInfo("Couldn't read Polaris configuration", true);
+                this.showInfo("Couldn't read backend configuration", true);
+                this.showInfo("Please reboot the application", true);
             }
 
             // console.log('MEMORYINFO 1');
@@ -1046,7 +1047,7 @@ Visit our project site at: https://ainara.app
             const response = await fetch(url);
 
             if (!response.ok) {
-                throw new Error(`Failed to fetch history: ${response.status}`);
+                throw new Error(`Failed to fetch history: ${response.status}, is memory enabled?`);
             }
 
             const data = await response.json();

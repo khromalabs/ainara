@@ -114,7 +114,7 @@ class DocumentView extends BaseComponent {
             contentArea.className = 'document-content';
 
             if (format === "chat-history" || format === "help") {
-                contentArea.innerHTML = this.parseMarkdown(content);
+                contentArea.innerHTML = this.parseMarkdown(content, true);
             } else {
                 contentArea.innerHTML = "<pre>" + content + "</pre>";
                 contentArea.className += ` language-${format}`;

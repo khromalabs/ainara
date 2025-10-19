@@ -232,6 +232,7 @@ class OllamaLLM(LLMBackend):
         try:
             details = self.client.show(model=model_name)
             params_str = details.get("parameters", "")
+            logger.info(f"Parameters in Ollama model: {params_str}")
             for line in params_str.split("\n"):
                 if "num_ctx" in line:
                     try:

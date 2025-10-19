@@ -159,7 +159,7 @@ class BaseComponent extends HTMLElement {
         throw new Error('Component must implement render method');
     }
 
-    parseMarkdown(text) {
+    parseMarkdown(text, generateLinks = false) {
         // Handle bold text with ** or __
         text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>');
 
@@ -198,18 +198,39 @@ class BaseComponent extends HTMLElement {
         });
 
         // Autolink URLs
-        const urlPattern = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
-        text = text.replace(urlPattern, (url) => {
-            let cleanUrl = url;
-            // Strip trailing punctuation that is unlikely to be part of the URL
-            while (/[.,;!?\)\]\}]$/.test(cleanUrl)) {
-                cleanUrl = cleanUrl.slice(0, -1);
-            }
-            const trailingChars = url.substring(cleanUrl.length);
+        if (generateLinks) {
+            const urlPattern = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
+            text = text.replace(urlPattern, (url) => {
+                let cleanUrl = url;
+                // Strip trailing punctuation that is unlikely to be part of the URL
+                while (/[.,;!?\)\]\}]$/.test(cleanUrl)) {
+                    cleanUrl = cleanUrl.slice(0, -1);
+                }
+                const trailingChars = url.substring(cleanUrl.length);
 
-            const href = cleanUrl.startsWith('www.') ? `http://${cleanUrl}` : cleanUrl;
-            return `<a href="${href}">${cleanUrl}</a>` + trailingChars;
-        });
+                const href = cleanUrl.startsWith('www.') ? `http://${cleanUrl}` : cleanUrl;
+                return `<a href="${href}">${cleanUrl}</a>` + trailingChars;
+            });
+        } else {
+            text = text.replace(/\[(.*?)\]\((.*?)\)/g, function(match, linkText, url) {
+                // Extract domain from URL
+                let domain = "";
+                try {
+                    domain = new URL(url).hostname.replace(/^www\./, '');
+                    // Truncate if too long
+                    if (domain.length > 15) {
+                        domain = domain.substring(0, 12) + '...';
+                    }
+                } catch (e) {
+                    // If URL parsing fails, skip domain
+                    console.log("Error parsing: " + e);
+                }
+
+                // Create a properly formatted HTML string
+                return '"' + linkText + '"' +
+                       (domain ? ' [' + domain + ']' : '');
+            });
+        }
 
         return text;
     }
