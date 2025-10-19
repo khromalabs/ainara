@@ -104,6 +104,7 @@ a {
     background: #555;
 }
 
+.copy-btn:active,
 .copy-button:active {
     border: 2px solid yellow;
 }
@@ -135,15 +136,38 @@ pre {
     padding: 16px;
     white-space: pre;
     max-width: 100%;
+    background-color: #333;
 }
 
 code {
     font-family: 'Menlo', 'Consolas', monospace;
     font-size: 14px;
     line-height: 1.5;
-    white-space: pre;
+    white-space: pre-wrap;
     display: inline-block;
-    min-width: 100%;
+    max-width: 98%;
+    background-color: #333;
+    border-radius: 5px;
+    margin: 4px;
+    padding: 2px;
+}
+
+.orakle-skill {
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    display: inline-block;
+    max-width: 98%;
+    border-radius: 5px;
+    margin: 4px;
+    padding: 2px;
+    background-color: #AAA;
+    color: black;
+}
+
+.orakle-skill:before {
+    content: "🔮✨";
 }
 
 ::-webkit-scrollbar {
@@ -175,4 +199,32 @@ code {
     border: none;
     width: 100%;
     min-height: 400px;
+}
+
+.code-block-wrapper {
+    position: relative;
+    margin: 8px 4px;
+}
+.copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #555;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.copy-btn:hover {
+    opacity: 1;
+    background: #666;
+}
+.code-block-wrapper code {
+    display: block;
+    padding: 12px;
+    margin: 0;
 }

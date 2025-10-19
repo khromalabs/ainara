@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 
 import argparse
+import re
 import atexit
 import bisect
 import json
@@ -923,7 +924,9 @@ def create_app():
                 for msg in messages_for_day:
                     role = msg.get("role", "unknown")
                     role_prefix = "U" if role == "user" else "A"
-                    content = msg.get("content", "").replace("\n", " ")
+                    content = msg.get("content", "")
+                    content = re.sub(r"\n+", "\n", content)
+                    # content = re.sub(r"^\n+", "", content)
                     timestamp = msg.get("timestamp")
 
                     dt_object = datetime.fromisoformat(timestamp)

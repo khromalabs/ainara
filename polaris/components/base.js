@@ -160,16 +160,30 @@ class BaseComponent extends HTMLElement {
     }
 
     parseMarkdown(text, generateLinks = false) {
-        // Handle bold text with ** or __
+        // Store code blocks temporarily
+        const codeBlocks = [];
+        let blockIndex = 0;
+
+        text = text.replace(/_orakle_loading_signal_\|([^ \n]+)/gm, '<span class="orakle-skill">$1</span>');
+
+        // Extract and replace triple backtick code blocks
+        text = text.replace(/```([\s\S]*?)```/gm, (match, content) => {
+            codeBlocks.push(`<div class="code-block-wrapper">
+                <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
+                <code>${content}</code>
+            </div>`);
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+
+        // Extract and replace single backtick inline code
+        text = text.replace(/`([^ ]+)`/gm, (match, content) => {
+            codeBlocks.push(`<code>${content}</code>`);
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+
+        // Now apply your Markdown formatting safely
         text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>');
-
-        // Handle italic text with * or _
         text = text.replace(/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>');
-
-        // Handle code blocks with `
-        text = text.replace(/`(.*?)`/gm, '<code>$1</code>');
-        //
-        // Handle H1,H2
         text = text.replace(/^### (.*?)\n/gm, '<h3>$1</h3>');
         text = text.replace(/^## (.*?)\n/gm, '<h2>$1</h2>');
         text = text.replace(/^# (.*?)\n/gm, '<h1>$1</h1>');
@@ -232,6 +246,12 @@ class BaseComponent extends HTMLElement {
             });
         }
 
+        // Restore code blocks
+        text = text.replace(/%%CODEBLOCK(\d+)%%/g, (match, index) => {
+            return codeBlocks[parseInt(index)];
+        });
+
+        // console.log("parseMarkdown post:" + text);
         return text;
     }
 }
