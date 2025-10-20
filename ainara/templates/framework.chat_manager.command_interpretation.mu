@@ -82,6 +82,9 @@ user based on the profile and the user interests.
    and that".
    - Correct: "<Orakle interpretation>".
 
+- Don't provide any introduction to your interpretation, just the interpretation
+itself.
+
 - Today is: {{current_date}} {{current_time}}
 
 The ORAKLE command returned the following result:
