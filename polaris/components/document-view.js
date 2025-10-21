@@ -1,6 +1,7 @@
 /* global BaseComponent */
 /* eslint no-undef: "error" */
 class DocumentView extends BaseComponent {
+
     constructor() {
         super();
         this.isVisible = false;
@@ -54,6 +55,28 @@ class DocumentView extends BaseComponent {
             nextButton.title = 'Next Day';
             nextButton.addEventListener('click', () => this.emitEvent('history-next-clicked'));
             controls.appendChild(nextButton);
+
+            // Add scroll to top button
+            const scrollTopButton = document.createElement('button');
+            scrollTopButton.className = 'nav-button scroll-top';
+            scrollTopButton.innerHTML = '▲';
+            scrollTopButton.title = 'Scroll to Top';
+            scrollTopButton.addEventListener('click', () => {
+                const contentArea = documentElement.querySelector('.document-content');
+                contentArea?.scrollTo({ top: 0, behavior: 'auto' });
+            });
+            controls.appendChild(scrollTopButton);
+
+            // Add scroll to bottom button
+            const scrollBottomButton = document.createElement('button');
+            scrollBottomButton.className = 'nav-button scroll-bottom';
+            scrollBottomButton.innerHTML = '▼';
+            scrollBottomButton.title = 'Scroll to Bottom';
+            scrollBottomButton.addEventListener('click', () => {
+                const contentArea = documentElement.querySelector('.document-content');
+                contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+            });
+            controls.appendChild(scrollBottomButton);
         }
 
         if (format !== 'nexus') {
@@ -123,6 +146,13 @@ class DocumentView extends BaseComponent {
                 }
             }
             documentElement.appendChild(contentArea);
+            // if (format === 'chat-history') {
+            //     setTimeout(() => {
+            //         requestAnimationFrame(() => {
+            //             contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'smooth' });
+            //         });
+            //     }, 0);
+            // }
         }
 
         this.container.appendChild(documentElement);

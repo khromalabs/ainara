@@ -503,7 +503,7 @@ class ComRing extends BaseComponent {
                         if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
                             this.switchToDocumentView(this.docFormat);
                         } else {
-                            this.showInfo('No documents to display.');
+                            await this.fetchAndDisplayChatHistory();
                         }
                     } else if (this.currentView === 'document') {
                         this.switchToRingView();
@@ -999,7 +999,7 @@ class ComRing extends BaseComponent {
         const helpContent = `
 ### Keyboard Shortcuts
 - **${this.triggerKey}**: Hold to record your voice.
-- **Tab**: Switch between Ring and Document view.
+- **Tab**: Toggle between Ring and Document view (history if no previous documents present).
 - **Escape**: Abort current action, hide Polaris, in document view exit view."
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.

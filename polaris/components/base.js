@@ -164,7 +164,7 @@ class BaseComponent extends HTMLElement {
         const codeBlocks = [];
         let blockIndex = 0;
 
-        text = text.replace(/_orakle_loading_signal_\|([^ \n]+)/gm, '<span class="orakle-skill">$1</span>');
+        text = text.replace(/_orakle_loading_signal_\|([^ \n]+)/gm, '<span class="orakle-skill" title="Orakle Skill">$1</span>');
 
         // Extract and replace triple backtick code blocks
         text = text.replace(/```([\s\S]*?)```/gm, (match, content) => {
