@@ -858,7 +858,7 @@ def create_app():
                     {
                         "history": "# Chat History\n\nNo history found.",
                         "date": (
-                            datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                            datetime.now().strftime("%Y-%m-%d")
                         ),
                         "has_previous": False,
                         "has_next": False,
@@ -881,7 +881,7 @@ def create_app():
                     if dt_object.tzinfo is None:
                         dt_object = dt_object.replace(tzinfo=timezone.utc)
 
-                    msg_date = dt_object.astimezone(timezone.utc).date()
+                    msg_date = dt_object.astimezone().date()
                     if msg_date not in messages_by_date:
                         messages_by_date[msg_date] = []
                     messages_by_date[msg_date].append(msg)
@@ -933,7 +933,7 @@ def create_app():
                     if dt_object.tzinfo is None:
                         dt_object = dt_object.replace(tzinfo=timezone.utc)
 
-                    time_str = dt_object.astimezone(timezone.utc).strftime(
+                    time_str = dt_object.astimezone().strftime(
                         "%H:%M:%S"
                     )
                     markdown_lines.append(
