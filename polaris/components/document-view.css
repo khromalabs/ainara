@@ -205,6 +205,23 @@ code {
     position: relative;
     margin: 8px 4px;
 }
+.code-type {
+    position: absolute;
+    top: 4px;
+    left: 8px;
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    display: inline-block;
+    max-width: 98%;
+    border-radius: 5px;
+    margin: 4px;
+    /* padding: 2px 4px; */
+    /* background-color: #444; */
+    font-weight: bold;
+    color: #FFF;
+}
 .copy-btn {
     position: absolute;
     top: 8px;
@@ -227,4 +244,5 @@ code {
     display: block;
     padding: 12px;
     margin: 0;
+    margin-top: 40px;
 }
