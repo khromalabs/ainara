@@ -135,6 +135,7 @@ class DocumentView extends BaseComponent {
             // Create content area
             const contentArea = document.createElement('div');
             contentArea.className = 'document-content';
+            contentArea.tabIndex = 0;
 
             if (format === "chat-history" || format === "help") {
                 contentArea.innerHTML = this.parseMarkdown(content, true);
@@ -146,13 +147,7 @@ class DocumentView extends BaseComponent {
                 }
             }
             documentElement.appendChild(contentArea);
-            // if (format === 'chat-history') {
-            //     setTimeout(() => {
-            //         requestAnimationFrame(() => {
-            //             contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'smooth' });
-            //         });
-            //     }, 0);
-            // }
+            contentArea.focus();
         }
 
         this.container.appendChild(documentElement);
