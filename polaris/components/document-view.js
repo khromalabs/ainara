@@ -148,6 +148,9 @@ class DocumentView extends BaseComponent {
             }
             documentElement.appendChild(contentArea);
             contentArea.focus();
+            // setTimeout(() => {
+            //     contentArea.focus();
+            // }, 2000);
         }
 
         this.container.appendChild(documentElement);
