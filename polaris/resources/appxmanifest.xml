@@ -24,8 +24,9 @@
   </Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust"/>
-	<Capability Name="internetClient" />
-	<Capability Name="privateNetworkClientServer" />
+    <Capability Name="internetClient" />
+    <Capability Name="internetClientServer" />
+    <Capability Name="privateNetworkClientServer" />
   </Capabilities>
   <Applications>
     <Application Id="${applicationId}" Executable="${executable}" EntryPoint="Windows.FullTrustApplication">

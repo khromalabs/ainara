@@ -372,6 +372,7 @@ async function appInitialization() {
                             comRing.restore();
                             firstTimeShow = false;
                         }
+                        comRing.window.setAlwaysOnTop(true);
                         comRing.focus();
                         Logger.log('visibility-changed (active): focused comRing');
                     }
