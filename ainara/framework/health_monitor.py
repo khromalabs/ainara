@@ -32,7 +32,7 @@ class HealthMonitor:
     application crashes.
     """
 
-    def __init__(self, timeout: int = 11, max_failed_attempts: int = 2, shutdown_callback: Callable = None):
+    def __init__(self, timeout: int = 11, max_failed_attempts: int = 3, shutdown_callback: Callable = None):
         """
         Initialize the HealthMonitor.
         Args:
