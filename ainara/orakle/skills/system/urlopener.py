@@ -33,13 +33,13 @@ class SystemUrlopener(Skill):
     # embeddings_boost_factor = 1.5
 
     matcher_info = (
-        "Use this skill when the user wants to open or launch a URL or"
+        "Use this skill when the user wants to open or launch a URL, a site or"
         " multiple URLs in the system browser. This skill can handle web"
         " addresses, local file paths, and other supported protocols like FTP."
         "\n\n"
         " Examples include: 'open example.com', 'launch github.com and"
         " stackoverflow.com', 'open file:///home/user/doc.pdf', 'go to"
-        " google.com'. Keywords: open, launch, go to, browse, URL, web,"
+        " google.com'. Keywords: open, launch, go to, browse, URL, web, site,"
         " website, link, address, browser, file, local, http, https, ftp."
     )
 
