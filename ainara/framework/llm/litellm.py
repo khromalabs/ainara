@@ -330,7 +330,7 @@ class LiteLLM(LLMBackend):
                         reasoning_effort_str
                     )
                     self.logger.info(
-                        f"[DISABLED] Requesting '{reasoning_effort_str}' reasoning for"
+                        f"Requesting '{reasoning_effort_str}' reasoning for"
                         f" model {provider['model']}"
                     )
                 else:
