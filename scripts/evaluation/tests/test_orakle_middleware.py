@@ -141,6 +141,24 @@ class TestOrakleMiddleware(unittest.TestCase):
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
+    def test_single_orakle_word2(self):
+        """Tests a stream with a single orakle word (2)."""
+        print("\n--- Testing: Single orakle workd (one less-than characters) ---")
+        input_text = "Outputing malformed command start <ORAKLE cmd ORAKLE"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
+    def test_single_orakle_word3(self):
+        """Tests a stream with a single orakle word (3)."""
+        print("\n--- Testing: Single orakle workd (two less-than characters)---")
+        input_text = "Outputing malformed command start <<ORAKLE cmd ORAKLE"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
 
     def test_self_correction_after_failure(self):
         """
