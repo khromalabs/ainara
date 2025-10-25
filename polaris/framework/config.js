@@ -42,9 +42,17 @@ class ConfigManager {
 
         // Follow platform-specific standards for config locations
         if (platform === 'win32') {
-            // Windows: %APPDATA%\ainara\polaris
-            return path.join(homeDir, 'AppData', 'Roaming', 'ainara', 'polaris');
-        } else if (platform === 'darwin') {
+            // Check for Windows Store (AppContainer) environment
+            const packageFamilyName = process.env.PackageFamilyName;
+            const localAppData = process.env.LOCALAPPDATA;
+            if (packageFamilyName && localAppData && localAppData.includes('Packages')) {
+                // Windows Store App: Use local app data
+                return path.join(localAppData, 'ainara', 'polaris');
+            } else {
+                // Standard Windows: %APPDATA%\ainara\polaris
+                return path.join(homeDir, 'AppData', 'Roaming', 'ainara', 'polaris');
+            }
+         } else if (platform === 'darwin') {
             // macOS: ~/Library/Application Support/ainara/polaris
             return path.join(homeDir, 'Library', 'Application Support', 'ainara', 'polaris');
         } else {

@@ -18,7 +18,6 @@
 
 import logging
 import os
-import signal
 import threading
 import time
 from typing import Callable
@@ -29,11 +28,11 @@ logger = logging.getLogger(__name__)
 class HealthMonitor:
     """
     Monitors health check pings and shuts down the server if they stop.
-    This acts as a watchdog to prevent orphaned server processes if the main
+    This acts as a watchdog to prevent orphaned server processes if the frontend
     application crashes.
     """
 
-    def __init__(self, timeout: int = 20, shutdown_callback: Callable = None):
+    def __init__(self, timeout: int = 11, max_failed_attempts: int = 3, shutdown_callback: Callable = None):
         """
         Initialize the HealthMonitor.
         Args:
@@ -43,11 +42,14 @@ class HealthMonitor:
         """
         self.started = False
         self.timeout = timeout
+        self.max_failed_attempts = max_failed_attempts
         self.last_health_check = time.time()
         self.health_check_timestamps = []
         self.activation_threshold = 6  # seconds
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._monitor, daemon=True)
+        self.failed_attempts = 0
+        self.last_health_check_fail = 0
 
         if shutdown_callback:
             self.shutdown = shutdown_callback
@@ -67,7 +69,7 @@ class HealthMonitor:
             self.last_health_check = time.time()  # Reset on start
             self._thread.start()
             logger.info(
-                f"Health monitor started with a {self.timeout}s timeout."
+                f"Health queries monitor started with a {self.timeout}s timeout."
             )
             self.started = True
 
@@ -76,19 +78,20 @@ class HealthMonitor:
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=2)
-        logger.info("Health monitor stopped.")
+        logger.info("Health queries monitor stopped.")
 
     def record_health_check(self, status: str = "ok"):
         """Record that a health check has been received."""
-        if status != "ok":
-            # Reset timestamp tracking if we get an unhealthy check,
-            # so we require two *consecutive* healthy checks.
+        if not self.started and status != "ok":
+            # Reset timestamp tracking if we get an unhealthy check before starting,
+            # so we require two *consecutive* healthy checks to start tracking.
             self.health_check_timestamps = []
             return
 
         current_time = time.time()
         self.last_health_check = current_time
-        logger.debug("Health check recorded.")
+        self.failed_attempts = 0
+        self.last_health_check_fail = 0
 
         if not self.started:
             self.health_check_timestamps.append(current_time)
@@ -102,6 +105,7 @@ class HealthMonitor:
                     - self.health_check_timestamps[0]
                 )
                 if time_diff < self.activation_threshold:
+                    # starts background thread
                     self.start()
                 else:
                     # If the gap is too large, we reset and wait for a new pair of close pings.
@@ -110,16 +114,26 @@ class HealthMonitor:
 
     def _monitor(self):
         """The monitoring loop that runs in a separate thread."""
-        logger.info("Health monitor thread running.")
+        logger.info("Health queries monitor thread running.")
         while not self._stop_event.is_set():
-            time_since_last_check = time.time() - self.last_health_check
-            if time_since_last_check > self.timeout:
-                logger.critical(
-                    f"No health check received for {time_since_last_check:.2f} "
-                    f"seconds (timeout is {self.timeout}s). Shutting down."
+            # logger.info("Health queries monitor thread loop")
+            if self.last_health_check_fail:
+                timeout_reference = time.time() - self.last_health_check_fail
+                # logger.info(f"timeout_reference based on last_health_check_fail: {timeout_reference}")
+            else:
+                timeout_reference = time.time() - self.last_health_check
+                # logger.info(f"timeout_reference based on last_health_check: {timeout_reference}")
+            if timeout_reference >= self.timeout:
+                self.last_health_check_fail = time.time()
+                self.failed_attempts += 1
+                logger.error(
+                    f"No health check received for {timeout_reference:.2f} "
+                    f"seconds (timeout is {self.timeout}s, attempt {self.failed_attempts})."
                 )
-                self.shutdown()
-                break  # Exit the loop after calling shutdown
+                if self.failed_attempts >= self.max_failed_attempts:
+                    logger.error("Max failed attemps reached. Shutting down.")
+                    self.shutdown()
+                    break  # Exit the loop after calling shutdown
             # Sleep for a short interval before checking again
             self._stop_event.wait(1)
-        logger.info("Health monitor thread finished.")
+        logger.info("Health queries monitor thread finished.")

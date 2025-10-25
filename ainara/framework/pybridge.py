@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 
 import argparse
+import re
 import atexit
 import bisect
 import json
@@ -857,7 +858,7 @@ def create_app():
                     {
                         "history": "# Chat History\n\nNo history found.",
                         "date": (
-                            datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                            datetime.now().strftime("%Y-%m-%d")
                         ),
                         "has_previous": False,
                         "has_next": False,
@@ -880,7 +881,7 @@ def create_app():
                     if dt_object.tzinfo is None:
                         dt_object = dt_object.replace(tzinfo=timezone.utc)
 
-                    msg_date = dt_object.astimezone(timezone.utc).date()
+                    msg_date = dt_object.astimezone().date()
                     if msg_date not in messages_by_date:
                         messages_by_date[msg_date] = []
                     messages_by_date[msg_date].append(msg)
@@ -923,14 +924,16 @@ def create_app():
                 for msg in messages_for_day:
                     role = msg.get("role", "unknown")
                     role_prefix = "U" if role == "user" else "A"
-                    content = msg.get("content", "").replace("\n", " ")
+                    content = msg.get("content", "")
+                    content = re.sub(r"\n+", "\n", content)
+                    # content = re.sub(r"^\n+", "", content)
                     timestamp = msg.get("timestamp")
 
                     dt_object = datetime.fromisoformat(timestamp)
                     if dt_object.tzinfo is None:
                         dt_object = dt_object.replace(tzinfo=timezone.utc)
 
-                    time_str = dt_object.astimezone(timezone.utc).strftime(
+                    time_str = dt_object.astimezone().strftime(
                         "%H:%M:%S"
                     )
                     markdown_lines.append(

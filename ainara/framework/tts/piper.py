@@ -634,15 +634,16 @@ class PiperTTS(TTSBackend):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=False,
             )
 
-            cleaned_text = self._clean_text(text)
-            stdout, stderr = process.communicate(input=cleaned_text)
+            cleaned_text = self._clean_text(text).encode("utf-8")
+            _, stderr = process.communicate(input=cleaned_text)
 
             if process.returncode != 0:
-                self.logger.error(f"Piper failed: {stderr}")
-                raise RuntimeError(f"Piper failed: {stderr}")
+                stderr_text = stderr.decode("utf-8") if stderr else ""
+                self.logger.error(f"Piper failed: {stderr_text}")
+                raise RuntimeError(f"Piper failed: {stderr_text}")
 
             # Get audio duration using soundfile
             with sf.SoundFile(temp_file) as f:

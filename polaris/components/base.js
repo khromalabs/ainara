@@ -159,17 +159,32 @@ class BaseComponent extends HTMLElement {
         throw new Error('Component must implement render method');
     }
 
-    parseMarkdown(text) {
-        // Handle bold text with ** or __
+    parseMarkdown(text, generateLinks = false) {
+        // Store code blocks temporarily
+        const codeBlocks = [];
+        let blockIndex = 0;
+
+        text = text.replace(/_orakle_loading_signal_\|([^ \n]+)/gm, '<span class="orakle-skill" title="Orakle Skill">$1</span>');
+
+        // Extract and replace triple backtick code blocks
+        text = text.replace(/```([^ \n]+)([\s\S]*?)```/gm, (match, codetype, content) => {
+            codeBlocks.push(`<div class="code-block-wrapper">
+                <span class="code-type">${codetype}</span>
+                <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
+                <code>${content}</code>
+            </div>`);
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+
+        // Extract and replace single backtick inline code
+        text = text.replace(/`([^ ]+)`/gm, (match, content) => {
+            codeBlocks.push(`<code>${content}</code>`);
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+
+        // Now apply your Markdown formatting safely
         text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>');
-
-        // Handle italic text with * or _
         text = text.replace(/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>');
-
-        // Handle code blocks with `
-        text = text.replace(/`(.*?)`/gm, '<code>$1</code>');
-        //
-        // Handle H1,H2
         text = text.replace(/^### (.*?)\n/gm, '<h3>$1</h3>');
         text = text.replace(/^## (.*?)\n/gm, '<h2>$1</h2>');
         text = text.replace(/^# (.*?)\n/gm, '<h1>$1</h1>');
@@ -198,19 +213,46 @@ class BaseComponent extends HTMLElement {
         });
 
         // Autolink URLs
-        const urlPattern = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
-        text = text.replace(urlPattern, (url) => {
-            let cleanUrl = url;
-            // Strip trailing punctuation that is unlikely to be part of the URL
-            while (/[.,;!?\)\]\}]$/.test(cleanUrl)) {
-                cleanUrl = cleanUrl.slice(0, -1);
-            }
-            const trailingChars = url.substring(cleanUrl.length);
+        if (generateLinks) {
+            const urlPattern = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
+            text = text.replace(urlPattern, (url) => {
+                let cleanUrl = url;
+                // Strip trailing punctuation that is unlikely to be part of the URL
+                while (/[.,;!?\)\]\}]$/.test(cleanUrl)) {
+                    cleanUrl = cleanUrl.slice(0, -1);
+                }
+                const trailingChars = url.substring(cleanUrl.length);
 
-            const href = cleanUrl.startsWith('www.') ? `http://${cleanUrl}` : cleanUrl;
-            return `<a href="${href}">${cleanUrl}</a>` + trailingChars;
+                const href = cleanUrl.startsWith('www.') ? `http://${cleanUrl}` : cleanUrl;
+                return `<a href="${href}">${cleanUrl}</a>` + trailingChars;
+            });
+        } else {
+            text = text.replace(/\[(.*?)\]\((.*?)\)/g, function(match, linkText, url) {
+                // Extract domain from URL
+                let domain = "";
+                try {
+                    domain = new URL(url).hostname.replace(/^www\./, '');
+                    // Truncate if too long
+                    if (domain.length > 15) {
+                        domain = domain.substring(0, 12) + '...';
+                    }
+                } catch (e) {
+                    // If URL parsing fails, skip domain
+                    console.log("Error parsing: " + e);
+                }
+
+                // Create a properly formatted HTML string
+                return '"' + linkText + '"' +
+                       (domain ? ' [' + domain + ']' : '');
+            });
+        }
+
+        // Restore code blocks
+        text = text.replace(/%%CODEBLOCK(\d+)%%/g, (match, index) => {
+            return codeBlocks[parseInt(index)];
         });
 
+        // console.log("parseMarkdown post:" + text);
         return text;
     }
 }

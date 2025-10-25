@@ -366,12 +366,13 @@ async function appInitialization() {
                 const comRing = windowManager.getWindow('comRing');
                 setTimeout(() => {
                     if (comRing) {
-                        if(firstTimeShow && process.platform == 'win32') {
-                            // ugly hack to force focus on Windows
+                        if(firstTimeShow) {
+                            // ugly hack to force focus
                             comRing.minimize();
                             comRing.restore();
                             firstTimeShow = false;
                         }
+                        comRing.window.setAlwaysOnTop(true);
                         comRing.focus();
                         Logger.log('visibility-changed (active): focused comRing');
                     }

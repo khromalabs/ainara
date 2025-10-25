@@ -22,6 +22,39 @@ import platform
 from pathlib import Path
 
 
+def is_appcontainer_environment():
+    """Detect if running in Windows AppContainer (Microsoft Store) environment"""
+    if platform.system() != "Windows":
+        return False
+
+    # Check for AppContainer-specific environment variables
+    package_family_name = os.environ.get("PackageFamilyName")
+    local_appdata_package = os.environ.get("LOCALAPPDATA")
+
+    # In AppContainer, LOCALAPPDATA points to package-specific path
+    if package_family_name and local_appdata_package and "Packages" in local_appdata_package:
+        return True
+
+    return False
+
+
+def get_appcontainer_paths():
+    """Get paths specific to Windows AppContainer environment"""
+    package_family_name = os.environ.get("PackageFamilyName", "Ainara")
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+
+    if not local_appdata:
+        local_appdata = os.path.expanduser("~/AppData/Local")
+
+    # In AppContainer, these are the writable locations
+    config_dir = Path(local_appdata) / "Ainara"
+    log_dir = Path(local_appdata) / "Ainara" / "logs"
+    cache_dir = Path(local_appdata) / "Ainara" / "Cache"
+    data_dir = Path(local_appdata) / "Ainara" / "Data"
+
+    return config_dir, log_dir, cache_dir, data_dir
+
+
 def get_default_config_paths():
     """Get list of default platform-specific configuration file paths"""
     system = platform.system()
@@ -37,11 +70,15 @@ def get_default_config_paths():
             Path("/etc/ainara/ainara.yaml"),
         ])
     elif system == "Windows":
-        # Windows standard locations
-        appdata = os.environ.get(
-            "APPDATA", os.path.expanduser("~/AppData/Roaming")
-        )
-        config_paths.append(Path(appdata) / "Ainara/ainara.yaml")
+        if is_appcontainer_environment():
+            config_dir, _, _, _ = get_appcontainer_paths()
+            config_paths.append(config_dir / "ainara.yaml")
+        else:
+            # Windows standard locations
+            appdata = os.environ.get(
+                "APPDATA", os.path.expanduser("~/AppData/Roaming")
+            )
+            config_paths.append(Path(appdata) / "Ainara/ainara.yaml")
     else:
         # Fallback for other systems
         config_paths.append(Path(os.path.expanduser("~/.ainara/ainara.yaml")))
@@ -54,6 +91,10 @@ def get_default_config_paths():
 def get_default_log_dir():
     """Get default platform-specific log directory path"""
     system = platform.system()
+
+    if system == "Windows" and is_appcontainer_environment():
+        _, log_dir, _, _ = get_appcontainer_paths()
+        return log_dir
 
     if system == "Linux":
         # XDG standard for Linux
@@ -80,6 +121,10 @@ def get_default_cache_dir():
     """Get default platform-specific cache directory path"""
     system = platform.system()
 
+    if system == "Windows" and is_appcontainer_environment():
+        _, _, cache_dir, _ = get_appcontainer_paths()
+        return cache_dir
+
     if system == "Linux":
         # XDG standard for Linux
         cache_home = os.environ.get(
@@ -104,6 +149,11 @@ def get_default_cache_dir():
 def get_default_data_dir(app_name="ainara"):
     """Get default platform-specific user data directory path"""
     system = platform.system()
+
+    if system == "Windows" and is_appcontainer_environment():
+        _, _, _, data_dir = get_appcontainer_paths()
+        return data_dir
+
     if system == "Windows":
         # On Windows, use %LOCALAPPDATA%\\app_name
         return os.path.join(

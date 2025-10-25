@@ -266,7 +266,8 @@ class ComRing extends BaseComponent {
             try {
                 backendConfig = await ConfigHelper.fetchBackendConfig();
             } catch {
-                this.showInfo("Couldn't read Polaris configuration", true);
+                this.showInfo("Couldn't read backend configuration", true);
+                this.showInfo("Please reboot the application", true);
             }
 
             // console.log('MEMORYINFO 1');
@@ -502,7 +503,7 @@ class ComRing extends BaseComponent {
                         if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
                             this.switchToDocumentView(this.docFormat);
                         } else {
-                            this.showInfo('No documents to display.');
+                            await this.fetchAndDisplayChatHistory();
                         }
                     } else if (this.currentView === 'document') {
                         this.switchToRingView();
@@ -998,7 +999,7 @@ class ComRing extends BaseComponent {
         const helpContent = `
 ### Keyboard Shortcuts
 - **${this.triggerKey}**: Hold to record your voice.
-- **Tab**: Switch between Ring and Document view.
+- **Tab**: Toggle between Ring and Document view (history if no previous documents present).
 - **Escape**: Abort current action, hide Polaris, in document view exit view."
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
@@ -1046,7 +1047,7 @@ Visit our project site at: https://ainara.app
             const response = await fetch(url);
 
             if (!response.ok) {
-                throw new Error(`Failed to fetch history: ${response.status}`);
+                throw new Error(`Failed to fetch history: ${response.status}, is memory enabled?`);
             }
 
             const data = await response.json();

@@ -27,7 +27,7 @@ from ainara.framework.skill import Skill
 
 
 class HtmlWebpage(Skill):
-    """Download the text of a website or webpage represented by a URL."""
+    """Download read or check the text of a website or webpage article or site represented by a URL."""
 
     matcher_info = (
         "Use ONLY when the user explicitly asks to download, fetch, get,"
@@ -36,7 +36,7 @@ class HtmlWebpage(Skill):
         " (e.g., 'What is the website for X?'). Use ONLY if a specific URL is"
         " provided or clearly implied in the request for its content.\n\n"
         " Keywords: download webpage, get website text, fetch URL content,"
-        " extract text from page, summarize website, analyze page content."
+        " extract text from page, summarize website, analyze page content, read page content."
     )
 
     def __init__(self):
