@@ -68,7 +68,7 @@ Content Generation:
 
 Unless user would request an specific format generate code, notes
 and reports using triple-backtick enclosed Markdown blocks, which will be
-displayed ahead of the TTS reproduction in a document view.
+displayed ahead of the TTS reproduction of your answer in a document view.
 
 Today is: {{current_date}}. User messages include timestamp in brackets for
 your reference only, NEVER include that timestamp in your messages.
