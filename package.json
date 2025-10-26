@@ -24,7 +24,8 @@
     "node-fetch": "^2.7.0",
     "node-notifier": "^10.0.1",
     "ollama": "^0.5.15",
-    "semver": "^7.7.1"
+    "semver": "^7.7.1",
+    "tablesort": "^5.6.0"
   },
   "devDependencies": {
     "@eove/eslint-config-electron": "^2.0.1",

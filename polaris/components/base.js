@@ -17,7 +17,10 @@
 // Lesser General Public License for more details.
 
 const { shell } = require('electron');
+const { marked } = require('marked');
 const DOMPurify = require('dompurify');
+const Tablesort = require('tablesort');
+
 
 class BaseComponent extends HTMLElement {
     constructor() {
@@ -167,6 +170,55 @@ class BaseComponent extends HTMLElement {
         throw new Error('Component must implement render method');
     }
 
+    renderSortableTable(markdownTable) {
+        const html = marked.parse(markdownTable);
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        const table = tempDiv.querySelector('table');
+        if (!table) return '<p>No table found in markdown.</p>';
+
+        // Mark this as a sortable table and add data-sort to headers
+        table.classList.add('sortable-table');
+        const headers = table.querySelectorAll('th');
+        headers.forEach((th, index) => {
+            th.setAttribute('data-sort', `col-${index}`);
+            th.classList.add('sortable-header'); // For styling/click targeting
+        });
+
+        // Add zebra classes
+        const rows = table.querySelectorAll('tbody tr, tr:not(:first-child)');
+        rows.forEach((row, index) => {
+            if (index % 2 === 0) row.classList.add('zebra-even');
+            else row.classList.add('zebra-odd');
+        });
+
+        // Return enhanced HTML ready for later JS initialization
+        return table.outerHTML;
+    }
+
+    // Initialize all sortable tables once DOM is ready
+    initAllSortableTables() {
+        // Find all shadow roots and search inside them
+        const allShadowHosts = document.querySelectorAll('*');
+        let totalTables = 0;
+
+        allShadowHosts.forEach(host => {
+            if (host.shadowRoot) {
+                const tables = host.shadowRoot.querySelectorAll('.sortable-table');
+                console.log(`Found ${tables.length} tables in shadow root of`, host);
+                totalTables += tables.length;
+
+                tables.forEach(table => {
+                    if (!table._tablesortInitialized) {
+                        new Tablesort(table, { asc: '▲', desc: '▼' });
+                    }
+                });
+            }
+        });
+
+        console.log(`Total tables initialized: ${totalTables}`);
+    }
+
     parseMarkdown(text_input, generateLinks = false) {
         // Store code blocks temporarily
         const codeBlocks = [];
@@ -183,26 +235,40 @@ class BaseComponent extends HTMLElement {
         });
         // Extract and replace triple backtick code blocks
         text = text.replace(/```([^ \n]+)([\s\S]*?)```/gm, (match, codetype, content) => {
-            codeBlocks.push(`<div class="code-block-wrapper">
-                <span class="code-type">${codetype}</span>
-                <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
-                <code>${content}</code>
-            </div>`);
-            return `%%CODEBLOCK${blockIndex++}%%`;
+            // if (this.isMarkdownTable(content)) {
+            // TODO Disabled markdown table process by now
+            if (0) { // eslint-disable-line no-constant-condition
+                let html_content = this.renderSortableTable(content);
+                codeBlocks.push(`<div class="code-block-wrapper">
+                    <span class="code-type">markdown2html</span>
+                    <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
+                    <div>${html_content}</div>
+                </div>`);
+            } else {
+                codeBlocks.push(`<div class="code-block-wrapper">
+                    <span class="code-type">${codetype}</span>
+                    <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
+                    <code>${content}</code>
+                </div>`);
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
         });
         // Extract and replace single backtick inline code
-        text = text.replace(/`([^ ]+)`/gm, (match, content) => {
-            codeBlocks.push(`<code>${content}</code>`);
+        text = text.replace(/`([\s\S]*?)`/gm, (match, content) => {
+                codeBlocks.push(`<div class="code-block-wrapper-inline">
+                    <code>${content}</code>
+                </div>`);
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
+
+            // [/^### (.*?)\n/gm, '<h3>$1</h3>'],                       // H3
+            // [/^## (.*?)\n/gm, '<h2>$1</h2>'],                        // H2
+            // [/^# (.*?)\n/gm, '<h1>$1</h1>'],                         // H1
 
         // Define patterns as an array of [regex, replacement] pairs
         const markdownPatterns = [
             [/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>'],  // Bold
             [/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>'],                // Italic
-            [/^### (.*?)\n/gm, '<h3>$1</h3>'],                       // H3
-            [/^## (.*?)\n/gm, '<h2>$1</h2>'],                        // H2
-            [/^# (.*?)\n/gm, '<h1>$1</h1>'],                         // H1
             [/\n/gm, '<br>']                                         // Line breaks (CR)
         ];
 
@@ -280,6 +346,38 @@ class BaseComponent extends HTMLElement {
     sanitizeText(text) {
         return DOMPurify.sanitize(text);
     }
+
+    // Function to detect if content is a markdown table
+    isMarkdownTable(content) {
+      // Clean up whitespace and normalize line endings
+      const lines = content.trim().split(/\r?\n/).filter(line => line.trim());
+
+      if (lines.length < 3) return false; // Need at least header, separator, and one row
+
+      // Check header: starts with | and has pipes separating columns
+      const header = lines[0].trim();
+      if (!header.startsWith('|') || !header.endsWith('|')) return false;
+
+      // Check separator row: |---| patterns (allow spaces around dashes)
+      const separator = lines[1].trim();
+      if (!separator.startsWith('|') || !separator.endsWith('|')) return false;
+      const hasDashes = separator.split('|').slice(1, -1).every(cell =>
+        cell.trim().split('-').length > 1 || cell.trim().includes('---')
+      );
+      if (!hasDashes) return false;
+
+      // Check data rows: similar pipe structure to header
+      const dataRows = lines.slice(2);
+      if (dataRows.length === 0) return false;
+
+      const colCount = header.split('|').length - 1; // Account for edge pipes
+      return dataRows.every(row => {
+        const trimmed = row.trim();
+        return trimmed.startsWith('|') && trimmed.endsWith('|') &&
+               trimmed.split('|').length - 1 === colCount;
+      });
+    }
 }
+
 
 module.exports = BaseComponent;

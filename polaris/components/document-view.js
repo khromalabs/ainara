@@ -142,15 +142,15 @@ class DocumentView extends BaseComponent {
             } else {
                 contentArea.innerHTML = "<pre>" + content + "</pre>";
                 contentArea.className += ` language-${format}`;
-                if (window.hljs) {
-                    window.hljs.highlightElement(contentArea);
-                }
+                // if (window.hljs) {
+                //     window.hljs.highlightElement(contentArea);
+                // }
             }
             documentElement.appendChild(contentArea);
+            if (format === "chat-history") {
+                this.initAllSortableTables();
+            }
             contentArea.focus();
-            // setTimeout(() => {
-            //     contentArea.focus();
-            // }, 2000);
         }
 
         this.container.appendChild(documentElement);
