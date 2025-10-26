@@ -17,6 +17,7 @@
 // Lesser General Public License for more details.
 
 const { shell } = require('electron');
+const DOMPurify = require('dompurify');
 
 class BaseComponent extends HTMLElement {
     constructor() {
@@ -33,6 +34,13 @@ class BaseComponent extends HTMLElement {
                 shell.openExternal(href);
             }
         });
+
+        // TODO Replace local markdown processing with marked
+        // // Configure marked
+        // marked.setOptions({
+        //     gfm: true,
+        //     breaks: true,
+        // });
     }
 
     // Utility methods
@@ -159,13 +167,20 @@ class BaseComponent extends HTMLElement {
         throw new Error('Component must implement render method');
     }
 
-    parseMarkdown(text, generateLinks = false) {
+    parseMarkdown(text_input, generateLinks = false) {
         // Store code blocks temporarily
         const codeBlocks = [];
         let blockIndex = 0;
 
-        text = text.replace(/_orakle_loading_signal_\|([^ \n]+)/gm, '<span class="orakle-skill" title="Orakle Skill">$1</span>');
+        // Sanitize HTML to prevent XSS attacks
+        let text = this.sanitizeText(text_input);
 
+        // Blocks extracted to prevent markdown parsing on them
+        // Extract ORAKLE skills blocks
+        text = text.replace(/_orakle_loading_signal_\|([^ \n]+)/gm, (text,skill) => {
+            codeBlocks.push(`<span class="orakle-skill" title="Orakle Skill">${skill}</span>`);
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
         // Extract and replace triple backtick code blocks
         text = text.replace(/```([^ \n]+)([\s\S]*?)```/gm, (match, codetype, content) => {
             codeBlocks.push(`<div class="code-block-wrapper">
@@ -175,22 +190,26 @@ class BaseComponent extends HTMLElement {
             </div>`);
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
-
         // Extract and replace single backtick inline code
         text = text.replace(/`([^ ]+)`/gm, (match, content) => {
             codeBlocks.push(`<code>${content}</code>`);
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
 
-        // Now apply your Markdown formatting safely
-        text = text.replace(/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>');
-        text = text.replace(/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>');
-        text = text.replace(/^### (.*?)\n/gm, '<h3>$1</h3>');
-        text = text.replace(/^## (.*?)\n/gm, '<h2>$1</h2>');
-        text = text.replace(/^# (.*?)\n/gm, '<h1>$1</h1>');
+        // Define patterns as an array of [regex, replacement] pairs
+        const markdownPatterns = [
+            [/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>'],  // Bold
+            [/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>'],                // Italic
+            [/^### (.*?)\n/gm, '<h3>$1</h3>'],                       // H3
+            [/^## (.*?)\n/gm, '<h2>$1</h2>'],                        // H2
+            [/^# (.*?)\n/gm, '<h1>$1</h1>'],                         // H1
+            [/\n/gm, '<br>']                                         // Line breaks (CR)
+        ];
 
-        // Handle CR
-        text = text.replace(/\n/gm, '<br>');
+        // Apply all replacements efficiently
+        text = markdownPatterns.reduce((acc, [pattern, repl]) => {
+            return acc.replace(pattern, repl);
+        }, text);
 
         // Handle links [text](url)
         text = text.replace(/\[(.*?)\]\((.*?)\)/gm, function(match, linkText, url) {
@@ -218,7 +237,7 @@ class BaseComponent extends HTMLElement {
             text = text.replace(urlPattern, (url) => {
                 let cleanUrl = url;
                 // Strip trailing punctuation that is unlikely to be part of the URL
-                while (/[.,;!?\)\]\}]$/.test(cleanUrl)) {
+                while (/[.,;!?\)\]\}]$/.test(cleanUrl)) { // eslint-disable-line no-useless-escape
                     cleanUrl = cleanUrl.slice(0, -1);
                 }
                 const trailingChars = url.substring(cleanUrl.length);
@@ -252,8 +271,14 @@ class BaseComponent extends HTMLElement {
             return codeBlocks[parseInt(index)];
         });
 
-        // console.log("parseMarkdown post:" + text);
+        // TODO Replace markdown processing with marked (?)
+        // text = marked.parse(text);
+
         return text;
+    }
+
+    sanitizeText(text) {
+        return DOMPurify.sanitize(text);
     }
 }
 
