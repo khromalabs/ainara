@@ -1210,7 +1210,7 @@ class ChatManager:
                     if start_pos != -1:
                         yield buffer[:start_pos]
                         yield "\n_AINARA_THINKING_START_\n"
-                        buffer = buffer[start_pos + len("<think>") :]
+                        buffer = buffer[start_pos + len("<think>"):]
                         in_thinking = True
                     else:
                         yield buffer
@@ -1220,7 +1220,7 @@ class ChatManager:
                     end_pos = buffer.find("</think>")
                     if end_pos != -1:
                         yield "\n_AINARA_THINKING_STOP_\n"
-                        buffer = buffer[end_pos + len("</think>") :]
+                        buffer = buffer[end_pos + len("</think>"):]
                         in_thinking = False
                     else:
                         # Not enough data in buffer to find the end tag, wait for more chunks
@@ -1433,7 +1433,7 @@ class ChatManager:
                 if recent_memories_summary:
                     final_system_content += (
                         "\n\n--- This is a summary of topics and facts that"
-                        " have been discussed recently. Use this to maintain"
+                        " have been discussed in the last conversations. Use this to maintain"
                         " conversation continuity."
                         f" ---\n{recent_memories_summary}"
                     )
