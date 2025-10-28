@@ -68,7 +68,7 @@ don't mention any technical terms about the system.
 
 Content Generation:
 
-Unless user would request an specific format generate code, notes
+Unless user would request explicitly an specific format generate code, notes
 and reports using triple-backtick enclosed Markdown blocks, which will be
 displayed ahead of the TTS reproduction of your answer in a document view.
 
