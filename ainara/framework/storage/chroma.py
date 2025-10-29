@@ -108,7 +108,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         texts = [doc["page_content"] for doc in documents]
         metadatas = [doc["metadata"] for doc in documents]
         # ChromaDB requires string IDs
-        ids = [meta.get("message_id", str(uuid.uuid4())) for meta in metadatas]
+        ids = [meta.get("id", str(uuid.uuid4())) for meta in metadatas]
 
         # ChromaDB can't handle non-primitive types in metadata, so we stringify complex values
         for meta in metadatas:
