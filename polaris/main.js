@@ -49,6 +49,7 @@ let wizardActive = false;
 let externallyManagedServices = false;
 let updateProgressWindow = null;
 let ollamaClient = null;
+let appReady = false;
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
 const triggerKey = config.get('shortcuts.trigger', 'Space');
@@ -317,6 +318,11 @@ function initializeOllamaClient() {
     Logger.info(`Ollama client initialized with server: ${serverIp}:${port}`);
 }
 
+function isRunningAsAppX() {
+    // This is a reliable way to check for APPX/MSIX packaged environments.
+    return !!process.env.PackageFamilyName;
+}
+
 async function appInitialization() {
     try {
          const singleInstanceLock = app.requestSingleInstanceLock();
@@ -328,7 +334,7 @@ async function appInitialization() {
         }
 
         app.on('second-instance', () => {
-            if (windowManager) {
+            if (windowManager && appReady) {
                 windowManager.showAll();
             }
         });
@@ -429,8 +435,10 @@ async function appInitialization() {
                 return;
             }
             startOllamaKeepAlive();
-            await updateProviderSubmenu();
-            initializeAutoUpdater();
+            await updateProviderSubmenu(); // Must be before initializeAutoUpdater
+            if (!isRunningAsAppX()) {
+                initializeAutoUpdater();
+            }
             // Set shortcut just before showing windows
             appSetupShortcuts();
             await appCreateTray();
@@ -530,7 +538,9 @@ async function appInitialization() {
             tray.setToolTip('Ainara Polaris v' + config.get('setup.version') + " - " + truncateMiddle(llmProviders.selected_provider, 44));
         }
 
-        initializeAutoUpdater();
+        if (!isRunningAsAppX()) {
+            initializeAutoUpdater();
+        }
 	checkFirstRunTasks();
 
         // Set shortcut just before showing windows
@@ -542,6 +552,7 @@ async function appInitialization() {
             windowManager.showAll(true);
         } else Logger.info('Starting minimized as per configuration.');
         Logger.info('Polaris initialized successfully');
+        appReady = true;
     } catch (error) {
         appHandleCriticalError(error);
     }
@@ -772,6 +783,14 @@ async function startOllamaKeepAlive() {
 async function updateProviderSubmenu() {
     try {
 
+        const updateItems = isRunningAsAppX() ? [] : [
+            { type: 'separator' },
+            {
+                label: 'Check for Updates',
+                click: () => checkForUpdates(true)
+            },
+        ];
+
         // Logger.info('UPDATING PROVIDER SUBMENU');
 
         // Get the current providers
@@ -844,11 +863,7 @@ async function updateProviderSubmenu() {
                 label: 'Hide',
                 click: () => windowManager.hideAll(true)
             },
-            { type: 'separator' },
-            {
-                label: 'Check for Updates',
-                click: () => checkForUpdates(true)
-            },
+            ...updateItems,
             { type: 'separator' },
             {
                 label: 'Help',
