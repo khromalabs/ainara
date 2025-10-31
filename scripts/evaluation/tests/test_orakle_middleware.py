@@ -34,7 +34,7 @@ class TestOrakleMiddleware(unittest.TestCase):
         # Mock dependencies that are not relevant to stream parsing
         mock_llm = MagicMock()
         mock_config_manager = MagicMock()
-        
+
         # We patch the matcher so it doesn't try to load a real model
         with patch('ainara.framework.orakle_middleware.OrakleMatcherTransformers'):
             self.middleware = OrakleMiddleware(
@@ -132,18 +132,46 @@ class TestOrakleMiddleware(unittest.TestCase):
         self.assertEqual(result, expected_output)
         print("PASSED")
 
+    def test_single_orakle_word(self):
+        """Tests a stream with a single orakle word."""
+        print("\n--- Testing: Single orakle workd ---")
+        input_text = "Outputing forbidden word ORAKLE"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
+    def test_single_orakle_word2(self):
+        """Tests a stream with a single orakle word (2)."""
+        print("\n--- Testing: Single orakle workd (one less-than characters) ---")
+        input_text = "Outputing malformed command start <ORAKLE cmd ORAKLE"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
+    def test_single_orakle_word3(self):
+        """Tests a stream with a single orakle word (3)."""
+        print("\n--- Testing: Single orakle workd (two less-than characters)---")
+        input_text = "Outputing malformed command start <<ORAKLE cmd ORAKLE"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
+
     def test_self_correction_after_failure(self):
         """
         Simulates an LLM 'self-correcting' by first sending a malformed
         stream and then a correct one.
         """
         print("\n--- Testing: Self-correction after failure ---")
-        
+
         # --- Attempt 1: Failure (Unterminated command) ---
         print("  Attempt 1 (Failure): Running...")
         failed_stream = "Let me try this:\n<<<ORAKLE\ncalculate_pi(digits=10"
         failed_result = self._run_test_stream(failed_stream)
-        
+
         # Verify failure
         self.assertIn("unterminated ORAKLE command", failed_result)
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", failed_result)
@@ -172,10 +200,10 @@ if __name__ == '__main__':
     print("="*70)
     print("  Running OrakleMiddleware Stream Parser Test Suite")
     print("="*70)
-    
+
     # Run the tests
     result = runner.run(suite)
-    
+
     # Custom summary
     if result.wasSuccessful():
         print("\n" + "="*70)

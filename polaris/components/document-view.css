@@ -246,3 +246,46 @@ code {
     margin: 0;
     margin-top: 40px;
 }
+
+/* Make Tablesort icons visible */
+th .tablesort__icon,
+th [data-sort] span {
+  margin-left: 5px;
+  font-weight: bold;
+  color: #666;
+  transition: color 0.2s;
+}
+
+th.sort-asc .tablesort__icon,
+th.sort-desc .tablesort__icon {
+  color: #2196F3; /* Blue for active sort */
+}
+
+/* Ensure the header text doesn't get squished */
+th[data-sort] {
+  cursor: pointer;
+  position: relative;
+}
+
+th[data-sort]:hover .tablesort__icon {
+  color: #333;
+}
+
+.zebra-even {
+    background-color: #333;
+}
+
+.zebra-odd {
+    background-color: #333;
+}
+
+/* tr:hover { */
+/*     background-color: #e3f2fd; */
+/* } */
+
+.code-block-wrapper-inline {
+    display: inline-block;
+    position: relative;
+    margin: 4px 4px 4px -4px;
+    padding: 0;
+}

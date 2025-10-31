@@ -177,7 +177,10 @@ class OrakleMiddleware:
                         yield "\n"
                 elif stripped_line == self.start_delimiter:
                     self.start_command()
-                elif self.start_delimiter in stripped_line:
+                elif (
+                    self.start_delimiter in stripped_line
+                    or self.end_delimiter in stripped_line
+                ):
                     yield line
                     yield self.middleware._get_correction_message()
                 else:

@@ -83,6 +83,11 @@ class GREENMemories:
             # Controls how quickly the recency boost fades over time (in hours).
             # A smaller value means the boost lasts longer.
             "recency_decay_rate": 0.01,
+            # The initial relevance boost for a memory's first update within a session.
+            "session_relevance_increment": 1.0,
+            # The factor by which the boost is multiplied for each subsequent update
+            # in the same session.
+            "session_relevance_decay_rate": 0.5,
         }
         self.nlp = load_spacy_model()
         self._db_lock = threading.Lock()
@@ -1010,6 +1015,7 @@ class GREENMemories:
         )
         total_turns = len(conversation_turns)
         newly_created_or_updated_memories_in_batch = []
+        session_update_counts = {}  # Track updates per memory_id in this session
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
             # Move timestamp forward BEFORE processing to avoid getting stuck.
             # If processing fails, this message will be skipped on the next run.
@@ -1027,7 +1033,9 @@ class GREENMemories:
                 # The last turn in the window is the one we are primarily analyzing.
                 # The preceding turns provide the context.
                 processed_memory = self._extract_and_assimilate_memory(
-                    context_turns, newly_created_or_updated_memories_in_batch
+                    context_turns,
+                    newly_created_or_updated_memories_in_batch,
+                    session_update_counts,
                 )
 
                 if processed_memory:
@@ -1132,6 +1140,7 @@ class GREENMemories:
         new_text: str,
         user_message: Dict,
         assistant_message: Dict,
+        increment: float = 1.0,
     ) -> Optional[Dict]:
         """Updates an existing memory's text and boosts its relevance."""
         try:
@@ -1171,11 +1180,12 @@ class GREENMemories:
                 cursor = self.storage.conn.execute(
                     """
                     UPDATE user_memories
-                    SET memory = ?, relevance = relevance + 1.0, last_updated = ?, source_message_ids = ?
+                    SET memory = ?, relevance = relevance + ?, last_updated = ?, source_message_ids = ?
                     WHERE id = ?
                     """,
                     (
                         new_text,
+                        increment,
                         new_last_updated,
                         updated_source_ids_json,
                         memory_id,
@@ -1418,6 +1428,7 @@ class GREENMemories:
         self,
         conversation_turns: List[tuple[Dict, Dict]],
         batch_context_memories: List[Dict] = None,
+        session_update_counts: Dict[str, int] = None,
     ) -> Optional[Dict]:
         """
         Analyzes a conversation turn, compares it with existing memories, and
@@ -1543,20 +1554,39 @@ class GREENMemories:
                     logger.warning(
                         "LLM chose 'reinforce' but provided no memory_id."
                     )
-                elif new_text:
-                    # This is a reinforcement that also updates the memory text.
-                    logger.info(f"LLM decided to update memory: {memory_id}")
-                    # The return from _update_memory is the updated memory object
-                    # which needs to be passed back to the main loop.
-                    return self._update_memory(
-                        memory_id, new_text, user_message, assistant_message
-                    )
                 else:
-                    # This is a simple reinforcement, just boosting the score.
-                    logger.info(
-                        f"LLM decided to reinforce memory: {memory_id}"
+                    # Calculate decayed relevance increment for this session
+                    if session_update_counts is None:
+                        session_update_counts = {}
+                    update_count = session_update_counts.get(memory_id, 0)
+                    increment = self.scoring_config[
+                        "session_relevance_increment"
+                    ] * (
+                        self.scoring_config["session_relevance_decay_rate"]
+                        ** update_count
                     )
-                    self._reinforce_memory(memory_id)
+                    session_update_counts[memory_id] = update_count + 1
+
+                    if new_text:
+                        # This is a reinforcement that also updates the memory text.
+                        logger.info(
+                            f"LLM decided to update memory: {memory_id}"
+                        )
+                        # The return from _update_memory is the updated memory object
+                        # which needs to be passed back to the main loop.
+                        return self._update_memory(
+                            memory_id,
+                            new_text,
+                            user_message,
+                            assistant_message,
+                            increment=increment,
+                        )
+                    else:
+                        # This is a simple reinforcement, just boosting the score.
+                        logger.info(
+                            f"LLM decided to reinforce memory: {memory_id}"
+                        )
+                        self._reinforce_memory(memory_id, increment=increment)
 
                 # Handle duplicates for deletion
                 duplicates_to_delete = decision.get("duplicates", [])

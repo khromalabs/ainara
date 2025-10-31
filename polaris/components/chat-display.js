@@ -250,7 +250,9 @@ class ChatDisplay extends BaseComponent {
                             // Check if content exists and has actual text content
                             if (content && content.content) {
                                 // Handle both string content and object content
-                                const textContent = content.content.content;
+                                const textContent = this.sanitizeText(
+                                    content.content.content
+                                );
                                 if (textContent) {
                                     // Pass the messageId from the event to addMessage
                                     const messageId = content.content.messageId;

@@ -1,0 +1,6 @@
+[submodule "docs"]
+	path = doc
+	url = khromalabs:ainara-docs
+[submodule "ainara/nexus/khromalabs/ataria"]
+	path = ainara/nexus/khromalabs/ataria
+	url = khromalabs:ataria
