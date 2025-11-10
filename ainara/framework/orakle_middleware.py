@@ -82,7 +82,7 @@ class OrakleMiddleware:
         self.matcher_threshold = self.config_manager.get(
             "orakle.matcher.threshold", 0.15
         )
-        self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 5)
+        self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 6)
         self.reasoning_effort_limit = self.config_manager.get(
             "orakle.reasoning_effort_limit", 1.0
         )
@@ -127,10 +127,11 @@ class OrakleMiddleware:
         """Returns a guardrail message for malformed ORAKLE commands."""
         logger.info("GUARDRAIL correction message generated")
         return (
-            "\n\n[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected. "
-            "The `<<<ORAKLE` and `ORAKLE` delimiters must be on their own "
-            "lines with no surrounding text. The command was not executed. "
-            "Please try again with the correct format.\n\n"
+            "\n\n[__AINARA_GUARDRAIL__] Error: Malformed ORAKLE command detected. "
+            "For multi-line commands, the `<<<ORAKLE` and `ORAKLE` delimiters "
+            "must be on their own lines. Single-line commands are also valid "
+            "(e.g. `<<<ORAKLE do something ORAKLE`). The command was not "
+            "executed. Please try again with the correct format.\n\n"
         )
 
     def update_llm(self, llm):
@@ -142,6 +143,7 @@ class OrakleMiddleware:
         # States
         streaming_text = State(initial=True)
         buffering_command = State()
+        orakle_only = State()
 
         def __init__(self, middleware, chat_manager, reasoning_level_heuristic=0.0):
             self.middleware = middleware
@@ -154,6 +156,16 @@ class OrakleMiddleware:
 
         def process_line(self, line: str) -> Generator[str, None, None]:
             """Process a single line of input from the stream."""
+            logger.info(
+                f"DEBUG ORAKLE Parser processing line in state '{self.current_state.id}': {repr(line)}"
+            )
+            # --- Guardrail Recursion Fix ---
+            # If the line is a guardrail message, pass it through without parsing
+            # to prevent a recursive loop where the guardrail triggers itself.
+            if line.strip().startswith("[__AINARA_GUARDRAIL__]"):
+                yield line
+                return
+
             stripped_line = line.strip()
 
             if self.current_state == self.streaming_text:
@@ -172,6 +184,7 @@ class OrakleMiddleware:
                         len(self.start_delimiter): -end_len
                     ].strip()
                     yield from self._execute_command(command_content)
+                    self.found_orakle()
                     # Preserve the newline from the original line
                     if line.endswith("\n"):
                         yield "\n"
@@ -201,11 +214,41 @@ class OrakleMiddleware:
                     self.malformed_end()
                 else:
                     self.command_buffer += line
+            elif self.current_state == self.orakle_only:
+                # In this state, we only accept more ORAKLE commands and ignore everything else.
+                if (
+                    stripped_line != self.start_delimiter
+                    and stripped_line.startswith(self.start_delimiter)
+                ) and (
+                    stripped_line.endswith(self.end_delimiter)
+                    or stripped_line.endswith(self.end_delimiter + ";")
+                ):
+                    # Handle subsequent single-line commands
+                    end_len = len(self.end_delimiter)
+                    if stripped_line.endswith(";"):
+                        end_len += 1
+                    command_content = stripped_line[
+                        len(self.start_delimiter): -end_len
+                    ].strip()
+                    yield from self._execute_command(command_content)
+                    if line.endswith("\n"):
+                        yield "\n"
+                elif stripped_line == self.start_delimiter:
+                    # Start of a multi-line command
+                    self.start_another_command()
+                elif stripped_line:
+                    # Ignore non-empty lines that are not ORAKLE commands
+                    logger.info(
+                        "ORAKLE GUARD: Ignoring trailing text after command:"
+                        f" '{stripped_line}'"
+                    )
 
         # Transitions
         start_command = streaming_text.to(buffering_command)
-        end_command = buffering_command.to(streaming_text, on="_on_end_command")
+        end_command = buffering_command.to(orakle_only, on="_on_end_command")
         malformed_end = buffering_command.to(streaming_text, on="_reset_buffer")
+        found_orakle = streaming_text.to(orakle_only)
+        start_another_command = orakle_only.to(buffering_command)
 
         # Transition Actions
         def _on_end_command(self) -> Generator[str, None, None]:
@@ -273,7 +316,7 @@ class OrakleMiddleware:
             yield parser.command_buffer
             logger.info("GUARDRAIL generated: unterminated ORAKLE command")
             yield (
-                "\n\n[AINARA GUARDRAIL] Error: Stream ended with an"
+                "\n\n[__AINARA_GUARDRAIL__] Error: Stream ended with an"
                 " unterminated ORAKLE command.\n\n"
             )
 
@@ -434,11 +477,11 @@ class OrakleMiddleware:
                 if selection_data.get("error_msg"):
                     error_msg = selection_data.get("error_msg")
                 else:
-                    error_msg = "Failed to select a skill from candidates."
+                    error_msg = "I can't complete that request."
                 logger.error(
                     f"ORAKLE: {error_msg} LLM response: {selection_response}"
                 )
-                yield f"\nError: {error_msg}\n\n"
+                yield f"\nI'm sorry, {error_msg}\n\n"
                 return
 
             logger.info(
@@ -873,7 +916,8 @@ class OrakleMiddleware:
                 )
                 continue
 
-        logger.warning(
-            "No Orakle capabilities found, is the Orakle server running?"
-        )
+        if self.orakle_servers:
+            logger.warning(
+                "No Orakle capabilities found, is the Orakle server running?"
+            )
         return capabilities

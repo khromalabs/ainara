@@ -30,16 +30,24 @@ class Service extends EventEmitter {
         this.args = args;
         this.url = url; // Health check URL
         this.errorMsg = null;
-
         this.process = null;
         this.healthy = false;
+        this.isStopping = false;
+        this.isStarting = false;
+        this.crashed = false;
     }
 
     start(timeout) {
         return new Promise((resolve, reject) => {
             Logger.log(`Starting ${this.name} service from: ${this.executablePath}`);
-
             try {
+                if (this.isStopping) {
+                    throw new Error(
+                        `Service ${this.name} is stopping, can't be started now.`
+                    );
+                }
+                this.crashed = false;
+                this.isStarting = true;
                 this.process = spawn(this.executablePath, this.args, {
                     stdio: 'pipe',
                     shell: false
@@ -54,7 +62,12 @@ class Service extends EventEmitter {
                 });
 
                 this.process.on('exit', (code) => {
+                    const wasIntentional = this.isStopping;
                     this.healthy = false;
+                    if (!wasIntentional) {
+                        Logger.error(`${this.name} process exited unexpectedly with code ${code}.`);
+                        this.crashed = true;
+                    }
                     this.emit('exit', code);
                 });
 
@@ -66,8 +79,15 @@ class Service extends EventEmitter {
                 });
 
                 this.waitForHealth(timeout)
-                    .then(() => resolve())
-                    .catch(err => { this.errorMsg = err.message; reject(err) });
+                    .then(() => {
+                        this.isStarting = false;
+                        resolve();
+                    })
+                    .catch(err => {
+                        this.isStarting = false;
+                        this.errorMsg = err.message;
+                        reject(err)
+                    });
 
             } catch (error) {
                 Logger.error(`Failed to spawn ${this.name} process:`, error);
@@ -108,18 +128,21 @@ class Service extends EventEmitter {
     async checkHealth() {
         try {
             const response = await fetch(this.url);
-            return response.ok;
+            this.healthy = response.ok;
         } catch (error) {
             // Don't log here, as it can be noisy. The caller can log if needed.
             this.errorMsg = error.message;
-            return false;
+            this.healthy = false;
         }
+        return this.healthy;
     }
 
     stop({ force = false } = {}) {
         if (!this.process || this.process.killed) {
             return Promise.resolve();
         }
+
+        this.isStopping = true;
 
         return new Promise((resolve, reject) => {
             if (force) {
@@ -144,6 +167,7 @@ class Service extends EventEmitter {
 
             this.process.once('exit', (code, signal) => {
                 clearTimeout(timeout);
+                this.isStopping = false;
                 Logger.log(`${this.name} exited gracefully with code ${code} signal ${signal}`);
                 resolve();
             });
@@ -151,6 +175,7 @@ class Service extends EventEmitter {
             this.process.once('error', (err) => {
                 clearTimeout(timeout);
                 Logger.error(`Error on ${this.name} process during stop: ${err.message}`);
+                this.isStopping = false;
                 this.errorMsg = err.message;
                 reject(err);
             });

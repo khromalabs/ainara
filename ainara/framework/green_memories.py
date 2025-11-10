@@ -52,6 +52,9 @@ logger = logging.getLogger(__name__)
 # This acts as a low-pass filter to prune irrelevant memories from active recall.
 MIN_RELEVANCE_THRESHOLD = 0.2
 
+MEMORY_MAX_WORDS = 80
+MEMORY_SOFT_MAX_WORDS = 60
+
 # Define a set of stopwords for normalization.
 # We use spaCy's list and can extend it if needed.
 STOPWORDS = set(SPACY_STOP_WORDS)
@@ -77,7 +80,7 @@ class GREENMemories:
             # semantic similarity to the query. 0.3 means 30% relevance, 70% semantic.
             "relevance_weight": 0.3,
             # The penalty applied to memories marked as 'past' to de-prioritize them.
-            "past_memory_penalty": 0.5,
+            "past_memory_penalty": 0.2,
             # The maximum boost applied to a memory that was just updated.
             "max_recency_boost": 1.5,
             # Controls how quickly the recency boost fades over time (in hours).
@@ -109,6 +112,7 @@ class GREENMemories:
         # Setup database / load key memories
         self._create_memories_table()
         self._update_schema()
+        self._truncate_long_memories()
         self.all_key_memories = self.get_key_memories()
         # Cache all topics on initialization to avoid repeated DB queries
         self.all_topics = self.get_all_topics()
@@ -419,6 +423,88 @@ class GREENMemories:
                 )
         except Exception as e:
             logger.error(f"Failed to update user_memories schema: {e}")
+
+    def _truncate_long_memories(self):
+        """
+        One-time process to find and truncate memories exceeding the word limit.
+        """
+        migration_flag = "long_memories_truncated_v1"
+        # !!! FORCE
+        self.storage.delete_metadata([migration_flag])
+        if self.storage.get_metadata(migration_flag) == "true":
+            return
+
+        logger.info("Running one-time check for long memories to truncate...")
+        try:
+            with self.storage.conn:
+                cursor = self.storage.conn.cursor()
+                cursor.execute("SELECT id, memory FROM user_memories")
+                all_memories = cursor.fetchall()
+
+                memories_to_update = []
+                for mem_id, mem_text in all_memories:
+                    if mem_text and len(mem_text.split()) > MEMORY_MAX_WORDS:
+                        truncated_text = self._truncate_memory_text(mem_text)
+                        memories_to_update.append((truncated_text, mem_id))
+
+                if memories_to_update:
+                    logger.info(
+                        f"Found {len(memories_to_update)} memories to truncate."
+                    )
+                    cursor.executemany(
+                        "UPDATE user_memories SET memory = ? WHERE id = ?",
+                        memories_to_update,
+                    )
+                    self.storage.set_metadata("vector_db_needs_reset", "true")
+                    logger.info(
+                        "Flagged vector DB for reset due to memory truncation."
+                    )
+                else:
+                    logger.info("No long memories found that need truncation.")
+
+                self.storage.set_metadata(migration_flag, "true")
+        except Exception as e:
+            logger.error(f"Failed during one-time memory truncation: {e}")
+
+    def _truncate_memory_text(self, text: str) -> str:
+        """
+        Truncates memory text if it exceeds word limits, trying to preserve
+        full sentences.
+        """
+        words = text.split()
+        word_count = len(words)
+
+        # If text is within the soft limit, no action needed.
+        if word_count <= MEMORY_MAX_WORDS:
+            return text
+
+        # If text is over the soft limit, try to find the next sentence end.
+        # We search from the word just before the soft limit up to the hard limit.
+        for i in range(
+            MEMORY_SOFT_MAX_WORDS - 1, min(word_count, MEMORY_MAX_WORDS)
+        ):
+            if words[i].endswith("."):
+                # Found a sentence boundary within the acceptable range.
+                truncated_text = " ".join(words[: i + 1])
+                logger.warning(
+                    f"Memory text is long ({word_count} words). Truncating to"
+                    f" {len(truncated_text.split())} words at sentence end."
+                )
+                return truncated_text
+
+        # If no suitable sentence end was found, or if the text exceeds the hard limit,
+        # apply the hard truncation.
+        if word_count > MEMORY_MAX_WORDS:
+            logger.warning(
+                f"Memory text is too long ({word_count} words) and no suitable"
+                " sentence end found. Hard truncating to"
+                f" {MEMORY_MAX_WORDS} words."
+            )
+            return " ".join(words[:MEMORY_MAX_WORDS]) + "..."
+
+        # If text is between the soft and hard limits but no sentence end was found,
+        # return the original text.
+        return text
 
     def _dict_from_row(self, row: Any) -> Dict:
         """Converts a sqlite3.Row to a dictionary and parses JSON fields."""
@@ -1175,6 +1261,8 @@ class GREENMemories:
                     source_ids.append(new_id)
             updated_source_ids_json = json.dumps(source_ids)
 
+            new_text = self._truncate_memory_text(new_text)
+
             # Update in SQLite, boosting relevance
             with self.storage.conn:
                 cursor = self.storage.conn.execute(
@@ -1241,6 +1329,8 @@ class GREENMemories:
                 "Attempted to create a memory with no text. Skipping."
             )
             return None
+
+        memory_text = self._truncate_memory_text(memory_text)
 
         if target_section not in ["key_memories", "extended_memories"]:
             logger.warning(
@@ -1549,51 +1639,108 @@ class GREENMemories:
             elif action == "reinforce":
                 memory_id = decision.get("memory_id")
                 new_text = decision.get("new_memory_text")
+                duplicates_to_delete = decision.get("duplicates", [])
 
                 if not memory_id:
                     logger.warning(
                         "LLM chose 'reinforce' but provided no memory_id."
                     )
-                else:
-                    # Calculate decayed relevance increment for this session
-                    if session_update_counts is None:
-                        session_update_counts = {}
-                    update_count = session_update_counts.get(memory_id, 0)
-                    increment = self.scoring_config[
-                        "session_relevance_increment"
-                    ] * (
-                        self.scoring_config["session_relevance_decay_rate"]
-                        ** update_count
-                    )
-                    session_update_counts[memory_id] = update_count + 1
+                    return None
 
-                    if new_text:
-                        # This is a reinforcement that also updates the memory text.
-                        logger.info(
-                            f"LLM decided to update memory: {memory_id}"
+                memory_id_to_keep = memory_id
+
+                # Programmatically handle consolidation of duplicates
+                if duplicates_to_delete:
+                    all_candidate_ids = list(
+                        set(duplicates_to_delete + [memory_id])
+                    )
+
+                    # Fetch all candidate memories from DB
+                    placeholders = ",".join("?" for _ in all_candidate_ids)
+                    cursor = self.storage.conn.cursor()
+                    cursor.execute(
+                        "SELECT * FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        all_candidate_ids,
+                    )
+                    candidate_memories = [
+                        self._dict_from_row(row) for row in cursor.fetchall()
+                    ]
+
+                    if candidate_memories:
+                        # Find the one with the highest relevance score
+                        candidate_memories.sort(
+                            key=lambda m: m.get("relevance", 0), reverse=True
                         )
-                        # The return from _update_memory is the updated memory object
-                        # which needs to be passed back to the main loop.
-                        return self._update_memory(
-                            memory_id,
-                            new_text,
-                            user_message,
-                            assistant_message,
-                            increment=increment,
+                        memory_to_keep = candidate_memories[0]
+                        memory_id_to_keep = memory_to_keep["id"]
+
+                        # The rest are to be deleted
+                        duplicates_to_delete = [
+                            m["id"]
+                            for m in candidate_memories
+                            if m["id"] != memory_id_to_keep
+                        ]
+
+                        logger.info(
+                            "Consolidating duplicates. Keeping memory"
+                            f" {memory_id_to_keep} (relevance:"
+                            f" {memory_to_keep['relevance']:.2f}) and"
+                            f" deleting {len(duplicates_to_delete)} others."
                         )
                     else:
-                        # This is a simple reinforcement, just boosting the score.
-                        logger.info(
-                            f"LLM decided to reinforce memory: {memory_id}"
+                        logger.warning(
+                            "LLM suggested duplicates for consolidation, but"
+                            " none were found in the database."
                         )
-                        self._reinforce_memory(memory_id, increment=increment)
+                        duplicates_to_delete = []  # Reset to avoid errors
+
+                # Calculate decayed relevance increment for this session
+                if session_update_counts is None:
+                    session_update_counts = {}
+                update_count = session_update_counts.get(memory_id_to_keep, 0)
+                increment = self.scoring_config[
+                    "session_relevance_increment"
+                ] * (
+                    self.scoring_config["session_relevance_decay_rate"]
+                    ** update_count
+                )
+                session_update_counts[memory_id_to_keep] = update_count + 1
+
+                processed_memory = None
+                if new_text:
+                    new_text = self._truncate_memory_text(new_text)
+
+                    # This is a reinforcement that also updates the memory text.
+                    logger.info(
+                        f"LLM decided to update memory: {memory_id_to_keep}"
+                    )
+                    # The return from _update_memory is the updated memory object
+                    # which needs to be passed back to the main loop.
+                    processed_memory = self._update_memory(
+                        memory_id_to_keep,
+                        new_text,
+                        user_message,
+                        assistant_message,
+                        increment=increment,
+                    )
+                else:
+                    # This is a simple reinforcement, just boosting the score.
+                    logger.info(
+                        f"LLM decided to reinforce memory: {memory_id_to_keep}"
+                    )
+                    self._reinforce_memory(
+                        memory_id_to_keep, increment=increment
+                    )
 
                 # Handle duplicates for deletion
-                duplicates_to_delete = decision.get("duplicates", [])
                 if duplicates_to_delete:
                     self._delete_memories(
-                        duplicates_to_delete, consolidate_into_id=memory_id
+                        duplicates_to_delete,
+                        consolidate_into_id=memory_id_to_keep,
                     )
+
+                return processed_memory
 
             elif action == "create":
                 logger.info("LLM decided to create a new memory.")

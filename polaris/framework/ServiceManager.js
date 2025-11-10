@@ -38,6 +38,7 @@ class ServiceManager {
         }
         ServiceManager.instance = this;
         this.externalProgressReceived = false;
+        this.serviceRestartCounters = {};
 
 
         // Determine executable paths based on platform
@@ -265,26 +266,56 @@ class ServiceManager {
         monitor();
     }
 
-    async checkServicesHealth() {
-        let healthyCount = 0;
-        const totalServices = Object.keys(this.services).length;
+    async restartService(service) {
+        const serviceId = service.id;
+        this.serviceRestartCounters[serviceId] = (
+            this.serviceRestartCounters[serviceId] || 0
+        ) + 1;
 
+        if (this.serviceRestartCounters[serviceId] > 2) {
+            Logger.error(`Service ${service.name} has failed to restart multiple times. Giving up.`);
+            if (this.windowManager && this.windowManager.mainWindow) {
+                const { dialog } = require('electron');
+                dialog.showErrorBox(
+                    'Critical Service Failure',
+                    `The "${service.name}" background service has failed repeatedly and could not be restarted. Please restart the application.`
+                );
+            }
+            return;
+        }
+
+        Logger.info(`Attempting to restart service ${service.name} (Attempt ${this.serviceRestartCounters[serviceId]})...`);
+        try {
+            await service.stop({ force: true });
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await service.start(600000);
+            Logger.info(`Service ${service.name} restarted successfully.`);
+        } catch (error) {
+            Logger.error(`Failed to restart service ${service.name}: ${error.message}`);
+        }
+    }
+
+    async checkServicesHealth() {
+        // Logger.info(`totalServices: ${Object.keys(this.services).length}`);
         for (const service of Object.values(this.services)) {
-            const wasHealthy = service.healthy;
-            service.healthy = await service.checkHealth();
-            if (service.healthy) {
-                healthyCount++;
-            }
-            if (!wasHealthy && service.healthy) {
-                Logger.log(`${service.name} is now healthy`);
-            }
-            else if (wasHealthy && !service.healthy) {
-                // Only log error if it wasn't already unhealthy
-                Logger.error(`${service.name} is no longer healthy`);
+            // Logger.info(`------------------------`);
+            // Logger.info(`SERVICE: ${service.name}`);
+            if (await service.checkHealth()) {
+                // is healthy
+                // Logger.info(`Service is healthy`);
+                this.serviceRestartCounters[service.id] = 0;
+            } else {
+                // is NOT healthy
+                if (!service.isStarting) {
+                    Logger.error(`Service ${service.name} is no longer healthy. Initiating restart.`);
+                    this.restartService(service);
+                    this.serviceRestartCounters[service.id]++;
+                }
             }
         }
 
-        return healthyCount == totalServices;
+        // All restart counters are zero = all services are healthy
+        return Object.values(this.serviceRestartCounters).every(el => el === 0);
     }
 
     async stopServices({ force = false } = {}) {

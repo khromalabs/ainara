@@ -1325,7 +1325,7 @@ async function displayFeaturedModels(existingProviders = []) {
     }
 
     const featured = [
-        { id: 'xai-grok-4-fast-non-reasoning', name: 'xAI Grok 4 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
+        { id: 'xai-grok-4-fast-reasoning', name: 'xAI Grok 4 Fast (Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
         { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3 (Chat)', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
     ];
 
@@ -3542,7 +3542,7 @@ async function finishSetup() {
 
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.9.7');
+    config.set('setup.version', '0.9.8');
     config.set('setup.timestamp', new Date().toISOString());
 
     // Save the final config state including setup completion flags

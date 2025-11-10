@@ -233,43 +233,45 @@ class BaseComponent extends HTMLElement {
             codeBlocks.push(`<span class="orakle-skill" title="Orakle Skill">${skill}</span>`);
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
-        // Extract and replace triple backtick code blocks
-        text = text.replace(/```([^ \n]+)([\s\S]*?)```/gm, (match, codetype, content) => {
-            // if (this.isMarkdownTable(content)) {
-            // TODO Disabled markdown table process by now
-            if (0) { // eslint-disable-line no-constant-condition
-                let html_content = this.renderSortableTable(content);
-                codeBlocks.push(`<div class="code-block-wrapper">
+
+        if (generateLinks) {
+            text = text.replace(/```([^ \n]*)([\s\S]*?)```/gm, (match, codetype, content) => {
+                // if (this.isMarkdownTable(content)) {
+                // TODO Disabled markdown table process by now
+                if (0) { // eslint-disable-line no-constant-condition
+                    let html_content = this.renderSortableTable(content);
+                    codeBlocks.push(`<div class="code-block-wrapper">
                     <span class="code-type">markdown2html</span>
                     <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
                     <div>${html_content}</div>
                 </div>`);
-            } else {
-                codeBlocks.push(`<div class="code-block-wrapper">
+                } else {
+                    codeBlocks.push(`<div class="code-block-wrapper">
                     <span class="code-type">${codetype}</span>
                     <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
                     <code>${content}</code>
                 </div>`);
-                return `%%CODEBLOCK${blockIndex++}%%`;
-            }
-        });
-        // Extract and replace single backtick inline code
-        text = text.replace(/`([\s\S]*?)`/gm, (match, content) => {
+                    return `%%CODEBLOCK${blockIndex++}%%`;
+                }
+            });
+            // Extract and replace single backtick inline code
+            text = text.replace(/`([\s\S]*?)`/gm, (match, content) => {
                 codeBlocks.push(`<div class="code-block-wrapper-inline">
                     <code>${content}</code>
                 </div>`);
-            return `%%CODEBLOCK${blockIndex++}%%`;
-        });
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            });
+        }
 
-            // [/^### (.*?)\n/gm, '<h3>$1</h3>'],                       // H3
-            // [/^## (.*?)\n/gm, '<h2>$1</h2>'],                        // H2
-            // [/^# (.*?)\n/gm, '<h1>$1</h1>'],                         // H1
-
+        // Extract and replace triple backtick code blocks
         // Define patterns as an array of [regex, replacement] pairs
         const markdownPatterns = [
-            [/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>'],  // Bold
-            [/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>'],                // Italic
-            [/\n/gm, '<br>']                                         // Line breaks (CR)
+            [/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>'], // Bold
+            [/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>'], // Italic
+            [/\n/gm, '<br>'], // Line breaks (CR)
+            [/^### (.*?)\n/gm, '<b>$1</b>'], // H3
+            [/^## (.*?)\n/gm, '<b>$1</b>'], // H2
+            [/^# (.*?)\n/gm, '<b>$1</b>'], // H1
         ];
 
         // Apply all replacements efficiently

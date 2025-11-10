@@ -49,7 +49,7 @@ class HealthMonitor:
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._monitor, daemon=True)
         self.failed_attempts = 0
-        self.last_health_check_fail = 0
+        self.last_timeout = 0
 
         if shutdown_callback:
             self.shutdown = shutdown_callback
@@ -91,7 +91,7 @@ class HealthMonitor:
         current_time = time.time()
         self.last_health_check = current_time
         self.failed_attempts = 0
-        self.last_health_check_fail = 0
+        self.last_timeout = 0
 
         if not self.started:
             self.health_check_timestamps.append(current_time)
@@ -117,14 +117,14 @@ class HealthMonitor:
         logger.info("Health queries monitor thread running.")
         while not self._stop_event.is_set():
             # logger.info("Health queries monitor thread loop")
-            if self.last_health_check_fail:
-                timeout_reference = time.time() - self.last_health_check_fail
-                # logger.info(f"timeout_reference based on last_health_check_fail: {timeout_reference}")
+            if self.last_timeout:
+                timeout_reference = time.time() - self.last_timeout
+                # logger.info(f"timeout_reference based on last_timeout: {timeout_reference}")
             else:
                 timeout_reference = time.time() - self.last_health_check
                 # logger.info(f"timeout_reference based on last_health_check: {timeout_reference}")
             if timeout_reference >= self.timeout:
-                self.last_health_check_fail = time.time()
+                self.last_timeout = time.time()
                 self.failed_attempts += 1
                 logger.error(
                     f"No health check received for {timeout_reference:.2f} "

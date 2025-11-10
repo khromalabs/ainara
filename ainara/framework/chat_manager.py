@@ -819,13 +819,18 @@ class ChatManager:
                 msg_tokens = msg["tokens"]
             else:
                 raise RuntimeError("Missing tokens")
-            if system_tokens + tokens_used + msg_tokens <= available_tokens:
+
+            is_sticky = msg.get("sticky", False)
+            if (
+                is_sticky
+                or system_tokens + tokens_used + msg_tokens <= available_tokens
+            ):
                 kept_exchanges.insert(0, msg)  # Add to front to maintain order
                 tokens_used += msg_tokens
                 kept_count += 1
                 logger.info(
                     f"Keeping {msg.get('role', 'unknown')} message:"
-                    f" {msg_tokens} tokens"
+                    f" {msg_tokens} tokens (Sticky: {is_sticky})"
                 )
             else:
                 # We can't fit any more messages
@@ -837,7 +842,6 @@ class ChatManager:
                 # Add skipped message to the buffer for summarization
                 with self.buffer_lock:
                     self.trimmed_messages_buffer.append(msg)
-                break
 
         logger.info(
             f"Kept {kept_count} additional messages, skipped"
@@ -1018,6 +1022,7 @@ class ChatManager:
                     config.config["memory"] = {}
                 config.config["memory"]["enabled"] = False
                 config.save()
+                self.user_profile_summary = ""
                 response = "Memory disabled"
                 state_changed = True
                 new_state = False
@@ -1118,11 +1123,11 @@ class ChatManager:
             "describe", "design", "develop", "differentiate", "evaluate",
             "explain", "find", "formulate", "investigate", "justify",
             "predict", "recommend", "suggest", "summarize", "synthesize",
-            "write",
+            "write", "tell"
         }
         # Phrases that indicate hypothetical or causal reasoning
         hypothetical_phrases = [
-            "what if", "what would", "what are the", "what is the",
+            "what if", "what would", "what are the", "what is the", "would you"
         ]
         # Interrogatives that often require explanation
         explanatory_interrogatives = {"why", "how"}
@@ -1269,7 +1274,7 @@ class ChatManager:
             guardrail_message = ""
 
             for chunk in stream_processor:
-                if isinstance(chunk, str) and "[AINARA GUARDRAIL]" in chunk:
+                if isinstance(chunk, str) and "[__AINARA_GUARDRAIL__]" in chunk:
                     has_guardrail = True
                     guardrail_message += chunk
                     # Stop streaming to the client for this attempt
@@ -1289,13 +1294,13 @@ class ChatManager:
                 turn_chat_history[:] = [
                     msg
                     for msg in turn_chat_history
-                    if "[AINARA GUARDRAIL]" not in msg.get("content", "")
+                    if "[__AINARA_GUARDRAIL__]" not in msg.get("content", "")
                 ]
 
                 if guardrail_retries > self.max_guardrail_retries:
                     logger.error("Max retries reached. Responding with error.")
                     error_message = guardrail_message.replace(
-                        "[AINARA GUARDRAIL]", ""
+                        "[__AINARA_GUARDRAIL__]", ""
                     ).strip()
                     # Yield a final error message to the client
                     yield f"\n\nError: {error_message}\n\n"
@@ -1317,7 +1322,7 @@ class ChatManager:
         self.chat_history[:] = [
             msg
             for msg in self.chat_history
-            if "[AINARA GUARDRAIL]" not in msg.get("content", "")
+            if "[__AINARA_GUARDRAIL__]" not in msg.get("content", "")
         ]
 
     def chat_completion(
@@ -1338,6 +1343,19 @@ class ChatManager:
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
             stream = "cli" if stream else None
+
+        # --- Handle message flags ---
+        save_to_memory = True
+        is_sticky = False
+        if "[__no_memory__]" in question:
+            save_to_memory = False
+            question = question.replace("[__no_memory__]", "").strip()
+            logger.info("Message flagged with [__no_memory__].")
+
+        if "[__sticky__]" in question:
+            is_sticky = True
+            question = question.replace("[__sticky__]", "").strip()
+            logger.info("Message flagged with [__sticky__].")
 
         # Handle special commands
         command_response = self._handle_command(question, stream)
@@ -1375,7 +1393,7 @@ class ChatManager:
 
         processed_answer = ""
         try:
-            if self.memory_enabled and self.chat_memory:
+            if self.memory_enabled and self.chat_memory and save_to_memory:
                 self.chat_memory.add_entry(question, "user")
 
             # Check if the last message is from a user, and if so, log a warning
@@ -1390,6 +1408,8 @@ class ChatManager:
                 )
 
             self.llm.add_msg(question, self.chat_history, "user")
+            if is_sticky:
+                self.chat_history[-1]["sticky"] = True
 
             # --- Summary and Memory Injection ---
             turn_chat_history = self.chat_history
@@ -1689,7 +1709,7 @@ class ChatManager:
                 )
 
                 # Log assistant response to chat memory
-                if self.memory_enabled and self.chat_memory:
+                if self.memory_enabled and self.chat_memory and save_to_memory:
                     self.chat_memory.add_entry(processed_answer, "assistant")
             else:
                 # If there's no processed answer, add a placeholder
@@ -1698,7 +1718,7 @@ class ChatManager:
                 )
                 logger.warning("No answer from the LLM")
                 self.llm.add_msg("-", self.chat_history, "assistant")
-                if self.memory_enabled and self.chat_memory:
+                if self.memory_enabled and self.chat_memory and save_to_memory:
                     self.chat_memory.add_entry("-", "assistant")
 
             # Stop loading animation

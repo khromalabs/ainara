@@ -204,7 +204,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         return " ".join(cleaned_tokens)
 
     def match(
-        self, query: str, threshold: float = 0.15, top_k: int = 5
+        self, query: str, threshold: float = 0.15, top_k: int = 6
     ) -> List[Dict[str, Any]]:
         """
         Find the best matching skills for a given query.
@@ -258,7 +258,14 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
 
         # Sort by score and usage count
         matches.sort(
-            key=lambda x: (x["score"], x["usage_count"]), reverse=True
+            key=lambda x: (
+                0  # Skills with boost_factor >= 3 are always present
+                if self.skills_registry[x["skill_id"]]
+                .get("metadata", {})
+                .get("embeddings_boost_factor", 1.0)
+                >= 3
+                else 1-x["score"]
+            )
         )
 
         logger.info("MATCH MATCHES: " + pprint.pformat(matches))
