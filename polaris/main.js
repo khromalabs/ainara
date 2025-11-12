@@ -800,11 +800,16 @@ async function updateProviderSubmenu() {
             return;
         }
 
+        function truncateToDecimals(num, dec = 1) {
+            const calcDec = Math.pow(10, dec);
+            return Math.trunc(num * calcDec) / calcDec;
+        }
+
         // Create menu items for each provider
         const providerItems = providers.map(provider => {
             const model = provider.model || 'Unknown model';
             const context_window = provider.context_window ?
-                "(C" + (provider.context_window / 1024) + "K)" :
+                "(C" + truncateToDecimals(provider.context_window / 1024) + "K)" :
                 '';
             return {
                 label: `${model} ${context_window}`,
@@ -835,6 +840,7 @@ async function updateProviderSubmenu() {
             };
         });
 
+        providerItems.sort((a,b) => a.label.localeCompare(b.label));
 
         // Create a new menu template
         const menuTemplate = [

@@ -373,7 +373,7 @@ class OrakleMiddleware:
 
             # Format skill description with parameters
             skill_desc = (
-                f"## Skill id {i}: {skill_id} (match score: {score:.2f})\n\n"
+                f"## Skill id {skill_id} (match score: {score:.2f})\n\n"
             )
             skill_desc += (
                 "Description:"
@@ -431,9 +431,12 @@ class OrakleMiddleware:
 
         selection_response = self.llm.chat(
             chat_history=self.llm.prepare_chat(
-                system_message=self.system_message, new_message=prompt
+                system_message=self.system_message,
+                new_message=prompt,
             ),
             stream=False,
+            # Enforce reasoning if available
+            reasoning_level=0.3
         )
 
         logger.info(f"ORAKLE selection_response: {selection_response}")

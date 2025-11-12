@@ -1123,14 +1123,14 @@ class ChatManager:
             "describe", "design", "develop", "differentiate", "evaluate",
             "explain", "find", "formulate", "investigate", "justify",
             "predict", "recommend", "suggest", "summarize", "synthesize",
-            "write", "tell"
+            "write", "tell", "analysis", "scrutinize"
         }
         # Phrases that indicate hypothetical or causal reasoning
         hypothetical_phrases = [
-            "what if", "what would", "what are the", "what is the", "would you"
+            "what if", "what would", "what are", "what is", "would you"
         ]
         # Interrogatives that often require explanation
-        explanatory_interrogatives = {"why", "how"}
+        explanatory_interrogatives = {"why", "how", "what"}
 
         # --- Rule-based scoring ---
         # Rule 1: Check for high-impact reasoning verbs (especially as the root)

@@ -150,7 +150,8 @@ class GREENMemories:
             try:
                 self.topic_matcher_model = SentenceTransformer(
                     embedding_model,
-                    cache_folder=config.get("cache.directory")
+                    cache_folder=config.get("cache.directory"),
+                    # device="cpu"
                 )
                 logger.info(f"Loaded topic matcher model: {embedding_model}")
             except Exception as e:
@@ -174,6 +175,9 @@ class GREENMemories:
             logger.info(
                 f"Using {vector_type} vector backend for user profile memories"
             )
+
+            self._deduplicate_existing_memories()
+
             # Sync profile to vector store on startup if needed.
             # First, check the explicit flag.
             needs_reset = self.storage.get_metadata("vector_db_needs_reset")
@@ -474,7 +478,7 @@ class GREENMemories:
         words = text.split()
         word_count = len(words)
 
-        # If text is within the soft limit, no action needed.
+        # If text is within the hard limit, no action needed.
         if word_count <= MEMORY_MAX_WORDS:
             return text
 
@@ -505,6 +509,119 @@ class GREENMemories:
         # If text is between the soft and hard limits but no sentence end was found,
         # return the original text.
         return text
+
+    def _deduplicate_existing_memories(self):
+        """
+        One-time process to find and consolidate duplicate memories.
+        """
+        migration_flag = "existing_memories_deduplicated_v1"
+        if self.storage.get_metadata(migration_flag) == "true":
+            return
+
+        logger.info("Running one-time check for duplicate memories...")
+        try:
+            with self.storage.conn:
+                cursor = self.storage.conn.cursor()
+                cursor.execute("SELECT * FROM user_memories")
+                all_memories_rows = cursor.fetchall()
+                all_memories = [
+                    self._dict_from_row(row) for row in all_memories_rows
+                ]
+
+            normalized_map = {}
+            for mem in all_memories:
+                normalized_text = self._normalize_memory_text(mem["memory"])
+                if normalized_text not in normalized_map:
+                    normalized_map[normalized_text] = []
+                normalized_map[normalized_text].append(mem)
+
+            memories_to_delete_ids = []
+            memories_to_update = []
+            total_duplicates_found = 0
+
+            for _, duplicates in normalized_map.items():
+                if len(duplicates) > 1:
+                    total_duplicates_found += len(duplicates) - 1
+                    # Sort by relevance to find the one to keep
+                    duplicates.sort(
+                        key=lambda m: m.get("relevance", 0), reverse=True
+                    )
+                    memory_to_keep = duplicates[0]
+                    memories_to_remove = duplicates[1:]
+
+                    # Consolidate relevance and source IDs
+                    total_relevance_from_dupes = sum(
+                        m.get("relevance", 0) for m in memories_to_remove
+                    )
+
+                    kept_source_ids = set(
+                        memory_to_keep.get("source_message_ids") or []
+                    )
+                    for mem in memories_to_remove:
+                        for msg_id in mem.get("source_message_ids") or []:
+                            kept_source_ids.add(msg_id)
+
+                    updated_relevance = (
+                        memory_to_keep.get("relevance", 0)
+                        + total_relevance_from_dupes
+                    )
+                    updated_source_ids_json = json.dumps(
+                        list(kept_source_ids)
+                    )
+
+                    memories_to_update.append(
+                        (
+                            updated_relevance,
+                            updated_source_ids_json,
+                            memory_to_keep["id"],
+                        )
+                    )
+                    memories_to_delete_ids.extend(
+                        [m["id"] for m in memories_to_remove]
+                    )
+
+            if memories_to_delete_ids:
+                logger.info(
+                    f"Found {total_duplicates_found} duplicate memories to"
+                    " consolidate."
+                )
+                with self.storage.conn:
+                    cursor = self.storage.conn.cursor()
+                    # Update the kept memories
+                    cursor.executemany(
+                        "UPDATE user_memories SET relevance = ?,"
+                        " source_message_ids = ? WHERE id = ?",
+                        memories_to_update,
+                    )
+                    # Delete the duplicates
+                    placeholders = ",".join(
+                        "?" for _ in memories_to_delete_ids
+                    )
+                    cursor.execute(
+                        "DELETE FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        memories_to_delete_ids,
+                    )
+
+                if self.vector_storage:
+                    self.vector_storage.delete(memories_to_delete_ids)
+                    logger.info(
+                        f"Deleted {len(memories_to_delete_ids)} duplicates"
+                        " from vector store."
+                    )
+
+                self.storage.set_metadata("vector_db_needs_reset", "true")
+                logger.info(
+                    "Flagged vector DB for reset due to de-duplication."
+                )
+            else:
+                logger.info("No duplicate memories found.")
+
+            self.storage.set_metadata(migration_flag, "true")
+        except Exception as e:
+            logger.error(
+                f"Failed during one-time memory de-duplication: {e}"
+            )
 
     def _dict_from_row(self, row: Any) -> Dict:
         """Converts a sqlite3.Row to a dictionary and parses JSON fields."""
@@ -1171,6 +1288,64 @@ class GREENMemories:
         with self._db_lock:
             self._decay_memory_relevance(decay_factor)
 
+    def _find_and_handle_duplicate(
+        self,
+        memory_text: str,
+        user_message: Dict,
+        assistant_message: Dict,
+    ) -> Optional[Dict]:
+        """
+        Checks for a duplicate memory before creation and reinforces it if found.
+
+        Returns:
+            The updated memory object if a duplicate was found and handled,
+            otherwise None.
+        """
+        if not self.vector_storage:
+            return None  # Cannot perform check without vector storage
+
+        normalized_new_text = self._normalize_memory_text(memory_text)
+        if not normalized_new_text:
+            return None  # Cannot check empty memories
+
+        # Phase 1: High-similarity vector search for candidates
+        # We use a very low distance (high similarity) threshold.
+        # A score of 0.1 is very similar.
+        candidates_with_scores = self.vector_storage.search_with_scores(
+            normalized_new_text, limit=5
+        )
+
+        # Filter for very high similarity
+        candidates = [
+            doc.get("metadata", {})
+            for doc, score in candidates_with_scores
+            if score < 0.1
+        ]
+
+        if not candidates:
+            return None
+
+        # Phase 2: Verify with exact normalized match
+        for candidate in candidates:
+            normalized_candidate_text = self._normalize_memory_text(
+                candidate.get("memory", "")
+            )
+            if normalized_new_text == normalized_candidate_text:
+                logger.info(
+                    f"Found duplicate memory (ID: {candidate['id']})."
+                    " Reinforcing existing instead of creating new."
+                )
+                # Use _update_memory to handle reinforcement and source ID merging.
+                return self._update_memory(
+                    candidate["id"],
+                    candidate["memory"],  # use existing text
+                    user_message,
+                    assistant_message,
+                    increment=1.0,
+                )
+
+        return None
+
     def _decay_memory_relevance(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
         logger.info(f"Applying relevance decay (factor: {decay_factor})...")
@@ -1230,6 +1405,52 @@ class GREENMemories:
     ) -> Optional[Dict]:
         """Updates an existing memory's text and boosts its relevance."""
         try:
+            # Check if this update would create a duplicate of another memory
+            normalized_new_text = self._normalize_memory_text(new_text)
+            if self.vector_storage and normalized_new_text:
+                # Find candidates
+                candidates_with_scores = self.vector_storage.search_with_scores(
+                    normalized_new_text, limit=5
+                )
+                candidates = [
+                    doc.get("metadata", {})
+                    for doc, score in candidates_with_scores
+                    if score < 0.1
+                    and doc.get("metadata", {}).get("id") != memory_id
+                ]
+
+                for candidate in candidates:
+                    normalized_candidate_text = self._normalize_memory_text(
+                        candidate.get("memory", "")
+                    )
+                    if normalized_new_text == normalized_candidate_text:
+                        logger.warning(
+                            f"Update to memory {memory_id} would create a"
+                            f" duplicate of {candidate['id']}. Consolidating"
+                            " instead."
+                        )
+                        # Consolidate memory_id into candidate['id']
+                        # First, get the relevance of the memory we are about to delete
+                        cursor = self.storage.conn.cursor()
+                        cursor.execute(
+                            "SELECT relevance FROM user_memories WHERE id = ?",
+                            (memory_id,),
+                        )
+                        row = cursor.fetchone()
+                        relevance_to_transfer = row[0] if row else 0
+
+                        # Delete the old memory
+                        self._delete_memories([memory_id])
+
+                        # Update the existing duplicate, transferring relevance
+                        return self._update_memory(
+                            candidate["id"],
+                            candidate["memory"],  # use its own text
+                            user_message,
+                            assistant_message,
+                            increment=increment + relevance_to_transfer,
+                        )
+
             # First, get the existing memory to preserve other metadata
             cursor = self.storage.conn.cursor()
             cursor.execute(
@@ -1329,6 +1550,13 @@ class GREENMemories:
                 "Attempted to create a memory with no text. Skipping."
             )
             return None
+
+        # Check for duplicates before proceeding
+        existing_duplicate = self._find_and_handle_duplicate(
+            memory_text, user_message, assistant_message
+        )
+        if existing_duplicate:
+            return existing_duplicate
 
         memory_text = self._truncate_memory_text(memory_text)
 

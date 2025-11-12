@@ -90,6 +90,7 @@ class ComRing extends BaseComponent {
 
             // Setup keyboard shortcut configuration
             this.triggerKey = this.config.get('shortcuts.trigger', 'Space');
+            this.showKey = this.config.get('shortcuts.show', 'F1');
             console.log('ComRing: Keyboard shortcuts initialized:', { trigger: this.triggerKey });
 
             this.stt = new WhisperSTT();
@@ -500,11 +501,12 @@ class ComRing extends BaseComponent {
                     event.preventDefault();
                     event.stopPropagation();
                     if (this.currentView === 'ring') {
-                        if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
-                            this.switchToDocumentView(this.docFormat);
-                        } else {
-                            await this.fetchAndDisplayChatHistory();
-                        }
+                        await this.fetchAndDisplayChatHistory();
+                        // if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
+                        //     this.switchToDocumentView(this.docFormat);
+                        // } else {
+                        //     await this.fetchAndDisplayChatHistory();
+                        // }
                     } else if (this.currentView === 'document') {
                         this.switchToRingView();
                     }
@@ -996,10 +998,12 @@ class ComRing extends BaseComponent {
 
     async showHelp() {
         const helpTitle = 'Help & Shortcuts';
+// - **/refresh**: Refresh the frontend application.
         const helpContent = `
 ### Keyboard Shortcuts
+- **${this.showKey}**: Show the UI interface (Also clicking on tray icon).
 - **${this.triggerKey}**: Hold to record your voice.
-- **Tab**: Toggle between Ring and Document view (history if no previous documents present).
+- **Tab**: Toggle between Ring and Document Mode chat history view.
 - **Escape**: Abort current action, hide Polaris, in document view exit view."
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.

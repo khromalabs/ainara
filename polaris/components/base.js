@@ -219,13 +219,13 @@ class BaseComponent extends HTMLElement {
         console.log(`Total tables initialized: ${totalTables}`);
     }
 
-    parseMarkdown(text_input, generateLinks = false) {
+    parseMarkdown(text, generateLinks = false) {
         // Store code blocks temporarily
         const codeBlocks = [];
         let blockIndex = 0;
 
         // Sanitize HTML to prevent XSS attacks
-        let text = this.sanitizeText(text_input);
+        text = this.sanitizeText(text);
 
         // Blocks extracted to prevent markdown parsing on them
         // Extract ORAKLE skills blocks
@@ -279,25 +279,25 @@ class BaseComponent extends HTMLElement {
             return acc.replace(pattern, repl);
         }, text);
 
-        // Handle links [text](url)
-        text = text.replace(/\[(.*?)\]\((.*?)\)/gm, function(match, linkText, url) {
-            // Extract domain from URL
-            let domain = "";
-            try {
-                domain = new URL(url).hostname.replace(/^www\./, '');
-                // Truncate if too long
-                if (domain.length > 20) {
-                    domain = domain.substring(0, 17) + '...';
-                }
-            } catch (e) {
-                // If URL parsing fails, skip domain
-                console.log("Error parsing: " + e);
-            }
-
-            // Create a properly formatted HTML string
-            return '"' + linkText + '"' +
-                   (domain ? ' [' + domain + ']' : '');
-        });
+        // // Handle links [text](url)
+        // text = text.replace(/\[(.*?)\]\((.*?)\)/gm, function(match, linkText, url) {
+        //     // Extract domain from URL
+        //     let domain = "";
+        //     try {
+        //         domain = new URL(url).hostname.replace(/^www\./, '');
+        //         // Truncate if too long
+        //         if (domain.length > 20) {
+        //             domain = domain.substring(0, 17) + '...';
+        //         }
+        //     } catch (e) {
+        //         // If URL parsing fails, skip domain
+        //         console.log("Error parsing: " + e);
+        //     }
+        //
+        //     // Create a properly formatted HTML string
+        //     return '"' + linkText + '"' +
+        //            (domain ? ' [' + domain + ']' : '');
+        // });
 
         // Autolink URLs
         if (generateLinks) {
