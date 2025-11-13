@@ -82,7 +82,7 @@ class ComRingWindow extends BaseWindow {
         const { ipcMain, screen } = require('electron');
 
         ipcMain.on('set-view-mode', (event, args) => {
-            if (args.view === 'document') {
+            if (args.view === 'document' && !this.isDocumentView) {
                 const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
 
                 // const docWidth = this.config.get('documentView.width', 800);
@@ -104,7 +104,7 @@ class ComRingWindow extends BaseWindow {
                 this.animateBounds({ x: targetX, y: targetY, width: docWidth, height: docHeight }, 400);
                 this.isDocumentView = true;
 
-            } else if (args.view === 'ring') {
+            } else if (args.view === 'ring' && this.isDocumentView) {
                 // Restore original size and position
                 const [originalWidth, originalHeight] = this.originalSize;
                 this.window.setMinimumSize(originalWidth, originalHeight);
@@ -190,6 +190,14 @@ class ComRingWindow extends BaseWindow {
                     clearInterval(animationInterval);
                     // Ensure the final size is exact
                     this.window.setBounds(targetBounds, false);
+
+                    // Fix for mouse event capture post-animation
+                    this.window.hide();
+                    this.window.show();
+                    this.window.focus();
+                    this.window.setFocusable(true);
+                    this.window.setIgnoreMouseEvents(false, { forward: false });
+
                     resolve();
                 }
             }, 16); // ~60 FPS
