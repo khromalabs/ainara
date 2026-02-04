@@ -153,7 +153,8 @@ Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms 
 
 ## $AINARA Token
 
-The Ainara Project now has its own Solana cryptocurrency token, CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump
+The project moved into a new V2 Solana token: 4GaCFbxuQ6db8RAepnvvMLvuZCsSmbjZoBwkEyfYLN9X
+(Old V1 CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump)
 
 The Ainara Project will use this token in a coming up distributed app store platform, for a new type of applications called Nexus as described in: https://ainara.app/AINARA_NEXUS_APPS_PLATFORM_V1_1.pdf
 
