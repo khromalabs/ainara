@@ -153,6 +153,8 @@ Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms 
 
 ## $AINARA Token
 
+This project uses the $AINARA token for optional premium services, and it was created and kept to ensure the project economical independence. It will *never* be a requirement to use the platform.
+
 The project moved into a new V2 Solana token: 4GaCFbxuQ6db8RAepnvvMLvuZCsSmbjZoBwkEyfYLN9X
 
 (Old V1 CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump)
