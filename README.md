@@ -1,9 +1,18 @@
-# Ainara AI Productivity Companion Framework
+# Ainara: The Sovereign AI Nexus
 
 ![Ainara logo](./assets/ainara_logo.png)
 
 **Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 
+**Ainara is an AI assistant, but not only an assistant. Is an AI companion, but not only an AI companion. Is not an AI agent, but an Orchestrator of AI agents. Ainara is a Human-AI Nexus designed to keep you sovereign.**
+
+Built on the Polaris Orchestrator (50k+ LoC), Ainara is a privacy-first, 
+client-side AI architecture designed for deep continuity. 
+
+- **ORAKLE Engine**: Real-time multi-agent orchestration.
+- **GREEN Memory**: True relational persistence (Subconscious processing).
+- **Ataria Ready**: Integrated financial sandbox for autonomous value generation.
+- **Sovereign by Design**: Your data, your keys, your consciousness.
 
 Ainara is a modular AI integration platform that reimagines human-computer interaction through natural conversation, made with components which work together to create intelligent companions that collaborate helping with tasks, generating insights, and transforming how people work with technology through voice and intuitive interfaces.
 
