@@ -9,7 +9,7 @@
 Built on the Polaris Orchestrator (50k+ LoC), Ainara is a privacy-first, 
 client-side AI architecture designed for deep continuity. 
 
-- **ORAKLE Engine**: Real-time multi-agent orchestration.
+- **ORAKLE Engine**: Exclusive client-side AI skills (function calling) hybrid matching framework. Real-time multi-agent orchestration. Designed to run flawlesslly both with big LLM providers, and small LLM local systems.
 - **GREEN Memory**: True relational persistence (Subconscious processing).
 - **Ataria Ready**: Integrated financial sandbox for autonomous value generation.
 - **Sovereign by Design**: Your data, your keys, your consciousness.
