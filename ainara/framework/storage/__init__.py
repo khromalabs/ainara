@@ -46,6 +46,34 @@ def get_vector_backend(backend_type, **config):
     return VECTOR_BACKENDS[backend_type](**config)
 
 
+def create_system_storage():
+    """
+    Creates and returns the configured text storage backend.
+    This allows the storage to be instantiated independently of ChatMemory,
+    enabling its use for system-wide features like Authentication.
+    """
+    import os
+    from ainara.framework.config import config
+
+    # Get text storage configuration
+    text_type = config.get("memory.text_storage.type", "sqlite")
+    text_path = config.get(
+        "memory.text_storage.storage_path",
+        os.path.join(config.get("data.directory"), "chat_memory.db"),
+    )
+
+    # Ensure path is expanded
+    text_path = os.path.expanduser(text_path)
+
+    # Default context (matches ChatMemory default)
+    context = config.get("memory.default_context", {"persona": "default"})
+    context_id = "_".join(f"{k}-{v}" for k, v in sorted(context.items()))
+
+    return get_text_backend(
+        text_type, db_path=text_path, context_id=context_id
+    )
+
+
 def register_text_backend(name, backend_class):
     """Register a custom text backend"""
     TEXT_BACKENDS[name] = backend_class
@@ -62,6 +90,7 @@ __all__ = [
     "VECTOR_BACKENDS",
     "get_text_backend",
     "get_vector_backend",
+    "create_system_storage",
     "register_text_backend",
     "register_vector_backend",
 ]

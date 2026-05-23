@@ -19,7 +19,7 @@
 const { ipcRenderer } = require('electron');
 const ConfigManager = require('../framework/config');
 const Logger = require('../framework/logger');
-const ConfigHelper = require('../framework/ConfigHelper');
+// const ConfigHelper = require('../framework/ConfigHelper');
 // const fs = require('fs');
 // const path = require('path');
 // const yaml = require('js-yaml');
@@ -39,6 +39,7 @@ const providerWebsites = {
     'deepseek': 'https://platform.deepseek.com/api_keys',
     'perplexity': 'https://www.perplexity.ai/settings/api',
     'fireworks': 'https://fireworks.ai/api-keys',
+    'helius': 'https://dashboard.helius.dev/api-keys',
     'together_ai': 'https://api.together.xyz/settings/api-keys',
     'openrouter': 'https://openrouter.ai/keys',
     'anyscale': 'https://console.anyscale.com/credentials',
@@ -69,10 +70,12 @@ const modifiedFields = {
 };
 
 // Initialize the UI
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
+    setupTosListeners();
     loadProviders();
     updateLLMStepTitle(); // Update the LLM step title
+    await setupAuthListeners();
     updateButtonVisibility();
 });
 
@@ -139,6 +142,10 @@ function extractApiKeysFromConfig(config) {
             if (!String(currentPath).startsWith("apis"))
                 continue;
 
+            // EXCLUDE EMAIL: Handled manually via table
+            if (String(currentPath).startsWith("apis.messaging.email"))
+                continue;
+
             // If the value is "<key>" or contains "api_key" in the key name, it's likely an API key
             // if (value === "<key>" || key.includes('api_key') || key.includes('apiKey')) {
             if (typeof value !== 'object' && value !== null) {
@@ -196,7 +203,7 @@ function getKeyDescription(pathArray) {
     const descriptions = {
         'coinmarketcap': {
             url: 'https://coinmarketcap.com/api/',
-            description: 'Used for cryptocurrency market data'
+            description: 'Used for extended quotes in cryptocurrency market data, not present in main markets'
         },
         'weather': {
             url: 'https://openweathermap.org/api',
@@ -241,6 +248,14 @@ function getKeyDescription(pathArray) {
         'helius': {
             url: 'https://helius.xyz/',
             description: 'Used for Solana blockchain data'
+        },
+        'discord': {
+            url: 'https://discord.com/developers/applications',
+            description: 'Used for Discord bot integration'
+        },
+        'email': {
+            url: null,
+            description: 'Configure IMAP accounts for email integration'
         }
     };
 
@@ -277,11 +292,18 @@ async function generateSkillsUI() {
 
         const sampleConfig = await response.json();
 
+        // Load ACTUAL config to populate email table
+        const backendConfig = await loadBackendConfig();
+
+        // Fetch capabilities to find schedulable ones
+        const capsResponse = await fetch(config.get('orakle.api_url') + '/capabilities?view=full');
+        const capabilities = await capsResponse.json();
+
         // Extract API keys
         const apiKeys = extractApiKeysFromConfig(sampleConfig);
 
         // Generate HTML for each API key
-        let html = '';
+        // let html = '';
 
         // Add event to load capabilities when navigating to finish step
         const observer = new MutationObserver((mutations) => {
@@ -310,6 +332,11 @@ async function generateSkillsUI() {
         // console.log(JSON.stringify(apiKeys));
         // console.log("-------");
 
+        // Ensure Messaging category exists for Email table, even if no other messaging keys exist
+        if (!categories.has('messaging')) {
+            categories.set('messaging', []);
+        }
+
         // Group by top-level category first
         for (const [parentPath, keyGroup] of Object.entries(apiKeys)) {
             const pathParts = parentPath.split('.');
@@ -331,21 +358,26 @@ async function generateSkillsUI() {
             });
         }
 
-        // Generate HTML for each category
-        for (const [category, keyGroups] of categories.entries()) {
-            if (keyGroups.length === 0) continue;
+        const orderedCategoriesEntries = new Map([...categories.entries()].sort());
 
-            html += `
-                <div class="skill-category">
+        // Prepare content buffers
+        let generalApiHtml = '';
+        let messagingHtml = '';
+
+        // Generate HTML for each category
+        for (const [category, keyGroups] of orderedCategoriesEntries) {
+            // Only skip if empty AND not messaging (messaging might need to show email table)
+            if (keyGroups.length === 0 && category !== 'messaging') continue;
+
+            let categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
+            let sectionHtml = `
+                <div class="skill-category ${categoryTitle}">
                     <h3>${category.charAt(0).toUpperCase() + category.slice(1)}</h3>
                     <div class="skill-items">
             `;
 
             keyGroups.forEach(group => {
-                // const pathParts = group.parentPath.split('.');
-                // const serviceName = pathParts[pathParts.length - 1];
-
-                html += `
+                sectionHtml += `
                     <div class="skill-item" data-group-path="${group.parentPath}">
                         <h4>${group.displayName} <span class="skill-validation-status" id="status-${group.parentPath.replace(/\./g, '-')}"></span></h4>
                         <div class="skill-validation-message" id="message-${group.parentPath.replace(/\./g, '-')}"></div>
@@ -354,17 +386,17 @@ async function generateSkillsUI() {
                 // Use the description from the first key in the group
                 if (group.keys.length > 0 && group.keys[0].description) {
                     if (group.keys[0].description.text) {
-                        html += `<p>${group.keys[0].description.text}</p>`;
+                        sectionHtml += `<p>${group.keys[0].description.text}</p>`;
                     }
 
                     if (group.keys[0].description.url) {
-                        html += `<p>Get API key(s) from: <a href="#" class="external-link" data-url="${group.keys[0].description.url}">${new URL(group.keys[0].description.url).hostname}</a></p>`;
+                        sectionHtml += `<p>Get API key(s) from: <a href="#" class="external-link" data-url="${group.keys[0].description.url}">${new URL(group.keys[0].description.url).hostname}</a></p>`;
                     }
                 }
 
                 // Add all keys for this group
                 group.keys.forEach(key => {
-                    html += `
+                    sectionHtml += `
                         <div class="form-group">
                             <label for="api-key-${key.path.replace(/\./g, '-')}">${key.displayName}:</label>
                             <input type="text" placeholder="${key.keyName}" id="api-key-${key.path.replace(/\./g, '-')}" data-path="${key.path}">
@@ -372,26 +404,58 @@ async function generateSkillsUI() {
                     `;
                 });
 
-                html += `</div>`;
+                sectionHtml += `</div>`;
             });
 
-            html += `
+            // INJECT EMAIL TABLE FOR MESSAGING CATEGORY
+            if (category === 'messaging') {
+               sectionHtml += generateEmailTableHtml(backendConfig);
+               sectionHtml += `</div></div>`;
+               messagingHtml += sectionHtml;
+            } else {
+               sectionHtml += `</div></div>`;
+               generalApiHtml += sectionHtml;
+            }
+        }
+
+        // Generate Schedule UI
+        const scheduleHtml = generateScheduleUI(capabilities, backendConfig);
+
+        // Construct the Layout with Top Menu
+        const layoutHtml = `
+            <div class="skills-layout">
+                <div class="skills-nav-bar">
+                    <div class="skills-nav-item active" data-target="section-api-keys">API Keys</div>
+                    <div class="skills-nav-item" data-target="section-messaging">Messaging</div>
+                    <div class="skills-nav-item" data-target="section-scheduler">Scheduled Skills</div>
+                </div>
+                <div class="skills-content-area">
+                    <div id="section-api-keys" class="skills-section-anchor">
+                        ${generalApiHtml}
+                    </div>
+                    <div id="section-messaging" class="skills-section-anchor">
+                        ${messagingHtml}
+                    </div>
+                    <div id="section-scheduler" class="skills-section-anchor">
+                        ${scheduleHtml}
+                    </div>
+
+                    <div class="validate-all-container" style="text-align: center; margin-top: 40px; margin-bottom: 10px; display: flex; justify-content: center; gap: 10px;">
+                        <button id="reset-skills-btn" class="btn btn-secondary">Reset Changes</button>
+                        <button id="validate-all-keys-btn" class="btn">Validate API Keys</button>
                     </div>
                 </div>
-            `;
-        }
+            </div>
+        `;
 
         // Update the skills list container
         const skillsListContainer = document.querySelector('.skills-list');
         if (skillsListContainer) {
-            skillsListContainer.innerHTML = html;
-            skillsListContainer.insertAdjacentHTML('beforeend', `
-                <div class="validate-all-container" style="text-align: center; margin-top: 20px; margin-bottom: 10px; display: flex; justify-content: center; gap: 10px;">
-                    <button id="reset-skills-btn" class="btn btn-secondary">Reset Changes</button>
-                    <button id="validate-all-keys-btn" class="btn">Validate API Keys</button>
-                </div>
-            `);
+            skillsListContainer.innerHTML = layoutHtml;
         }
+
+        // Setup Navigation Logic
+        setupSkillsNavigation();
 
         // Add event listeners to all input fields
         document.querySelectorAll('.skills-list input[data-path]').forEach(input => {
@@ -403,6 +467,12 @@ async function generateSkillsUI() {
 
         // Add event listener for the reset button
         document.getElementById('reset-skills-btn').addEventListener('click', resetApiKeys);
+
+        // SETUP EMAIL TABLE LISTENERS
+        setupEmailTableListeners();
+
+        // SETUP SCHEDULE LISTENERS
+        setupScheduleListeners();
 
         // Load existing values from config
         await loadExistingApiKeys();
@@ -592,7 +662,11 @@ function updateButtonVisibility() {
     // Disabled state
     const currentStep = steps[currentStepIndex];
 
-    if (currentStep === 'llm') {
+    if (currentStep === 'welcome') {
+        const isWalletVerified = document.getElementById('auth-container').classList.contains('verified');
+        const isTosAccepted = document.getElementById('terms-accept-btn').checked;
+        nextBtn.disabled = !(isWalletVerified && isTosAccepted);
+    } else if (currentStep === 'llm') {
         const testResult = document.getElementById('test-result');
         const hasExistingSelection = document.querySelector('input[name="existing-provider"]:checked');
         const isTestSuccessful = testResult.classList.contains('success') && !testResult.classList.contains('hidden');
@@ -636,273 +710,6 @@ function setupEventListeners() {
     if (ollamaPanel) {
         ollamaObserver.observe(ollamaPanel, { attributes: true });
     }
-
-    // Add CSS for hardware acceleration info and shortcuts
-    const style = document.createElement('style');
-    style.textContent = `
-        .hardware-info {
-            margin-bottom: 20px;
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            /* border-left: 4px solid #6c757d; */
-         }
-
-        .success-message {
-            color: #28a745;
-            font-weight: bold;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-        }
-
-        .warning-message {
-            color: #ffc107;
-            font-weight: bold;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-        }
-
-        .info-message {
-            color: #17a2b8;
-            font-weight: bold;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-        }
-
-        .success-message .icon,
-        .warning-message .icon,
-        .info-message .icon {
-            margin-right: 8px;
-            font-size: 1.2em;
-        }
-
-        .hardware-info p {
-            margin: 8px 0;
-        }
-
-        .hardware-info a {
-            color: #007bff;
-            text-decoration: underline;
-        }
-
-        .gpu-details {
-            background-color: #f0f0f0;
-            padding: 10px;
-            border-radius: 4px;
-            margin-top: 10px;
-        }
-
-        .gpu-details ul {
-            margin: 5px 0 0 20px;
-            padding: 0;
-        }
-
-        .gpu-details li {
-            margin-bottom: 5px;
-        }
-
-        .hardware-info ul {
-            margin: 5px 0 0 20px;
-            padding: 0;
-        }
-
-        .hardware-info li {
-            margin-bottom: 5px;
-        }
-
-        #ollama-models-container {
-            margin-top: 20px;
-        }
-
-        #ollama-models-container ul {
-            list-style-type: none;
-            padding: 0;
-        }
-
-        #ollama-models-container li {
-            background-color: #f9f9f9;
-            padding: 10px;
-            margin-bottom: 5px;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        #ollama-models-container select {
-            padding: 8px;
-            margin-right: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            width: 300px;
-        }
-
-        #download-model-btn {
-            background-color: #28a745;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        #download-model-btn:hover {
-            background-color: #218838;
-        }
-
-        #download-model-btn:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-
-        #download-progress {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 4px;
-        }
-
-        #download-progress p {
-            margin: 0;
-        }
-
-        .delete-model-btn {
-            background-color: #dc3545;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        .delete-model-btn:hover {
-            background-color: #c82333;
-        }
-
-        .field-description {
-            font-size: 0.8em;
-            color: #6c757d;
-            margin-top: 4px;
-        }
-
-        .skill-test-container {
-            margin-top: 10px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .skill-test-status.success {
-            color: #28a745;
-            font-weight: bold;
-        }
-        .skill-test-status.error {
-            color: #dc3545;
-            font-weight: bold;
-            background-color: #00000000 !important;
-        }
-        .skill-validation-status {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            margin-left: 8px;
-            vertical-align: middle;
-            font-size: 16px;
-            line-height: 1;
-            background-color: transparent;
-        }
-        .skill-validation-status.success::after {
-            content: '✔';
-            color: #28a745;
-        }
-        .skill-validation-status.error::after {
-            content: '✖';
-            color: #dc3545;
-        }
-        .skill-validation-status.pending::after {
-            content: '...';
-            color: #6c757d;
-        }
-
-        .skill-validation-message {
-            margin-top: 5px;
-            font-size: 0.9em;
-        }
-
-        .skill-validation-message.success {
-            color: #28a745;
-        }
-
-        .skill-validation-message.error {
-            color: #dc3545;
-            font-weight: bold;
-        }
-
-        /* Shortcuts panel styles */
-        .shortcuts-container {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .shortcut-group {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            /* border-left: 4px solid #007bff; */
-        }
-
-        .shortcut-group h3 {
-            margin-top: 0;
-            color: #007bff;
-        }
-
-        .shortcut-description {
-            font-size: 0.9em;
-            color: #6c757d;
-            margin-top: 5px;
-        }
-
-        .usage-instructions {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            /* border-left: 4px solid #28a745; */
-        }
-
-        .usage-instructions h3 {
-            margin-top: 0;
-            color: #28a745;
-        }
-
-        .usage-instructions ol {
-            padding-left: 20px;
-        }
-
-        .usage-instructions li {
-            margin-bottom: 10px;
-        }
-
-        #show-key-display,
-        #hide-key-display,
-        #trigger-key-display {
-            background-color: #e9ecef;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-weight: bold;
-        }
-
-        input.capturing {
-            background-color: #ffe8e8;
-            border-color: #dc3545;
-        }
-    `;
-    document.head.appendChild(style);
 
     // Handle external links to open in system browser
     document.addEventListener('click', (event) => {
@@ -1013,11 +820,11 @@ function setupEventListeners() {
                 startMinimizedCheckbox.checked = config.get('startup.startMinimized');
             }
 
-            // Add event listener for the review stt checkbox
-            const reviewSttCheckbox = document.getElementById('review-stt-checkbox');
-            if (reviewSttCheckbox) {
-                reviewSttCheckbox.addEventListener('change', (event) => handleInputChange(event));
-                reviewSttCheckbox.checked = config.get('stt.review');
+            // Add event listener for the review stt select
+            const reviewSttSelect = document.getElementById('review-stt-select');
+            if (reviewSttSelect) {
+                reviewSttSelect.addEventListener('change', (event) => handleInputChange(event));
+                reviewSttSelect.value = config.get('stt.review');
             }
 
             // // Add event listener for the auto start checkbox
@@ -1033,6 +840,24 @@ function setupEventListeners() {
             if (backgroundNotificationsCheckbox) {
                 backgroundNotificationsCheckbox.addEventListener('change', (event) => handleInputChange(event));
                 backgroundNotificationsCheckbox.checked = config.get('ui.backgroundNotifications');
+            }
+
+            const lowerVolumeCheckbox = document.getElementById('lower-volume-checkbox');
+            if (lowerVolumeCheckbox) {
+                lowerVolumeCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                lowerVolumeCheckbox.checked = config.get('stt.lowerVolume');
+            }
+
+            const wakeWordCheckbox = document.getElementById('wakeword-checkbox');
+            if (wakeWordCheckbox) {
+                wakeWordCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                wakeWordCheckbox.checked = config.get('wakeword.enabled');
+            }
+
+            const comringNotificationsCheckbox = document.getElementById('comring-notifications-checkbox');
+            if (comringNotificationsCheckbox) {
+                comringNotificationsCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                comringNotificationsCheckbox.checked = config.get('ui.comringNotifications');
             }
 
             // Add event listener for the backup directory input and browse button
@@ -1081,7 +906,7 @@ function setupEventListeners() {
                 const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
                 // Apply default filter - include recommended models but exclude smaller ones
-                filterInput.value = 'xai,qwen-3,qwen3,deepseek,-3b';
+                filterInput.value = 'qwen-3,qwen3,moonshot,deepseek,-3b,xai,zai,minimax';
                 // Hide filter input, label and apply button
                 filterInput.style.display = 'none';
                 filterInputContainer.style.display = 'none';
@@ -1103,7 +928,7 @@ function setupEventListeners() {
                     filterInput.dataset.previousValue = filterInput.value;
 
                     // Apply default filter - include recommended models but exclude smaller ones
-                    filterInput.value = 'xai,qwen-3,qwen3,deepseek,-3b';
+                    filterInput.value = 'xai,moonshot,qwen-3,qwen3,deepseek,-3b';
                     // Hide filter input, label and apply button
                     filterInput.style.display = 'none';
                     filterInputContainer.style.display = 'none';
@@ -1159,6 +984,7 @@ async function goToNextStep() {
         currentStepIndex++;
         document.getElementById(`${steps[currentStepIndex]}-panel`).classList.add('active');
         document.querySelector(`.step[data-step="${steps[currentStepIndex]}"]`).classList.add('active');
+        console.log(currentStepIndex)
         updateButtonVisibility();
 
     } catch (error) {
@@ -1325,8 +1151,9 @@ async function displayFeaturedModels(existingProviders = []) {
     }
 
     const featured = [
-        { id: 'xai-grok-4-fast-reasoning', name: 'xAI Grok 4 Fast (Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-fast-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
-        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3 (Chat)', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s powerful, and very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
+        { id: 'kimi-k2-turbo', name: 'Kimi K2 Turbo', providerId: 'moonshot', modelId: 'moonshot/kimi-k2-turbo-preview', description: 'A fast, highly smart, open model from Moonshot.', imageUrl: '../assets/providers/kimi-k2-turbo.png', tags: [ "open_model", "high_intelligence", "high_speed" ] },
+        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3 (Chat)', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s open, highly smart, very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
+        { id: 'xai-grok-4-1-fast-non-reasoning', name: 'xAI Grok 4.1 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-1-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
     ];
 
     const existingModelIds = new Set(existingProviders.map(p => p.model));
@@ -1370,8 +1197,8 @@ async function displayFeaturedModels(existingProviders = []) {
         // banner.addEventListener('click', async (event) => {
         banner.addEventListener('click', async () => {
             const defaultFilterCheckbox = document.getElementById('default-filter');
-            // ensure filter configuration is default, this assumes featured models 
-            // always will be present in the default configuration 
+            // ensure filter configuration is default, this assumes featured models
+            // always will be present in the default configuration
             if (defaultFilterCheckbox && !defaultFilterCheckbox.checked) {
                 defaultFilterCheckbox.click();
                 // Wait for the DOM to update
@@ -1411,7 +1238,7 @@ async function displayFeaturedModels(existingProviders = []) {
 }
 
 // Replace the existing loadProviders function
-function loadProviders() {
+async function loadProviders() {
     // First load existing providers from backend config
     const nextButton = document.getElementById('main-next-btn');
     const testResult = document.getElementById('test-result');
@@ -1422,7 +1249,7 @@ function loadProviders() {
     testResult.classList.add('hidden');
     nextButton.disabled = true;
 
-    loadExistingProviders(); // This might enable nextButton if an existing provider is selected.
+    await loadExistingProviders(); // This might enable nextButton if an existing provider is selected.
 
     const filter = document.getElementById('model-filter')?.value || '';
     loadProvidersWithFilter(filter);
@@ -1517,7 +1344,7 @@ async function loadExistingProviders() {
             const hasSelectedProvider = document.querySelector('input[name="existing-provider"]:checked');
 
             // If a provider is already selected enable the next button
-            if (hasSelectedProvider) {
+            if (hasSelectedProvider && steps[currentStepIndex] === 'llm') {
                 document.getElementById('main-next-btn').disabled = false;
             }
         }
@@ -1554,8 +1381,10 @@ async function loadExistingProviders() {
                     // Hide provider details
                     document.getElementById('provider-details').innerHTML = '';
 
-                    // Enable the next button
-                    document.getElementById('main-next-btn').disabled = false;
+                    // Enable the next button if we are in llm panel
+                    if (steps[currentStepIndex] === 'llm') {
+                        document.getElementById('main-next-btn').disabled = false;
+                    }
 
                     // Hide test result
                     document.getElementById('test-result').classList.add('hidden');
@@ -1786,7 +1615,7 @@ function handleInputChange(event, disableNext = true) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-checkbox' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input' || fieldId === 'auto-start-checkbox') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-select' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input' || fieldId === 'auto-start-checkbox' || fieldId == 'lower-volume-checkbox' || fieldId === 'wakeword-checkbox' || fieldId == 'comring-notifications-checkbox') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -1925,7 +1754,9 @@ function updateSkillsNextButtonState() {
     if (!nextButton) return;
 
     const allValid = Object.values(skillValidationStatus).every(status => status === 'success');
-    nextButton.disabled = !allValid;
+    if (steps[currentStepIndex] === 'skills') {
+        nextButton.disabled = !allValid;
+    }
 }
 
 function validateProviderForm() {
@@ -2261,212 +2092,200 @@ function validateMcpStep() {
 }
 
 // Add event listeners for STT options
-function setupSTTEventListeners() {
+async function setupSTTEventListeners() {
     const sttNextButton = document.getElementById('main-next-btn');
-    const sttPanel = document.getElementById('stt-panel');
+    const languageSelect = document.getElementById('stt-language-select');
+    const voiceSelect = document.getElementById('tts-voice-select');
+    const warningDiv = document.getElementById('stt-ram-warning');
 
-    // Add hardware acceleration info section if it doesn't exist
-    if (!document.getElementById('hardware-acceleration-info')) {
-        const infoHtml = `
-            <div id="hardware-acceleration-info" class="hardware-info">
-                <h3>Hardware Acceleration</h3>
-                <div id="hardware-status">Checking hardware acceleration status...</div>
-            </div>
-        `;
+    // Define supported languages (Intersection of Faster-Whisper and Kokoro)
+    const sttLanguages = [
+        { code: 'en', name: 'English', flag: '🇬🇧' },
+        { code: 'es', name: 'Spanish (Español)', flag: '🇪🇸' },
+        { code: 'fr', name: 'French (Français)', flag: '🇫🇷' },
+        { code: 'it', name: 'Italian (Italiano)', flag: '🇮🇹' },
+        { code: 'pt', name: 'Portuguese (Português)', flag: '🇵🇹' },
+        // { code: 'ja', name: 'Japanese (日本語)', flag: '🇯🇵', highMem: true },
+        // { code: 'zh', name: 'Chinese (中文)', flag: '🇨🇳', highMem: true },
+        { code: 'hi', name: 'Hindi (हिन्दी)', flag: '🇮🇳', highMem: true },
+    ];
 
-        // Insert before the STT options
-        const sttOptions = sttPanel.querySelector('.stt-options');
-        if (sttOptions) {
-            sttOptions.insertAdjacentHTML('beforebegin', infoHtml);
+    // Kokoro Voice Data
+    const kokoroVoices = {
+        'en': [ // English (US & UK)
+            { id: 'af_heart',   name: 'Heart',   lang: 'en-us', flag: '🇺🇸', grade: 'A',  desc: 'High quality' },
+            { id: 'af_bella',   name: 'Bella',   lang: 'en-us', flag: '🇺🇸', grade: 'A-', desc: 'High quality' },
+            { id: 'af_nicole',  name: 'Nicole',  lang: 'en-us', flag: '🇺🇸', grade: 'B-', desc: 'Good quality' },
+            { id: 'bf_emma',    name: 'Emma',    lang: 'en-gb', flag: '🇬🇧', grade: 'B-', desc: 'Good quality' },
+            // { id: 'af_alloy',   name: 'Alloy',   lang: 'en-us', flag: '🇺🇸', grade: 'C',  desc: 'Average quality' },
+            { id: 'bf_isabella',name: 'Isabella',lang: 'en-gb', flag: '🇬🇧', grade: 'C',  desc: 'Average quality' },
+            // { id: 'bf_fable',   name: 'Fable',   lang: 'en-gb', flag: '🇬🇧', grade: 'C',  desc: 'Average quality' },
+            // { id: 'bf_george',  name: 'George',  lang: 'en-gb', flag: '🇬🇧', grade: 'C',  desc: 'Average quality' }
+        ],
+        'es': [ // Spanish
+            { id: 'ef_dora',  name: 'Dora',  lang: 'es', flag: '🇪🇸', grade: '', desc: 'Female' },
+            { id: 'em_alex',  name: 'Alex',  lang: 'es', flag: '🇪🇸', grade: '', desc: 'Male' },
+            { id: 'em_santa', name: 'Santa', lang: 'es', flag: '🇪🇸', grade: '', desc: 'Male' }
+        ],
+        'fr': [ // French
+            { id: 'ff_siwis', name: 'Siwis', lang: 'fr-fr', flag: '🇫🇷', grade: 'B-', desc: 'Female' }
+        ],
+        'it': [ // Italian
+            { id: 'if_sara',   name: 'Sara',   lang: 'it', flag: '🇮🇹', grade: 'C', desc: 'Female' },
+            { id: 'im_nicola', name: 'Nicola', lang: 'it', flag: '🇮🇹', grade: 'C', desc: 'Male' }
+        ],
+        'pt': [ // Portuguese (Brazilian)
+            { id: 'pf_dora',  name: 'Dora',  lang: 'pt-br', flag: '🇧🇷', grade: '', desc: 'Female' },
+            { id: 'pm_alex',  name: 'Alex',  lang: 'pt-br', flag: '🇧🇷', grade: '', desc: 'Male' },
+            { id: 'pm_santa', name: 'Santa', lang: 'pt-br', flag: '🇧🇷', grade: '', desc: 'Male' }
+        ],
+        'ja': [ // Japanese
+            { id: 'jf_alpha',      name: 'Alpha',      lang: 'ja', flag: '🇯🇵', grade: 'C+', desc: 'Female' },
+            { id: 'jf_gongitsune', name: 'Gongitsune', lang: 'ja', flag: '🇯🇵', grade: 'C',  desc: 'Female' },
+            { id: 'jf_tebukuro',   name: 'Tebukuro',   lang: 'ja', flag: '🇯🇵', grade: 'C',  desc: 'Female' }
+        ],
+        'zh': [ // Chinese (Mandarin)
+            { id: 'zf_xiaobei', name: 'Xiaobei', lang: 'zh', flag: '🇨🇳', grade: 'D', desc: 'Female' },
+            { id: 'zf_xiaoni',  name: 'Xiaoni',  lang: 'zh', flag: '🇨🇳', grade: 'D', desc: 'Female' },
+            { id: 'zm_yunjian', name: 'Yunjian', lang: 'zh', flag: '🇨🇳', grade: 'D', desc: 'Male' }
+        ],
+        'hi': [ // Hindi
+            { id: 'hf_alpha', name: 'Alpha', lang: 'hi', flag: '🇮🇳', grade: 'C', desc: 'Female' },
+            { id: 'hf_beta',  name: 'Beta',  lang: 'hi', flag: '🇮🇳', grade: 'C', desc: 'Female' },
+            { id: 'hm_omega', name: 'Omega', lang: 'hi', flag: '🇮🇳', grade: 'C', desc: 'Male' },
+            { id: 'hm_psi',   name: 'Psi',   lang: 'hi', flag: '🇮🇳', grade: 'C', desc: 'Male' }
+        ]
+    };
+
+    // Function to update voice options based on selected language
+    function updateVoiceOptions(langCode, backendConfig = null) {
+        if (!voiceSelect) return;
+
+        voiceSelect.innerHTML = '';
+        const voices = kokoroVoices[langCode] || [];
+
+        if (voices.length === 0) {
+            const option = document.createElement('option');
+            option.textContent = "No voices available";
+            voiceSelect.appendChild(option);
+            return;
         }
 
-        // Check hardware acceleration status
-        ConfigHelper.getHardwareAcceleration().then(result => {
-            const statusElement = document.getElementById('hardware-status');
-            if (statusElement) {
-                if (result.cuda_available) {
-                    statusElement.innerHTML = `
-                        <div class="success-message">
-                            <span class="icon">✓</span>
-                            <span>CUDA ${result.cuda_version || ''} is available</span>
-                        </div>
-                        <p>Your system will use GPU acceleration for faster speech recognition.</p>
-                    `;
+        voices.forEach(voice => {
+            const option = document.createElement('option');
+            option.value = voice.id;
+            // Store specific lang code (e.g. en-us) in dataset for saving
+            option.dataset.lang = voice.lang;
 
-                    // Show GPU details if available
-                    if (result.gpu_list && result.gpu_list.length > 0) {
-                        let gpuHtml = `<div class="gpu-details"><p>Using GPU(s):</p><ul>`;
-                        result.gpu_list.forEach(gpu => {
-                            gpuHtml += `<li>${gpu.name} ${gpu.memory ? '(' + gpu.memory + ')' : ''}</li>`;
-                        });
-                        gpuHtml += `</ul></div>`;
-                        statusElement.innerHTML += gpuHtml;
-                    }
-                } else if (result.has_nvidia_hardware) {
-                    // NVIDIA hardware detected but CUDA not available
-                    let helpText = '';
-                    if (result.platform === 'win32') {
-                        helpText = `
-                            <p>An NVIDIA GPU was detected, but CUDA drivers are not installed or not working properly.</p>
-                            <p>For faster speech recognition, we recommend installing NVIDIA CUDA drivers:</p>
-                            <p><a href="#" class="external-link" data-url="https://www.nvidia.com/Download/index.aspx">Download NVIDIA Drivers</a></p>
-                            <p><a href="#" class="external-link" data-url="https://developer.nvidia.com/cuda-downloads">Download CUDA Toolkit</a></p>
-                            <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
-                        `;
-                    } else if (result.platform === 'linux') {
-                        helpText = `
-                            <p>An NVIDIA GPU was detected, but CUDA drivers are not installed or not working properly.</p>
-                            <p>For faster speech recognition, install NVIDIA drivers using your distribution's package manager.</p>
-                            <p>You can continue without GPU acceleration, but speech recognition will be slower.</p>
-                        `;
-                    }
+            let text = `${voice.flag} ${voice.name}`;
+            if (voice.grade) text += ` (Grade: ${voice.grade})`;
+            if (voice.desc) text += ` - ${voice.desc}`;
 
-                    // Show GPU details if available
-                    if (result.gpu_list && result.gpu_list.length > 0) {
-                        helpText += `<div class="gpu-details"><p>Detected GPU(s):</p><ul>`;
-                        result.gpu_list.forEach(gpu => {
-                            helpText += `<li>${gpu.name} ${gpu.driver_version ? '(Driver: ' + gpu.driver_version + ')' : ''}</li>`;
-                        });
-                        helpText += `</ul></div>`;
-                    }
+            option.textContent = text;
+            voiceSelect.appendChild(option);
+        });
 
-                    statusElement.innerHTML = `
-                        <div class="warning-message">
-                            <span class="icon">⚠</span>
-                            <span>Hardware acceleration not available</span>
-                        </div>
-                        ${helpText}
-                    `;
-                } else if (result.platform === 'darwin') {
-                    // macOS - no NVIDIA hardware
-                    let helpText = `
-                        <p>On macOS, Metal is used for acceleration on Apple Silicon.</p>
-                        <p>CPU will be used on Intel Macs, which may be slower for speech recognition.</p>
-                    `;
+        // Select previously configured voice if it matches current language
+        // TODO Fixed in kokoro
+        const configuredVoice = backendConfig?.tts?.modules?.kokoro?.default_voice
+        if (configuredVoice && voices.some(v => v.id === configuredVoice)) {
+            voiceSelect.value = configuredVoice;
+        }
+    }
 
-                    statusElement.innerHTML = `
-                        <div class="info-message">
-                            <span class="icon">ℹ</span>
-                            <span>Using macOS native acceleration</span>
-                        </div>
-                        ${helpText}
-                    `;
-                } else {
-                    // No NVIDIA hardware detected
-                    let helpText = `
-                        <p>Your system will use CPU for speech recognition, which may be slower.</p>
-                        <p>If you have an NVIDIA GPU, installing CUDA drivers can improve performance.</p>
-                    `;
-
-                    statusElement.innerHTML = `
-                        <div class="info-message">
-                            <span class="icon">ℹ</span>
-                            <span>No NVIDIA GPU detected</span>
-                        </div>
-                        ${helpText}
-                    `;
-                }
+    // Populate language dropdown
+    if (languageSelect && languageSelect.options.length === 0) {
+        sttLanguages.forEach(lang => {
+            const option = document.createElement('option');
+            option.value = lang.code;
+            option.textContent = `${lang.flag} ${lang.name}`;
+            if (lang.highMem) {
+                option.dataset.highMem = "true";
             }
-        }).catch(error => {
-            console.error('Failed to check hardware acceleration:', error);
-            const statusElement = document.getElementById('hardware-status');
-            if (statusElement) {
-                statusElement.innerHTML = `
-                    <div class="warning-message">
-                        <span class="icon">⚠</span>
-                        <span>Unable to check hardware acceleration status</span>
-                    </div>
-                    <p>Speech recognition will work, but may be slower without GPU acceleration.</p>
-                `;
+            languageSelect.appendChild(option);
+        });
+
+        // Auto-detect language
+        const systemLang = navigator.language.split('-')[0];
+        const supportedLang = sttLanguages.find(l => l.code === systemLang);
+
+        // Set default: Configured > System > English
+        const backendConfig = await loadBackendConfig();
+        const configuredLang = backendConfig?.stt?.language;
+        if (configuredLang) {
+            languageSelect.value = configuredLang;
+        } else if (supportedLang) {
+            languageSelect.value = systemLang;
+        } else {
+            languageSelect.value = 'en';
+        }
+
+        // Initialize voices for the selected language
+        updateVoiceOptions(languageSelect.value, backendConfig);
+    }
+
+    // Check RAM and handle warnings
+    async function checkRamAndWarn() {
+        try {
+            const response = await fetch(config.get('pybridge.api_url') + '/hardware/acceleration');
+            const hwInfo = await response.json();
+            const totalRam = hwInfo.details?.total_ram_gb || 0;
+
+            const selectedOption = languageSelect.options[languageSelect.selectedIndex];
+            const isHighMemLang = selectedOption.dataset.highMem === "true";
+
+            warningDiv.classList.add('hidden');
+            warningDiv.innerHTML = '';
+
+            if (totalRam < 8) {
+                warningDiv.innerHTML = `Your system has less than 8GB of RAM (${totalRam.toFixed(1)} GB detected). Speech recognition might be slow or have lower quality.`;
+                warningDiv.classList.remove('hidden');
+            } else if (totalRam < 15 && isHighMemLang) {
+                warningDiv.innerHTML = `The selected language requires significant memory. With less than 16GB of RAM (${totalRam.toFixed(1)} GB detected), performance may be impacted.`;
+                warningDiv.classList.remove('hidden');
             }
+        } catch (error) {
+            console.error('Error checking RAM for STT:', error);
+        }
+    }
+
+    // Event listener for language change
+    if (languageSelect) {
+        languageSelect.addEventListener('change', () => {
+            modifiedFields.stt.add('stt.language');
+            updateVoiceOptions(languageSelect.value);
+            checkRamAndWarn();
         });
     }
 
-    // Show/hide details based on selection
-    document.querySelectorAll('input[name="stt-backend"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            // Hide all details first
-            document.querySelectorAll('.stt-details').forEach(el => {
-                el.style.display = 'none';
-            });
-
-            // Show details for selected option
-            const selectedValue = radio.value;
-            if (selectedValue === 'custom') {
-                document.getElementById('custom-stt-details').style.display = 'block';
-                // Disable next button until validation passes
-                sttNextButton.disabled = true;
-            } else {
-                // Enable next button for built-in option
-                sttNextButton.disabled = false;
-            }
-
-            // Hide any previous validation messages
-            document.getElementById('stt-test-result').classList.add('hidden');
-
-            // Track this change
-            modifiedFields.stt.add('stt-backend');
+    // Event listener for voice change
+    if (voiceSelect) {
+        voiceSelect.addEventListener('change', () => {
+            modifiedFields.stt.add('tts.voice');
         });
-    });
+    }
 
-    // Add input validation for custom API fields
-    const apiUrlInput = document.getElementById('custom-api-url');
-    const apiKeyInput = document.getElementById('custom-api-key');
+    // Initial check
+    checkRamAndWarn();
 
-    [apiUrlInput, apiKeyInput].forEach(input => {
-        if (input) {
-            input.addEventListener('input', validateSTTForm);
-        }
-    });
+    // Enable next button (always valid now that we removed custom config)
+    if (sttNextButton) sttNextButton.disabled = false;
 
-    // Initial validation
-    validateSTTForm();
+    /*
+    // GPU Hardware Acceleration Info - Commented out for now as STT is CPU only
+    // Add hardware acceleration info section if it doesn't exist
+    if (!document.getElementById('hardware-acceleration-info')) {
+        // ... (Previous GPU check logic preserved here in comments if needed later) ...
+    }
+    */
 }
 
 // Validate STT form inputs
 function validateSTTForm() {
-    const selectedBackend = document.querySelector('input[name="stt-backend"]:checked')?.value;
+    // Simplified validation since we removed custom backend options
     const sttNextButton = document.getElementById('main-next-btn');
-    const testResult = document.getElementById('stt-test-result');
-
-    // Reset validation state
-    testResult.classList.add('hidden');
-
-    // If using built-in whisper, always valid
-    if (selectedBackend === 'faster_whisper') {
-        sttNextButton.disabled = false;
-        return true;
-    }
-
-    // For custom API, validate URL and key
-    if (selectedBackend === 'custom') {
-        const apiUrl = document.getElementById('custom-api-url').value.trim();
-
-        // URL is required
-        if (!apiUrl) {
-            sttNextButton.disabled = true;
-            testResult.textContent = 'API URL is required';
-            testResult.classList.remove('hidden');
-            testResult.classList.add('error');
-            return false;
-        }
-
-        // Validate URL format
-        try {
-            new URL(apiUrl);
-            sttNextButton.disabled = false;
-            return true;
-        } catch (e) {
-            console.log(e);
-            sttNextButton.disabled = true;
-            testResult.textContent = 'Please enter a valid URL';
-            testResult.classList.remove('hidden');
-            testResult.classList.add('error');
-            return false;
-        }
-    }
-
-    return false;
+    if (sttNextButton) sttNextButton.disabled = false;
+    return true;
 }
 
 async function saveCurrentStepData() {
@@ -2761,83 +2580,192 @@ async function saveMcpConfig() {
     }
 }
 
-// Function to save STT config
+// Function to save Voice (STT & TTS) config
 async function saveSTTConfig() {
-    const selectedBackend = document.querySelector('input[name="stt-backend"]:checked')?.value || 'faster_whisper';
-
-    // If no STT fields were modified and we're using the default, skip saving
-    const usingDefault = selectedBackend === 'faster_whisper';
-    if (modifiedFields.stt.size === 0 && usingDefault) {
+    // If no fields were modified, skip saving
+    if (modifiedFields.stt.size === 0) {
         return;
     }
 
-    // Save to Polaris config
-    const sttConfig = {
-        backend: selectedBackend
-    };
+    const languageSelect = document.getElementById('stt-language-select');
+    const voiceSelect = document.getElementById('tts-voice-select');
 
-    if (selectedBackend === 'custom') {
-        const apiUrl = document.getElementById('custom-api-url').value;
-        const apiKey = document.getElementById('custom-api-key').value;
+    const selectedLanguage = languageSelect ? languageSelect.value : 'en';
+    const selectedSttBackend = 'faster_whisper';
 
-        if (apiUrl) {
-            sttConfig.custom = {
-                apiUrl,
-                apiKey: apiKey || 'local' // Use 'local' as default if no key provided
-            };
-        }
-    }
+    const selectedVoiceId = voiceSelect ? voiceSelect.value : 'af_heart';
+    // Get the specific lang code (e.g. en-us) from the selected option's dataset
+    const selectedOption = voiceSelect ? voiceSelect.options[voiceSelect.selectedIndex] : null;
+    const selectedVoiceLang = selectedOption ? selectedOption.dataset.lang : 'en-us';
+    const selectedTtsBackend = 'kokoro';
 
-    config.set('stt', sttConfig);
-    config.saveConfig();
-
+    // Save to Polaris backend config
     try {
         // Load current backend config
         const backendConfig = await loadBackendConfig();
 
-        // Ensure STT section exists
+        // --- Update STT Config ---
         if (!backendConfig.stt) {
-            backendConfig.stt = { default_module: "custom" };
-        }
-
-        // Update backend based on selection
-        backendConfig.stt.backend = selectedBackend;
-
-        if (selectedBackend === 'custom') {
-            const apiUrl = document.getElementById('custom-api-url').value;
-            const apiKey = document.getElementById('custom-api-key').value;
-
-            if (!backendConfig.stt.modules) {
-                backendConfig.stt.modules = {};
-            }
-            if (!backendConfig.stt.modules.whisper) {
-                backendConfig.stt.modules.whisper = {};
-            }
-
-            backendConfig.stt.modules.whisper.service = 'custom';
-            if (!backendConfig.stt.modules.whisper.custom) {
-                backendConfig.stt.modules.whisper.custom = {};
-            }
-
-            if (apiUrl) {
-                backendConfig.stt.modules.whisper.custom.api_url = apiUrl;
-            }
-            if (apiKey) {
-                backendConfig.stt.modules.whisper.custom.api_key = apiKey;
-            } else {
-                backendConfig.stt.modules.whisper.custom.api_key = 'local';
+            backendConfig.stt = {
+                language: selectedLanguage,
+                modules: { faster_whisper: { model_size: "small" } },
+                selected_module: selectedSttBackend
+            };
+        } else {
+            backendConfig.stt.language = selectedLanguage;
+            backendConfig.stt.selected_module = selectedSttBackend;
+            if (!backendConfig.stt.modules) backendConfig.stt.modules = {};
+            if (!backendConfig.stt.modules.faster_whisper) {
+                backendConfig.stt.modules.faster_whisper = { model_size: "small" };
             }
         }
+
+        // --- Update TTS Config ---
+        if (!backendConfig.tts) {
+            backendConfig.tts = {
+                selected_module: selectedTtsBackend,
+                modules: {}
+            };
+        }
+
+        backendConfig.tts.selected_module = "kokoro";
+        if (!backendConfig.tts.modules) backendConfig.tts.modules = {};
+
+        // Set Kokoro specific settings
+        backendConfig.tts.modules.kokoro = {
+            default_lang: selectedVoiceLang,
+            default_voice: selectedVoiceId
+        };
 
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
-        // await saveBackendConfig(backendConfig, config.get('orakle.api_url'));
 
         // After successful save, clear the modified fields tracking
         modifiedFields.stt.clear();
     } catch (error) {
-        console.error('Error updating STT config:', error);
+        console.error('Error updating Voice config:', error);
     }
+}
+
+function generateEmailTableHtml(config) {
+    const accounts = config?.apis?.messaging?.email?.accounts || [];
+
+    let rowsHtml = '';
+
+    // Helper to generate a row
+    const createRow = (acc, isGhost = false) => `
+        <div class="email-row ${isGhost ? 'ghost' : ''}">
+            <div class="email-cell"><input type="text" class="email-id" placeholder="ID (e.g. gmail)" value="${acc.id || ''}" ${isGhost ? '' : 'required'}></div>
+            <div class="email-cell"><input type="text" class="email-host" placeholder="imap.email.com" value="${acc.imap_host || ''}" ${isGhost ? '' : 'required'}></div>
+            <div class="email-cell"><input type="number" class="email-port" placeholder="993" value="${acc.imap_port || ''}"></div>
+            <div class="email-cell"><input type="text" class="email-user" placeholder="user@email.com" value="${acc.username || ''}" ${isGhost ? '' : 'required'}></div>
+            <div class="email-cell">
+                <div class="password-wrapper">
+                    <input type="password" class="email-pass" placeholder="Password" value="${acc.password || ''}" ${isGhost ? '' : 'required'}>
+                    <button class="password-toggle" type="button" tabindex="-1">Show</button>
+                </div>
+            </div>
+            <div class="email-cell">
+                ${!isGhost ? '<button class="remove-email-btn" title="Remove account">&times;</button>' : ''}
+            </div>
+        </div>
+    `;
+
+    // Existing accounts
+    accounts.forEach(acc => {
+        rowsHtml += createRow(acc, false);
+    });
+
+    // Ghost row
+    rowsHtml += createRow({}, true);
+
+    return `
+        <div class="skill-item email-config-section" data-group-path="apis.messaging.email">
+            <div class="email-config-header">
+                <h4>Email Accounts</h4>
+                <p>Configure IMAP accounts for email integration.</p>
+            </div>
+            <div class="email-config-table" id="email-accounts-table">
+                <div class="email-col-header">ID</div>
+                <div class="email-col-header">IMAP Host</div>
+                <div class="email-col-header">Port</div>
+                <div class="email-col-header">Username</div>
+                <div class="email-col-header">Password</div>
+                <div class="email-col-header"></div>
+                ${rowsHtml}
+            </div>
+        </div>
+    `;
+}
+
+function setupEmailTableListeners() {
+    const table = document.getElementById('email-accounts-table');
+    if (!table) return;
+
+    // Delegate events
+    table.addEventListener('click', (e) => {
+        // Remove button
+        if (e.target.closest('.remove-email-btn')) {
+            if (confirm('Remove this email account?')) {
+                e.target.closest('.email-row').remove();
+                modifiedFields.skills.add('apis.messaging.email');
+                updateSkillsNextButtonState();
+            }
+        }
+
+        // Password toggle
+        if (e.target.classList.contains('password-toggle')) {
+            const btn = e.target;
+            const input = btn.previousElementSibling;
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = 'Hide';
+            } else {
+                input.type = 'password';
+                btn.textContent = 'Show';
+            }
+        }
+    });
+
+    table.addEventListener('input', (e) => {
+        const row = e.target.closest('.email-row');
+        if (!row) return;
+
+        // Mark as modified
+        modifiedFields.skills.add('apis.messaging.email');
+        updateSkillsNextButtonState();
+
+        // Handle Ghost Row interaction
+        if (row.classList.contains('ghost')) {
+            // Remove ghost class and required attributes
+            row.classList.remove('ghost');
+            row.querySelectorAll('input').forEach(input => input.required = true);
+            // Port is optional
+            row.querySelector('.email-port').required = false;
+
+            // Add remove button
+            const actionCell = row.lastElementChild;
+            actionCell.innerHTML = '<button class="remove-email-btn" title="Remove account">&times;</button>';
+
+            // Create new ghost row
+            const newGhostHtml = `
+                <div class="email-row ghost">
+                    <div class="email-cell"><input type="text" class="email-id" placeholder="ID (e.g. gmail)"></div>
+                    <div class="email-cell"><input type="text" class="email-host" placeholder="imap.email.com"></div>
+                    <div class="email-cell"><input type="number" class="email-port" placeholder="993"></div>
+                    <div class="email-cell"><input type="text" class="email-user" placeholder="user@email.com"></div>
+                    <div class="email-cell">
+                        <div class="password-wrapper">
+                            <input type="password" class="email-pass" placeholder="Password">
+                            <button class="password-toggle" type="button" tabindex="-1">Show</button>
+                        </div>
+                    </div>
+                    <div class="email-cell"></div>
+                </div>
+            `;
+            table.insertAdjacentHTML('beforeend', newGhostHtml);
+        }
+    });
 }
 
 async function saveSkillsConfig() {
@@ -2876,10 +2804,107 @@ async function saveSkillsConfig() {
             }
         });
 
-        // console.log("======================");
-        // console.log("backendConfig");
-        // console.log(JSON.stringify(backendConfig));
-        // console.log("======================");
+        // SAVE EMAIL ACCOUNTS
+        if (modifiedFields.skills.has('apis.messaging.email')) {
+            const emailAccounts = [];
+            const rows = document.querySelectorAll('#email-accounts-table .email-row:not(.ghost)');
+
+            rows.forEach(row => {
+                const id = row.querySelector('.email-id').value.trim();
+                const host = row.querySelector('.email-host').value.trim();
+                const port = row.querySelector('.email-port').value.trim();
+                const user = row.querySelector('.email-user').value.trim();
+                const pass = row.querySelector('.email-pass').value.trim();
+
+                if (id && host && user && pass) {
+                    const accountObj = {
+                        id: id,
+                        imap_host: host,
+                        username: user,
+                        password: pass
+                    };
+                    if (port) accountObj.imap_port = parseInt(port);
+                    emailAccounts.push(accountObj);
+                }
+            });
+
+            // Ensure structure exists
+            if (!backendConfig.apis) backendConfig.apis = {};
+            if (!backendConfig.apis.messaging) backendConfig.apis.messaging = {};
+            if (!backendConfig.apis.messaging.email) backendConfig.apis.messaging.email = {};
+
+            backendConfig.apis.messaging.email.accounts = emailAccounts;
+        }
+
+        // SAVE SCHEDULE OVERRIDES (Updated Logic)
+        if (modifiedFields.skills.has('scheduler')) {
+            if (!backendConfig.scheduler) backendConfig.scheduler = {};
+            if (!backendConfig.scheduler.overrides) backendConfig.scheduler.overrides = {};
+
+            document.querySelectorAll('.schedule-row').forEach(row => {
+                const skillName = row.dataset.skill;
+                const isEnabled = row.querySelector('.schedule-enable').checked;
+                const minutes = parseInt(row.querySelector('.schedule-interval').value);
+                const isDefaultDefault = row.dataset.defaultDefault === "true";
+
+                if (!isEnabled) {
+                    // If disabled:
+                    // - If default was enabled (true), we must explicitly set false.
+                    // - If default was disabled (false), we can just remove the override key.
+                    if (isDefaultDefault) {
+                        backendConfig.scheduler.overrides[skillName] = false;
+                    } else {
+                        delete backendConfig.scheduler.overrides[skillName];
+                    }
+                } else {
+                    // If enabled, we construct the full config object
+
+                    // 1. Harvest Kwargs from UI
+                    const uiKwargs = {};
+                    const paramInputs = document.querySelectorAll(`.param-input[data-skill="${skillName}"]`);
+
+                    paramInputs.forEach(input => {
+                        const key = input.dataset.key;
+                        const type = input.dataset.type;
+                        let val = input.value;
+
+                        if (type === 'boolean') {
+                            val = (val === 'true');
+                        } else if (type === 'integer') {
+                            val = parseInt(val);
+                            if (isNaN(val)) val = null; // Handle empty
+                        } else if (type === 'number') {
+                            val = parseFloat(val);
+                            if (isNaN(val)) val = null;
+                        } else if (type === 'array') {
+                            // Split by comma and trim
+                            val = val ? val.split(',').map(s => s.trim()).filter(s => s !== '') : [];
+                        }
+
+                        // Only add if not object placeholder (which is disabled)
+                        if (!input.disabled) {
+                            uiKwargs[key] = val;
+                        }
+                    });
+
+                    // 2. Merge with existing kwargs to preserve hidden/complex objects
+                    // We start with the existing override kwargs (if any), or default kwargs
+                    const existingOverride = backendConfig.scheduler.overrides[skillName];
+                    const existingKwargs = (existingOverride && existingOverride !== false && existingOverride.kwargs)
+                                           ? existingOverride.kwargs
+                                           : {};
+
+                    // Merge: Existing takes precedence for keys NOT in UI, UI takes precedence for keys IN UI
+                    const finalKwargs = { ...existingKwargs, ...uiKwargs };
+
+                    backendConfig.scheduler.overrides[skillName] = {
+                        trigger: 'interval',
+                        minutes: minutes,
+                        kwargs: finalKwargs
+                    };
+                }
+            });
+        }
 
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
@@ -2913,9 +2938,8 @@ async function saveFinishStepConfig() {
         //     ipcRenderer.send('set-auto-start');
         // }
 
-        if (modifiedFields.finish.has('review-stt-checkbox')) {
-            const isChecked = document.getElementById('review-stt-checkbox').checked;
-            config.set('stt.review', isChecked);
+        if (modifiedFields.finish.has('review-stt-select')) {
+            config.set('stt.review', document.getElementById('review-stt-select').value);
         }
 
         if (modifiedFields.finish.has('background-notifications-checkbox')) {
@@ -2936,6 +2960,21 @@ async function saveFinishStepConfig() {
             backendConfig.backup.enabled = !!backupDirectory; // Enable if directory is not empty
 
             await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+        }
+
+        if (modifiedFields.finish.has('wakeword-checkbox')) {
+            const isChecked = document.getElementById('wakeword-checkbox').checked;
+            config.set('wakeword.enabled', isChecked);
+        }
+
+        if (modifiedFields.finish.has('lower-volume-checkbox')) {
+            const isChecked = document.getElementById('lower-volume-checkbox').checked;
+            config.set('stt.lowerVolume', isChecked);
+        }
+
+        if (modifiedFields.finish.has('comring-notifications-checkbox')) {
+            const isChecked = document.getElementById('comring-notifications-checkbox').checked;
+            config.set('ui.comringNotifications', isChecked);
         }
 
         config.saveConfig();
@@ -3071,6 +3110,287 @@ function setupShortcutCapture() {
         triggerDisplay.textContent = triggerInput.value;
         modifiedFields.shortcuts.add('trigger-shortcut');
     });
+}
+
+// Helper to parse Python default string values from run_info
+function parsePythonDefault(val) {
+    if (val === undefined || val === null) return null;
+    const sVal = String(val).trim();
+    if (sVal === "None") return null;
+    if (sVal === "True") return true;
+    if (sVal === "False") return false;
+    // Check if it's a number
+    if (!isNaN(Number(sVal))) return Number(sVal);
+    // Remove quotes if present
+    if ((sVal.startsWith("'") && sVal.endsWith("'")) || (sVal.startsWith('"') && sVal.endsWith('"'))) {
+        return sVal.slice(1, -1);
+    }
+    return sVal;
+}
+
+function renderInputBySchema(skillName, paramName, paramDef, currentValue) {
+    const schema = paramDef.schema || {};
+    const type = schema.type || 'string';
+    const inputId = `param-${skillName}-${paramName}`;
+
+    // Determine effective value
+    let value = currentValue;
+    if (value === undefined || value === null) {
+        value = parsePythonDefault(paramDef.default);
+    }
+
+    let defaultValue = paramDef.required ? ` value="${value}" ` : '';
+
+    // console.log("----------------------");
+    // console.log(paramDef);
+    // console.log("----------------------");
+    // console.log(defaultValue);
+
+    let inputHtml = '';
+
+    if (type === 'boolean') {
+        const isTrue = value === true;
+        inputHtml = `
+            <select class="param-input" data-skill="${skillName}" data-key="${paramName}" data-type="boolean">
+                <option value="true" ${isTrue ? 'selected' : ''}>True</option>
+                <option value="false" ${!isTrue ? 'selected' : ''}>False</option>
+            </select>
+        `;
+    } else if (type === 'integer' || type === 'number') {
+        inputHtml = `<input type="number" class="param-input" id="${inputId}" data-skill="${skillName}" data-key="${paramName}" data-type="${type}" ${defaultValue}  placeholder="${value !== null ? value : ''}" step="${type === 'integer' ? '1' : 'any'}">`;
+    } else if (type === 'array') {
+        // List handling - comma separated
+        let displayVal = value;
+        if (Array.isArray(value)) displayVal = value.join(', ');
+        inputHtml = `<input type="text" class="param-input" id="${inputId}" data-skill="${skillName}" data-key="${paramName}" data-type="array" placeholder="${displayVal || ''}" >`;
+    } else if (type === 'object') {
+        // Placeholder for complex objects
+        inputHtml = `<input type="text" disabled value="COMPLEX CONFIGURATION (OBJECT) - NOT EDITABLE IN THIS VERSION" style="font-style: italic; color: #888; background-color: #eee;">`;
+    } else {
+        // String and fallback
+        inputHtml = `<input type="text" class="param-input" id="${inputId}" data-skill="${skillName}" data-key="${paramName}" data-type="string" placeholder="${value || ''}">`;
+    }
+
+    return `
+        <div class="param-group">
+            <label for="${inputId}" title="${paramName}">${paramName}</label>
+            ${inputHtml}
+            <div class="param-desc">${paramDef.description || ''}</div>
+        </div>
+    `;
+}
+
+function renderSkillParameters(skillName, cap, currentKwargs) {
+    const parameters = cap.run_info?.parameters;
+    if (!parameters || Object.keys(parameters).length === 0) {
+        return '<p style="color: #666; font-style: italic;">No configurable parameters.</p>';
+    }
+
+    let html = '';
+    for (const [paramName, paramDef] of Object.entries(parameters)) {
+        // We ignore 'hidden' flag as discussed to allow advanced config
+        const val = currentKwargs ? currentKwargs[paramName] : undefined;
+        html += renderInputBySchema(skillName, paramName, paramDef, val);
+    }
+    return html;
+}
+
+function generateScheduleUI(capabilities, backendConfig) {
+    let rows = '';
+    let hasSchedulable = false;
+
+    // Inject CSS for the accordion and form
+    const styles = `
+        <style>
+            .schedule-details-row { display: none; background-color: #f8f9fa; }
+            .schedule-details-row.active { display: table-row; }
+            .schedule-details-panel { padding: 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; border-bottom: 1px solid #eee; }
+            .param-group { display: flex; flex-direction: column; }
+            .param-group label { font-size: 0.85em; font-weight: bold; margin-bottom: 4px; color: #444; }
+            .param-group .param-desc { font-size: 0.75em; color: #666; margin-top: 4px; line-height: 1.2; }
+            .param-group input, .param-group select { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9em; }
+            .settings-btn { background: none; border: none; cursor: pointer; font-size: 1.2em; padding: 0 10px; opacity: 0.6; transition: opacity 0.2s; }
+            .settings-btn:hover, .settings-btn.active { opacity: 1; }
+            .schedule-table td { vertical-align: middle; }
+        </style>
+    `;
+
+    for (const [name, cap] of Object.entries(capabilities)) {
+        if (cap.default_schedule) {
+            hasSchedulable = true;
+            // Determine current state
+            const override = backendConfig.scheduler?.overrides?.[name];
+            const defaultSched = cap.default_schedule;
+
+            let isEnabled;
+            if (defaultSched.default) {
+                isEnabled = !(override === false);
+            } else {
+                isEnabled = typeof override !== "undefined" && override !== false;
+            }
+
+            // Resolve current kwargs: Override > Default Schedule > Empty
+            // Note: If override is false (disabled), we fall back to default kwargs for display
+            const currentKwargs = (override && override !== false && override.kwargs)
+                                  ? override.kwargs
+                                  : (defaultSched.kwargs || {});
+
+            const minutes = (override && override.minutes) ? override.minutes : (defaultSched.minutes || 10);
+            const hasParams = cap.run_info?.parameters && Object.keys(cap.run_info.parameters).length > 0;
+
+            // TODO Hidden settings configuration by now
+            rows += `
+                <tr class="schedule-row" data-skill="${name}" data-default-default=${defaultSched.default || false} data-default-minutes="${defaultSched.minutes || 10}">
+                    <td style="max-width: 100px">
+                        <i>${name}</i>
+                        <p style="font-size:0.8em; margin: 2px 0 0 0; color: #666;">${cap.description ? cap.description.trim().split('\n')[0] : ""}</p>
+                    </td>
+                    <td>
+                        <label class="schedule-toggle">
+                            <input type="checkbox" class="schedule-enable" ${isEnabled ? 'checked' : ''}>
+                            Enable
+                        </label>
+                    </td>
+                    <td>
+                        Run every <input type="number" class="schedule-interval schedule-interval-input" value="${minutes}" min="1" ${isEnabled ? '' : 'disabled'} style="width: 60px;"> minutes
+                    </td>
+                    <td style="text-align: center;">
+                        ${hasParams ? `<button class="settings-btn" style="display:none" data-skill="${name}" title="Configure Parameters">⚙️</button>` : ''}
+                    </td>
+                </tr>
+                ${hasParams ? `
+                <tr class="schedule-details-row" id="details-${name}">
+                    <td colspan="4" style="padding: 0;">
+                        <div class="schedule-details-panel">
+                            ${renderSkillParameters(name, cap, currentKwargs)}
+                        </div>
+                    </td>
+                </tr>
+                ` : ''}
+            `;
+        }
+    }
+
+    if (!hasSchedulable) return '';
+
+    return `
+        ${styles}
+        <div class="schedule-config-section">
+            <h3>Scheduled Skills</h3>
+            <p>Configure automatic execution intervals and parameters for supported skills.</p>
+            <table class="schedule-table">
+                <thead>
+                    <tr>
+                        <th>Skill</th>
+                        <th>Status</th>
+                        <th>Frequency</th>
+                        <th style="width: 50px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function setupScheduleListeners() {
+    // Handle Enable/Disable and Interval changes
+    document.querySelectorAll('.schedule-row').forEach(row => {
+        const checkbox = row.querySelector('.schedule-enable');
+        const input = row.querySelector('.schedule-interval');
+        const skillName = row.dataset.skill;
+
+        checkbox.addEventListener('change', () => {
+            input.disabled = !checkbox.checked;
+            modifiedFields.skills.add('scheduler');
+            updateSkillsNextButtonState();
+        });
+
+        input.addEventListener('input', () => {
+            modifiedFields.skills.add('scheduler');
+            updateSkillsNextButtonState();
+        });
+
+        // Handle Settings Button (Accordion)
+        const settingsBtn = row.querySelector('.settings-btn');
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const detailsRow = document.getElementById(`details-${skillName}`);
+                const isActive = detailsRow.classList.contains('active');
+
+                // Close all other details
+                document.querySelectorAll('.schedule-details-row').forEach(el => el.classList.remove('active'));
+                document.querySelectorAll('.settings-btn').forEach(el => el.classList.remove('active'));
+
+                // Toggle current
+                if (!isActive) {
+                    detailsRow.classList.add('active');
+                    settingsBtn.classList.add('active');
+                }
+            });
+        }
+    });
+
+    // Handle Parameter Input changes
+    document.querySelectorAll('.param-input').forEach(input => {
+        input.addEventListener('change', () => { // Use change for selects/inputs to avoid spamming on keystrokes
+            modifiedFields.skills.add('scheduler');
+            updateSkillsNextButtonState();
+        });
+        // Also capture text input for immediate feedback if needed, though 'change' is safer for complex forms
+        if (input.tagName === 'INPUT' && input.type === 'text') {
+             input.addEventListener('input', () => {
+                modifiedFields.skills.add('scheduler');
+             });
+        }
+    });
+}
+
+function setupSkillsNavigation() {
+    const navItems = document.querySelectorAll('.skills-nav-item');
+    const sections = document.querySelectorAll('.skills-section-anchor');
+    const scrollContainer = document.querySelector('.step-content'); // The main scrollable area
+
+    // Click handling
+    navItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const targetId = item.dataset.target;
+            const targetElement = document.getElementById(targetId);
+            if (targetElement) {
+                targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+    });
+
+    // Scroll Spy Logic
+    // We use the scroll event on the container because IntersectionObserver can be tricky with nested scrolling
+    if (scrollContainer) {
+        scrollContainer.addEventListener('scroll', () => {
+            let currentSectionId = '';
+
+            // Find which section is currently closest to the top of the viewport
+            sections.forEach(section => {
+                const rect = section.getBoundingClientRect();
+                // 150px offset to trigger slightly before the section hits the very top
+                if (rect.top < 200 && rect.bottom > 0) {
+                    currentSectionId = section.id;
+                }
+            });
+
+            if (currentSectionId) {
+                navItems.forEach(item => {
+                    if (item.dataset.target === currentSectionId) {
+                        item.classList.add('active');
+                    } else {
+                        item.classList.remove('active');
+                    }
+                });
+            }
+        });
+    }
 }
 
 // Function to update the LLM step title
@@ -3536,18 +3856,111 @@ async function loadOllamaModel(client, modelId) {
 }
 
 async function finishSetup() {
+    // console.info("Saving pending changes..");
     // Save any pending changes from the last configurable steps
     saveShortcutsConfig(); // Save shortcuts if modified
     await saveFinishStepConfig(); // Save finish step settings (like start minimized)
 
+    // console.info("Marking setup as completed..");
     // Mark setup as completed
     config.set('setup.completed', true);
-    config.set('setup.version', '0.9.8');
+    config.set('setup.version', '0.10.2');
     config.set('setup.timestamp', new Date().toISOString());
 
+    // console.info("Saving config...");
     // Save the final config state including setup completion flags
     config.saveConfig();
 
     // Notify main process that setup is complete
+    // console.info("Sending setup-complete signal");
     ipcRenderer.send('setup-complete');
+    // console.info("finishSetup done");
+}
+
+async function setupAuthListeners() {
+    const verifyBtn = document.getElementById('verify-wallet-btn');
+    const walletInput = document.getElementById('wallet-address-input'); // We will hide/ignore this
+    const statusMsg = document.getElementById('auth-status-message');
+    const authContainer = document.getElementById('auth-container');
+
+    // Hide the manual input if it exists, we don't need it anymore
+    if (walletInput) walletInput.style.display = 'none';
+    let pollingInterval = null;
+    let verified = await checkSolanaLogin();
+
+    if (!verified) {
+        verifyBtn.textContent = "Login with Solana Wallet";
+        verifyBtn.addEventListener('click', async () => {
+            // 1. Open the portal
+            ipcRenderer.send('open-auth-portal');
+            verifyBtn.disabled = true;
+            verifyBtn.textContent = "Waiting for browser login...";
+            statusMsg.textContent = "Please complete login in your browser...";
+            statusMsg.className = "info-message";
+            // 2. Start polling for success
+            if (pollingInterval) clearInterval(pollingInterval);
+            pollingInterval = setInterval(checkSolanaLogin, 2000);
+        });
+    }
+
+    async function checkSolanaLogin()  {
+        try {
+            const response = await fetch(config.get('pybridge.api_url') + '/auth/status');
+            const status = await response.json();
+
+            if (status.authorized) {
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                }
+                statusMsg.textContent = `Success! Wallet verified: ${status.wallet}`;
+                statusMsg.className = "success-message";
+                authContainer.classList.add('verified');
+                verifyBtn.textContent = "Verified";
+                updateButtonVisibility();
+            }
+            return status.authorized;
+        } catch (e) {
+            console.error("Auth polling error", e);
+        }
+    }
+}
+
+function setupTosListeners() {
+    const tosCheckbox = document.getElementById('terms-accept-btn');
+    const openModalLink = document.getElementById('open-tos-modal');
+    const closeModalBtn = document.getElementById('close-tos-modal');
+    const acceptModalBtn = document.getElementById('accept-tos-modal-btn');
+    const tosModal = document.getElementById('tos-modal');
+
+    // Load saved state
+    if (config.get('setup.tosAccepted')) {
+        tosCheckbox.checked = true;
+    }
+
+    // Checkbox change listener
+    tosCheckbox.addEventListener('change', () => {
+        config.set('setup.tosAccepted', tosCheckbox.checked);
+        config.saveConfig();
+        updateButtonVisibility();
+    });
+
+    // Open modal
+    openModalLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        tosModal.classList.remove('hidden');
+    });
+
+    // Close modal
+    closeModalBtn.addEventListener('click', () => {
+        tosModal.classList.add('hidden');
+    });
+
+    // Accept from modal
+    acceptModalBtn.addEventListener('click', () => {
+        tosCheckbox.checked = true;
+        config.set('setup.tosAccepted', true);
+        config.saveConfig();
+        tosModal.classList.add('hidden');
+        updateButtonVisibility();
+    });
 }

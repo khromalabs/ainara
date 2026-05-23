@@ -22,6 +22,9 @@ import pystache
 from datetime import datetime
 from typing import Dict, Any, Optional
 import logging
+from pycountry import languages
+
+from ainara.framework.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +83,15 @@ class TemplateManager:
         if context is None:
             context = {}
 
+        current_language = languages.get(
+            alpha_2=config.get("stt.language", "en")
+        ).name or "English"
+
         # Add some default variables
         full_context = {
-            'current_date': datetime.now().strftime('%Y-%m-%d'),
+            'current_date': datetime.now().strftime('%A %Y-%m-%d'),
             'current_time': datetime.now().strftime('%H:%M:%S'),
+            'language': current_language
         }
         full_context.update(context)
 

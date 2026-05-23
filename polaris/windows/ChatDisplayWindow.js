@@ -54,7 +54,7 @@ class ChatDisplayWindow extends BaseWindow {
     }
 
     constructor(config, screen, manager, basePath) {
-        const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+        const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().size;
         const windowWidth = Math.floor(screenWidth * 0.7);
         const windowHeight = 600; // config.get('chatDisplay.height', 300);
         const windowX = Math.floor((screenWidth / 2) - (windowWidth / 2));
@@ -64,13 +64,13 @@ class ChatDisplayWindow extends BaseWindow {
         let windowY;
         if (process.platform === 'win32') {
             // Windows: Position higher on screen
-            windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
+            windowY = Math.floor(screenHeight * 0.8) - (windowHeight / 2);
         } else if (process.platform === 'darwin') {
             // macOS: Account for menu bar
-            windowY = Math.floor(screenHeight * 0.7) - (windowHeight / 2);
+            windowY = Math.floor(screenHeight * 0.8) - (windowHeight / 2);
         } else {
             // Linux: Position lower as before
-            windowY = Math.floor(screenHeight * (6/7)) - (windowHeight / 2);
+            windowY = Math.floor(screenHeight * 0.8) - (windowHeight / 2);
         }
 
         Logger.log(`ChatDisplayWindow: Positioning at Y=${windowY} (${process.platform}, screen height=${screenHeight})`);
@@ -139,22 +139,28 @@ class ChatDisplayWindow extends BaseWindow {
 
         // Handle for setting typing mode state
         ipcMain.handle('set-typing-mode-state', (event, isTyping) => {
-            const oldState = this.isTypingMode;
-            this.isTypingMode = isTyping;
+            try {
+                const oldState = this.isTypingMode;
+                this.isTypingMode = isTyping;
 
-            // When typing, capture mouse events. Otherwise, let them pass through.
-            this.window.setIgnoreMouseEvents(!isTyping);
+                // When typing, capture mouse events. Otherwise, let them pass through.
+                if (this.window) {
+                    this.window.setIgnoreMouseEvents(!isTyping);
 
-            // Only broadcast if state actually changed
-            if (oldState !== isTyping) {
-                Logger.log(`ChatDisplayWindow: Typing mode changed to ${isTyping}`);
+                    // Only broadcast if state actually changed
+                    if (oldState !== isTyping) {
+                        Logger.log(`ChatDisplayWindow: Typing mode changed to ${isTyping}`);
 
-                // Broadcast to all relevant components
-                this.window.webContents.send('typing-mode-changed', isTyping);
-                const comRing = this.manager.getWindow('comRing');
-                if (comRing) {
-                    comRing.window.webContents.send('typing-mode-changed', isTyping);
+                        // Broadcast to all relevant components
+                        this.window.webContents.send('typing-mode-changed', isTyping);
+                        const comRing = this.manager.getWindow('comRing');
+                        if (comRing) {
+                            comRing.window.webContents.send('typing-mode-changed', isTyping);
+                        }
+                    }
                 }
+            } catch (error) {
+                Logger.error('ChatDisplayWindow: Error in setupEventHandlers: ', error);
             }
 
             return this.isTypingMode;

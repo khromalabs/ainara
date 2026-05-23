@@ -110,7 +110,7 @@ class Service extends EventEmitter {
                 const response = await fetch(this.url);
                 if (response.ok) {
                     this.healthy = true;
-                    Logger.log(`${this.name} is healthy`);
+                    // Logger.log(`${this.name} is healthy`);
                     return;
                 }
             } catch (error) {
@@ -128,6 +128,7 @@ class Service extends EventEmitter {
     async checkHealth() {
         try {
             const response = await fetch(this.url);
+            // Logger.log(JSON.stringify(response));
             this.healthy = response.ok;
         } catch (error) {
             // Don't log here, as it can be noisy. The caller can log if needed.
@@ -149,6 +150,7 @@ class Service extends EventEmitter {
                 Logger.log(`Force killing ${this.name} immediately (SIGKILL)`);
                 this.process.kill('SIGKILL');
                 this.healthy = false;
+                this.isStopping = false;
                 return resolve();
             }
 
@@ -163,6 +165,7 @@ class Service extends EventEmitter {
                 }
                 this.errorMsg = "Failed";
                 reject(new Error(`${this.name} failed to terminate gracefully`));
+                this.isStopping = false;
             }, maxWaitTime);
 
             this.process.once('exit', (code, signal) => {

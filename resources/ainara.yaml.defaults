@@ -4,57 +4,31 @@
 stt:
   # Default backend to use
   selected_module: "faster_whisper"
+  language: "en"
   modules:
     faster_whisper:
-      language: "en"
       model_size: "small"
-    whisper:
-      service: "custom"
-      language: "en"
-      custom:
-        api_key: ""
-        api_url: "http://127.0.0.1:8080/inference"
-        model: "whisper-1"
-        headers: {}
 
 # Text-to-Speech configuration
 tts:
   # Default backend to use
-  selected_module: "piper"
+  selected_module: "kokoro"
   modules:
-    piper:
-      # Piper binary location:
-      # - "auto": Auto-detect bundled binary or system installation
-      # - "/path/to/piper": Use specific binary path
-      binary: "auto"
-
-      # Voice model to use:
-      # - "en_US-amy-medium": Default English (US) female voice
-      # - "en_GB-alba-medium": English (UK) female voice
-      # - "es_ES-mls_10246-medium": Spanish female voice
-      # - "fr_FR-siwis-medium": French female voice
-      # - "de_DE-thorsten-medium": German male voice
-      # - "/path/to/model.onnx": Use specific model file
-      voice: "en_US-amy-medium"
-
-      # Voice model directory:
-      # - "auto": Use bundled models or standard location
-      # - "/path/to/models": Use specific directory
-      model_dir: "auto"
-
-      # TTS options
-      options: "--output_raw --length_scale 0.7"
+    kokoro:
+      default_lang: en-us
+      default_voice: af_heart
 
 # LLM configuration
 llm:
   # Default backend to use
   selected_backend: "litellm"
   selected_provider: ""
-  providers:
+  providers: []
+    # Example provider configuration:
     # - model: "openai/gpt-3.5-turbo"
     #   api_base: "http://127.0.0.1:8000/v1"
     #   api_key: "nokey"
-    #   context_window: 8192 # Optional: Specify context window size
+    #   context_window: 8192
 
 # Ainara configuration
 orakle:
@@ -85,25 +59,32 @@ memory:
   vector_db_enabled: true
   summary_enabled: true
   session_id: "default_session"
-#  embedding_model: "sentence-transformers/all-mpnet-base-v2"
+#  embedding_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 #  storage_path: "~/.config/ainara/chat_memory.db"
 #  vector_db_path: "~/.config/ainara/vector_db"
 
 # APIs
 apis:
-  #crypto:
-  #  coinmarketcap_api_key: ""
+  coinmarketcap:
+    api_key: ""
+  helius:
+    api_key: ""
+  # Example configuration for an exchange (e.g., binance, kraken, coinbase)
+  # cryptoexchanges:
+  #   binance:
+  #     api_key: ""
+  #     secret: ""
+  #     password: "" # Only required for some exchanges
+  #     sandbox_mode: true
   finance:
     alphavantage_api_key: ""
-  # helius:
-  #   api_key: ""
   # reddit:
   #   client_id: ""
   #   client_secret: ""
   search:
-    google:
-      api_key: ""
-      cx: ""
+    # google:
+    #   api_key: ""
+    #   cx: ""
     metaphor:
       api_key: ""
     newsapi:

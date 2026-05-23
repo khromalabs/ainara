@@ -20,29 +20,41 @@ import asyncio
 import inspect
 import logging
 import re
-# import os
-from abc import ABC
+import sys
 from pathlib import Path
-from typing import (Annotated, Any, Dict, Optional, get_args, get_origin,
-                    get_type_hints)
+from typing import (Annotated, Any, Dict, Optional, Union, get_args, get_origin,
+                    get_type_hints, is_typeddict)
 
 from ainara.framework.mcp.client_manager import MCPClientManager
+# from ainara.framework.connectors.manager import ConnectorManager
+from ainara.framework.connectors.router import ConnectorRouter
 
 from .base import CapabilityProvider
 
 logger = logging.getLogger(__name__)
 
 
-class BasePythonSkillProvider(CapabilityProvider, ABC):
+class BasePythonSkillProvider(CapabilityProvider):
     """Abstract base provider for discovering Python-based skills from the filesystem."""
 
-    def __init__(self, config, mcp_client_manager: Optional[MCPClientManager]):
+    def __init__(
+        self,
+        config,
+        mcp_client_manager: Optional[MCPClientManager],
+        # connector_manager: Optional[ConnectorManager] = None,
+        connector_router: Optional[ConnectorRouter] = None,
+    ):
         self.config = config
         self.mcp_client_manager = mcp_client_manager
+        # self.connector_manager = connector_manager
+        self.connector_router = connector_router
         self.capabilities: Dict[str, Dict[str, Any]] = {}
 
     def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
         """Execute a skill."""
+
+        # logger.info(f"PRESENT CAPABILITIES:\n{self.capabilities}")
+
         capability_data = self.capabilities.get(name)
         if not capability_data:
             raise ValueError(f"Skill '{name}' not found by provider.")
@@ -66,7 +78,7 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
                         self.mcp_client_manager
                         and self.mcp_client_manager._loop
                     ):
-                        logger.debug(
+                        logger.info(
                             f"Executing async skill '{name}' using MCP event"
                             " loop."
                         )
@@ -112,11 +124,75 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
         if params:
             desc += "Arguments:\n"
             for p_name, p_info in params.items():
+                # Skip parameters marked as hidden (e.g. for UI/Scheduler only)
+                if p_info.get("hidden", False):
+                    continue
+
                 desc += f"- {p_name} (type: {p_info['type']})"
                 if p_info["required"]:
                     desc += " (required)"
                 desc += f": {p_info['description']}\n"
         return desc + "---\n"
+
+    def _generate_json_schema(self, type_hint: Any) -> Dict[str, Any]:
+        """Generate a JSON Schema from a Python type hint."""
+        origin = get_origin(type_hint)
+        args = get_args(type_hint)
+
+        # Handle TypedDict
+        if is_typeddict(type_hint):
+            properties = {}
+            required_keys = getattr(type_hint, "__required_keys__", frozenset())
+
+            # If __required_keys__ is empty but total=True (default), all keys are required
+            if not required_keys and getattr(type_hint, "__total__", True):
+                required_keys = type_hint.__annotations__.keys()
+
+            for name, t_val in type_hint.__annotations__.items():
+                properties[name] = self._generate_json_schema(t_val)
+
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": list(required_keys),
+                "title": type_hint.__name__
+            }
+
+        # Handle List
+        if origin is list or origin is list:  # Handle both typing.List and built-in list
+            return {
+                "type": "array",
+                "items": self._generate_json_schema(args[0]) if args else {}
+            }
+
+        # Handle Dict
+        if origin is dict or origin is dict:
+            # Dict[Key, Value] -> JSON object with additionalProperties
+            return {
+                "type": "object",
+                "additionalProperties": self._generate_json_schema(args[1]) if len(args) > 1 else {}
+            }
+
+        # Handle Optional / Union
+        if origin is Union:
+            # Filter out NoneType to find the actual type
+            non_none_types = [t for t in args if t is not type(None)]
+            if len(non_none_types) == 1:
+                return self._generate_json_schema(non_none_types[0])
+            # Complex unions could be handled with "anyOf", but keeping it simple for now
+            return {}
+
+        # Handle Primitives
+        if type_hint is int:
+            return {"type": "integer"}
+        if type_hint is float:
+            return {"type": "number"}
+        if type_hint is bool:
+            return {"type": "boolean"}
+        if type_hint is str:
+            return {"type": "string"}
+
+        return {}
 
     def _get_method_details(
         self, instance: Any, method_name: str, capability_name: str
@@ -152,6 +228,7 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
                 origin = get_origin(param_type_hint)
                 args = get_args(param_type_hint)
                 actual_type = param_type_hint
+                is_hidden = False
 
                 if origin is Annotated and len(args) >= 2:
                     actual_type = args[0]
@@ -163,6 +240,13 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
                             f" capability '{capability_name}' is not a string."
                         )
 
+                    # Check for "hidden" flag in Annotated args
+                    if "hidden" in args[1:]:
+                        is_hidden = True
+
+                # Generate JSON Schema for the type
+                json_schema = self._generate_json_schema(actual_type)
+
                 details["parameters"][param_name] = {
                     "type": str(actual_type),
                     "default": (
@@ -172,6 +256,8 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
                     ),
                     "required": param.default is param.empty,
                     "description": param_desc,
+                    "hidden": is_hidden,
+                    "schema": json_schema
                 }
         except Exception as e:
             logger.error(
@@ -196,10 +282,19 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
         import importlib
 
         self.capabilities = {}
-        logger.info(f"Scanning for skills in: {skills_dir}")
-        # logger.info(f"2 Current path: {os.getcwd()}")
+        is_frozen = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
-        for skill_file in skills_dir.glob("*/*.py"):
+        # In frozen mode, look for .pyc and .py files; in dev mode, look for .py files
+        glob_patterns = ["*/*.pyc", "*/*.py"] if is_frozen else ["*/*.py"]
+        skill_files = set()
+        skill_files = set()
+        for pattern in glob_patterns:
+            skill_files.update(skills_dir.glob(pattern))
+
+        logger.info(f"Scanning for skills in: {skills_dir} (pattern: {glob_patterns})")
+
+        for skill_file in skill_files:
+            # For .pyc files, stem is like "analysis" from "analysis.pyc"
             if skill_file.stem.startswith("__") or skill_file.stem == "base":
                 continue
 
@@ -222,14 +317,40 @@ class BasePythonSkillProvider(CapabilityProvider, ABC):
                     continue
 
                 full_module_path = f"{prefix_module}.{module_path}"
-                logger.debug(f"Importing module: {full_module_path}")
-                module = importlib.import_module(full_module_path)
+                logger.info(f"Importing module: {full_module_path}")
+
+                # In frozen mode, load from file path directly
+                if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                    # Try .pyc first, then .py
+                    pyc_path = skill_file.with_suffix(".pyc")
+                    load_path = pyc_path if pyc_path.exists() else skill_file
+
+                    spec = importlib.util.spec_from_file_location(
+                        full_module_path, load_path
+                    )
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[full_module_path] = module
+                        spec.loader.exec_module(module)
+                    else:
+                        raise ImportError(f"Could not load spec for {load_path}")
+                else:
+                    # Development mode - use standard import
+                    module = importlib.import_module(full_module_path)
                 if hasattr(module, class_name):
                     skill_class = getattr(module, class_name)
 
                     if inspect.isclass(skill_class):
                         try:
                             instance = skill_class()
+
+                            # # Added: Inject ConnectorManager if available
+                            # if self.connector_manager:
+                            #     instance.connector_manager = self.connector_manager
+
+                            if self.connector_router:
+                                instance.router = self.connector_router
+
                             snake_name = self.camel_to_snake(class_name)
                             embeddings_boost_factor = 1.0
                             if hasattr(instance, "embeddings_boost_factor"):

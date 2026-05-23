@@ -17,42 +17,21 @@
 # Lesser General Public License for more details.
 
 import json
+import logging
 import os
 import platform
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
-def is_appcontainer_environment():
-    """Detect if running in Windows AppContainer (Microsoft Store) environment"""
-    if platform.system() != "Windows":
-        return False
+MIGRATION_CHECKED = False
 
-    # Check for AppContainer-specific environment variables
-    package_family_name = os.environ.get("PackageFamilyName")
-    local_appdata_package = os.environ.get("LOCALAPPDATA")
-
-    # In AppContainer, LOCALAPPDATA points to package-specific path
-    if package_family_name and local_appdata_package and "Packages" in local_appdata_package:
-        return True
-
-    return False
-
-
-def get_appcontainer_paths():
-    """Get paths specific to Windows AppContainer environment"""
-    package_family_name = os.environ.get("PackageFamilyName", "Ainara")
-    local_appdata = os.environ.get("LOCALAPPDATA", "")
-
-    if not local_appdata:
-        local_appdata = os.path.expanduser("~/AppData/Local")
-
-    # In AppContainer, these are the writable locations
-    config_dir = Path(local_appdata) / "Ainara"
-    log_dir = Path(local_appdata) / "Ainara" / "logs"
-    cache_dir = Path(local_appdata) / "Ainara" / "Cache"
-    data_dir = Path(local_appdata) / "Ainara" / "Data"
-
-    return config_dir, log_dir, cache_dir, data_dir
+def _get_windows_documents_path():
+    """Get the real Documents path on Windows using Windows API"""
+    import ctypes.wintypes
+    buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+    ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf)  # CSIDL_PERSONAL = 5
+    return Path(buf.value)
 
 
 def get_default_config_paths():
@@ -70,15 +49,9 @@ def get_default_config_paths():
             Path("/etc/ainara/ainara.yaml"),
         ])
     elif system == "Windows":
-        if is_appcontainer_environment():
-            config_dir, _, _, _ = get_appcontainer_paths()
-            config_paths.append(config_dir / "ainara.yaml")
-        else:
-            # Windows standard locations
-            appdata = os.environ.get(
-                "APPDATA", os.path.expanduser("~/AppData/Roaming")
-            )
-            config_paths.append(Path(appdata) / "Ainara/ainara.yaml")
+        # Always use Documents/Ainara/Config on Windows
+        docs_path = _get_windows_documents_path()
+        config_paths.append(docs_path / "Ainara" / "Config" / "ainara.yaml")
     else:
         # Fallback for other systems
         config_paths.append(Path(os.path.expanduser("~/.ainara/ainara.yaml")))
@@ -92,83 +65,50 @@ def get_default_log_dir():
     """Get default platform-specific log directory path"""
     system = platform.system()
 
-    if system == "Windows" and is_appcontainer_environment():
-        _, log_dir, _, _ = get_appcontainer_paths()
-        return log_dir
-
-    if system == "Linux":
-        # XDG standard for Linux
+    if system == "Windows":
+        docs_path = _get_windows_documents_path()
+        return docs_path / "Ainara" / "Logs"
+    elif system == "Linux":
         data_home = os.environ.get(
             "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
         )
-        log_dir = Path(data_home) / "ainara/logs"
+        return Path(data_home) / "ainara/logs"
     elif system == "Darwin":  # macOS
-        log_dir = Path(os.path.expanduser("~/Library/Logs/Ainara"))
-    elif system == "Windows":
-        # Windows standard locations
-        localappdata = os.environ.get(
-            "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
-        )
-        log_dir = Path(localappdata) / "Ainara/logs"
+        return Path(os.path.expanduser("~/Library/Logs/Ainara"))
     else:
-        # Fallback for other systems
-        log_dir = Path(os.path.expanduser("~/.ainara/logs"))
-
-    return log_dir
+        return Path(os.path.expanduser("~/.ainara/logs"))
 
 
 def get_default_cache_dir():
     """Get default platform-specific cache directory path"""
     system = platform.system()
 
-    if system == "Windows" and is_appcontainer_environment():
-        _, _, cache_dir, _ = get_appcontainer_paths()
-        return cache_dir
-
-    if system == "Linux":
-        # XDG standard for Linux
+    if system == "Windows":
+        docs_path = _get_windows_documents_path()
+        return docs_path / "Ainara" / "Cache"
+    elif system == "Linux":
         cache_home = os.environ.get(
             "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
         )
-        cache_dir = Path(cache_home) / "ainara"
+        return Path(cache_home) / "ainara"
     elif system == "Darwin":  # macOS
-        cache_dir = Path(os.path.expanduser("~/Library/Caches/Ainara"))
-    elif system == "Windows":
-        # Windows standard locations
-        localappdata = os.environ.get(
-            "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
-        )
-        cache_dir = Path(localappdata) / "Ainara/Cache"
+        return Path(os.path.expanduser("~/Library/Caches/Ainara"))
     else:
-        # Fallback for other systems
-        cache_dir = Path(os.path.expanduser("~/.ainara/cache"))
-
-    return cache_dir
+        return Path(os.path.expanduser("~/.ainara/cache"))
 
 
 def get_default_data_dir(app_name="ainara"):
     """Get default platform-specific user data directory path"""
     system = platform.system()
 
-    if system == "Windows" and is_appcontainer_environment():
-        _, _, _, data_dir = get_appcontainer_paths()
-        return data_dir
-
     if system == "Windows":
-        # On Windows, use %LOCALAPPDATA%\\app_name
-        return os.path.join(
-            os.environ.get(
-                "LOCALAPPDATA", os.path.expanduser("~/AppData/Local")
-            ),
-            app_name,
-        )
+        docs_path = _get_windows_documents_path()
+        return docs_path / "Ainara" / "Data"
     elif system == "Darwin":  # macOS
-        # On macOS, use ~/Library/Application Support/app_name
         return os.path.join(
             os.path.expanduser("~/Library/Application Support"), str(app_name)
         )
     else:  # Linux and others
-        # On Linux, use ~/.local/state/app_name (for state data)
         return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
 
 

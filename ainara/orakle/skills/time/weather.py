@@ -49,6 +49,11 @@ class TimeWeather(Skill):
         )
         self.logger = logging.getLogger(__name__)
         self.api_key = config.get("apis.weather.openweathermap_api_key")
+        # self.default_schedule = {
+        #     "trigger": "interval",
+        #     "minutes": 60,
+        #     "kwargs": {"action": "check"},
+        # }
 
     # def reload(self):
     #     super().reload(config)
@@ -187,8 +192,7 @@ class TimeWeather(Skill):
         ] = None,
         country: Annotated[
             Optional[str],
-            "Country name or code (e.g., US, UK). Used to make the city search"
-            " more specific.",
+            "Country name. Used to make the city search more specific.",
         ] = None,
         api_key: Annotated[
             Optional[str],

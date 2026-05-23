@@ -35,6 +35,7 @@ from ainara.framework.capabilities.manager import CapabilitiesManager
 from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
+from ainara.orakle.scheduler import OrakleScheduler
 
 config.load_config()
 logger = logging.getLogger(__name__)
@@ -156,6 +157,12 @@ def create_app(internet_available: bool):
 
     # Store reference to capabilities manager, passing the global config
     app.capabilities_manager = CapabilitiesManager(app, config, internet_available)
+
+    # --- Scheduler ---
+    # Initialize and start the background scheduler
+    app.scheduler = OrakleScheduler(app.capabilities_manager, config)
+    app.scheduler.start()
+    atexit.register(app.scheduler.shutdown)
 
     # --- Health Monitor ---
     app.health_monitor = HealthMonitor(shutdown_callback=shutdown_server)

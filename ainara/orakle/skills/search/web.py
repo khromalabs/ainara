@@ -159,6 +159,12 @@ class SearchWeb(Skill):
                 f" (optimized for {exploratory_engines})."
             )
 
+        if "crypto" in search_types:
+            crypto_engines = ", ".join(search_types["crypto"])
+            doc += (
+                " Use search_type='crypto' for exploratory searches"
+                f" (optimized for {crypto_engines})."
+            )
         self.__doc__ = doc
 
     def _collect_engine_specialties(self):
@@ -185,9 +191,9 @@ class SearchWeb(Skill):
         query: Annotated[str, "Search web query string"],
         search_type: Annotated[
             Literal[
-                "comprehensive", "academic", "recent", "exploratory", "news"
+                "comprehensive", "academic", "recent", "exploratory", "news", "crypto"
             ],
-            "Type of search to perform",
+            "Type of search to perform or best fitting topic",
         ] = "comprehensive",
         num_results: Annotated[int, "Number of results to return"] = 20,
         engine: Annotated[
@@ -228,6 +234,7 @@ class SearchWeb(Skill):
             "recent",
             "exploratory",
             "news",
+            "crypto"
         ]
         if search_type not in valid_search_types:
             search_type = "comprehensive"
@@ -331,7 +338,7 @@ class SearchWeb(Skill):
         Args:
             query: The search query
             num_results: Number of results to return
-            search_type: Type of search (comprehensive, academic, recent, exploratory, news)
+            search_type: Type of search (comprehensive, academic, recent, exploratory, news, crypto)
             engines: List of engine names to use
             recency: Optional recency filter
             **kwargs: Additional parameters

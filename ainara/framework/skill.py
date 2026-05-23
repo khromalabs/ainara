@@ -20,8 +20,19 @@
 class Skill:
     def __init__(self):
         self.name = self.__class__.__name__
+        self.connector_manager = None  # Added: Reference to ConnectorManager
         # Define what data this skill requires from the chat manager
         self.required_data = {}
+        # Default schedule configuration.
+        # Examples:
+        # {'trigger': 'interval', 'minutes': 15}
+        # {'trigger': 'cron', 'hour': 8, 'minute': 0, 'misfire_grace_time': 3600}
+        #
+        # Note on misfire_grace_time:
+        # - If omitted, defaults to scheduler strict mode (usually 1s).
+        # - Set to None to allow the job to run no matter how late it is (e.g. after sleep).
+        # - Set to an integer (seconds) to define a specific grace window.
+        self.default_schedule = None
 
     # def reload(self, config=None):
     #     if config:

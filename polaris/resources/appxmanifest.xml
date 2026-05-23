@@ -8,7 +8,7 @@
   <!-- use single quotes to avoid double quotes escaping in the publisher value  -->
   <Identity Name="${identityName}"
     ProcessorArchitecture="${arch}"
-    Publisher='${publisher}'
+    Publisher='CN="Open Source Developer, RUBEN GOMEZ AGUDO", O=Open Source Developer, L=Madrid, S=Madrid, C=ES'
     Version="${version}" />
   <Properties>
     <DisplayName>${displayName}</DisplayName>
@@ -28,6 +28,7 @@
     <Capability Name="internetClient" />
     <Capability Name="internetClientServer" />
     <Capability Name="privateNetworkClientServer" />
+    <DeviceCapability Name="microphone" />
   </Capabilities>
   <Applications>
     <Application Id="${applicationId}" Executable="${executable}" EntryPoint="Windows.FullTrustApplication">

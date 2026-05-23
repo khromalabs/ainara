@@ -244,6 +244,88 @@ class LiteLLM(LLMBackend):
 
         raise RuntimeError("No working LLM providers found")
 
+    def _get_provider_type(self, provider: dict = None) -> str:
+        """Extract the provider type from the model string.
+
+        Returns the provider prefix (e.g. 'anthropic', 'openai', 'ollama')
+        or an empty string if unknown.
+        """
+        model = (provider or self.provider).get("model", "")
+        if "/" in model:
+            return model.split("/", 1)[0].lower()
+        return ""
+
+    def _apply_cache_hints(
+        self, messages: list, provider: dict = None
+    ) -> list:
+        """Apply provider-specific KV cache hints to messages.
+
+        For Anthropic: converts the system message content to a content-block
+        list with cache_control marker, enabling prompt prefix caching.
+        For other providers: returns messages unchanged (OpenAI caches
+        automatically, others don't support client-side hints).
+
+        This can be disabled per-provider by setting cache_hints: false
+        in the provider configuration.
+
+        Args:
+            messages: Cleaned message list (no internal metadata).
+            provider: Provider config dict (defaults to self.provider).
+
+        Returns:
+            Message list with cache hints applied where supported.
+        """
+        provider = provider or self.provider
+
+        # Allow opt-out via provider config
+        if not provider.get("cache_hints", True):
+            return messages
+
+        provider_type = self._get_provider_type(provider)
+
+        if provider_type == "anthropic":
+            return self._apply_anthropic_cache_hints(messages)
+
+        # OpenAI: automatic prefix caching, nothing to do
+        # Others: no client-side cache hint support
+        return messages
+
+    def _apply_anthropic_cache_hints(self, messages: list) -> list:
+        """Apply Anthropic-specific cache_control markers.
+
+        Places a single cache breakpoint on the system message, which is
+        the largest stable prefix and the most valuable content to cache.
+
+        The system message content is converted from a plain string to a
+        content-block list as required by Anthropic's caching API.
+        """
+        if not messages:
+            return messages
+
+        result = list(messages)  # Shallow copy
+
+        # Find and transform the system message
+        for i, msg in enumerate(result):
+            if msg.get("role") == "system" and isinstance(
+                msg.get("content"), str
+            ):
+                result[i] = {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": msg["content"],
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                }
+                self.logger.debug(
+                    "Applied Anthropic cache_control to system message"
+                )
+                break  # Only one system message expected
+
+        return result
+
     def _get_token_count(self, text: str, role: str) -> int:
         """Get accurate token count using LiteLLM"""
         if not text:
@@ -290,20 +372,30 @@ class LiteLLM(LLMBackend):
             # self.logger.info(str(type(chat_history)))
             # self.logger.info(pprint.pformat(chat_history))
 
-            # Create a clean copy of chat history without 'tokens' field
+            # Create a clean copy of chat history without internal metadata
             clean_messages = []
             for msg in chat_history:
-                clean_msg = {k: v for k, v in msg.items() if k != "tokens"}
+                clean_msg = {
+                    k: v
+                    for k, v in msg.items()
+                    if k not in ("tokens", "sticky")
+                }
                 clean_messages.append(clean_msg)
 
             if not provider:
                 provider = self.provider
+
+            # Apply provider-specific KV cache hints
+            clean_messages = self._apply_cache_hints(
+                clean_messages, provider
+            )
 
             completion_kwargs = {
                 "model": provider["model"],
                 "messages": clean_messages,
                 # "temperature": 0.2,
                 "stream": stream,
+                "timeout": float(provider.get("request_timeout", 120.0)),
                 **(
                     {"api_base": provider["api_base"]}
                     if "api_base" in provider
@@ -432,20 +524,30 @@ class LiteLLM(LLMBackend):
                         f" content_length={len(msg.get('content', ''))}"
                     )
 
-            # Create a clean copy of chat history without 'tokens' field
+            # Create a clean copy of chat history without internal metadata
             clean_messages = []
             for msg in chat_history:
-                clean_msg = {k: v for k, v in msg.items() if k != "tokens"}
+                clean_msg = {
+                    k: v
+                    for k, v in msg.items()
+                    if k not in ("tokens", "sticky")
+                }
                 clean_messages.append(clean_msg)
 
             if not provider:
                 provider = self.provider
+
+            # Apply provider-specific KV cache hints
+            clean_messages = self._apply_cache_hints(
+                clean_messages, provider
+            )
 
             completion_kwargs = {
                 "model": provider["model"],
                 "messages": clean_messages,
                 # "temperature": 0.2,
                 "stream": stream,
+                "timeout": float(provider.get("request_timeout", 120.0)),
                 **(
                     {"api_base": provider["api_base"]}
                     if "api_base" in provider
@@ -457,6 +559,8 @@ class LiteLLM(LLMBackend):
                     else {}
                 ),
                 "logger_fn": self.my_custom_logging_fn,
+                # disable model tools
+                # "tool_choice": "none",
             }
 
             # Add reasoning effort if requested and supported

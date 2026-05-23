@@ -3,6 +3,8 @@ import os
 import sys
 import importlib
 import platform
+import compileall
+import shutil
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Get the project root directory (use current working directory as project root)
@@ -12,19 +14,48 @@ project_root = os.path.abspath(os.getcwd())
 if not os.path.exists(os.path.join(project_root, 'ainara')):
     raise ValueError(f"Calculated project_root {project_root} does not contain 'ainara' directory. Ensure the build is run from the project root.")
 
+# Compile Nexus Python files to .pyc
+nexus_src = os.path.join(project_root, 'ainara', 'nexus')
+nexus_compiled = os.path.join(project_root, 'build', 'nexus_compiled', 'ainara', 'nexus')
+
+if os.path.exists(nexus_src):
+    # Clean previous build
+    if os.path.exists(os.path.dirname(nexus_compiled)):
+        shutil.rmtree(os.path.dirname(nexus_compiled))
+
+    # Copy structure (including _components)
+    shutil.copytree(nexus_src, nexus_compiled)
+
+    # Compile .py to .pyc
+    compileall.compile_dir(nexus_compiled, force=True, legacy=True)
+
+    # Remove .py source files and __pycache__ directories, keep legacy .pyc and non-Python files
+    for root, dirs, files in os.walk(nexus_compiled, topdown=False):
+        for f in files:
+            if f.endswith('.py'):
+                os.remove(os.path.join(root, f))
+        # Remove __pycache__ directories (we use legacy .pyc files instead)
+        for d in dirs:
+            if d == '__pycache__':
+                shutil.rmtree(os.path.join(root, d))
+
+    print(f"Compiled Nexus modules to: {nexus_compiled}")
+
 block_cipher = None
 
 # Create array of package data entries
 package_data_entries = [
     ('emoji', ['unicode_codes']),
-    ('normalise', ['data']),
+    # ('normalise', ['data']),
     ('faster_whisper', ['assets']),
-    ('litellm', [
-        'litellm_core_utils/tokenizers',
-        'model_prices_and_context_window_backup.json'
-    ]),
+    # ('litellm', [
+    #     'litellm_core_utils/tokenizers',
+    #     'model_prices_and_context_window_backup.json'
+    #     'containers/endpoints.json'
+    # ]),
     ('en_core_web_sm', ['.']),
-    ('newspaper', ['.']),
+    ('openwakeword', ['.']),
+    ('trafilatura', ['.'])
 ]
 
 # Generate datas array from package data directories
@@ -54,7 +85,12 @@ packages_to_collect_data_from = [
     'chromadb',
     'onnxruntime',
     'tokenizers',
-    'chroma-hnswlib'
+    'chroma-hnswlib',
+    'numpy',
+    'litellm',
+    'kokoro_onnx',
+    'language_tags',
+    'espeakng_loader',
 ]
 
 # Define rules for platform-specific data files that need special handling.
@@ -102,6 +138,11 @@ tts_models_dir = os.path.join(project_root, 'resources/tts/models')
 if os.path.exists(tts_models_dir):
     datas.append((tts_models_dir, 'resources/tts/models'))
 
+# Add STT wakeword models
+tts_models_dir = os.path.join(project_root, 'resources/stt/wakeword')
+if os.path.exists(tts_models_dir):
+    datas.append((tts_models_dir, 'resources/stt/wakeword'))
+
 # Add platform-specific binaries
 system = platform.system()
 arch = platform.machine().lower()
@@ -133,12 +174,24 @@ else:  # Linux
     if os.path.exists(piper_bin_dir):
         binaries.append((piper_bin_dir, 'resources/bin/linux'))
 
+    # Fix for kokoro-onnx/espeakng_loader on Linux: ensure libespeak-ng.so is bundled
+    try:
+        spec = importlib.util.find_spec('espeakng_loader')
+        if spec and spec.origin:
+            pkg_dir = os.path.dirname(spec.origin)
+            so_path = os.path.join(pkg_dir, 'libespeak-ng.so')
+            if os.path.exists(so_path):
+                datas.append((so_path, 'espeakng_loader'))
+    except Exception as e:
+        print(f"Warning: Could not add libespeak-ng.so: {e}")
+
 # Define platform-specific excludes for packages that should not be bundled
 # on certain operating systems, even if they are present in the environment.
 platform_excludes = []
 if system == "Windows":
     platform_excludes.append('uvloop')
     platform_excludes.append('triton')
+
 
 # Common data files for both executables
 common_datas = [
@@ -156,7 +209,6 @@ common_imports = [
     # Core functionality
     'flask',
     'flask_cors',
-    'requests',
     'aiohttp',
     'asgiref',
     'tiktoken_ext.openai_public',
@@ -165,8 +217,7 @@ common_imports = [
     'json',
     'numpy',
     'pyperclip',
-    'feedparser',
-    'tldextract',
+    'fastembed'
 
     # LLM Backends
     'litellm',
@@ -178,20 +229,15 @@ common_imports = [
     'sounddevice',
     'soundfile',
     'pygame',
-    'elevenlabs',
-
-    # Additional dependencies
-    'telegram',
-    'validators',
-    'googleapiclient',
-    'googleapiclient.discovery',
-    'tiktoken',
+    'kokoro_onnx',
+    'misaki',
+    'language_tags',
+    'espeakng_loader',
+    'openwakeword'
 
     # ML/AI related
-    'transformers',
+    # 'transformers',
     'tokenizers',
-    'sentence_transformers',
-    'torch',
     # ChromaDB and its full set of dependencies.
     # Even for local/in-process usage, it can dynamically import many of these.
     'chromadb',
@@ -236,24 +282,38 @@ common_imports = [
 
     # Search engines
     'newsapi_python',
-    'newspaper3k', # The package name for 'newspaper'
     'tweepy',
+    'trafilatura',
 
     # Text processing
     'lxml_html_clean',
     'nltk',
     'textblob',
     'emoji',
-    'normalise', # Text normalization
+    # 'normalise', # Text normalization
     'spacy', # NLTK and Spacy for text processing
     'en_core_web_sm', # Default English model for Spacy
 
-    # Framework modules
-    'ainara.framework',
     # System utilities
     'psutil',
     'setproctitle',
+    'apscheduler',
 
+    # Communications
+    'aioimaplib',
+    'aiosmtplib',
+    # 'telethon',
+
+    # Additional dependencies
+    'validators',
+    'googleapiclient',
+    'googleapiclient.discovery',
+    'tiktoken',
+    'ccxt',
+    'ccxt.async_support',
+
+    # Framework modules
+    'ainara.framework',
     'ainara.framework.llm',
     'ainara.framework.matcher',
     'ainara.framework.storage',
@@ -267,15 +327,16 @@ common_imports = [
 ]
 
 # Add all the transformers models to common imports
-common_imports += collect_submodules('transformers')
+# common_imports += collect_submodules('transformers')
 common_imports += collect_submodules('chromadb')
 # Add all opentelemetry modules, a complex dependency of chromadb
 common_imports += collect_submodules('opentelemetry')
-collect_submodules('sentence_transformers')
+# collect_submodules('sentence_transformers')
 
 # Orakle-specific data and imports
 orakle_datas = [
     (os.path.join(project_root, 'ainara/orakle'), 'ainara/orakle'),
+    (os.path.join(project_root, 'build', 'nexus_compiled', 'ainara', 'nexus'), 'ainara/nexus'),
 ]
 
 orakle_imports = [
@@ -293,8 +354,11 @@ orakle_imports = [
 
 # PyBridge-specific data and imports
 pybridge_datas = []
-
 pybridge_imports = []
+
+# Bureau-specific data and imports
+bureau_datas = []
+bureau_imports = []
 
 # Create a runtime hook to help with imports
 with open(os.path.join(SPECPATH, 'runtime_hook.py'), 'w') as f:
@@ -399,17 +463,40 @@ a_pybridge = Analysis(
     noarchive=True,
 )
 
+# Analysis for Bureau
+a_bureau = Analysis(
+    [os.path.join(project_root, 'ainara/bureau', 'server.py')],
+    pathex=[project_root],
+    binaries=binaries,
+    datas=[*common_datas, *bureau_datas],
+    hiddenimports=[*common_imports, *bureau_imports],
+    hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
+    hooksconfig={},
+    runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
+    excludes=platform_excludes,
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=True,
+)
+
 # MERGE statement to combine the analyses
 MERGE(
     (a_orakle, 'orakle', 'orakle'),
-    (a_pybridge, 'pybridge', 'pybridge')
+    (a_pybridge, 'pybridge', 'pybridge'),
+    (a_bureau, 'bureau', 'bureau')
 )
+
 
 # PYZ for Orakle
 pyz_orakle = PYZ(a_orakle.pure, a_orakle.zipped_data, cipher=block_cipher)
 
 # PYZ for PyBridge
 pyz_pybridge = PYZ(a_pybridge.pure, a_pybridge.zipped_data, cipher=block_cipher)
+
+# PYZ for Bureau
+pyz_bureau = PYZ(a_bureau.pure, a_bureau.zipped_data, cipher=block_cipher)
+
 
 # EXE for Orakle
 exe_orakle = EXE(
@@ -439,6 +526,20 @@ exe_pybridge = EXE(
     console=True,
 )
 
+# EXE for Bureau
+exe_bureau = EXE(
+    pyz_bureau,
+    a_bureau.scripts,
+    [],
+    exclude_binaries=True,
+    name='bureau',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+)
+
 # COLLECT to create the final bundle with both executables
 coll = COLLECT(
     exe_orakle,
@@ -449,8 +550,12 @@ coll = COLLECT(
     a_pybridge.binaries,
     a_pybridge.zipfiles,
     a_pybridge.datas,
+    exe_bureau,
+    a_bureau.binaries,
+    a_bureau.zipfiles,
+    a_bureau.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='servers',
 )

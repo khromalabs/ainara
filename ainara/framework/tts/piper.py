@@ -25,89 +25,24 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
-from typing import Generator, Optional, Tuple
+from typing import Generator, List, Optional, Tuple
 
 import soundfile as sf
 from pygame import USEREVENT, mixer
 
 from ..config import config
+from ..platform_utils import get_default_data_dir
 from .base import TTSBackend
 
 
 class PiperTTS(TTSBackend):
     """Piper implementation of TTS backend"""
 
-    # Default voices with their file names and URLs
-    DEFAULT_VOICES = {
-        "en_US-amy-medium": {
-            "model": "en_US-amy-medium.onnx",
-            "url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx?download=true"
-            ),
-            "config_url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx.json?download=true"
-            ),
-        },
-        "en_US-lessac-medium": {
-            "model": "en_US-lessac-medium.onnx",
-            "url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx?download=true"
-            ),
-            "config_url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json?download=true"
-            ),
-        },
-        "en_GB-alba-medium": {
-            "model": "en_GB-alba-medium.onnx",
-            "url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alba/medium/en_GB-alba-medium.onnx?download=true"
-            ),
-            "config_url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json?download=true"
-            ),
-        },
-        "es_ES-mls_10246-medium": {
-            "model": "es_ES-mls_10246-medium.onnx",
-            "url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/es/es_ES/mls_10246/medium/es_ES-mls_10246-medium.onnx?download=true"
-            ),
-            "config_url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/es/es_ES/mls_10246/medium/es_ES-mls_10246-medium.onnx.json?download=true"
-            ),
-        },
-        "fr_FR-siwis-medium": {
-            "model": "fr_FR-siwis-medium.onnx",
-            "url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx?download=true"
-            ),
-            "config_url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx.json?download=true"
-            ),
-        },
-        "de_DE-thorsten-medium": {
-            "model": "de_DE-thorsten-medium.onnx",
-            "url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx?download=true"
-            ),
-            "config_url": (
-                "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json?download=true"
-            ),
-        },
-    }
-
     def __init__(self):
         """Initialize piper backend"""
         self._current_process: Optional[subprocess.Popen] = None
 
-        # # Initialize pygame mixer for audio playback with platform-specific settings
-        # if platform.system() == 'Darwin':
-        #     mixer.pre_init(
-        #         frequency=22050,
-        #         buffer=4096,
-        #         allowedchanges=0
-        #     )
         mixer.init(frequency=22050)
 
         # Create temp directory for audio files
@@ -117,14 +52,31 @@ class PiperTTS(TTSBackend):
         self.logger = logging.getLogger(__name__)
         self.logger.debug("PiperTTS initialization started")
 
-        # Get model directory and voice name from config
-        self.voice = config.get("tts.modules.piper.voice", "en_US-amy-medium")
-        self.model_dir = self._get_model_directory()
-        self.options = config.get(
-            "tts.modules.piper.options", "--output_raw --length_scale 0.7"
+        # Load Configuration
+        self.default_voice_name = config.get(
+            "tts.modules.piper.default_voice", "en_US-amy-medium"
+        )
+        self.default_options = config.get(
+            "tts.modules.piper.default_options",
+            "--output_raw --length_scale 1.0",
         ).split()
+        self.language_config = config.get("tts.modules.piper.languages", {})
 
-        # Run setup to ensure binary and models are available
+        # Define Model Directories
+        # 1. User Data Directory (Persistent downloads)
+        self.user_models_dir = (
+            Path(get_default_data_dir()) / "tts" / "piper" / "models"
+        )
+        # 2. Bundled Resources Directory (App distribution)
+        self.bundled_models_dir = (
+            self._get_resource_base_dir() / "resources" / "tts" / "models"
+        )
+
+        # State
+        self.binary: Optional[str] = None
+        self.default_model_path: Optional[str] = None
+
+        # Run setup
         if not self.setup():
             self.logger.error("Piper TTS setup failed")
             raise RuntimeError(
@@ -133,24 +85,19 @@ class PiperTTS(TTSBackend):
 
         self.logger.debug("Initialized PiperTTS with:")
         self.logger.debug(f"Binary: {self.binary}")
-        self.logger.debug(f"Voice: {self.voice}")
-        self.logger.debug(f"Model: {self.model}")
-        self.logger.debug(f"Model directory: {self.model_dir}")
-        self.logger.debug(f"Options: {self.options}")
+        self.logger.debug(f"Default Voice: {self.default_voice_name}")
+        self.logger.debug(f"Default Model Path: {self.default_model_path}")
 
     def _get_resource_base_dir(self) -> Path:
         """Determine the base directory for resources (project root or MEIPASS)."""
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            # Running as a bundled app (PyInstaller)
             return Path(sys._MEIPASS)
         else:
-            # Running from source
-            # __file__ -> tts -> framework -> ainara -> project_root
             return Path(__file__).parent.parent.parent.parent
 
     def _find_piper_binary(self) -> str:
         """Find piper binary in bundled resources or common locations"""
-        configured_binary = config.get("tts.modules.piper.binary", "auto")
+        configured_binary = config.get("tts.modules.piper.binary_path", "auto")
         if configured_binary != "auto" and os.path.exists(configured_binary):
             return configured_binary
 
@@ -176,7 +123,6 @@ class PiperTTS(TTSBackend):
             self.logger.info(f"Using bundled Piper binary: {bundled_path}")
             return str(bundled_path)
 
-        # If we get here, we couldn't find piper
         msg_error = (
             "Could not find piper binary. Please install piper or specify the"
             " path in config."
@@ -184,148 +130,31 @@ class PiperTTS(TTSBackend):
         self.logger.error(msg_error)
         raise RuntimeError(msg_error)
 
-    def _get_model_directory(self) -> str:
-        """Get the directory for storing TTS models"""
-        configured_dir = config.get("tts.modules.piper.model_dir", "auto")
-        if configured_dir != "auto":
-            model_dir = os.path.expanduser(configured_dir)
-            os.makedirs(model_dir, exist_ok=True)
-            return model_dir
+    def _get_voice_path(self, voice_name: str) -> Optional[str]:
+        """
+        Locate a voice model file in user data or bundled resources.
 
-        # Check for bundled models relative to resource base dir
-        resource_base_dir = self._get_resource_base_dir()
-        bundled_model_dir = resource_base_dir / "resources" / "tts" / "models"
+        Args:
+            voice_name: The name of the voice (e.g., 'en_US-amy-medium')
 
-        if bundled_model_dir.is_dir():
-            self.logger.info(
-                f"Using bundled model directory: {bundled_model_dir}"
-            )
-            return str(bundled_model_dir)
+        Returns:
+            str: Path to the .onnx file if found, None otherwise.
+        """
+        # 1. Check User Data Directory
+        user_path = self.user_models_dir / f"{voice_name}.onnx"
+        if user_path.exists():
+            return str(user_path)
 
-        # Use standard XDG data directory for other platforms
-        user_data_dir = config.get("data.directory")
-        model_dir = os.path.join(user_data_dir, "tts", "models")
-        os.makedirs(model_dir, exist_ok=True)
-        self.logger.info(f"Using standard model directory: {model_dir}")
-        return model_dir
+        # 2. Check Bundled Resources
+        bundled_path = self.bundled_models_dir / f"{voice_name}.onnx"
+        if bundled_path.exists():
+            return str(bundled_path)
 
-    def _get_or_download_model(self) -> str:
-        """Get the path to the voice model, downloading it if necessary"""
-        voice_name = self.voice
-
-        # Check if it's a full path to a model file
-        if os.path.exists(os.path.expanduser(voice_name)):
-            return os.path.expanduser(voice_name)
-
-        # Check if it's one of our known voices
-        if voice_name in self.DEFAULT_VOICES:
-            voice_info = self.DEFAULT_VOICES[voice_name]
-            model_filename = voice_info["model"]
-            model_path = os.path.join(self.model_dir, model_filename)
-
-            # Check if model exists, download if not
-            if not os.path.exists(model_path):
-                self._download_model(voice_name, model_path)
-
-            # Check for config file - Piper expects the config file to be named exactly like the model file but with .json extension
-            json_path = (
-                model_path + ".json"
-            )  # Piper expects model.onnx.json, not model.json
-            if not os.path.exists(json_path):
-                self._download_model_config(voice_name, json_path)
-
-            return model_path
-
-        # If we get here, we don't know this voice
-        self.logger.error(f"Unknown voice model: {voice_name}")
-        raise ValueError(
-            f"Unknown voice model: {voice_name}. Please use one of:"
-            f" {', '.join(self.DEFAULT_VOICES.keys())}"
-        )
-
-    def _download_model(self, voice_name: str, model_path: str) -> None:
-        """Download a voice model from the repository"""
-        voice_info = self.DEFAULT_VOICES[voice_name]
-        model_url = voice_info["url"]
-
-        self.logger.info(
-            f"Downloading voice model {voice_name} from {model_url}"
-        )
-        print(
-            f"Downloading voice model {voice_name}... This may take a few"
-            " minutes."
-        )
-
-        try:
-            # Download with progress reporting
-            def report_progress(block_num, block_size, total_size):
-                downloaded = block_num * block_size
-                percent = min(100, int(downloaded * 100 / total_size))
-                sys.stdout.write(
-                    f"\rDownloading: {percent}% [{downloaded} / {total_size}]"
-                )
-                sys.stdout.flush()
-
-            urllib.request.urlretrieve(
-                model_url, model_path, reporthook=report_progress
-            )
-            print("\nDownload complete!")
-        except Exception as e:
-            self.logger.error(f"Failed to download voice model: {e}")
-            if os.path.exists(model_path):
-                os.remove(model_path)
-            raise RuntimeError(f"Failed to download voice model: {e}")
-
-    def _download_model_config(
-        self, voice_name: str, config_path: str
-    ) -> None:
-        """Download the JSON config file for a voice model"""
-        voice_info = self.DEFAULT_VOICES[voice_name]
-        config_url = voice_info["config_url"]
-
-        self.logger.info(f"Downloading voice config from {config_url}")
-
-        try:
-            first_error = None
-            # First try the URL as provided
-            try:
-                urllib.request.urlretrieve(config_url, config_path)
-                return
-            except Exception as e:
-                first_error = e
-                self.logger.warning(
-                    f"First attempt to download config failed: {e}"
-                )
-
-            # If that fails, try with an extra .json extension (seen in some URLs)
-            try:
-                alternate_url = f"{config_url}.json"
-                self.logger.info(f"Trying alternate URL: {alternate_url}")
-                urllib.request.urlretrieve(alternate_url, config_path)
-                return
-            except Exception as second_error:
-                self.logger.warning(
-                    f"Second attempt to download config failed: {second_error}"
-                )
-
-            # If both attempts fail, raise the original error
-            if first_error:
-                raise first_error
-        except Exception as e:
-            self.logger.warning(f"Failed to download voice config: {e}")
-            self.logger.warning(
-                "This is not critical, Piper can work without the config file"
-            )
+        return None
 
     def setup(self) -> bool:
         """
         Validate and set up Piper TTS requirements.
-
-        This function checks if the Piper binary and voice models are available,
-        and downloads them if needed.
-
-        Returns:
-            bool: True if setup was successful, False otherwise
         """
         try:
             self.logger.info("Setting up Piper TTS...")
@@ -333,23 +162,22 @@ class PiperTTS(TTSBackend):
             # Step 1: Ensure Piper binary is available
             try:
                 self.binary = self._find_piper_binary()
-                self.logger.info(f"Using Piper binary: {self.binary}")
             except RuntimeError:
-                # Binary not found, try to download it
-                self.logger.info(
-                    "Piper binary not found"
+                return False
+
+            # Step 2: Ensure Default Voice is available
+            self.default_model_path = self._get_voice_path(
+                self.default_voice_name
+            )
+
+            if not self.default_model_path:
+                self.logger.error(
+                    f"Default voice model '{self.default_voice_name}' not"
+                    " found in bundled or user directories."
                 )
                 return False
 
-            # Step 2: Ensure voice model is available
-            try:
-                self.model = self._get_or_download_model()
-                self.logger.info(f"Using voice model: {self.model}")
-            except (ValueError, RuntimeError) as e:
-                self.logger.error(f"Failed to set up voice model: {e}")
-                return False
-
-            # Step 3: Verify Piper works by running a simple test
+            # Step 3: Verify Piper works
             try:
                 self._check_dependencies()
                 self.logger.info("Piper TTS setup completed successfully")
@@ -360,9 +188,6 @@ class PiperTTS(TTSBackend):
 
         except Exception as e:
             self.logger.error(f"Unexpected error during Piper setup: {e}")
-            import traceback
-
-            self.logger.error(traceback.format_exc())
             return False
 
     def _get_macos_architecture(self) -> str:
@@ -378,33 +203,60 @@ class PiperTTS(TTSBackend):
     def _check_dependencies(self) -> None:
         """Check if required commands are available"""
         try:
-            self.logger.debug(f"Checking piper binary: {self.binary}")
-
-            # Check if piper works
             subprocess.run(
                 [self.binary, "--help"], capture_output=True, check=True
             )
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             self.logger.error(f"Command check failed: {str(e)}")
-            raise RuntimeError(
-                "Required commands not found. Please install piper and audio"
-                " playback utilities"
-            )
+            raise RuntimeError("Piper binary check failed.")
 
-    def _print_synchronized(self, text: str, duration: float) -> None:
-        """Print text synchronized with audio playback
+    def _resolve_voice_params(self, text: str) -> Tuple[str, List[str]]:
+        """
+        Determine the appropriate model and options for the given text.
+
+        Looks up configuration based on configured lang. Falls back to default
+        voice if specific language voice is missing or not configured.
 
         Args:
-            text: Text to print
-            duration: Duration in seconds to complete printing
+            text: The text to be spoken.
+
+        Returns:
+            Tuple[str, List[str]]: (model_path, options_list)
         """
+        lang = config.get("stt.language", "en")
+        model_path = None
+        options = self.default_options
+
+        # Check if we have a configuration for this language
+        if lang in self.language_config:
+            lang_conf = self.language_config[lang]
+            voice_name = lang_conf.get("voice")
+
+            if voice_name:
+                found_path = self._get_voice_path(voice_name)
+                if found_path:
+                    model_path = found_path
+                    # Override options if specified for this language
+                    if "options" in lang_conf:
+                        options = lang_conf["options"].split()
+                else:
+                    self.logger.warning(
+                        f"Configured voice '{voice_name}' for language"
+                        f" '{lang}' not found. Falling back to default."
+                    )
+
+        # Fallback to default if no specific model found
+        if not model_path:
+            model_path = self.default_model_path
+
+        return model_path, options
+
+    def _print_synchronized(self, text: str, duration: float) -> None:
+        """Print text synchronized with audio playback"""
         if not text:
             return
 
-        # Calculate delay between each character
         char_delay = duration / len(text)
-
-        # Print each character with calculated delay
         for char in text:
             sys.stdout.write(char)
             sys.stdout.flush()
@@ -415,15 +267,7 @@ class PiperTTS(TTSBackend):
     def speak_sync(
         self, text: str
     ) -> Generator[Tuple[str, float], None, None]:
-        """Stream text to speech with precise timing
-
-        Args:
-            text: The text to convert to speech
-
-        Yields:
-            Tuple[str, float]: Each phrase and its duration in seconds
-        """
-        self.logger.debug("speak_sync called with text length: %d", len(text))
+        """Stream text to speech with precise timing"""
         phrases = self._split_into_phrases(text)
 
         for phrase in phrases:
@@ -432,33 +276,21 @@ class PiperTTS(TTSBackend):
                 continue
 
             try:
-                self.logger.debug(
-                    "Processing phrase: %s",
-                    phrase[:50] + "..." if len(phrase) > 50 else phrase,
-                )
+                # Resolve model and options for this specific phrase
+                model_path, options = self._resolve_voice_params(phrase)
 
-                # Generate audio file
                 temp_wav = os.path.join(
                     self.temp_dir, f"speech_{abs(hash(phrase))}.wav"
                 )
 
-                # Generate speech using piper with direct WAV output
-                piper_cmd = [
-                    self.binary,
-                    "--model",
-                    self.model,
-                    "--output_file",
-                    temp_wav,
-                ]
-
-                self.logger.debug(
-                    f"Running piper command: {' '.join(piper_cmd)}"
+                piper_cmd = (
+                    [self.binary, "--model", model_path]
+                    + options
+                    + ["--output_file", temp_wav]
                 )
 
-                # Clean and write the text to piper
                 cleaned_phrase = self._clean_text(phrase).encode("utf-8")
 
-                # Run piper to generate the WAV file
                 process = subprocess.Popen(
                     piper_cmd,
                     stdin=subprocess.PIPE,
@@ -468,29 +300,21 @@ class PiperTTS(TTSBackend):
                 )
 
                 _, stderr = process.communicate(input=cleaned_phrase)
-                stderr_text = stderr.decode("utf-8") if stderr else ""
 
                 if process.returncode != 0:
-                    self.logger.error(
-                        f"Piper failed with return code {process.returncode}"
-                    )
-                    self.logger.error(f"Piper stderr: {stderr_text}")
-                    raise RuntimeError(f"Piper failed: {stderr_text}")
+                    stderr_text = stderr.decode("utf-8") if stderr else ""
+                    self.logger.error(f"Piper failed: {stderr_text}")
+                    continue
 
-                # Play the WAV file using pygame
                 mixer.music.load(temp_wav)
                 mixer.music.play()
 
-                # Wait for audio playback to complete and track the actual duration
                 start_time = time.time()
                 while mixer.music.get_busy():
                     time.sleep(0.1)
                 actual_duration = time.time() - start_time
 
-                # Yield for any external processing
                 yield phrase, actual_duration
-
-                # Small pause between phrases
                 time.sleep(0.2)
 
             except Exception as e:
@@ -498,38 +322,25 @@ class PiperTTS(TTSBackend):
                 continue
 
     def speak(self, text: str) -> bool:
-        """Convert text to speech using piper with pygame for audio playback
-
-        Args:
-            text: The text to convert to speech
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        self.logger.debug(f"speak() called with text: {text[:50]}...")
-
+        """Convert text to speech using piper with pygame for audio playback"""
         try:
-            # Stop any current speech
             self.stop()
 
-            # Create a temporary WAV file
+            # Resolve model and options
+            model_path, options = self._resolve_voice_params(text)
+
             temp_wav = os.path.join(
                 self.temp_dir, f"speech_{abs(hash(text))}.wav"
             )
 
-            # Generate speech using piper with direct WAV output
-            piper_cmd = [
-                self.binary,
-                "--model",
-                self.model,
-                "--output_file",
-                temp_wav,
-            ]
+            piper_cmd = (
+                [self.binary, "--model", model_path]
+                + options
+                + ["--output_file", temp_wav]
+            )
 
-            # Clean the text
             cleaned_text = self._clean_text(text).encode("utf-8")
 
-            # Run piper to generate the WAV file
             process = subprocess.Popen(
                 piper_cmd,
                 stdin=subprocess.PIPE,
@@ -539,24 +350,17 @@ class PiperTTS(TTSBackend):
             )
 
             _, stderr = process.communicate(input=cleaned_text)
-            stderr_text = stderr.decode("utf-8") if stderr else ""
 
             if process.returncode != 0:
-                self.logger.error(
-                    f"Piper failed with return code {process.returncode}"
-                )
-                self.logger.error(f"Piper stderr: {stderr_text}")
+                stderr_text = stderr.decode("utf-8") if stderr else ""
+                self.logger.error(f"Piper failed: {stderr_text}")
                 return False
 
-            # Play the WAV file using pygame
             try:
                 mixer.music.load(temp_wav)
                 mixer.music.play()
-
-                # Wait for playback to complete
                 while mixer.music.get_busy():
                     time.sleep(0.1)
-
                 return True
             except Exception as e:
                 self.logger.error(f"Error playing audio with pygame: {e}")
@@ -567,36 +371,19 @@ class PiperTTS(TTSBackend):
             return False
 
     def _split_into_phrases(self, text: str) -> list[str]:
-        """Split text into natural phrases/sentences
-
-        Args:
-            text: Text to split
-
-        Returns:
-            list[str]: List of phrases
-        """
-        # Remove code blocks as we don't want to speak those
+        """Split text into natural phrases/sentences"""
         text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-
-        # Split on sentence endings and other natural breaks
         splits = re.split(r"([.!?]\s+|\n\n+)", text)
-
-        # Recombine splits with their punctuation
         phrases = []
         for i in range(0, len(splits) - 1, 2):
             if i + 1 < len(splits):
                 phrases.append(splits[i] + splits[i + 1])
             else:
                 phrases.append(splits[i])
-
         return [p.strip() for p in phrases if p.strip()]
 
     def stop(self) -> bool:
-        """Stop current speech and audio playback
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Stop current speech and audio playback"""
         try:
             if self._current_process:
                 self._current_process.terminate()
@@ -609,23 +396,16 @@ class PiperTTS(TTSBackend):
             return False
 
     def generate_audio(self, text: str) -> Tuple[str, float]:
-        """Generate audio file for text and return its path and duration
-
-        Args:
-            text: The text to convert to speech
-
-        Returns:
-            Tuple[str, float]: Path to generated audio file and its duration
-            in seconds
-        """
+        """Generate audio file for text and return its path and duration"""
         try:
-            # Create temporary WAV file
+            # Resolve model and options
+            model_path, options = self._resolve_voice_params(text)
+
             temp_file = os.path.join(self.temp_dir, f"{hash(text)}.wav")
 
-            # Generate speech using piper
             piper_cmd = (
-                [self.binary, "--model", self.model]
-                + self.options
+                [self.binary, "--model", model_path]
+                + options
                 + ["--output_file", temp_file]
             )
 
@@ -645,7 +425,6 @@ class PiperTTS(TTSBackend):
                 self.logger.error(f"Piper failed: {stderr_text}")
                 raise RuntimeError(f"Piper failed: {stderr_text}")
 
-            # Get audio duration using soundfile
             with sf.SoundFile(temp_file) as f:
                 duration = len(f) / f.samplerate
 
@@ -656,22 +435,11 @@ class PiperTTS(TTSBackend):
             raise
 
     def play_audio(self, audio_file: str) -> bool:
-        """Play audio file and return when playback actually starts
-
-        Args:
-            audio_file: Path to audio file to play
-
-        Returns:
-            bool: True if playback started successfully, False otherwise
-        """
+        """Play audio file and return when playback actually starts"""
         try:
             mixer.music.load(audio_file)
-            # Set up an event to be triggered when playback starts
             mixer.music.set_endevent(USEREVENT + 1)
             mixer.music.play()
-
-            # Wait for playback to actually start
-            # This ensures synchronization with text display
             while not mixer.music.get_busy():
                 time.sleep(0.001)
             return True

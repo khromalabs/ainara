@@ -37,6 +37,16 @@ a {
     overflow: auto;
 }
 
+.document-content::selection,
+.document-content  *::selection {
+  color: black;
+  background-color: #f0f000;
+}
+
+.document-content:focus {
+    outline: none;
+}
+
 .document-item {
     display: flex;
     flex-direction: column;
@@ -106,7 +116,7 @@ a {
 
 .copy-btn:active,
 .copy-button:active {
-    border: 2px solid yellow;
+    border: 2px solid #f0f000;
 }
 
 .close-button {
@@ -126,7 +136,7 @@ a {
 }
 
 .close-button:active {
-    border: 2px solid yellow;
+    border: 2px solid #f0f000;
 }
 
 pre {
@@ -286,6 +296,17 @@ th[data-sort]:hover .tablesort__icon {
 .code-block-wrapper-inline {
     display: inline-block;
     position: relative;
-    margin: 4px 4px 4px -4px;
+    margin: 0px;
     padding: 0;
+    /* padding: 2px 2px 2px -2px; */
+}
+
+.tipInfo {
+    position: relative;
+    top: 2px;
+}
+.tipInfo:before {
+    content:'🛈';
+    padding: 10px;
+    cursor: pointer;
 }

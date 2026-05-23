@@ -7,6 +7,35 @@
             "type": "object",
             "description": "Container for various external API keys and settings.",
             "properties": {
+                "coinmarketcap": {
+                    "type": "object",
+                    "properties": {
+                        "api_key": {"type": "string"}
+                    }
+                },
+                "helius": {
+                    "type": "object",
+                    "properties": {
+                        "api_key": {"type": "string"}
+                    }
+                },
+                "cryptoexchanges": {
+                    "type": "object",
+                    "description": "Configuration for CCXT crypto exchanges.",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "api_key": {"type": "string"},
+                            "secret": {"type": "string"},
+                            "password": {"type": "string"},
+                            "sandbox_mode": {"type": "boolean"},
+                            "wallet_address": {"type": "string"},
+                            "default_type": {"type": "string"},
+                            "default_quote": {"type": "string"}
+                        },
+                        "required": ["api_key", "secret"]
+                    }
+                },
                 "finance": {
                     "type": "object",
                     "properties": {"alphavantage_api_key": {"type": "string"}},
@@ -19,7 +48,8 @@
                         "metaphor": {"type": "object", "properties": {"api_key": {"type": "string"}}},
                         "newsapi": {"type": "object", "properties": {"api_key": {"type": "string"}}},
                         "perplexity": {"type": "object", "properties": {"api_key": {"type": "string"}}},
-                        "tavily": {"type": "object", "properties": {"api_key": {"type": "string"}}}
+                        "tavily": {"type": "object", "properties": {"api_key": {"type": "string"}}},
+                        "guavy": {"type": "object", "properties": {"api_key": {"type": "string"}}}
                     }
                 },
                 "weather": {
@@ -81,6 +111,10 @@
                         "required": ["model"]
                     }
                 },
+                "memories_processors": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
                 "selected_backend": {"type": "string"},
                 "selected_provider": {"type": "string"}
             },
@@ -128,6 +162,10 @@
                 "servers": {
                     "type": "array",
                     "items": {"type": "string", "format": "uri"}
+                },
+                "match_providers": {
+                    "type": "array",
+                    "items": { "type": "string" }
                 }
             },
             "required": ["servers"]
@@ -135,7 +173,7 @@
         "stt": {
             "type": "object",
             "properties": {
-                "backend": {"type": "string"},
+                "language": {"type": "string"},
                 "selected_module": {"type": "string", "enum": ["faster_whisper", "whisper"]},
                 "modules": {
                     "type": "object",
@@ -143,7 +181,6 @@
                         "faster_whisper": {
                             "type": "object",
                             "properties": {
-                                "language": {"type": "string"},
                                 "model_size": {"type": "string"}
                             }
                         },
@@ -159,7 +196,6 @@
                                         "model": {"type": "string"}
                                     }
                                 },
-                                "language": {"type": "string"},
                                 "service": {"type": "string"}
                             }
                         }
@@ -171,7 +207,7 @@
         "tts": {
             "type": "object",
             "properties": {
-                "selected_module": {"type": "string", "enum": ["piper", "elevenlabs"]},
+                "selected_module": {"type": "string", "enum": ["piper", "elevenlabs",  "coqui", "kokoro"]},
                 "modules": {
                     "type": "object",
                     "properties": {
@@ -182,13 +218,47 @@
                                 "voice": {"type": "string"}
                             }
                         },
+                        "kokoro": {
+                            "type": "object",
+                            "properties": {
+                                "default_lang": {"type": "string"},
+                                "default_voice": {"type": "string"},
+                                "default_speed": {"type": "string"},
+                                "languages": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                        "^[a-z]{2,3}$": {
+                                            "type": "object",
+                                            "properties": {
+                                                "lang": {"type": "string"},
+                                                "voice": {"type": "string"},
+                                                "speed": {"type": "string"}
+                                            },
+                                            "required": ["voice"]
+                                        }
+                                    }
+                                }
+                            }
+                        },
                         "piper": {
                             "type": "object",
                             "properties": {
-                                "binary": {"type": "string"},
-                                "model_dir": {"type": "string"},
-                                "options": {"type": "string"},
-                                "voice": {"type": "string"}
+                                "binary_path": {"type": "string"},
+                                "default_voice": {"type": "string"},
+                                "default_options": {"type": "string"},
+                                "languages": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                        "^[a-z]{2,3}$": {
+                                            "type": "object",
+                                            "properties": {
+                                                "voice": {"type": "string"},
+                                                "options": {"type": "string"}
+                                            },
+                                            "required": ["voice"]
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

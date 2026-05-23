@@ -52,6 +52,11 @@ class FinanceStocks(Skill):
         self.logger = logging.getLogger(__name__)
         self.base_url = "https://www.alphavantage.co/query"
         self.api_key = config.get("apis.finance.alphavantage_api_key")
+        # self.default_schedule = {
+        #     "trigger": "interval",
+        #     "minutes": 60,
+        #     "kwargs": {"action": "check"},
+        # }
 
     # def reload(self):
     #     super().reload(config)

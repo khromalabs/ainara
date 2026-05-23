@@ -1,6 +1,8 @@
 resources/*
 !resources/ainara.yaml.defaults
 !resources/config.schema.json
+!resources/contracts/*
+!resources/connectors/*
 static/*
 venv/*
 node_modules/*

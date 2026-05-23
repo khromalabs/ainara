@@ -8,5 +8,12 @@ static/
 build/*
 dist/*
 ainara/resources/*
+resources/*
 scripts/pyinstaller/runtime_hook.py
 ainara.egg-info/*
+scripts/migration/drop_*/assets/
+scripts/migration/drop_*/cache*.json
+scripts/migration/drop_*/sugar.log
+polaris/**/*.jsc
+ainara/nexus/*
+docs

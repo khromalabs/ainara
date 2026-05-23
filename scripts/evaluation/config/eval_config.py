@@ -50,7 +50,7 @@ class EvaluationConfig:
     )
 
     # Matcher model to use
-    matcher_model: str = "sentence-transformers/all-mpnet-base-v2"
+    matcher_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
     # Thresholds for success
     parameter_score_threshold: float = 0.7

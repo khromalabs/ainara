@@ -18,6 +18,7 @@
  * Lesser General Public License for more details.
  */
 
+
 html {
     height: 100%;
 }
@@ -145,6 +146,15 @@ body {
     height: 1px;
     background-color: #eee;
     z-index: -1;
+}
+
+#welcome-panel {
+    max-width: 80%;
+    line-height: 1.5;
+}
+
+#welcome-panel p {
+    text-align: justify;
 }
 
 .step-content {
@@ -278,6 +288,64 @@ button {
     /* max-height: 400px; */
     /* overflow-y: auto; */
     padding-right: 10px;
+    height: 100%; /* Ensure full height for the layout */
+}
+
+/* New Horizontal Layout Styles */
+.skills-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+}
+
+.skills-nav-bar {
+    display: flex;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    background-color: rgba(255, 255, 255, 0.95);
+    z-index: 100;
+    border-bottom: 1px solid #eee;
+    padding: 10px 0;
+    margin-bottom: 20px;
+    gap: 10px;
+    justify-content: center;
+    backdrop-filter: blur(5px);
+}
+
+.skills-nav-item {
+    padding: 8px 20px;
+    color: #666;
+    text-decoration: none;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.skills-nav-item:hover {
+    background-color: #f0f0f0;
+    color: #333;
+}
+
+.skills-nav-item.active {
+    background-color: #e9f7fe;
+    color: #007bff;
+    border-color: #c5e8f7;
+    font-weight: 600;
+}
+
+.skills-content-area {
+    flex-grow: 1;
+    padding-bottom: 50px; /* Space for scrolling */
+}
+
+.skills-section-anchor {
+    scroll-margin-top: 70px; /* Offset for sticky header */
+    margin-bottom: 40px;
 }
 
 .skill-category {
@@ -286,13 +354,17 @@ button {
     padding-bottom: 15px;
 }
 
+.skill-category.Messaging {
+    width: calc(100% - 30px);
+}
+
 .skill-category h3 {
     margin-top: 0;
     color: #444;
     font-size: 18px;
 }
 
-.skill-items {
+.skill-category.Apis > .skill-items {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
     gap: 20px;
@@ -849,4 +921,471 @@ input:disabled, button:disabled {
     font-weight: bold;
     color: white;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.hardware-info {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    /* border-left: 4px solid #6c757d; */
+}
+
+.success-message {
+    color: #28a745;
+    font-weight: bold;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.warning-message {
+    color: #ffc107;
+    font-weight: bold;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.info-message {
+    color: #17a2b8;
+    font-weight: bold;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.success-message .icon,
+.warning-message .icon,
+.info-message .icon {
+    margin-right: 8px;
+    font-size: 1.2em;
+}
+
+.hardware-info p {
+    margin: 8px 0;
+}
+
+.hardware-info a {
+    color: #007bff;
+    text-decoration: underline;
+}
+
+.gpu-details {
+    background-color: #f0f0f0;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+.gpu-details ul {
+    margin: 5px 0 0 20px;
+    padding: 0;
+}
+
+.gpu-details li {
+    margin-bottom: 5px;
+}
+
+.hardware-info ul {
+    margin: 5px 0 0 20px;
+    padding: 0;
+}
+
+.hardware-info li {
+    margin-bottom: 5px;
+}
+
+#ollama-models-container {
+    margin-top: 20px;
+}
+
+#ollama-models-container ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+#ollama-models-container li {
+    background-color: #f9f9f9;
+    padding: 10px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#ollama-models-container select {
+    padding: 8px;
+    margin-right: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    width: 300px;
+}
+
+#download-model-btn {
+    background-color: #28a745;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+#download-model-btn:hover {
+    background-color: #218838;
+}
+
+#download-model-btn:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+#download-progress {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+#download-progress p {
+    margin: 0;
+}
+
+.delete-model-btn {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.delete-model-btn:hover {
+    background-color: #c82333;
+}
+
+.field-description {
+    font-size: 0.8em;
+    color: #6c757d;
+    margin-top: 4px;
+}
+
+.skill-test-container {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.skill-test-status.success {
+    color: #28a745;
+    font-weight: bold;
+}
+.skill-test-status.error {
+    color: #dc3545;
+    font-weight: bold;
+    background-color: #00000000 !important;
+}
+.skill-validation-status {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 8px;
+    vertical-align: middle;
+    font-size: 16px;
+    line-height: 1;
+    background-color: transparent;
+}
+.skill-validation-status.success::after {
+    content: '✔';
+    color: #28a745;
+}
+.skill-validation-status.error::after {
+    content: '✖';
+    color: #dc3545;
+}
+.skill-validation-status.pending::after {
+    content: '...';
+    color: #6c757d;
+}
+
+.skill-validation-message {
+    margin-top: 5px;
+    font-size: 0.9em;
+}
+
+.skill-validation-message.success {
+    color: #28a745;
+}
+
+.skill-validation-message.error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+/* Shortcuts panel styles */
+.shortcuts-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.shortcut-group {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    /* border-left: 4px solid #007bff; */
+}
+
+.shortcut-group h3 {
+    margin-top: 0;
+    color: #007bff;
+}
+
+.shortcut-description {
+    font-size: 0.9em;
+    color: #6c757d;
+    margin-top: 5px;
+}
+
+.usage-instructions {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    /* border-left: 4px solid #28a745; */
+}
+
+.usage-instructions h3 {
+    margin-top: 0;
+    color: #28a745;
+}
+
+.usage-instructions ol {
+    padding-left: 20px;
+}
+
+.usage-instructions li {
+    margin-bottom: 10px;
+}
+
+#show-key-display,
+#hide-key-display,
+#trigger-key-display {
+    background-color: #e9ecef;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-weight: bold;
+}
+
+input.capturing {
+    background-color: #ffe8e8;
+    border-color: #dc3545;
+}
+
+/* Email Configuration Table Styles */
+.email-config-section {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    width: 100%;
+    overflow-x: auto;
+}
+
+.email-config-header {
+    margin-bottom: 10px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+}
+
+.email-config-header h4 {
+    margin: 0;
+    color: #1a2530;
+}
+
+.email-config-table {
+    display: grid;
+    /* ID, Host, Port, Username, Password, Actions */
+    grid-template-columns: 1fr 1.5fr 0.5fr 1.5fr 1.5fr 40px;
+    gap: 10px;
+    align-items: center;
+    min-width: 800px; /* Ensure it doesn't squish too much */
+}
+
+.email-col-header {
+    font-weight: bold;
+    font-size: 0.85em;
+    color: #666;
+    padding-bottom: 5px;
+    border-bottom: 2px solid #eee;
+}
+
+.email-row {
+    display: contents; /* Allows children to participate in the parent grid */
+}
+
+.email-cell {
+    position: relative;
+}
+
+.email-cell input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 0.9em;
+}
+
+.email-row.ghost input {
+    opacity: 0.6;
+    border-style: dashed;
+}
+
+.password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 8px;
+    cursor: pointer;
+    color: #999;
+    font-size: 12px;
+    user-select: none;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+.password-toggle:hover {
+    color: #007bff;
+}
+
+.remove-email-btn {
+    background: none;
+    border: none;
+    color: #dc3545;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+}
+
+.remove-email-btn:hover {
+    color: #a71d2a;
+    background-color: #ffe8e8;
+    border-radius: 4px;
+}
+
+/* Schedule Configuration Styles */
+.schedule-config-section {
+    margin-top: 30px;
+    margin-bottom: 20px;
+    border-top: 1px solid #eee;
+    padding-top: 20px;
+}
+
+.schedule-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    background-color: #f9f9f9;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.schedule-table th, .schedule-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.schedule-table th {
+    background-color: #f1f1f1;
+    font-weight: bold;
+    color: #555;
+}
+
+.schedule-interval-input {
+    width: 60px;
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-right: 5px;
+}
+
+/* Modal Styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.modal-content {
+    background-color: white;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.close-modal-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #666;
+    padding: 0;
+}
+
+.close-modal-btn:hover {
+    color: #dc3545;
+}
+
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    line-height: 1.6;
+}
+
+.modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid #eee;
+    text-align: right;
 }

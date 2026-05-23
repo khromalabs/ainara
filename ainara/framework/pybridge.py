@@ -20,39 +20,39 @@
 # <https://www.gnu.org/licenses/>.
 
 import argparse
-import re
 import atexit
-import bisect
 import json
 import logging
 import os
 import shutil
-import requests
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
+import requests
 from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
+from flask_sock import Sock
 
 from ainara import __version__
-from ainara.framework.config import config
+from ainara.framework.auth import AuthManager
 from ainara.framework.backup import BackupManager
 from ainara.framework.chat_manager import ChatManager
 from ainara.framework.chat_memory import ChatMemory
+from ainara.framework.config import config
 from ainara.framework.dependency_checker import DependencyChecker
 from ainara.framework.green_memories import GREENMemories
 from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
+from ainara.framework.notifications import NotificationManager
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
-from ainara.framework.tts.elevenlabs import ElevenLabsTTS
-from ainara.framework.tts.piper import PiperTTS
+from ainara.framework.tts import create_tts_backend
 from ainara.framework.utils import check_embedding_model, setup_embedding_model
-
+from ainara.framework.wakeword import create_wakeword_backend
 
 config.load_config()
 
@@ -120,6 +120,7 @@ def cleanup_audio_buffer(directory, max_size_mb):
 
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 
 
 # Add at module level
@@ -150,6 +151,7 @@ def parse_args():
 
 
 # def setup_app()
+
 
 def _validate_skill_key(service: str, keys: dict):
     """Performs a simple API call to validate credentials for a given service."""
@@ -234,7 +236,10 @@ def _validate_skill_key(service: str, keys: dict):
             api_key = keys.get("api_key")
             if not api_key:
                 return False, "API key is missing"
-            headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+            headers = {
+                "x-api-key": api_key,
+                "Content-Type": "application/json",
+            }
             data = {"query": "test", "numResults": 1}
             response = requests.post(
                 "https://api.metaphor.systems/search",
@@ -275,6 +280,24 @@ def _validate_skill_key(service: str, keys: dict):
             response = requests.get(
                 "https://api.openweathermap.org/data/2.5/weather",
                 params=params,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "helius":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            data = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAsset",
+                "params": ["So11111111111111111111111111111111111111112"]
+            }
+            response = requests.post(
+                f"https://mainnet.helius-rpc.com/?api-key={api_key}",
+                json=data,
                 timeout=10,
             )
             response.raise_for_status()
@@ -322,7 +345,9 @@ def check_resources():
 
         # Check Whisper models
         whisper_status = {"initialized": False}
-        stt_selected_module = config.get("stt.selected_module", "faster_whisper")
+        stt_selected_module = config.get(
+            "stt.selected_module", "faster_whisper"
+        )
         if stt_selected_module == "faster_whisper":
             try:
                 # FasterWhisperSTT reads config to determine model size
@@ -341,10 +366,7 @@ def check_resources():
         results["details"]["embedding"] = embedding_status
 
         # Review the overall status
-        if (
-            whisper_status["initialized"]
-            and embedding_status["initialized"]
-        ):
+        if whisper_status["initialized"] and embedding_status["initialized"]:
             results["initialized"] = True
 
         return results
@@ -374,7 +396,11 @@ def initialize_resources(status: dict):
         resources_to_init = []
         if not status.get("details", {}).get("whisper", {}).get("initialized"):
             resources_to_init.append("whisper")
-        if not status.get("details", {}).get("embedding", {}).get("initialized"):
+        if (
+            not status.get("details", {})
+            .get("embedding", {})
+            .get("initialized")
+        ):
             resources_to_init.append("embedding")
 
         # Check if embedding model needs initialization
@@ -396,9 +422,7 @@ def initialize_resources(status: dict):
 
         # --- Initialize Whisper models if needed ---
         if "whisper" in resources_to_init:
-            current_progress = int(
-                completed_resources * progress_per_resource
-            )
+            current_progress = int(completed_resources * progress_per_resource)
             _send_progress(
                 "running", current_progress, "Setting up Whisper models..."
             )
@@ -407,13 +431,11 @@ def initialize_resources(status: dict):
             stt = FasterWhisperSTT()
             whisper_result = stt.setup_model()
             if not whisper_result["success"]:
-                message = (
-                    "Whisper setup failed:"
-                    f" {whisper_result['message']}"
-                )
+                message = f"Whisper setup failed: {whisper_result['message']}"
                 _send_progress("error", current_progress, message)
                 logger.error(message)
                 return False
+            stt.load_model()
             completed_resources += 1
             _send_progress(
                 "running",
@@ -423,9 +445,7 @@ def initialize_resources(status: dict):
 
         # --- Initialize Embedding model if needed ---
         if "embedding" in resources_to_init:
-            current_progress = int(
-                completed_resources * progress_per_resource
-            )
+            current_progress = int(completed_resources * progress_per_resource)
             _send_progress(
                 "running",
                 current_progress,
@@ -449,9 +469,7 @@ def initialize_resources(status: dict):
             )
 
         # --- Final success message ---
-        _send_progress(
-            "complete", 80, "Initialization completed successfully"
-        )
+        _send_progress("complete", 80, "Initialization completed successfully")
         logger.info("Initialization: Completed successfully.")
         return True
 
@@ -493,6 +511,10 @@ def check_download_capability():
 def create_app():
     llm = create_llm_backend(config.get("llm", {}))
     app.llm = llm
+
+    # Initialize background event queue
+    app.background_queue = []
+
     # # --- DEBUG: ChromaDB Dependency Check ---
     # import sys
     # import traceback
@@ -560,6 +582,7 @@ def create_app():
 
     # Choose STT backend based on configuration. This is safe now because
     # the main script block ensures models are downloaded before this runs.
+    # TODO Remove the STT configuration and setup from the server code
     stt_selected_module = config.get("stt.selected_module", "faster_whisper")
     if stt_selected_module == "faster_whisper":
         stt = FasterWhisperSTT()
@@ -571,20 +594,28 @@ def create_app():
     # Initialize TTS with auto-setup
     try:
         logger.info("Initializing TTS system...")
-        tts_selected_module = config.get("tts.selected_module", "piper")
-        if tts_selected_module == "elevenlabs":
-            tts = ElevenLabsTTS()
-            logger.info("Using ElevenLabs TTS backend")
-        else:
-            tts = PiperTTS()
-            logger.info("Using PiperTTS backend")
-        logger.info("TTS system initialized successfully")
+        tts_config = config.get("tts", {})
+        tts = create_tts_backend(tts_config)
+        logger.info(
+            "TTS system initialized successfully using"
+            f" {tts.__class__.__name__}"
+        )
     except Exception as e:
         logger.error(f"Failed to initialize TTS system: {e}")
         import traceback
 
         logger.error(traceback.format_exc())
         raise
+
+    # --- Initialize Wake Word Backend ---
+    try:
+        logger.info("Initializing Wake Word backend...")
+        app.wakeword = create_wakeword_backend(config.config)
+        app.wakeword.load_model()
+        logger.info(f"Wake Word backend initialized. Models: {app.wakeword.get_loaded_models()}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Wake Word backend: {e}")
+        app.wakeword = None
 
     # Use the appropriate user data directory
     user_data_dir = config.get("data.directory")
@@ -606,16 +637,39 @@ def create_app():
     atexit.register(cleanup_on_shutdown)
 
     # --- Initialize Core Managers ---
-    # Initialize ChatMemory if enabled
+
+    # 1. Initialize System Storage (Required for Auth and Memory)
+    from ainara.framework.storage import create_system_storage
+
+    try:
+        system_storage = create_system_storage()
+        app.storage = system_storage
+        logger.info(
+            f"System storage initialized: {system_storage.__class__.__name__}"
+        )
+    except Exception as e:
+        logger.critical(f"Failed to initialize system storage: {e}")
+        # We cannot proceed without storage for Auth
+        sys.exit(1)
+
+    # 2. Initialize ChatMemory if enabled (Injecting system storage)
     chat_memory = None
     if config.get("memory.enabled", True):
-        chat_memory = ChatMemory()
+        chat_memory = ChatMemory(storage_backend=system_storage)
         logger.info("Chat memory initialized")
+    else:
+        logger.info("Chat memory disabled by configuration")
+
+    # 3. Initialize Auth Manager (Injecting system storage)
+    # Now AuthManager always has access to storage, even if memory is disabled
+    auth_manager = AuthManager(system_storage)
 
     # Initialize GREENMemories
     green_memories = None
     user_profile_summary = None
     if chat_memory:
+        # GREENMemories are completely dependant of ChatMemory so is ok to enable
+        # them only if chat_memory is present, with a direct reference
         green_memories = GREENMemories(
             llm=app.llm,
             chat_memory=chat_memory,
@@ -634,8 +688,7 @@ def create_app():
             )
 
         green_memories.process_new_messages_for_update(
-            progress_callback=memory_progress_callback,
-            max_progress=90
+            progress_callback=memory_progress_callback, max_progress=90
         )
         logger.info("Message processing complete.")
 
@@ -653,7 +706,16 @@ def create_app():
         chat_memory=chat_memory,
         green_memories=green_memories,
         user_profile_summary=user_profile_summary,
+        storage_backend=system_storage
     )
+
+    # Initialize Notification Manager
+    # It uses the system storage for persistence
+    # Don't activate notifications without memory, anyway
+    if chat_memory and hasattr(chat_memory, "storage"):
+        app.notification_manager = NotificationManager(app.llm, system_storage)
+    else:
+        logger.info("Notifications disabled (Chat Memory not available)")
 
     # Initialize and start the backup manager
     app.backup_manager = BackupManager(config)
@@ -664,6 +726,99 @@ def create_app():
     # --- Health Monitor ---
     app.health_monitor = HealthMonitor(shutdown_callback=shutdown_server)
     atexit.register(app.health_monitor.stop)
+
+    @sock.route('/wakeword')
+    def wakeword_socket(ws):
+        """WebSocket endpoint for streaming audio for wake word detection"""
+        logger.info("Wake word socket connected")
+        cooldown_until = 0
+
+        try:
+            while True:
+                data = ws.receive()
+                if not data:
+                    logger.debug("Wake word socket received empty data or closed")
+                    break
+
+                if hasattr(app, 'wakeword') and app.wakeword:
+                    # Process audio chunk to keep model state updated (flush buffers)
+                    scores = app.wakeword.process_chunk(data)
+
+                    # Cooldown check: ignore results if in cooldown
+                    if time.time() < cooldown_until:
+                        logger.debug(f"Cooldown active ({cooldown_until - time.time():.2f}s). Ignoring scores: {scores}")
+                        continue
+
+                    # Check threshold
+                    threshold = config.get("wakeword.threshold", 0.5)
+
+                    # Log significant scores to trace detection progression
+                    max_score = max(scores.values()) if scores else 0
+                    if max_score > 0.1:
+                        logger.debug(f"Processing scores: {scores}")
+
+                    for model_name, score in scores.items():
+                        if score > threshold:
+                            logger.info(f"Wake word detected: {model_name} (score: {score:.4f})")
+
+                            # Set cooldown (2 seconds) to ignore subsequent buffered chunks
+                            cooldown_until = time.time() + 4.0
+
+                            ws.send(json.dumps({
+                                "detected": True,
+                                "model": model_name,
+                                "score": float(score)
+                            }))
+                            # Break inner loop to avoid sending multiple detections for the same frame
+                            break
+        except Exception as e:
+            logger.warning(f"Wake word socket Exception: {e}")
+        finally:
+            logger.debug("Wake word socket disconnected")
+
+    @app.route("/auth/portal", methods=["GET"])
+    def auth_portal():
+        """Serves the local HTML page for wallet connection."""
+        if not auth_manager:
+            return "Auth system unavailable (Storage missing)", 503
+        return auth_manager.get_portal_html()
+
+    @app.route("/auth/verify", methods=["POST"])
+    def auth_verify():
+        """Verifies wallet signature and balance."""
+        if not auth_manager:
+            return (
+                jsonify(
+                    {"success": False, "message": "Auth system unavailable"}
+                ),
+                503,
+            )
+
+        data = request.get_json()
+        wallet = data.get("wallet")
+        signature = data.get("signature")
+        message = data.get("message")
+
+        if not wallet or not signature or not message:
+            return (
+                jsonify({"success": False, "message": "Missing parameters"}),
+                400,
+            )
+
+        success, msg = auth_manager.verify_and_login(
+            wallet, signature, message
+        )
+        return jsonify({"success": success, "message": msg})
+
+    @app.route("/auth/status", methods=["GET"])
+    def auth_status():
+        """Checks current authentication status."""
+        if not auth_manager:
+            return jsonify(
+                {"authorized": False, "reason": "system_unavailable"}
+            )
+
+        return jsonify(auth_manager.is_authorized())
 
     @app.route("/config/status", methods=["GET"])
     def get_config_status():
@@ -681,8 +836,6 @@ def create_app():
         start_time = time.time()
 
         # Get memory configuration
-        memory_config = config.get("memory", {})
-        memory_enabled = memory_config.get("enabled", False)
         backup_enabled = config.get("backup.enabled", False)
 
         status = {
@@ -697,16 +850,11 @@ def create_app():
                 "logging": logging_manager is not None,
                 "backup_manager": app.backup_manager is not None,
             },
-            "dependencies": {"llm_available": app.llm is not None},
+            "dependencies": {
+                "llm_available": app.llm is not None,
+                "storage_available": hasattr(app, "storage"),
+            },
         }
-
-        # Only include storage check if memory is enabled
-        if memory_enabled:
-            # Check if chat_memory was successfully initialized in ChatManager
-            status["dependencies"]["storage_available"] = (
-                hasattr(app.chat_manager, "chat_memory")
-                and app.chat_manager.chat_memory is not None
-            )
 
         # Add backup status details
         if backup_enabled and hasattr(app, "backup_manager"):
@@ -831,6 +979,31 @@ def create_app():
 
         return Response(generate(), mimetype="text/event-stream")
 
+    @app.route("/framework/chat/search", methods=["GET"])
+    def search_chat_history():
+        """
+        Search chat history with syntax support.
+        Query params:
+            q: Search query (supports "phrase", -exclude, ~semantic)
+            limit: Max results (default 10)
+            offset: Pagination offset (default 0)
+        """
+        query = request.args.get("q", "")
+        limit = int(request.args.get("limit", 10))
+        offset = int(request.args.get("offset", 0))
+
+        if not query:
+            return jsonify({"results": []})
+
+        try:
+            results = app.chat_manager.chat_memory.search_entries(
+                query, limit=limit, offset=offset
+            )
+            return jsonify({"results": results})
+        except Exception as e:
+            logger.error(f"Error searching chat history: {e}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/framework/chat/history", methods=["GET"])
     def get_chat_history():
         """
@@ -851,117 +1024,125 @@ def create_app():
 
         try:
             memory = app.chat_manager.chat_memory
-            total_messages = memory.get_total_messages()
-            logger.info(f"total_messages: {total_messages}")
-            if total_messages == 0:
-                return jsonify(
-                    {
-                        "history": "# Chat History\n\nNo history found.",
-                        "date": (
-                            datetime.now().strftime("%Y-%m-%d")
-                        ),
-                        "has_previous": False,
-                        "has_next": False,
-                    }
+            since_timestamp = request.args.get("since")
+
+            if since_timestamp:
+                # Fetch messages since the provided timestamp
+                new_messages = memory.get_chat_history(
+                    start_date=since_timestamp, limit=100
                 )
 
-            # Fetch all messages and group by date
-            all_messages = memory.get_chat_history(
-                limit=total_messages, offset=0
-            )
-            messages_by_date = {}
-            for msg in all_messages:
-                # TODO get messages by day instead of getting all together
-                # logger.info(f"msg: {msg}")
-                timestamp_str = msg.get("timestamp")
-                # logger.info(f"timestamp_str: {timestamp_str}")
-                if timestamp_str:
-                    # Ensure timestamp is timezone-aware before converting
-                    dt_object = datetime.fromisoformat(timestamp_str)
-                    if dt_object.tzinfo is None:
-                        dt_object = dt_object.replace(tzinfo=timezone.utc)
+                # Exclude the message with the exact start timestamp to avoid duplication
+                filtered_messages = [
+                    m
+                    for m in new_messages
+                    if m.get("timestamp") != since_timestamp
+                ]
 
-                    msg_date = dt_object.astimezone().date()
-                    if msg_date not in messages_by_date:
-                        messages_by_date[msg_date] = []
-                    messages_by_date[msg_date].append(msg)
+                if not filtered_messages:
+                    # Return empty history and no new timestamp if nothing new
+                    return jsonify({"history": "", "last_timestamp": None})
 
-            if not messages_by_date:
+                # Format into a concise Markdown string
+                history_md = memory.format_messages_to_markdown(
+                    filtered_messages
+                )
+                # Get the timestamp of the very last message to send back to the client
+                last_timestamp = filtered_messages[-1].get("timestamp")
+
                 return jsonify(
-                    {
-                        "history": (
-                            "# Chat History\n\nNo history found for today."
-                        ),
-                        "date": (
-                            datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                        ),
-                        "has_previous": False,
-                        "has_next": False,
-                    }
+                    {"history": history_md, "last_timestamp": last_timestamp}
                 )
 
-            sorted_dates = sorted(messages_by_date.keys())
-
-            # Determine target date
             date_str = request.args.get("date")
             if date_str:
-                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                try:
+                    target_date = date.fromisoformat(date_str)
+                except ValueError:
+                    return (
+                        jsonify(
+                            {"error": "Invalid date format. Use YYYY-MM-DD."}
+                        ),
+                        400,
+                    )
             else:
-                # Default to the most recent day with messages
-                target_date = sorted_dates[-1]
+                # Default to the date of the most recent message (UTC)
+                last_message = memory.get_recent_entries(limit=1)
+                if not last_message:
+                    return jsonify(
+                        {
+                            "history": "# Chat History\n\nNo history found.",
+                            "date": (
+                                datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                            ),
+                            "has_previous": False,
+                            "has_next": False,
+                        }
+                    )
+                # Timestamps are ISO strings in UTC
+                target_date = datetime.fromisoformat(
+                    last_message[0]["timestamp"]
+                ).date()
 
-            # Get messages for the target day
-            messages_for_day = messages_by_date.get(target_date, [])
-            messages_for_day.sort(key=lambda m: m.get("timestamp"))
+            # Define the UTC day boundaries
+            start_of_day = datetime.combine(
+                target_date, datetime.min.time(), tzinfo=timezone.utc
+            )
+            end_of_day = datetime.combine(
+                target_date, datetime.max.time(), tzinfo=timezone.utc
+            )
+
+            # Fetch messages for the target day
+            messages_for_day = memory.get_chat_history(
+                start_date=start_of_day.isoformat(),
+                end_date=end_of_day.isoformat(),
+                limit=5000,  # A generous limit for a single day
+                sort="DESC",
+            )
+            # The backend returns newest first, so we reverse for chronological order
+            messages_for_day.reverse()
 
             # Format into a concise Markdown string
             markdown_lines = [
-                f"### History for {target_date.strftime('%A, %B %d, %Y')}\n"
+                f"<h3>History for {target_date.strftime('%A, %B %d, %Y')}</h3>"
             ]
             if not messages_for_day:
                 markdown_lines.append("\n_No messages for this day._")
             else:
-                for msg in messages_for_day:
-                    role = msg.get("role", "unknown")
-                    role_prefix = "U" if role == "user" else "A"
-                    content = msg.get("content", "")
-                    content = re.sub(r"\n+", "\n", content)
-                    # content = re.sub(r"^\n+", "", content)
-                    timestamp = msg.get("timestamp")
-
-                    dt_object = datetime.fromisoformat(timestamp)
-                    if dt_object.tzinfo is None:
-                        dt_object = dt_object.replace(tzinfo=timezone.utc)
-
-                    time_str = dt_object.astimezone().strftime(
-                        "%H:%M:%S"
-                    )
-                    markdown_lines.append(
-                        f"`{time_str}` **{role_prefix}:** {content}"
-                    )
-
+                formatted_messages = memory.format_messages_to_markdown(
+                    messages_for_day
+                )
+                markdown_lines.append(formatted_messages)
             history_md = "\n".join(markdown_lines)
 
-            # Determine if previous/next days with history exist
-            try:
-                current_date_index = sorted_dates.index(target_date)
-                has_previous = current_date_index > 0
-                has_next = current_date_index < len(sorted_dates) - 1
-            except ValueError:
-                # This can happen if a date is requested that has no messages.
-                # Find where it would be inserted to determine prev/next.
-                insertion_point = bisect.bisect_left(sorted_dates, target_date)
-                has_previous = insertion_point > 0
-                has_next = insertion_point < len(sorted_dates)
-
-            return jsonify(
-                {
-                    "history": history_md,
-                    "date": target_date.strftime("%Y-%m-%d"),
-                    "has_previous": has_previous,
-                    "has_next": has_next,
-                }
+            # Efficiently check for previous/next days with history
+            # Check for any message before the start of the target day
+            prev_day_check_end = start_of_day - timedelta(microseconds=1)
+            has_previous = bool(
+                memory.get_chat_history(
+                    end_date=prev_day_check_end.isoformat(), limit=1
+                )
             )
+
+            # Check for any message after the end of the target day
+            next_day_check_start = end_of_day + timedelta(microseconds=1)
+            has_next = bool(
+                memory.get_chat_history(
+                    start_date=next_day_check_start.isoformat(), limit=1
+                )
+            )
+
+            output = {
+                "history": history_md,
+                "date": target_date.strftime("%Y-%m-%d"),
+                "has_previous": has_previous,
+                "has_next": has_next,
+            }
+            if messages_for_day:
+                output["last_timestamp"] = (
+                    messages_for_day[-1].get("timestamp"),
+                )
+            return jsonify(output)
         except Exception as e:
             logger.error(f"Error fetching chat history: {e}")
             import traceback
@@ -1025,13 +1206,29 @@ def create_app():
             # Save the uploaded file
             audio_file.save(temp_path)
             # Transcribe using the saved file path
-            text = stt.transcribe_file(temp_path)
+            result = stt.transcribe_file(temp_path)
+
+            # [MODIFIED] Handle both dictionary (FasterWhisper) and string (Legacy/HTTP) returns
+            text = ""
+            confidence = 0.0
+            detected_language = language
+
+            if isinstance(result, dict):
+                text = result.get("text", "")
+                confidence = result.get("confidence", 0.0)
+                # Use detected language if available and not manually set
+                if language == "auto" and "language" in result:
+                    detected_language = result["language"]
+            else:
+                text = str(result)
+                confidence = 1.0 if text else 0.0
 
             # Format response to match what OpenAI Whisper API returns
             response = {
                 "text": text,
+                "confidence": confidence,  # [NEW] Add confidence score
                 "task": task,
-                "language": language,
+                "language": detected_language,
                 "duration": 0,  # We don't have actual duration info
                 "model": model,
             }
@@ -1426,6 +1623,51 @@ def create_app():
             logger.error(traceback.format_exc())
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/framework/queue/push", methods=["POST"])
+    def push_to_queue():
+        """Endpoint for Orakle to push background skill results"""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "No data provided"}), 400
+
+            # Basic validation (Orakle sends 'result', not 'content')
+            if "source" not in data or "result" not in data:
+                return jsonify({"error": "Missing source or result"}), 400
+
+            # Pass to Notification Manager if available
+            if hasattr(app, "notification_manager"):
+                app.notification_manager.process_payload(data)
+                logger.info(
+                    f"Processing background event from {data.get('source')}"
+                )
+                return jsonify({"status": "processing"})
+            else:
+                return jsonify(
+                    {"status": "ignored", "reason": "notifications_disabled"}
+                )
+
+        except Exception as e:
+            logger.error(f"Error pushing to queue: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/framework/notifications/status", methods=["GET"])
+    def get_notification_status():
+        """Check if there are pending notifications for the tray icon"""
+        pending_count = 0
+        if hasattr(app, "notification_manager"):
+            pending_count = app.notification_manager.pending_notifications()
+            show_report = request.args.get("report", False)
+            if show_report:
+                pending_items = (
+                    app.notification_manager.get_and_clear_notifications(
+                        do_clear=False
+                    )
+                )
+                for item in pending_items:
+                    logger.info(f" [{item['source']}]: {item['summary']}\n")
+        return jsonify({"pending": pending_count})
+
     return app
 
 
@@ -1458,21 +1700,33 @@ if __name__ == "__main__":
 
     if not resources_status.get("initialized"):
         logger.info("Resources not initialized. Proceeding with setup.")
-        logger.info("Step 2: Checking download capability from Hugging Face Hub...")
+        logger.info(
+            "Step 2: Checking download capability from Hugging Face Hub..."
+        )
         download_check = check_download_capability()
 
         if not download_check.get("can_download"):
-            error_msg = "Cannot download required models. No internet connection or Hugging Face Hub is unreachable."
+            error_msg = (
+                "Cannot download required models. No internet connection or"
+                " Hugging Face Hub is unreachable."
+            )
             logger.critical(error_msg)
             # Send one final progress update for the UI before exiting
             _send_progress("error", 100, error_msg)
             sys.exit(1)  # Exit with error code
 
-        logger.info("Download is possible. Starting resource initialization...")
-        logger.info("Step 3: Initializing resources (this may take a while)...")
+        logger.info(
+            "Download is possible. Starting resource initialization..."
+        )
+        logger.info(
+            "Step 3: Initializing resources (this may take a while)..."
+        )
         success = initialize_resources(resources_status)
         if not success:
-            error_msg = "Failed to initialize required resources. The service cannot start."
+            error_msg = (
+                "Failed to initialize required resources. The service cannot"
+                " start."
+            )
             logger.critical(error_msg)
             # initialize_resources already sends a final progress update on error
             sys.exit(1)  # Exit with error code

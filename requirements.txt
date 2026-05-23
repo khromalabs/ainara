@@ -7,19 +7,32 @@
 --extra-index-url https://pypi.ngc.nvidia.com
 --trusted-host pypi.ngc.nvidia.com
 
+addict==2.4.0
+    # via misaki
+aiodns==4.0.0
+    # via ccxt
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.11.11
     # via
     #   -r requirements.in
+    #   ccxt
     #   litellm
-aiosignal==1.3.2
+aioimaplib==2.0.1
+    # via -r requirements.in
+aiosignal==1.4.0
     # via aiohttp
-altgraph==0.17.4
+aiosmtplib==5.0.0
+    # via -r requirements.in
+altgraph==0.17.5
     # via pyinstaller
+annotated-doc==0.0.4
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.7.0
     # via pydantic
-anyio==4.9.0
+anyio==4.12.1
     # via
     #   httpx
     #   mcp
@@ -27,280 +40,309 @@ anyio==4.9.0
     #   sse-starlette
     #   starlette
     #   watchfiles
+apscheduler==3.11.1
+    # via -r requirements.in
 asgiref==3.8.1
     # via
     #   -r requirements.in
     #   opentelemetry-instrumentation-asgi
-attrs==25.3.0
+attrs==25.4.0
     # via
     #   aiohttp
+    #   csvw
     #   jsonschema
+    #   phonemizer-fork
     #   referencing
-av==14.3.0
+av==16.1.0
     # via faster-whisper
+babel==2.18.0
+    # via
+    #   courlan
+    #   csvw
 backoff==2.2.1
     # via posthog
-bcrypt==4.3.0
+bcrypt==5.0.0
     # via chromadb
-beautifulsoup4==4.13.3
-    # via
-    #   feedfinder2
-    #   newspaper3k
 blinker==1.9.0
     # via flask
-blis==1.3.0
+blis==1.3.3
     # via thinc
-build==1.2.2.post1
+build==1.4.0
     # via chromadb
 cachetools==5.5.1
-    # via
-    #   -r requirements.in
-    #   google-auth
+    # via -r requirements.in
 catalogue==2.0.10
     # via
     #   spacy
     #   srsly
     #   thinc
-certifi==2025.1.31
+ccxt==4.5.35
+    # via -r requirements.in
+certifi==2026.2.25
     # via
+    #   ccxt
     #   httpcore
     #   httpx
     #   kubernetes
     #   requests
-cffi==1.17.1
+    #   trafilatura
+cffi==2.0.0
     # via
+    #   cryptography
+    #   pycares
     #   sounddevice
     #   soundfile
-charset-normalizer==3.4.1
-    # via requests
+charset-normalizer==3.4.5
+    # via
+    #   htmldate
+    #   requests
+    #   trafilatura
 chroma-hnswlib==0.7.6
     # via chromadb
 chromadb==0.6.3
     # via -r requirements.in
-click==8.1.8
+click==8.3.1
     # via
     #   flask
     #   litellm
-    #   nltk
     #   typer
     #   uvicorn
-cloudpathlib==0.21.0
+cloudpathlib==0.23.0
     # via weasel
+coincurve==21.0.0
+    # via ccxt
 colorama==0.4.6
     # via -r requirements.in
-coloredlogs==15.0.1
-    # via onnxruntime
+colorlog==6.10.1
+    # via kokoro-onnx
 confection==0.1.5
     # via
     #   thinc
     #   weasel
+construct==2.10.70
+    # via construct-typing
+construct-typing==0.7.0
+    # via solana
 contourpy==1.3.3
     # via matplotlib
-cssselect==1.3.0
-    # via newspaper3k
-ctranslate2==4.6.0
+courlan==1.3.2
+    # via trafilatura
+cryptography==46.0.5
+    # via
+    #   ccxt
+    #   google-auth
+    #   pyjwt
+csvw==3.7.0
+    # via segments
+ctranslate2==4.7.1
     # via faster-whisper
 cycler==0.12.1
     # via matplotlib
-cymem==2.0.11
+cymem==2.0.13
     # via
     #   preshed
     #   spacy
     #   thinc
+dateparser==1.3.0
+    # via htmldate
 distro==1.9.0
     # via
     #   openai
     #   posthog
-durationpy==0.9
+dlinfo==2.0.0
+    # via phonemizer-fork
+durationpy==0.10
     # via kubernetes
-elevenlabs==2.16.0
-    # via -r requirements.in
 emoji==2.14.1
     # via -r requirements.in
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
     # via -r requirements.in
-fastapi==0.115.12
+espeakng-loader==0.2.4
+    # via kokoro-onnx
+fastapi==0.135.1
     # via chromadb
+fastembed===0.7.4
+    # via -r requirements.in
 faster-whisper==1.1.1
     # via -r requirements.in
-fastuuid==0.13.5
+fastuuid==0.14.0
     # via litellm
-feedfinder2==0.0.4
-    # via newspaper3k
-feedparser==6.0.11
-    # via newspaper3k
-filelock==3.18.0
-    # via
-    #   huggingface-hub
-    #   tldextract
-    #   torch
-    #   transformers
+filelock==3.25.2
+    # via huggingface-hub
 flask==3.1.0
     # via
     #   -r requirements.in
     #   flask-cors
+    #   flask-sock
 flask-cors==5.0.0
     # via -r requirements.in
-flatbuffers==25.2.10
+flask-sock==0.7.0
+    # via -r requirements.in
+flatbuffers==25.12.19
     # via onnxruntime
-fonttools==4.60.1
+fonttools==4.62.0
     # via matplotlib
-frozenlist==1.5.0
+frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-fsspec==2025.3.2
-    # via
-    #   huggingface-hub
-    #   torch
-google-api-core==2.24.2
+fsspec==2026.2.0
+    # via huggingface-hub
+google-api-core==2.30.0
     # via google-api-python-client
 google-api-python-client==2.166.0
     # via -r requirements.in
-google-auth==2.39.0
+google-auth==2.49.1
     # via
     #   google-api-core
     #   google-api-python-client
     #   google-auth-httplib2
-    #   kubernetes
-google-auth-httplib2==0.2.0
+google-auth-httplib2==0.3.0
     # via google-api-python-client
-googleapis-common-protos==1.70.0
+googleapis-common-protos==1.73.0
     # via
     #   google-api-core
     #   opentelemetry-exporter-otlp-proto-grpc
-greenlet==3.2.4
-    # via pynvim
-grpcio==1.73.1
+greenlet==3.3.2
+    # via
+    #   pynvim
+    #   sqlalchemy
+grpcio==1.78.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
-h11==0.14.0
+h11==0.16.0
     # via
     #   httpcore
     #   uvicorn
-httpcore==1.0.8
+    #   wsproto
+hf-xet==1.4.0
+    # via huggingface-hub
+htmldate==1.9.4
+    # via trafilatura
+httpcore==1.0.9
     # via httpx
-httplib2==0.22.0
+httplib2==0.31.2
     # via
     #   google-api-python-client
     #   google-auth-httplib2
-httptools==0.6.4
+httptools==0.7.1
     # via uvicorn
-httpx==0.27.2
+httpx==0.28.1
     # via
     #   chromadb
-    #   elevenlabs
+    #   huggingface-hub
     #   litellm
     #   mcp
     #   ollama
     #   openai
-httpx-sse==0.4.0
+    #   solana
+httpx-sse==0.4.3
     # via mcp
-huggingface-hub==0.30.2
+huggingface-hub==1.6.0
     # via
+    #   fastembed
     #   faster-whisper
-    #   sentence-transformers
     #   tokenizers
-    #   transformers
-humanfriendly==10.0
-    # via coloredlogs
-idna==3.10
+idna==3.11
     # via
     #   anyio
     #   httpx
     #   requests
-    #   tldextract
     #   yarl
-importlib-metadata==8.6.1
+importlib-metadata==8.7.1
     # via
     #   litellm
     #   opentelemetry-api
 importlib-resources==6.5.2
     # via chromadb
-iniconfig==2.1.0
+iniconfig==2.3.0
     # via pytest
+isodate==0.7.2
+    # via csvw
 itsdangerous==2.2.0
     # via flask
-jieba3k==0.35.1
-    # via newspaper3k
 jinja2==3.1.6
     # via
     #   flask
     #   litellm
     #   spacy
-    #   torch
-jiter==0.9.0
+jiter==0.13.0
     # via openai
-joblib==1.4.2
+joblib==1.5.3
     # via
-    #   nltk
+    #   phonemizer-fork
     #   scikit-learn
+jsonalias==0.1.1
+    # via solders
 jsonschema==4.24.0
     # via
     #   -r requirements.in
+    #   csvw
     #   litellm
-jsonschema-specifications==2025.4.1
+    #   mcp
+jsonschema-specifications==2025.9.1
     # via jsonschema
-kiwisolver==1.4.9
+justext==3.0.2
+    # via trafilatura
+kiwisolver==1.5.0
     # via matplotlib
-kubernetes==33.1.0
+kokoro-onnx==0.4.9
+    # via -r requirements.in
+kubernetes==35.0.0
     # via chromadb
-langcodes==3.5.0
+langcodes==3.5.1
     # via spacy
-language-data==1.3.0
-    # via langcodes
-litellm==1.77.5
+language-tags==1.2.0
+    # via csvw
+litellm==1.81.10
     # via -r requirements.in
-lxml==6.0.0
+loguru==0.7.3
+    # via fastembed
+lxml[html-clean]==6.0.2
     # via
+    #   htmldate
+    #   justext
     #   lxml-html-clean
-    #   newspaper3k
+    #   trafilatura
 lxml-html-clean==0.4.1
-    # via -r requirements.in
-marisa-trie==1.2.1
-    # via language-data
-markdown-it-py==3.0.0
+    # via
+    #   -r requirements.in
+    #   lxml
+markdown-it-py==4.0.0
     # via rich
-markupsafe==3.0.2
+markupsafe==3.0.3
     # via
     #   jinja2
     #   werkzeug
 matplotlib==3.10.5
     # via -r requirements.in
-mcp[cli]==1.7.1
+mcp[cli]==1.26.0
     # via -r requirements.in
 mdurl==0.1.2
     # via markdown-it-py
-mmh3==5.1.0
-    # via chromadb
+misaki==0.9.4
+    # via -r requirements.in
+mmh3==5.2.1
+    # via
+    #   chromadb
+    #   fastembed
 mpmath==1.3.0
     # via sympy
-msgpack==1.1.1
+msgpack==1.1.2
     # via pynvim
-multidict==6.4.3
+multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-murmurhash==1.0.12
+murmurhash==1.0.15
     # via
     #   preshed
     #   spacy
     #   thinc
-networkx==3.4.2
-    # via torch
 newsapi-python==0.2.7
     # via -r requirements.in
-newspaper3k==0.2.8
-    # via -r requirements.in
-nltk==3.9.1
-    # via
-    #   newspaper3k
-    #   normalise
-    #   textblob
-normalise==0.1.8
-    # via -r requirements.in
-numpy==2.2.4
+numpy==2.4.2
     # via
     #   -r requirements.in
     #   blis
@@ -308,8 +350,9 @@ numpy==2.2.4
     #   chromadb
     #   contourpy
     #   ctranslate2
+    #   fastembed
+    #   kokoro-onnx
     #   matplotlib
-    #   normalise
     #   onnxruntime
     #   pandas
     #   scikit-learn
@@ -317,56 +360,22 @@ numpy==2.2.4
     #   soundfile
     #   spacy
     #   thinc
-    #   transformers
-# REQUIREMENT for Github
-# nvidia-cublas-cu12==12.4.5.8
-#     # via
-#     #   nvidia-cudnn-cu12
-#     #   nvidia-cusolver-cu12
-#     #   torch
-# nvidia-cuda-cupti-cu12==12.4.127
-#     # via torch
-# nvidia-cuda-nvrtc-cu12==12.4.127
-#     # via torch
-# nvidia-cuda-runtime-cu12==12.4.127
-#     # via torch
-# nvidia-cudnn-cu12==9.1.0.70
-#     # via torch
-# nvidia-cufft-cu12==11.2.1.3
-#     # via torch
-# nvidia-curand-cu12==10.3.5.147
-#     # via torch
-# nvidia-cusolver-cu12==11.6.1.9
-#     # via torch
-# nvidia-cusparse-cu12==12.3.1.170
-#     # via
-#     #   nvidia-cusolver-cu12
-#     #   torch
-# nvidia-cusparselt-cu12==0.6.2
-#     # via torch
-# nvidia-nccl-cu12==2.21.5
-#     # via torch
-# nvidia-nvjitlink-cu12==12.4.127
-#     # via
-#     #   nvidia-cusolver-cu12
-#     #   nvidia-cusparse-cu12
-#     #   torch
-# nvidia-nvtx-cu12==12.4.127
-    # via torch
-oauthlib==3.2.2
+oauthlib==3.3.1
     # via
-    #   kubernetes
     #   requests-oauthlib
     #   tweepy
 ollama==0.5.1
     # via -r requirements.in
-onnxruntime==1.21.0
+onnxruntime==1.24.3
     # via
     #   chromadb
+    #   fastembed
     #   faster-whisper
-openai==1.102.0
+    #   kokoro-onnx
+    #   openwakeword
+openai==2.26.0
     # via litellm
-opentelemetry-api==1.34.1
+opentelemetry-api==1.40.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -375,41 +384,43 @@ opentelemetry-api==1.34.1
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-exporter-otlp-proto-common==1.34.1
+opentelemetry-exporter-otlp-proto-common==1.40.0
     # via opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-exporter-otlp-proto-grpc==1.34.1
+opentelemetry-exporter-otlp-proto-grpc==1.40.0
     # via chromadb
-opentelemetry-instrumentation==0.55b1
+opentelemetry-instrumentation==0.61b0
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-asgi==0.55b1
+opentelemetry-instrumentation-asgi==0.61b0
     # via opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-fastapi==0.55b1
+opentelemetry-instrumentation-fastapi==0.61b0
     # via chromadb
-opentelemetry-proto==1.34.1
+opentelemetry-proto==1.40.0
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-sdk==1.34.1
+opentelemetry-sdk==1.40.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-semantic-conventions==0.55b1
+opentelemetry-semantic-conventions==0.61b0
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-sdk
-opentelemetry-util-http==0.55b1
+opentelemetry-util-http==0.61b0
     # via
     #   opentelemetry-instrumentation-asgi
     #   opentelemetry-instrumentation-fastapi
-orjson==3.10.18
+openwakeword @ git+https://github.com/khromalabs/openWakeWord.git@tag_v0.6.0
+    # via -r requirements.in
+orjson==3.11.7
     # via chromadb
 overrides==7.7.0
     # via chromadb
-packaging==24.2
+packaging==26.0
     # via
     #   build
     #   huggingface-hub
@@ -421,55 +432,60 @@ packaging==24.2
     #   pytest
     #   spacy
     #   thinc
-    #   transformers
     #   weasel
 pandas==2.3.1
     # via -r requirements.in
-pillow==11.2.1
+phonemizer-fork==3.3.2
+    # via kokoro-onnx
+pillow==11.3.0
     # via
+    #   fastembed
     #   matplotlib
-    #   newspaper3k
-    #   sentence-transformers
-pluggy==1.5.0
+pluggy==1.6.0
     # via pytest
-posthog==5.4.0
+posthog==7.9.12
     # via chromadb
-preshed==3.0.9
+preshed==3.0.12
     # via
     #   spacy
     #   thinc
 prompt-toolkit==3.0.50
     # via -r requirements.in
-propcache==0.3.1
+propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-proto-plus==1.26.1
+proto-plus==1.27.1
     # via google-api-core
-protobuf==5.29.5
+protobuf==6.33.5
     # via
     #   google-api-core
     #   googleapis-common-protos
     #   onnxruntime
     #   opentelemetry-proto
     #   proto-plus
-psutil==7.0.0
+psutil==7.2.2
     # via -r requirements.in
-pyasn1==0.6.1
+py-rust-stemmers==0.1.5
+    # via fastembed
+pyaes==1.6.1
+    # via telethon
+pyasn1==0.6.2
     # via
     #   pyasn1-modules
     #   rsa
 pyasn1-modules==0.4.2
     # via google-auth
+pycares==5.0.1
+    # via aiodns
 pycountry==24.6.1
     # via -r requirements.in
-pycparser==2.22
+pycparser==3.0
     # via cffi
-pydantic==2.11.3
+pydantic==2.12.5
     # via
     #   chromadb
     #   confection
-    #   elevenlabs
     #   fastapi
     #   litellm
     #   mcp
@@ -479,11 +495,9 @@ pydantic==2.11.3
     #   spacy
     #   thinc
     #   weasel
-pydantic-core==2.33.1
-    # via
-    #   elevenlabs
-    #   pydantic
-pydantic-settings==2.8.1
+pydantic-core==2.41.5
+    # via pydantic
+pydantic-settings==2.13.1
     # via mcp
 pydub==0.25.1
     # via -r requirements.in
@@ -491,21 +505,24 @@ pyflakes==3.4.0
     # via -r requirements.in
 pygame==2.6.1
     # via -r requirements.in
-pygments==2.19.1
+pygments==2.19.2
     # via rich
-pyinstaller==6.12.0
+pyinstaller==6.18.0
     # via -r requirements.in
-pyinstaller-hooks-contrib==2025.2
+pyinstaller-hooks-contrib==2026.3
     # via pyinstaller
+pyjwt[crypto]==2.12.0
+    # via mcp
 pynvim==0.5.2
     # via -r requirements.in
-pyparsing==3.2.3
+pyparsing==3.3.2
     # via
     #   httplib2
     #   matplotlib
+    #   rdflib
 pyperclip==1.9.0
     # via -r requirements.in
-pypika==0.48.9
+pypika==0.51.1
     # via chromadb
 pyproject-hooks==1.2.0
     # via build
@@ -515,23 +532,27 @@ pytest==8.3.5
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via
+    #   csvw
+    #   dateparser
+    #   htmldate
     #   kubernetes
     #   matplotlib
-    #   newspaper3k
     #   pandas
     #   posthog
-python-dotenv==1.1.0
+python-dotenv==1.2.2
     # via
     #   litellm
     #   mcp
     #   pydantic-settings
     #   uvicorn
-python-multipart==0.0.20
+python-multipart==0.0.22
     # via mcp
 python-statemachine==2.5.0
     # via -r requirements.in
-pytz==2025.2
-    # via pandas
+pytz==2026.1.post1
+    # via
+    #   dateparser
+    #   pandas
 pyyaml==6.0.2
     # via
     #   -r requirements.in
@@ -539,111 +560,105 @@ pyyaml==6.0.2
     #   ctranslate2
     #   huggingface-hub
     #   kubernetes
-    #   newspaper3k
-    #   transformers
     #   uvicorn
-referencing==0.36.2
+rdflib==7.6.0
+    # via csvw
+referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2024.7.24
+regex==2026.2.28
     # via
-    #   nltk
+    #   dateparser
+    #   misaki
+    #   segments
     #   tiktoken
-    #   transformers
 requests==2.32.3
     # via
     #   -r requirements.in
-    #   elevenlabs
-    #   feedfinder2
+    #   ccxt
+    #   csvw
+    #   fastembed
     #   google-api-core
-    #   huggingface-hub
     #   kubernetes
     #   newsapi-python
-    #   newspaper3k
+    #   openwakeword
     #   posthog
-    #   requests-file
     #   requests-oauthlib
     #   spacy
     #   tiktoken
-    #   tldextract
-    #   transformers
     #   tweepy
     #   weasel
-requests-file==2.1.0
-    # via tldextract
 requests-oauthlib==2.0.0
     # via
     #   kubernetes
     #   tweepy
-rich==14.0.0
+rfc3986==1.5.0
+    # via csvw
+rich==14.3.3
     # via
     #   chromadb
     #   typer
-roman==5.0
-    # via normalise
-rpds-py==0.24.0
+rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
-rsa==4.9
-    # via google-auth
-safetensors==0.5.3
-    # via transformers
+rsa==4.9.1
+    # via telethon
 scikit-learn==1.6.1
     # via
     #   -r requirements.in
-    #   normalise
-    #   sentence-transformers
-scipy==1.15.2
+    #   openwakeword
+scipy==1.17.1
     # via
-    #   normalise
+    #   openwakeword
     #   scikit-learn
-    #   sentence-transformers
-sentence-transformers==3.4.1
-    # via -r requirements.in
+segments==2.4.0
+    # via phonemizer-fork
 setproctitle==1.3.4
     # via -r requirements.in
-sgmllib3k==1.0.0
-    # via feedparser
 shellingham==1.5.4
     # via typer
+simple-websocket==1.1.0
+    # via flask-sock
 simpleaudio==1.0.4
     # via -r requirements.in
 six==1.17.0
     # via
-    #   feedfinder2
     #   kubernetes
     #   posthog
     #   python-dateutil
-smart-open==7.1.0
+smart-open==7.5.1
     # via weasel
 sniffio==1.3.1
+    # via openai
+solana==0.36.10
+    # via -r requirements.in
+solders==0.27.1
     # via
-    #   anyio
-    #   httpx
-    #   openai
+    #   -r requirements.in
+    #   solana
 sounddevice==0.5.2
     # via -r requirements.in
 soundfile==0.13.0
     # via -r requirements.in
-soupsieve==2.6
-    # via beautifulsoup4
 spacy==3.8.7
     # via -r requirements.in
 spacy-legacy==3.0.12
     # via spacy
 spacy-loggers==1.0.5
     # via spacy
-srsly==2.5.1
+sqlalchemy==2.0.46
+    # via -r requirements.in
+srsly==2.5.2
     # via
     #   confection
     #   spacy
     #   thinc
     #   weasel
-sse-starlette==2.3.3
+sse-starlette==3.3.2
     # via mcp
-starlette==0.46.2
+starlette==0.52.1
     # via
     #   fastapi
     #   mcp
@@ -652,98 +667,111 @@ sympy==1.13.1
     # via
     #   -r requirements.in
     #   onnxruntime
-    #   torch
-tenacity==9.1.2
-    # via chromadb
-textblob==0.19.0
+telethon==1.42.0
     # via -r requirements.in
-thinc==8.3.6
+tenacity==9.1.4
+    # via chromadb
+termcolor==3.3.0
+    # via csvw
+thinc==8.3.10
     # via spacy
 threadpoolctl==3.6.0
     # via scikit-learn
-tiktoken==0.9.0
+tiktoken==0.12.0
     # via litellm
-tinysegmenter==0.3
-    # via newspaper3k
-tldextract==5.2.0
-    # via newspaper3k
-tokenizers==0.21.1
+tld==0.13.2
+    # via courlan
+tokenizers==0.22.2
     # via
     #   chromadb
+    #   fastembed
     #   faster-whisper
     #   litellm
-    #   transformers
-torch==2.6.0
-    # via
-    #   -r requirements.in
-    #   sentence-transformers
-tqdm==4.67.1
+tqdm==4.67.3
     # via
     #   chromadb
+    #   fastembed
     #   faster-whisper
     #   huggingface-hub
-    #   nltk
     #   openai
-    #   sentence-transformers
+    #   openwakeword
     #   spacy
-    #   transformers
-transformers==4.51.3
-    # via sentence-transformers
+trafilatura==2.0.0
+    # via -r requirements.in
 tree-sitter==0.25.1
     # via -r requirements.in
 tree-sitter-javascript==0.23.1
     # via -r requirements.in
 tree-sitter-python==0.23.6
     # via -r requirements.in
-# Commented out to avoid GPU requirement
-# REQUIREMENT for Github
-#triton==3.2.0
-#   # via torch
 tweepy==4.15.0
     # via -r requirements.in
-typer==0.15.2
+typer==0.24.1
     # via
     #   chromadb
+    #   huggingface-hub
     #   mcp
     #   spacy
-    #   weasel
-typing-extensions==4.13.2
+    #   typer-slim
+typer-slim==0.24.0
+    # via weasel
+typing-extensions==4.15.0
     # via
+    #   aiosignal
     #   anyio
-    #   beautifulsoup4
+    #   ccxt
     #   chromadb
-    #   elevenlabs
+    #   construct-typing
     #   fastapi
+    #   grpcio
     #   huggingface-hub
+    #   mcp
     #   openai
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   phonemizer-fork
+    #   posthog
     #   pydantic
     #   pydantic-core
     #   referencing
-    #   torch
-    #   typer
+    #   solana
+    #   solders
+    #   sqlalchemy
+    #   starlette
     #   typing-inspection
-typing-inspection==0.4.0
-    # via pydantic
-tzdata==2025.2
-    # via pandas
-uritemplate==4.1.1
-    # via google-api-python-client
-urllib3==2.4.0
+typing-inspection==0.4.2
     # via
+    #   fastapi
+    #   mcp
+    #   pydantic
+    #   pydantic-settings
+tzdata==2025.3
+    # via pandas
+tzlocal==5.3.1
+    # via
+    #   apscheduler
+    #   dateparser
+uritemplate==4.2.0
+    # via
+    #   csvw
+    #   google-api-python-client
+urllib3==2.6.3
+    # via
+    #   courlan
+    #   htmldate
     #   kubernetes
     #   requests
-uvicorn==0.34.1
-# REQUIREMENT for Github
-# uvicorn[standard]==0.34.1
+# uvicorn[standard] is not available in Windows
+uvicorn==0.40.0
+# uvicorn[standard]==0.40.0
 #     # via
 #     #   chromadb
 #     #   mcp
 # uvloop==0.21.0
-    # via uvicorn
+#uuvloop==0.22.1
+#    # via uvicorn
 validators==0.34.0
     # via -r requirements.in
 wasabi==1.1.3
@@ -751,28 +779,33 @@ wasabi==1.1.3
     #   spacy
     #   thinc
     #   weasel
-watchfiles==1.1.0
+watchfiles==1.1.1
     # via uvicorn
-wcwidth==0.2.13
+wcwidth==0.6.0
     # via prompt-toolkit
-weasel==0.4.1
+weasel==0.4.3
     # via spacy
-websocket-client==1.8.0
+websocket-client==1.9.0
     # via kubernetes
 websockets==15.0.1
     # via
-    #   elevenlabs
+    #   solana
     #   uvicorn
-werkzeug==3.1.3
+werkzeug==3.1.6
     # via flask
-wrapt==1.17.2
+wrapt==1.17.3
     # via
     #   opentelemetry-instrumentation
     #   smart-open
-yarl==1.19.0
-    # via aiohttp
-zipp==3.21.0
+wsproto==1.3.2
+    # via simple-websocket
+yarl==1.23.0
+    # via
+    #   aiohttp
+    #   ccxt
+zipp==3.23.0
     # via importlib-metadata
+setuptools<82
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

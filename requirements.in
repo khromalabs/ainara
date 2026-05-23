@@ -7,20 +7,18 @@ asgiref==3.8.1
 cachetools==5.5.1
 chromadb==0.6.3
 colorama==0.4.6
-elevenlabs==2.16.0
+# elevenlabs==2.16.0
 emoji==2.14.1
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
 faster-whisper==1.1.1
 google-api-python-client==2.166.0
 jsonschema==4.24.0
-litellm==1.77.5
+litellm==1.81.10
 lxml_html_clean==0.4.1
 matplotlib==3.10.5
 mcp[cli]>=1.7.1
 newsapi_python==0.2.7
-newspaper3k==0.2.8
-normalise==0.1.8
-numpy==2.2.4
+numpy==2.4.2
 ollama==0.5.1
 pandas==2.3.1
 prompt_toolkit==3.0.50
@@ -29,7 +27,7 @@ pycountry==24.6.1
 pydub==0.25.1
 pyflakes==3.4.0
 pygame==2.6.1
-pyinstaller==6.12.0
+pyinstaller==6.18.0
 pynvim==0.5.2
 pyperclip==1.9.0
 pystache==0.6.7
@@ -38,16 +36,31 @@ python-statemachine==2.5.0
 requests>=2.32.3
 simpleaudio==1.0.4
 scikit_learn==1.6.1
-sentence_transformers==3.4.1
 setproctitle==1.3.4
 sounddevice==0.5.2
 soundfile==0.13.0
 spacy==3.8.7
 sympy==1.13.1
-textblob==0.19.0
-torch==2.6.0
 tree-sitter-javascript==0.23.1
 tree-sitter-python==0.23.6
 tree-sitter==0.25.1
 tweepy==4.15.0
 validators==0.34.0
+ccxt==4.5.35
+apscheduler==3.11.1
+telethon==1.42.0
+aioimaplib==2.0.1
+aiosmtplib==5.0.0
+solana==0.36.10
+solders==0.27.1
+flask-sock==0.7.0
+misaki==0.9.4
+kokoro-onnx==0.4.9
+SQLAlchemy==2.0.46
+fastembed===0.7.4
+ccxt==4.5.35
+openwakeword @ git+https://github.com/khromalabs/openWakeWord.git@tag_v0.6.0
+trafilatura==2.0.0
+speexdsp_ns==0.1.2
+# fix weird dependency error
+setuptools<82

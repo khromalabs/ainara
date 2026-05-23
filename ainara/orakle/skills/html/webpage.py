@@ -19,11 +19,19 @@
 
 from typing import Annotated, Any, Dict, Literal
 
-import requests
+import trafilatura
 import validators
-from newspaper import Article
+import logging
 
 from ainara.framework.skill import Skill
+
+logger = logging.getLogger(__name__)
+
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 
 class HtmlWebpage(Skill):
@@ -36,32 +44,12 @@ class HtmlWebpage(Skill):
         " (e.g., 'What is the website for X?'). Use ONLY if a specific URL is"
         " provided or clearly implied in the request for its content.\n\n"
         " Keywords: download webpage, get website text, fetch URL content,"
-        " extract text from page, summarize website, analyze page content, read page content."
+        " extract text from page, summarize website, analyze page content,"
+        " read page content."
     )
 
     def __init__(self):
         super().__init__()
-
-    def _download_url(self, url):
-        """Helper function to download URL content"""
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            response.encoding = "utf-8"
-            return response.text
-        except Exception as e:
-            return None, str(e)
-
-    def _extract_text(self, html_content):
-        """Helper function to extract text from HTML content"""
-        try:
-            article = Article("")  # Empty URL since we already have the text
-            article.download_state = 2  # Skip download
-            article.html = html_content
-            article.parse()
-            return article.text
-        except Exception as e:
-            return None, str(e)
 
     async def run(
         self,
@@ -69,7 +57,15 @@ class HtmlWebpage(Skill):
         format: Annotated[
             Literal["text", "html"],
             "The format of the returned output: html or text",
-        ] = "text",
+        ] = "html",
+        render_js: Annotated[
+            bool,
+            "Whether to use a headless browser to render JavaScript. Set to"
+            " True for Single Page Applications (SPAs), sites with dynamically"
+            " loaded content, or when the default extraction returns"
+            " insufficient content. Default False uses fast static HTML"
+            " extraction. True is slower but handles JS-heavy sites.",
+        ] = False,
     ) -> Dict[str, Any]:
         """Downloads the text of a website or webpage represented by a URL"""
         # Try adding https:// prefix if no protocol specified
@@ -91,20 +87,46 @@ class HtmlWebpage(Skill):
         if not validators.url(url):
             return {"error": f"The provided address is not a valid URL: {url}"}
 
-        # Download the content
-        html_content = self._download_url(url)
-        if not html_content:
-            return {"error": f"Failed to download content from {url}"}
+        # Download and extract content
+        try:
+            if render_js and PLAYWRIGHT_AVAILABLE:
+                # Use playwright for JS-rendered content
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    page = await browser.new_page()
+                    await page.goto(
+                        url, wait_until="networkidle", timeout=20000
+                    )
 
-        # Extract the text
-        if format == "text":
-            text = self._extract_text(html_content)
-            if not text:
-                return (
-                    "ERROR: Failed to extract text from the downloaded content"
-                )
-            output = text
-        else:
-            output = html_content
+                    if format == "html":
+                        output = await page.content()
+                    else:
+                        output = await page.inner_text("body")
 
-        return {"url": url, "output": output}
+                    await browser.close()
+            else:
+                if render_js:
+                    logger.warning("render_js required but no PLAYWRIGHT_AVAILABLE")
+                # Use trafilatura for fast static extraction
+                downloaded = trafilatura.fetch_url(url)
+                if not downloaded:
+                    return {"error": f"Failed to download content from {url}"}
+
+                if format == "html":
+                    output = downloaded
+                else:
+                    output = trafilatura.extract(
+                        downloaded, include_comments=False, include_tables=True
+                    )
+                    if not output:
+                        return {
+                            "error": (
+                                "Failed to extract text from the downloaded"
+                                " content"
+                            )
+                        }
+
+            return {"url": url, "output": output}
+
+        except Exception as e:
+            return {"error": f"Error processing {url}: {str(e)}"}

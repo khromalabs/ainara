@@ -16,14 +16,19 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import sys
 import atexit
 import logging
+import copy
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 from flask import jsonify, request
 
 # Import the new manager and related types
 from ainara.framework.mcp.client_manager import MCPClientManager
+from ainara.framework.connectors.manager import ConnectorManager
+from ainara.framework.connectors.router import ConnectorRouter
 
 # Import providers
 from .mcp import MCPToolProvider
@@ -40,9 +45,22 @@ class CapabilitiesManager:
         self.internet_available = internet_available
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         self.mcp_client_manager = None
+        # self.connector_manager = None
         self.nexus_provider = None
         self.providers = []
         self.provider_map: Dict[str, Any] = {}
+        resource_base_dir = self._get_resource_base_dir()
+
+        # Initialize Connector Router
+        self.router = ConnectorRouter(resource_base_dir / "resources/contracts")
+        logger.info("Initialized ConnectorRouter.")
+
+        # Initialize Connector Manager
+        try:
+            self.connector_manager = ConnectorManager(self.config, self.router)
+            logger.info("Initialized ConnectorManager.")
+        except Exception as e:
+            logger.error(f"Failed to initialize ConnectorManager: {e}", exc_info=True)
 
         # Initialize MCP Client Manager (if available and configured)
         if self.internet_available:
@@ -96,12 +114,22 @@ class CapabilitiesManager:
         # Register API endpoints for capabilities
         self.register_capability_endpoints()
 
+    def _get_resource_base_dir(self) -> Path:
+        """Determine the base directory for resources (project root or MEIPASS)."""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            # Running as a bundled app (PyInstaller)
+            return Path(sys._MEIPASS)
+        else:
+            # Running from source
+            # __file__ -> capabilities -> framework -> ainara -> repo_root
+            return Path(__file__).parent.parent.parent.parent
+
     def _initialize_providers(self):
         """Instantiate and register all capability providers."""
         logger.info("Initializing capability providers...")
         # Native Skill Provider is always available
         skill_provider = NativeSkillProvider(
-            self.config, self.mcp_client_manager
+            self.config, self.mcp_client_manager, self.router
         )
         self.providers.append(skill_provider)
         self.provider_map["skill"] = skill_provider
@@ -169,20 +197,53 @@ class CapabilitiesManager:
         self.load_capabilities()
         logger.info("Capabilities reload complete.")
 
-    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
-        """Get information about all available capabilities (skills and tools)."""
+    def get_capabilities(self, view_mode: str = "llm") -> Dict[str, Dict[str, Any]]:
+        """
+        Get information about all available capabilities.
+
+        Args:
+            view_mode: "llm" (default) for lean output (no schemas, no hidden params),
+                       or "full" for complete details (schemas, hidden params, schedules).
+        """
         output_capabilities = {}
         for name, cap_data in self.capabilities.items():
             if cap_data.get("hidden", False):
                 continue
 
-            # Prepare output structure, excluding the instance itself
+            # Create a deep copy of run_info to safely modify parameters for the view
+            run_info = copy.deepcopy(cap_data["run_info"])
+
+            # Prepare output structure
             info = {
                 "type": cap_data["type"],
                 "origin": cap_data["origin"],
                 "description": cap_data["description"],
-                "run_info": cap_data["run_info"],
+                "run_info": run_info,
             }
+
+            # Filter parameters based on view_mode
+            params = run_info.get("parameters", {})
+            params_to_remove = []
+
+            for param_name, param_data in params.items():
+                if view_mode == "llm":
+                    # 1. Remove hidden parameters entirely
+                    if param_data.get("hidden", False):
+                        params_to_remove.append(param_name)
+                        continue
+
+                    # 2. Remove verbose schema
+                    if "schema" in param_data:
+                        del param_data["schema"]
+
+                    # 3. Remove redundant 'hidden' flag (it's False if we are here)
+                    if "hidden" in param_data:
+                        del param_data["hidden"]
+
+            # Apply removals
+            for p in params_to_remove:
+                del params[p]
+
             # Add type-specific fields
             if cap_data["type"] == "skill":
                 info["matcher_info"] = cap_data.get("matcher_info", "")
@@ -194,12 +255,16 @@ class CapabilitiesManager:
             elif cap_data["type"] == "mcp":
                 info["server"] = cap_data.get("server", "unknown")
             elif cap_data["type"] == "nexus":
-                # For nexus skills, always include vendor and bundle.
                 info["vendor"] = cap_data.get("vendor")
                 info["bundle"] = cap_data.get("bundle")
-                # If a UI component is found, copy its info over.
                 if "ui" in cap_data:
                     info["ui"] = cap_data["ui"]
+
+            # Expose default schedule only in 'full' mode
+            if view_mode == "full":
+                instance = cap_data.get("instance")
+                if instance and hasattr(instance, "default_schedule"):
+                    info["default_schedule"] = instance.default_schedule
 
             output_capabilities[name] = info
 
@@ -282,7 +347,9 @@ class CapabilitiesManager:
         @self.app.route(route_path, methods=["GET"], endpoint=endpoint_name)
         def get_capabilities_list():
             try:
-                return jsonify(self.get_capabilities())
+                # Get view mode from query param, default to 'llm'
+                view_mode = request.args.get("view", "llm")
+                return jsonify(self.get_capabilities(view_mode=view_mode))
             except Exception as e:
                 logger.error(
                     "Error generating capabilities list for endpoint"

@@ -18,7 +18,9 @@
 
 module.exports = {
     stt: {
-        review: true,
+        review: 'auto',
+        smart_send_threshold: 0.75,
+        lowerVolume: true,
         modules: {
             whisper: {
                 service: 'custom',
@@ -35,6 +37,9 @@ module.exports = {
     },
     pybridge: {
         api_url: 'http://127.0.0.1:8101'
+    },
+    bureau: {
+        api_url: 'http://127.0.0.1:8010'
     },
     window: {
         width: 300,
@@ -74,7 +79,8 @@ module.exports = {
         completed: false,
         version: "",
         timestamp: "",
-        firstLaunch: true
+        firstLaunch: true,
+        tosAccepted: false
     },
     startup: {
         autoStart: false,
@@ -87,6 +93,15 @@ module.exports = {
         totalVram: 0
     },
     ui: {
-        backgroundNotifications: false
+        backgroundNotifications: false,
+        comringNotifications: false
+    },
+    auth: {
+        walletAddress: null,
+        lastVerification: 0,
+        signature: null
+    },
+    wakeword: {
+        enabled: false
     }
 };

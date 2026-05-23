@@ -1,0 +1,16 @@
+#!/bin/bash
+# gen-polaris-report.sh - Generate formatted development log
+set -e
+if [ -z "$1" ]; then
+    echo "Usage: $0 <start-date> [end-date]"
+    echo "Date format: YYYY-MM-DD"
+    exit 1
+fi
+START_DATE="$1"
+END_DATE="$2"
+# Generate git log and format output
+if [ -n "$END_DATE" ]; then
+    git log --since="$START_DATE" --until="$END_DATE" --pretty=reference --stat --reverse
+else
+    git log --since="$START_DATE" --pretty=reference --stat --reverse
+fi | sed -z 's/)\n\n/)\n/g; s/\n\([0-9a-f]\{7\}\)/\n\n\1/g'

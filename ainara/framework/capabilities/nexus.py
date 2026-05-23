@@ -16,10 +16,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
-# import importlib.util
-# import json
 import logging
-# import os
+import mimetypes
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -42,14 +41,30 @@ class NexusSkillProvider(BasePythonSkillProvider):
         mcp_client_manager: Optional[MCPClientManager],
     ):
         super().__init__(config, mcp_client_manager)
-        self.nexus_path = Path(nexus_path)
+
+        # Ensure .mjs files are served with the correct MIME type (fixes Windows issue)
+        mimetypes.add_type("application/javascript", ".mjs")
+
+        self._configured_path = Path(nexus_path)  # Store original config
+        self.nexus_path = self._get_nexus_base_path()  # Resolve actual path
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         if not self.nexus_path.is_dir():
             logger.warning(
                 f"Nexus path '{self.nexus_path}' does not exist or is not a"
-                " directory. Creating it."
+                " directory."
             )
-            self.nexus_path.mkdir(parents=True, exist_ok=True)
+            # Don't create in frozen mode - it should be bundled
+            if not getattr(sys, "frozen", False):
+                self.nexus_path.mkdir(parents=True, exist_ok=True)
+
+    def _get_nexus_base_path(self) -> Path:
+        """Determine the base path for Nexus bundles based on runtime environment."""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            # Running as PyInstaller bundle (includes APPX)
+            return Path(sys._MEIPASS) / "ainara" / "nexus"
+        else:
+            # Development mode - use configured path
+            return self._configured_path
 
     def discover(self) -> Dict[str, Dict[str, Any]]:
         """Discover and load skills from Nexus bundles."""
@@ -98,11 +113,15 @@ class NexusSkillProvider(BasePythonSkillProvider):
                         # Add ui info to each capability, verifying component existence
                         for cap_id, cap_data in bundle_caps.items():
                             # Derive component name from skill ID by convention
-                            skill_prefix = f"{vendor_dir.name}_{bundle_dir.name}_"
+                            skill_prefix = (
+                                f"{vendor_dir.name}_{bundle_dir.name}_"
+                            )
                             if not cap_id.startswith(skill_prefix):
                                 logger.warning(
-                                    f"Skill ID '{cap_id}' does not follow the expected naming convention "
-                                    f"'{skill_prefix}...' and will not be linked to a UI component."
+                                    f"Skill ID '{cap_id}' does not follow the"
+                                    " expected naming convention"
+                                    f" '{skill_prefix}...' and will not be"
+                                    " linked to a UI component."
                                 )
                                 continue
 
@@ -114,7 +133,9 @@ class NexusSkillProvider(BasePythonSkillProvider):
                             )
 
                             # Verify component directory exists
-                            component_dir = (ui_components_path / component_name).resolve()
+                            component_dir = (
+                                ui_components_path / component_name
+                            ).resolve()
                             if component_dir.is_dir():
                                 # This skill has a verified UI component
                                 cap_data["ui"] = {
@@ -122,15 +143,21 @@ class NexusSkillProvider(BasePythonSkillProvider):
                                 }
                                 # ui_path is for internal use by serve_component
                                 cap_data["ui_path"] = str(ui_components_path)
-                                logger.debug(
-                                    f"Associated skill '{cap_id}' with component '{component_name}'"
+                                logger.info(
+                                    f"Associated skill '{cap_id}'"
+                                    f" ({ui_components_path}) with component"
+                                    f" '{component_name}'"
                                 )
                             else:
                                 logger.warning(
-                                    f"Skill '{cap_id}' found, but corresponding component directory "
-                                    f"'{component_dir}' not found. This skill will not have a UI component."
+                                    f"Skill '{cap_id}' found, but"
+                                    " corresponding component directory"
+                                    f" '{component_dir}' not found. This skill"
+                                    " will not have a UI component."
                                 )
-                                cap_data["type"] = "skill"
+                                # Not necessary to make this distinction to a
+                                # UI-less nexus skill
+                                # cap_data["type"] = "skill"
                     else:
                         logger.info(
                             "No '_components' directory found for bundle"
@@ -154,10 +181,12 @@ class NexusSkillProvider(BasePythonSkillProvider):
         # All skills in a bundle share the same UI path.
         ui_path = None
         for cap_data in self.capabilities.values():
+            # logger.info(f"cap_data: {cap_data}")
             if (
                 cap_data.get("type") == "nexus"
                 and cap_data.get("vendor") == vendor
                 and cap_data.get("bundle") == bundle
+                and cap_data.get("ui_path")
             ):
                 ui_path = cap_data.get("ui_path")
                 break
@@ -168,7 +197,7 @@ class NexusSkillProvider(BasePythonSkillProvider):
             )
 
         ui_dir = Path(ui_path).resolve()
-        file_path = Path(*rest)
+        file_path = Path(*rest).as_posix()
 
         # Security check: ensure the resolved path is within the UI directory.
         # send_from_directory should handle this, but an extra check is good practice.

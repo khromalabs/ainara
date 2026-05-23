@@ -108,7 +108,7 @@ CHAT_MEMORY_CONFIG = {
         "type": "chroma",  # or a custom backend
         "config": {
             "vector_db_path": "~/.config/ainara/vector_db",
-            "embedding_model": "sentence-transformers/all-mpnet-base-v2",
+            "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             "collection_name": "chat_memory"
         }
     }

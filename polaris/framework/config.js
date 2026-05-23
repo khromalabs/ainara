@@ -61,6 +61,20 @@ class ConfigManager {
         }
     }
 
+    _deepMerge(target, ...sources) {
+        sources.forEach(source => {
+            for (const key in source) {
+                if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                    if (!target[key]) target[key] = {};
+                    this._deepMerge(target[key], source[key]);
+                } else {
+                    target[key] = source[key];
+                }
+            }
+        });
+        return target;
+    }
+
     loadConfig() {
         try {
             console.log('Loading configuration from:', this.configDir);
@@ -77,8 +91,7 @@ class ConfigManager {
                 try {
                     const fileContents = fs.readFileSync(this.configFile, 'utf8');
                     loadedConfig = JSON.parse(fileContents);
-                    // TODO disabled frontend config verification until v0.10
-                    this.config = loadedConfig;
+                    this._deepMerge(this.config, defaultConfig, loadedConfig)
                 } catch (e) {
                     console.warn('Configuration file contains invalid JSON. Resetting to default: ' + e.message);
                     // loadedConfig will be undefined, triggering the reset below
@@ -105,12 +118,9 @@ class ConfigManager {
             }
 
             // Force correct Python server URLs (temporary enforcement)
-            if (this.config.orakle) {
-                this.config.orakle.api_url = 'http://127.0.0.1:8100';
-            }
-            if (this.config.pybridge) {
-                this.config.pybridge.api_url = 'http://127.0.0.1:8101';
-            }
+            this.config.orakle.api_url = 'http://127.0.0.1:8100';
+            this.config.pybridge.api_url = 'http://127.0.0.1:8101';
+            this.config.bureau.api_url = 'http://127.0.0.1:8010';
 
             this.config.stt = this.config.stt ?? {};
             this.config.stt.review = this.config.stt.review ?? true;

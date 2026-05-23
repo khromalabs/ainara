@@ -20,6 +20,10 @@ const BaseWindow = require('./BaseWindow');
 const Logger = require('../framework/logger');
 const ConfigHelper = require('../framework/ConfigHelper');
 const Notifier = require('../framework/notifier');
+const loudness = require('loudness');
+// const { EventEmitter } = require('events');
+
+// const myEmitter = new EventEmitter();
 
 class ComRingWindow extends BaseWindow {
     static getHandlers() {
@@ -40,7 +44,8 @@ class ComRingWindow extends BaseWindow {
             onBlur: async (window, manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
                 // Don't auto-hide if in typing mode
-                if (window.prefix === 'comRing' && window.isVisible() && !chatDisplay.isTypingMode) {
+                if (window.prefix === 'comRing' &&
+                    window.isVisible() && !chatDisplay.isTypingMode) {
                     window.window.webContents.send('window-hide');
                     window.hide();
                 }
@@ -74,6 +79,8 @@ class ComRingWindow extends BaseWindow {
         this.originalSize = [windowWidth, windowHeight];
         this.originalPosition = [options.x, options.y];
         this.isDocumentView = false;
+        this.originalVolume = null;
+        this.onAnimation = false;
     }
 
     setupEventHandlers() {
@@ -81,14 +88,51 @@ class ComRingWindow extends BaseWindow {
 
         const { ipcMain, screen } = require('electron');
 
+        ipcMain.on('show-window', async () => {
+            if (this.manager && !this.isVisible()) {
+                this.manager.showAll(true);
+            }
+        });
+
+        ipcMain.on('ptt-start', async () => {
+            if (this.config.get('stt.lowerVolume', true)) {
+                try {
+                    this.originalVolume = await loudness.getVolume();
+                    const newVolume = 0; // Math.round(this.originalVolume * 0.2);
+                    await loudness.setVolume(newVolume);
+                    Logger.log(`Volume lowered to ${newVolume}% (from ${this.originalVolume}%)`);
+                } catch (err) {
+                    Logger.error('Failed to lower system volume:', err);
+                    this.originalVolume = null; // Reset on error
+                }
+            }
+        });
+
+        ipcMain.on('ptt-stop', async () => {
+            if (this.config.get('stt.lowerVolume', true) && this.originalVolume !== null) {
+                try {
+                    await loudness.setVolume(this.originalVolume);
+                    Logger.log(`Volume restored to ${this.originalVolume}%`);
+                } catch (err) {
+                    Logger.error('Failed to restore system volume:', err);
+                } finally {
+                    this.originalVolume = null;
+                }
+            }
+        });
+
         ipcMain.on('set-view-mode', (event, args) => {
+            if (this.onAnimation) {
+                // prevent reentry
+                return;
+            }
             if (args.view === 'document' && !this.isDocumentView) {
-                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().size;
 
                 // const docWidth = this.config.get('documentView.width', 800);
                 // const docWidth = this.config.get('documentView.width', 800);
-                const docHeight = screenHeight * .80
-                const docWidth = screenWidth * .80
+                const docHeight = screenHeight * .90
+                const docWidth = screenWidth * .90
 
                 // Store current position before resizing
                 if (!this.isDocumentView) {
@@ -108,7 +152,8 @@ class ComRingWindow extends BaseWindow {
                 // Restore original size and position
                 const [originalWidth, originalHeight] = this.originalSize;
                 this.window.setMinimumSize(originalWidth, originalHeight);
-                this.animateBounds({ x: this.originalPosition[0], y: this.originalPosition[1], width: originalWidth, height: originalHeight }, 400);
+                let fixMouse = 'fixMouse' in args ? args.fixMouse : true;
+                this.animateBounds({ x: this.originalPosition[0], y: this.originalPosition[1], width: originalWidth, height: originalHeight }, 400, fixMouse);
                 this.window.setResizable(false);
                 this.isDocumentView = false;
             }
@@ -164,10 +209,13 @@ class ComRingWindow extends BaseWindow {
         });
     }
 
-    animateBounds(targetBounds, duration) {
+    animateBounds(targetBounds, duration, fixMouse = true) {
         return new Promise(resolve => {
             const startBounds = this.window.getBounds();
             const startTime = Date.now();
+
+            this.onAnimation = true;
+            this.window.webContents.send('on-animation');
 
             const animationInterval = setInterval(() => {
                 const elapsedTime = Date.now() - startTime;
@@ -191,13 +239,16 @@ class ComRingWindow extends BaseWindow {
                     // Ensure the final size is exact
                     this.window.setBounds(targetBounds, false);
 
-                    // Fix for mouse event capture post-animation
-                    this.window.hide();
-                    this.window.show();
-                    this.window.focus();
-                    this.window.setFocusable(true);
-                    this.window.setIgnoreMouseEvents(false, { forward: false });
-
+                    if (fixMouse) {
+                        // Fix for mouse event capture post-animation
+                        this.window.hide();
+                        this.window.show();
+                        this.window.focus();
+                        this.window.setFocusable(true);
+                        this.window.setIgnoreMouseEvents(false, { forward: false });
+                    }
+                    this.onAnimation = false;
+                    this.window.webContents.send('not-on-animation');
                     resolve();
                 }
             }, 16); // ~60 FPS

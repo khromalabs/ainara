@@ -76,6 +76,12 @@ class ServiceManager {
                     name: 'Pybridge',
                     executablePath: pythonExecutable,
                     args: ['-u', '-m', 'ainara.framework.pybridge']
+                }),
+                bureau: new Service('bureau', {
+                    url: config.get('bureau.api_url') + '/health',
+                    name: 'bureau',
+                    executablePath: pythonExecutable,
+                    args: ['-u', '-m', 'ainara.bureau.server']
                 })
             };
         } else {
@@ -91,7 +97,13 @@ class ServiceManager {
                     name: 'Pybridge',
                     executablePath: path.join(executablesDir, platform === 'win32' ? 'pybridge.exe' : 'pybridge'),
                     args: []
-                })
+                }),
+                bureau: new Service('bureau', {
+                    url: config.get('bureau.api_url') + '/health',
+                    name: 'bureau',
+                    executablePath: path.join(executablesDir, platform === 'win32' ? 'bureau.exe' : 'bureau'),
+                    args: []
+                }),
             };
         }
 
@@ -273,7 +285,6 @@ class ServiceManager {
         ) + 1;
 
         if (this.serviceRestartCounters[serviceId] > 2) {
-            Logger.error(`Service ${service.name} has failed to restart multiple times. Giving up.`);
             if (this.windowManager && this.windowManager.mainWindow) {
                 const { dialog } = require('electron');
                 dialog.showErrorBox(
@@ -292,6 +303,9 @@ class ServiceManager {
             Logger.info(`Service ${service.name} restarted successfully.`);
         } catch (error) {
             Logger.error(`Failed to restart service ${service.name}: ${error.message}`);
+            if (this.serviceRestartCounters[serviceId] > 2) {
+                Logger.error(`Service ${service.name} has failed to restart multiple times. Giving up.`);
+            }
         }
     }
 
@@ -302,12 +316,11 @@ class ServiceManager {
             // Logger.info(`SERVICE: ${service.name}`);
             if (await service.checkHealth()) {
                 // is healthy
-                // Logger.info(`Service is healthy`);
+                // Logger.info(`Service ${service.id} is healthy`);
                 this.serviceRestartCounters[service.id] = 0;
             } else {
                 // is NOT healthy
                 if (!service.isStarting) {
-                    Logger.error(`Service ${service.name} is no longer healthy. Initiating restart.`);
                     this.restartService(service);
                     this.serviceRestartCounters[service.id]++;
                 }

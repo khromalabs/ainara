@@ -20,23 +20,128 @@
 import importlib
 import inspect
 import json
-# import pprint
 import logging
-# import re
 import os
-from typing import Generator, List, Optional, Union
+import re
+import time
+from typing import Dict, Generator, List, Optional, Union
 
 import requests
-from statemachine import State, StateMachine
 
 from ainara.framework.config import ConfigManager
+from ainara.framework.llm import create_llm_backend
 from ainara.framework.matcher.transformers import OrakleMatcherTransformers
+from ainara.framework.orakle_client import call_skill
 from ainara.framework.system_skills.base import BaseSystemSkill
 from ainara.framework.template_manager import TemplateManager
 
 # from ainara.framework.utils import format_orakle_command
 
 logger = logging.getLogger(__name__)
+
+
+class OrakleCapabilityFetcher:
+    """Utility class to fetch and process capabilities from Orakle servers."""
+
+    def __init__(self, orakle_servers: List[str]):
+        self.orakle_servers = orakle_servers
+
+    def fetch_capabilities(self) -> List[dict]:
+        """Query Orakle servers for capabilities and store them in structured format."""
+        capabilities = []
+        max_attempts = 10
+        attempts = 0
+
+        while not capabilities:
+            for server in self.orakle_servers:
+                try:
+                    response = requests.get(
+                        f"{server}/capabilities", timeout=2
+                    )
+                    if response.status_code == 200:
+                        raw_capabilities = response.json()
+                        capabilities = self._process_orakle_skills(
+                            raw_capabilities
+                        )
+                        if capabilities:
+                            logger.info(
+                                f"Successfully loaded {len(capabilities)}"
+                                f" skills from Orakle server: {server}"
+                            )
+                            return capabilities
+                        else:
+                            attempts += 1
+                            if attempts > max_attempts:
+                                logger.warning(
+                                    "Max attempts reached. No Orakle"
+                                    " capabilities found."
+                                )
+                                return []
+                            time.sleep(2)
+                except requests.RequestException as e:
+                    time.sleep(2)
+                    logger.warning(
+                        f"Failed to connect to Orakle server {server}:"
+                        f" {str(e)}"
+                    )
+                    attempts += 1
+                    if attempts > max_attempts:
+                        logger.warning(
+                            "Max attempts reached. No Orakle capabilities"
+                            " found."
+                        )
+                        return []
+                    continue
+
+        if self.orakle_servers:
+            logger.warning(
+                "No Orakle capabilities found, is the Orakle server running?"
+            )
+        return capabilities
+
+    def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
+        """Process raw skill capabilities into structured format."""
+        skills = []
+        for skill_name, skill_info in raw_capabilities.items():
+            skill_name = skill_name.strip("/")
+            skill_data = {
+                "name": skill_name,
+                "description": (
+                    skill_info.get("description", "").replace("\n", "")
+                ),
+                "matcher_info": (
+                    skill_info.get("matcher_info", "").replace("\n", "")
+                ),
+                "run_info": skill_info.get("run_info", ""),
+                "full_description": (
+                    skill_info.get("run", {}).get(
+                        "docstring", skill_info.get("description", "")
+                    )
+                ),
+                "embeddings_boost_factor": skill_info.get(
+                    "embeddings_boost_factor", 1.0
+                ),
+                "type": skill_info.get("type"),
+                "ui": skill_info.get("ui"),
+                "vendor": skill_info.get("vendor"),
+                "bundle": skill_info.get("bundle"),
+                "parameters": [],
+            }
+
+            if skill_data["run_info"].get("parameters"):
+                for param_name, param_info in (
+                    skill_data["run_info"].get("parameters", {}).items()
+                ):
+                    skill_data["parameters"].append(
+                        {
+                            "name": param_name,
+                            "type": param_info.get("type", "any"),
+                            "description": param_info.get("description", ""),
+                        }
+                    )
+
+            skills.append(skill_data)
+        return skills
 
 
 class OrakleMiddleware:
@@ -52,7 +157,7 @@ class OrakleMiddleware:
         self,
         llm,
         orakle_servers: List[str],
-        system_message: str,
+        system_message: Optional[str] = None,
         capabilities: Optional[dict] = None,
         config_manager: Optional[ConfigManager] = None,
     ):
@@ -68,24 +173,34 @@ class OrakleMiddleware:
         """
         self.llm = llm
         self.orakle_servers = orakle_servers
-        self.system_message = system_message
+        self.system_message = system_message or ""
         self.template_manager = TemplateManager()
         self.config_manager = config_manager or ConfigManager()
+        self.current_language = None
+        self._match_llm_cache = {}
+        self._blacklisted_match_providers = set()
 
         # --- Matcher Configuration ---
         # Use transformer matcher
         matcher_model = self.config_manager.get(
-            "orakle.matcher.model", "sentence-transformers/all-mpnet-base-v2"
+            "orakle.matcher.model",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         )
         self.matcher = OrakleMatcherTransformers(model_name=matcher_model)
         # Get threshold and top_k from config or use defaults
         self.matcher_threshold = self.config_manager.get(
-            "orakle.matcher.threshold", 0.15
+            "orakle.matcher.threshold", 0.0001
         )
-        self.matcher_top_k = self.config_manager.get("orakle.matcher.top_k", 6)
+        self.matcher_top_k = self.config_manager.get(
+            "orakle.matcher.top_k", 10
+        )
         self.reasoning_effort_limit = self.config_manager.get(
             "orakle.reasoning_effort_limit", 1.0
         )
+        self.enable_agent_spawn = self.config_manager.get(
+            "orakle.enable_agent_spawn", False
+        )
+
         logger.info(
             "Initialized OrakleMiddleware with Transformer Matcher:"
             f" model={matcher_model}, threshold={self.matcher_threshold},"
@@ -97,11 +212,11 @@ class OrakleMiddleware:
         )
 
         # Initialize capabilities
-        if capabilities:
+        if capabilities is not None:
             self.capabilities = capabilities
         else:
-            self.capabilities = []
-            self.capabilities = self.get_orakle_capabilities()
+            fetcher = OrakleCapabilityFetcher(self.orakle_servers)
+            self.capabilities = fetcher.fetch_capabilities()
 
         # --- System Skills ---
         # Load system skills from the framework's system_skills directory
@@ -116,7 +231,9 @@ class OrakleMiddleware:
                 metadata={
                     "run_info": skill["run_info"],
                     "matcher_info": skill["matcher_info"],
-                    "embeddings_boost_factor": skill.get("embeddings_boost_factor", 1.0),
+                    "embeddings_boost_factor": skill.get(
+                        "embeddings_boost_factor", 1.0
+                    ),
                 },
             )
 
@@ -124,207 +241,436 @@ class OrakleMiddleware:
         # logger.info(pprint.pformat(skill))
 
     def _get_correction_message(self) -> str:
-        """Returns a guardrail message for malformed ORAKLE commands."""
+        """Returns a guardrail message for malformed orakle tags."""
         logger.info("GUARDRAIL correction message generated")
         return (
-            "\n\n[__AINARA_GUARDRAIL__] Error: Malformed ORAKLE command detected. "
-            "For multi-line commands, the `<<<ORAKLE` and `ORAKLE` delimiters "
-            "must be on their own lines. Single-line commands are also valid "
-            "(e.g. `<<<ORAKLE do something ORAKLE`). The command was not "
-            "executed. Please try again with the correct format.\n\n"
+            "\n\n[__AINARA_GUARDRAIL__] Error: Malformed orakle tag detected."
+            " Use the format: <orakle>your query here</orakle>. The tag must"
+            " be properly closed. Please try again with the correct"
+            " format.\n\n"
         )
+
+    def _get_typo_correction_message(self, wrong_tag: str) -> str:
+        """Returns a guardrail message for misspelled orakle tags."""
+        logger.info(f"GUARDRAIL typo correction generated for: {wrong_tag}")
+        return (
+            "\n\n[__AINARA_GUARDRAIL__] Error: Invalid tag detected. You used"
+            f" '{wrong_tag}' but the correct tag is 'orakle'. Please retry"
+            " using <orakle>your query</orakle>.\n\n"
+        )
+
+    def _get_unclosed_tag_message(self) -> str:
+        """Returns a guardrail message for unclosed orakle tags."""
+        logger.info("GUARDRAIL unclosed tag message generated")
+        return (
+            "\n\n[__AINARA_GUARDRAIL__] Error: Unclosed orakle tag detected."
+            " You opened <orakle> but did not close it with </orakle>."
+            " Please try again with a properly closed tag.\n\n"
+        )
+
+    def _get_attribute_rejection_message(self) -> str:
+        """Returns a guardrail message for orakle tags with invalid attributes."""
+        logger.info("GUARDRAIL invalid attribute rejection message generated")
+        return (
+            "\n\n[__AINARA_GUARDRAIL__] Error: Orakle tags only accept the"
+            " 'query' attribute. Use the format:"
+            ' <orakle query="your intent">your data</orakle> or'
+            " <orakle>your query</orakle>."
+            " Please try again with the correct format.\n\n"
+        )
+
+    def _get_self_closing_rejection_message(self) -> str:
+        """Returns a guardrail message for self-closing orakle tags."""
+        logger.info("GUARDRAIL self-closing rejection message generated")
+        return (
+            "\n\n[__AINARA_GUARDRAIL__] Error: Self-closing orakle tags are"
+            " not allowed. Use the format: <orakle>your query here</orakle>."
+            " Please try again with a properly opened and closed tag.\n\n"
+        )
+
+    def _get_nested_tags_rejection_message(self) -> str:
+        """Returns a guardrail message for nested orakle tags."""
+        logger.info("GUARDRAIL nested tags rejection message generated")
+        return (
+            "\n\n[__AINARA_GUARDRAIL__] Error: Nested orakle tags are not"
+            " allowed. Use only one <orakle>query</orakle> at a time."
+            " Please try again without nesting tags.\n\n"
+        )
+
+    def _normalize_query_content(self, content: str) -> str:
+        """Normalize query content by collapsing whitespace and newlines."""
+        normalized = re.sub(r"\s+", " ", content)
+        return normalized.strip()
+
+    def _check_for_invalid_attributes(self, text: str) -> bool:
+        """Check if any orakle tag contains attributes other than 'query'.
+
+        Returns True if invalid attributes are detected.
+        """
+        # Match <orakle with attributes
+        attr_pattern = r"<orakle\s+([^>]*)>"
+        for match in re.finditer(attr_pattern, text, re.IGNORECASE):
+            attrs_str = match.group(1)
+            # Strip a trailing / in case of self-closing (handled elsewhere)
+            attrs_str = attrs_str.rstrip("/")
+            if not attrs_str:
+                continue
+            # Allow only query="..." or query='...'
+            # After removing a valid query attribute, nothing should remain
+            cleaned = re.sub(r"""query\s*=\s*(['"])(.*?)\1""", "", attrs_str)
+            if cleaned.strip():
+                return True
+        return False
+
+    def _check_for_self_closing(self, text: str) -> bool:
+        """Check for self-closing orakle tags.
+
+        Returns True if self-closing syntax is detected.
+        """
+        # Match <orakle/> or <orakle .../>
+        pattern = r"<orakle[^>]*/>"
+        return bool(re.search(pattern, text, re.IGNORECASE))
+
+    def _has_potential_tag(self, text: str) -> bool:
+        """Check if text contains a full or partial opening tag."""
+        text_lower = text.lower()
+        if "<orakle" in text_lower:
+            return True
+        # Check for unclosed '<' near the end of the buffer
+        last_open = text.rfind("<")
+        if last_open != -1 and text.find(">", last_open) == -1:
+            # Only consider it a potential tag if the characters after '<'
+            # match the start of 'orakle' (case-insensitive)
+            after_open = text[last_open + 1:].lower()
+            if after_open == "":
+                return True
+            keyword = "orakle"
+            # Check if after_open starts with 'orakle', an slice of it, or is empty
+            while True:
+                if keyword == "":
+                    break
+                if after_open == keyword:
+                    return True
+                keyword = keyword[:-1]
+        return False
+
+    def _check_for_nested_tags(self, text: str) -> bool:
+        """Check for nested orakle tags.
+
+        Returns True if nested tags are detected.
+        """
+        # Find all opening tags
+        open_pattern = r"<orakle(?:\s[^>]*)?>"
+        opens = list(re.finditer(open_pattern, text, re.IGNORECASE))
+
+        if len(opens) < 2:
+            return False
+
+        # Find all closing tags
+        close_pattern = r"</orakle>"
+        closes = list(re.finditer(close_pattern, text, re.IGNORECASE))
+
+        # Check if second open comes before first close
+        if len(closes) >= 1:
+            if opens[1].start() < closes[0].start():
+                return True
+
+        return False
 
     def update_llm(self, llm):
         self.llm = llm
 
-    class _OrakleParser(StateMachine):
-        """A state machine to parse ORAKLE commands from a stream."""
+    def _check_for_typo_tags(self, text: str) -> Optional[str]:
+        """Check for common typo variants of orakle tags.
 
-        # States
-        streaming_text = State(initial=True)
-        buffering_command = State()
-        orakle_only = State()
+        Returns the typo tag name if found, None otherwise.
+        """
+        typo_patterns = [
+            r"<(oracle)[^>]*>",
+            r"<(oragle)[^>]*>",
+            r"</(oracle)>",
+            r"</(oragle)>",
+        ]
+        for pattern in typo_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
 
-        def __init__(self, middleware, chat_manager, reasoning_level_heuristic=0.0):
-            self.middleware = middleware
-            self.chat_manager = chat_manager
-            self.command_buffer = ""
-            self.start_delimiter = "<<<ORAKLE"
-            self.end_delimiter = "ORAKLE"
-            self.reasoning_level_heuristic = reasoning_level_heuristic
-            super().__init__()
+    def _extract_orakle_tags(self, text: str) -> tuple[
+        List[tuple[int, int, str, Optional[str]]],
+        bool,
+        Optional[str],
+        Optional[str],
+    ]:
+        """Extract all valid orakle tags from text.
 
-        def process_line(self, line: str) -> Generator[str, None, None]:
-            """Process a single line of input from the stream."""
-            logger.info(
-                f"DEBUG ORAKLE Parser processing line in state '{self.current_state.id}': {repr(line)}"
+        Returns:
+            - List of tuples (start_pos, end_pos, intent, data)
+              intent: the query for the matcher (from query attr or tag content)
+              data: the tag content when query attr is present, None otherwise
+            - Boolean indicating if there's an unclosed tag
+            - Typo tag name if found, None otherwise
+            - Guardrail type if violation detected ('attribute', 'self_closing', 'nested'), None otherwise
+        """
+        # First check for typos
+        typo = self._check_for_typo_tags(text)
+        if typo:
+            return [], False, typo, None
+
+        # Check for self-closing tags
+        if self._check_for_self_closing(text):
+            return [], False, None, "self_closing"
+
+        # Check for invalid attributes (anything other than query)
+        if self._check_for_invalid_attributes(text):
+            return [], False, None, "attribute"
+
+        # Check for nested tags
+        if self._check_for_nested_tags(text):
+            return [], False, None, "nested"
+
+        tags = []
+
+        # Pattern for <orakle query="...">...</orakle> (with query attribute)
+        attr_pattern = (
+            r"""<orakle\s+query\s*=\s*(['"])(.*?)\1\s*>(.*?)</orakle>"""
+        )
+        for match in re.finditer(
+            attr_pattern, text, re.IGNORECASE | re.DOTALL
+        ):
+            intent = self._normalize_query_content(match.group(2))
+            data = match.group(3).strip() if match.group(3).strip() else None
+            tags.append((match.start(), match.end(), intent, data))
+
+        # Pattern for simple <orakle>...</orakle> (no attributes)
+        simple_pattern = r"<orakle>(.*?)</orakle>"
+        for match in re.finditer(
+            simple_pattern, text, re.IGNORECASE | re.DOTALL
+        ):
+            # Skip if this region was already matched by the attr pattern
+            already_matched = any(
+                t[0] <= match.start() and match.end() <= t[1] for t in tags
             )
-            # --- Guardrail Recursion Fix ---
-            # If the line is a guardrail message, pass it through without parsing
-            # to prevent a recursive loop where the guardrail triggers itself.
-            if line.strip().startswith("[__AINARA_GUARDRAIL__]"):
-                yield line
-                return
+            if not already_matched:
+                intent = self._normalize_query_content(match.group(1))
+                tags.append((match.start(), match.end(), intent, None))
 
-            stripped_line = line.strip()
+        # Sort by position
+        tags.sort(key=lambda t: t[0])
 
-            if self.current_state == self.streaming_text:
-                # Check for single-line command first
-                if (
-                    stripped_line != self.start_delimiter
-                    and stripped_line.startswith(self.start_delimiter)
-                ) and (
-                    stripped_line.endswith(self.end_delimiter)
-                    or stripped_line.endswith(self.end_delimiter + ";")
-                ):
-                    end_len = len(self.end_delimiter)
-                    if stripped_line.endswith(";"):
-                        end_len += 1
-                    command_content = stripped_line[
-                        len(self.start_delimiter): -end_len
-                    ].strip()
-                    yield from self._execute_command(command_content)
-                    self.found_orakle()
-                    # Preserve the newline from the original line
-                    if line.endswith("\n"):
-                        yield "\n"
-                elif stripped_line == self.start_delimiter:
-                    self.start_command()
-                elif (
-                    self.start_delimiter in stripped_line
-                    or self.end_delimiter in stripped_line
-                ):
-                    yield line
-                    yield self.middleware._get_correction_message()
-                else:
-                    yield line
-            elif self.current_state == self.buffering_command:
-                if (
-                    stripped_line == self.end_delimiter
-                    or stripped_line == self.end_delimiter + ";"
-                ):
-                    yield from self.end_command()
-                    # Preserve the newline from the original line
-                    if line.endswith("\n"):
-                        yield "\n"
-                elif self.end_delimiter in stripped_line:
-                    yield self.command_buffer
-                    yield line
-                    yield self.middleware._get_correction_message()
-                    self.malformed_end()
-                else:
-                    self.command_buffer += line
-            elif self.current_state == self.orakle_only:
-                # In this state, we only accept more ORAKLE commands and ignore everything else.
-                if (
-                    stripped_line != self.start_delimiter
-                    and stripped_line.startswith(self.start_delimiter)
-                ) and (
-                    stripped_line.endswith(self.end_delimiter)
-                    or stripped_line.endswith(self.end_delimiter + ";")
-                ):
-                    # Handle subsequent single-line commands
-                    end_len = len(self.end_delimiter)
-                    if stripped_line.endswith(";"):
-                        end_len += 1
-                    command_content = stripped_line[
-                        len(self.start_delimiter): -end_len
-                    ].strip()
-                    yield from self._execute_command(command_content)
-                    if line.endswith("\n"):
-                        yield "\n"
-                elif stripped_line == self.start_delimiter:
-                    # Start of a multi-line command
-                    self.start_another_command()
-                elif stripped_line:
-                    # Ignore non-empty lines that are not ORAKLE commands
-                    logger.info(
-                        "ORAKLE GUARD: Ignoring trailing text after command:"
-                        f" '{stripped_line}'"
-                    )
+        # Check for unclosed tag
+        open_pattern = r"<orakle(?:\s[^>]*)?>|<orakle>"
+        close_pattern = r"</orakle>"
 
-        # Transitions
-        start_command = streaming_text.to(buffering_command)
-        end_command = buffering_command.to(orakle_only, on="_on_end_command")
-        malformed_end = buffering_command.to(streaming_text, on="_reset_buffer")
-        found_orakle = streaming_text.to(orakle_only)
-        start_another_command = orakle_only.to(buffering_command)
+        open_matches = list(re.finditer(open_pattern, text, re.IGNORECASE))
+        close_matches = list(re.finditer(close_pattern, text, re.IGNORECASE))
 
-        # Transition Actions
-        def _on_end_command(self) -> Generator[str, None, None]:
-            """Action to execute when a command block is properly closed."""
-            command_to_process = self.command_buffer.strip()
-            self._reset_buffer()
-            yield from self._execute_command(command_to_process)
+        has_unclosed = len(open_matches) > len(close_matches)
 
-        def _reset_buffer(self):
-            """Reset the command buffer."""
-            self.command_buffer = ""
-
-        def _execute_command(self, command: str) -> Generator[str, None, None]:
-            """Wrapper to call the middleware's processing method."""
-            logger.info(f"ORAKLE command to process: '{command}'")
-            if command:
-                yield from self.middleware._process_orakle_request(
-                    command,
-                    self.chat_manager,
-                    reasoning_level_heuristic=self.reasoning_level_heuristic,
-                )
+        return tags, has_unclosed, None, None
 
     def process_stream(
         self,
         token_stream: Generator[str, None, None],
-        chat_manager=None,
+        chat_history: Optional[List[Dict]] = None,
         reasoning_level_heuristic: float = 0.0,
+        current_language: str = None,
+        memories: Optional[List[Dict]] = None,
+        agentic_mode: bool = False,
     ) -> Generator[Union[str, dict], None, None]:
         """
-        Process a stream of tokens using a state machine to handle Orakle commands.
+        Process a stream of tokens to detect and handle orakle tags.
 
         Args:
             token_stream: Generator yielding tokens from the LLM
-            chat_manager: Optional ChatManager instance to get chat history
+            chat_history: Optional chat history list for context
             reasoning_level_heuristic: A reasoning level calculated by a heuristic
                                        based on the user's query.
+            current_language: Language code for responses.
+            memories: Optional list of memory dictionaries for context
 
         Yields:
             Processed tokens, including command results and guardrail messages.
         """
-        parser = self._OrakleParser(self, chat_manager, reasoning_level_heuristic)
+        # TODO: [Refactor] Implement explicit State Machine for stream processing.
+        # The current implementation uses an implicit state machine (buffer + booleans + if/else blocks)
+        # which makes tracing edge cases (typos, nested tags, partial streams) difficult.
+        #
+        # Proposed Architecture (Separation of Concerns):
+        # 1. Create an Enum for states: TEXT, POTENTIAL_TAG, INSIDE_TAG.
+        # 2. Extract the lexing/parsing logic into a separate generator (e.g., `_tokenize_stream`).
+        #    This tokenizer should ONLY handle buffer management and state transitions, yielding
+        #    tuples like ("TEXT", "safe text") or ("TAG", "<orakle>query</orakle>").
+        # 3. Simplify `process_stream` to act purely as an Executor that consumes the tokenizer's
+        #    output and routes it to `yield` (for TEXT) or `_process_orakle_request` (for TAG).
+
         buffer = ""
+        found_orakle = False  # Track if we've found at least one orakle tag
+
+        # Guardrail buffer for forbidden signals
+        signal_check_buffer = ""
+        forbidden_signal = "_orakle_loading_signal_"
+
+        self.current_language = (
+            current_language if current_language is not None else "English"
+        )
+        logger.info(f"OrakleMiddleware: current_language: {current_language}")
 
         for token in token_stream:
             if token is None:
                 continue
-            # # --- TOKEN DEBUG
-            # logger.info(f"ORAKLE Middleware received token: {repr(token)}")
+
+            # --- Guardrail: Check for forbidden internal signal ---
+            signal_check_buffer += token
+            if len(signal_check_buffer) > len(forbidden_signal) + 20:
+                signal_check_buffer = signal_check_buffer[
+                    -(len(forbidden_signal) + 20):
+                ]
+
+            if forbidden_signal in signal_check_buffer:
+                logger.warning(
+                    "GUARDRAIL: LLM generated forbidden internal signal."
+                )
+                yield (
+                    "\n\n[__AINARA_GUARDRAIL__] Error: You generated a system"
+                    f" signal ('{forbidden_signal}') which is forbidden."
+                    " DO NOT SIMULATE THE EXECUTION OF SKILLS. Use"
+                    " <orakle>your query</orakle> to run commands.\n\n"
+                )
+                return
 
             buffer += token
 
-            while "\n" in buffer:
-                line_end_pos = buffer.find("\n")
-                # Include the newline in the processed line
-                line = buffer[: line_end_pos + 1]
-                buffer = buffer[line_end_pos + 1:]
-                yield from parser.process_line(line)
+            # Check for typo tags in the current buffer
+            typo = self._check_for_typo_tags(buffer)
+            if typo:
+                # Output buffer content before the typo, then guardrail
+                yield buffer
+                yield self._get_typo_correction_message(typo)
+                buffer = ""
+                continue
 
-        # After the loop, process any remaining content in the buffer as a final line.
-        if buffer:
-            yield from parser.process_line(buffer)
-
-        # After all processing, if the parser is still in a command state, it's unterminated.
-        if parser.current_state == parser.buffering_command:
-            yield parser.command_buffer
-            logger.info("GUARDRAIL generated: unterminated ORAKLE command")
-            yield (
-                "\n\n[__AINARA_GUARDRAIL__] Error: Stream ended with an"
-                " unterminated ORAKLE command.\n\n"
+            # Try to extract complete orakle tags
+            tags, has_unclosed, _, guardrail_type = self._extract_orakle_tags(
+                buffer
             )
+
+            if guardrail_type:
+                yield buffer
+                if guardrail_type == "attribute":
+                    yield self._get_attribute_rejection_message()
+                elif guardrail_type == "self_closing":
+                    yield self._get_self_closing_rejection_message()
+                elif guardrail_type == "nested":
+                    yield self._get_nested_tags_rejection_message()
+                return
+
+            if tags:
+                # Process each found tag
+                last_end = 0
+                for start, end, query, data in tags:
+                    # Yield text before this tag (only if we haven't found orakle yet)
+                    if not found_orakle:
+                        pre_text = buffer[last_end:start]
+                        if pre_text:
+                            yield pre_text
+
+                    found_orakle = True
+
+                    # Execute the orakle command
+                    logger.info(f"ORAKLE command to process: '{query}'")
+                    if query:
+                        yield from self._process_orakle_request(
+                            query,
+                            chat_history,
+                            reasoning_level_heuristic=reasoning_level_heuristic,
+                            orakle_data=data,
+                            memories=memories,
+                            agentic_mode=agentic_mode,
+                        )
+
+                    last_end = end
+
+                # Keep any remaining text after the last tag
+                buffer = buffer[last_end:]
+
+                # After finding orakle, ignore non-orakle text
+                if found_orakle and buffer.strip():
+                    # Check if remaining buffer might contain another tag
+                    if not self._has_potential_tag(buffer):
+                        logger.info(
+                            "ORAKLE GUARD: Ignoring trailing text after"
+                            f" command: '{buffer.strip()}'"
+                        )
+                        buffer = ""
+
+            # If buffer is getting large and no complete tag found,
+            # yield content up to potential tag start
+            elif len(buffer) > 1000 and not self._has_potential_tag(buffer):
+                if not found_orakle:
+                    yield buffer
+                buffer = ""
+
+        # Process any remaining buffer content
+        if buffer:
+            tags, has_unclosed, typo, guardrail_type = (
+                self._extract_orakle_tags(buffer)
+            )
+
+            if guardrail_type:
+                yield buffer
+                if guardrail_type == "attribute":
+                    yield self._get_attribute_rejection_message()
+                elif guardrail_type == "self_closing":
+                    yield self._get_self_closing_rejection_message()
+                elif guardrail_type == "nested":
+                    yield self._get_nested_tags_rejection_message()
+            elif typo:
+                yield buffer
+                yield self._get_typo_correction_message(typo)
+            elif has_unclosed:
+                yield buffer
+                logger.info("GUARDRAIL generated: unclosed orakle tag")
+                yield self._get_unclosed_tag_message()
+            elif tags:
+                # Process remaining tags
+                last_end = 0
+                for start, end, query, data in tags:
+                    if not found_orakle:
+                        pre_text = buffer[last_end:start]
+                        if pre_text:
+                            yield pre_text
+
+                    found_orakle = True
+                    logger.info(f"ORAKLE command to process: '{query}'")
+                    if query:
+                        yield from self._process_orakle_request(
+                            query,
+                            chat_history,
+                            reasoning_level_heuristic=reasoning_level_heuristic,
+                            orakle_data=data,
+                            memories=memories,
+                            agentic_mode=agentic_mode,
+                        )
+                    last_end = end
+
+                # Any remaining text after tags
+                remaining = buffer[last_end:]
+                if remaining and not found_orakle:
+                    yield remaining
+            elif not found_orakle:
+                # No tags found, yield remaining buffer
+                yield buffer
 
     def _process_orakle_request(
         self,
         query: str,
-        chat_manager=None,
+        chat_history: Optional[List[Dict]] = None,
         reasoning_level_heuristic: float = 0.0,
+        orakle_data: Optional[str] = None,
+        memories: Optional[List[Dict]] = None,
+        agentic_mode: Optional[bool] = False,
     ) -> Generator[Union[str, dict], None, None]:
         """
         Process an Orakle request from the user.
@@ -337,14 +683,17 @@ class OrakleMiddleware:
 
         Args:
             query: The natural language query from the user
-            chat_manager: Optional ChatManager instance to get chat history
+            chat_history: Optional chat history list for context
             reasoning_level_heuristic: A reasoning level calculated by a heuristic
                                        based on the user's query.
+            orakle_data: Optional data payload from the orakle tag content
+                         when query attribute form is used.
+            memories: Optional list of memory dictionaries for context
+            agentic_mode: Optional Orakle is being executed in agentic mode
 
         Yields:
             Processed results as a stream
         """
-        logger.info(f"ORAKLE Processing request: {query}")
 
         # Pre-filter matching skills using the embeddings matcher
         matches = self.matcher.match(
@@ -422,69 +771,261 @@ class OrakleMiddleware:
             candidate_skills_text += skill_desc + "\n---\n\n"
 
         # Use LLM to select the best skill and extract parameters
+        template = (
+            "framework.chat_manager.orakle_select_and_params"
+            if self.enable_agent_spawn
+            else "framework.chat_manager.orakle_select_and_params_old"
+        )
         prompt = self.template_manager.render(
-            "framework.chat_manager.orakle_select_and_params",
-            {"query": query, "candidate_skills": candidate_skills_text},
+            template,
+            {
+                "query": query,
+                "candidate_skills": candidate_skills_text,
+                "language": self.current_language or "English",
+                "orakle_data": orakle_data,
+                "agentic_mode": agentic_mode,
+            },
         )
 
-        logger.info(f"ORAKLE skill selection prompt: {prompt}")
+        logger.debug(f"ORAKLE skill selection prompt: {prompt}")
 
-        selection_response = self.llm.chat(
-            chat_history=self.llm.prepare_chat(
-                system_message=self.system_message,
+        # --- Guardrail: Retry loop for skill selection ---
+        valid_skill_ids = [m["skill_id"] for m in matches]
+
+        if not self.system_message:
+            raise ValueError(
+                "system_message is not initialized in OrakleMiddleware"
+            )
+
+        select_prompt = """
+You are an expert data analyist. You combine built-in knowledge with real-time capabilities through the ORAKLE query system. ORAKLE connects with external API servers to access real-time data; these capabilities are called skills. Task is to identify from a query in natural language the skill and parameters matching the query intention. If no match can be found return an empty skill_id next to a descriptive error about why none of the possible candidates fits. Search carefully among the available skills.
+"""
+        match_providers = self.config_manager.get("orakle.match_providers", [])
+        llm_config = self.config_manager.get("llm", {})
+
+        selection_data = {}
+        selection_response = ""
+        max_attempts = 3
+
+        providers_to_try = match_providers + [None]
+
+        for provider_name in providers_to_try:
+            if provider_name in self._blacklisted_match_providers:
+                continue
+
+            try:
+                if provider_name:
+                    if provider_name not in self._match_llm_cache:
+                        self._match_llm_cache[provider_name] = (
+                            create_llm_backend(
+                                llm_config, selected_provider=provider_name
+                            )
+                        )
+                    current_llm = self._match_llm_cache[provider_name]
+                else:
+                    current_llm = self.llm
+            except Exception as e:
+                logger.warning(
+                    f"Failed to initialize provider '{provider_name}': {e}"
+                )
+                if provider_name is not None:
+                    logger.warning(
+                        f"ORAKLE: Blacklisting provider: {provider_name} (p1)"
+                    )
+                    self._blacklisted_match_providers.add(provider_name)
+                continue
+
+            # Reset chat history for this provider
+            current_chat_history = current_llm.prepare_chat(
+                system_message=select_prompt,
                 new_message=prompt,
-            ),
-            stream=False,
-            # Enforce reasoning if available
-            reasoning_level=0.3
-        )
+            )
 
-        logger.info(f"ORAKLE selection_response: {selection_response}")
+            provider_success = False
+
+            for attempt in range(max_attempts):
+                try:
+                    selection_response = current_llm.chat(
+                        chat_history=current_chat_history,
+                        stream=False,
+                        # Enforce low level reasoning if available
+                        reasoning_level=0.3,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"ORAKLE provider '{provider_name or 'default'}'"
+                        f" exception: {e}"
+                    )
+                    break  # Break attempt loop on hard exception
+
+                logger.info(
+                    "ORAKLE selection_response (provider:"
+                    f" {provider_name or 'default'}, attempt {attempt + 1}):"
+                    f" {selection_response}"
+                )
+
+                try:
+                    selection_data = json.loads(selection_response)
+                    selected_skill_id = selection_data.get("skill_id")
+
+                    # Validation
+                    if not selected_skill_id:
+                        # Valid: No skill selected
+                        provider_success = True
+                        break
+
+                    if selected_skill_id in valid_skill_ids:
+                        # Valid: Selected skill is in candidates
+                        provider_success = True
+                        break
+
+                    # Invalid: Hallucination
+                    logger.warning(
+                        f"ORAKLE: Hallucinated skill_id '{selected_skill_id}'"
+                    )
+                    if attempt < max_attempts - 1:
+                        current_chat_history.append(
+                            {
+                                "role": "assistant",
+                                "content": selection_response,
+                            }
+                        )
+                        current_chat_history.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Error: The skill_id"
+                                    f" '{selected_skill_id}' is not in the"
+                                    " available candidates. Please choose one"
+                                    f" of: {', '.join(valid_skill_ids)} or"
+                                    " return null."
+                                ),
+                            }
+                        )
+
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "ORAKLE: JSONDecodeError in selection response"
+                    )
+                    if attempt < max_attempts - 1:
+                        current_chat_history.append(
+                            {
+                                "role": "assistant",
+                                "content": selection_response,
+                            }
+                        )
+                        current_chat_history.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Error: Invalid JSON format. Please return"
+                                    " ONLY a valid JSON object."
+                                ),
+                            }
+                        )
+
+            if provider_success:
+                break  # Break provider loop on success
+            else:
+                logger.warning(
+                    f"Provider '{provider_name or 'default'}' failed to"
+                    " produce valid selection."
+                )
+                if provider_name is not None:
+                    logger.warning(
+                        f"ORAKLE: Blacklisting provider: {provider_name} (p2)"
+                    )
+                    self._blacklisted_match_providers.add(provider_name)
 
         try:
-            # Parse the LLM response to get skill_id and parameters
-            selection_data = json.loads(selection_response)
-            selected_skill_id = selection_data.get("skill_id")
-            parameters = selection_data.get("parameters", {})
-            skill_intention = selection_data.get("skill_intention", "Processing...")
             frustration_level = selection_data.get("frustration_level", 0.0)
             frustration_reason = selection_data.get("frustration_reason", "")
+            if frustration_level > 0:
+                logger.info(
+                    "ORAKLE: Detected frustration level:"
+                    f" {frustration_level:.2f}. Reason:"
+                    f" '{frustration_reason}'. Query: '{query}'"
+                )
 
             # Prioritize reasoning level from Orakle, fall back to heuristic
             orakle_reasoning_level = selection_data.get("reasoning_level")
             if orakle_reasoning_level is not None:
                 reasoning_level = orakle_reasoning_level
                 logger.info(
-                    f"ORAKLE: Reasoning level from skill selection: {reasoning_level}"
+                    "ORAKLE: Reasoning level from skill selection:"
+                    f" {reasoning_level}"
                 )
             else:
                 reasoning_level = reasoning_level_heuristic
                 logger.info(
-                    f"ORAKLE: Reasoning level from heuristic: {reasoning_level}"
+                    "ORAKLE: Reasoning level from heuristic:"
+                    f" {reasoning_level}"
                 )
-
             # Apply the global reasoning effort limit
-            final_reasoning_level = min(reasoning_level, self.reasoning_effort_limit)
+            final_reasoning_level = min(
+                reasoning_level, self.reasoning_effort_limit
+            )
             if final_reasoning_level < reasoning_level:
                 logger.info(
-                    f"ORAKLE: Capping reasoning level from {reasoning_level} to"
-                    f" {final_reasoning_level} due to global limit."
+                    "ORAKLE: Capping reasoning level from"
+                    f" {reasoning_level} to {final_reasoning_level} due to"
+                    " global limit."
                 )
 
-            logger.info(
-                f"ORAKLE: Detected frustration level: {frustration_level:.2f}. "
-                f"Reason: '{frustration_reason}'. Query: '{query}'"
-            )
+            skill_intention = selection_data.get("skill_intention", "")
+
+            # Handle agent requirement
+            if selection_data.get("requires_agent", False):
+                logger.info(
+                    f"ORAKLE: Query requires agent processing: '{query}'"
+                )
+                if skill_intention:
+                    yield f"\n{skill_intention}\n\n"
+                yield "\n_orakle_loading_signal_|spawn_agent\n"
+
+                # Spawn ephemeral agent via Bureau
+                agent_result = self._spawn_ephemeral_agent(
+                    query=query,
+                    chat_history=chat_history,
+                    reasoning_level=final_reasoning_level,
+                )
+
+                if agent_result:
+                    yield agent_result
+                else:
+                    yield (
+                        "\nI encountered an issue processing that request."
+                        " Please try again.\n\n"
+                    )
+                return
+
+            # Use the data from the retry loop
+            # If retries failed (e.g. persistent hallucination),
+            # we force invalid ID to None
+            selected_skill_id = selection_data.get("skill_id")
+            if selected_skill_id and selected_skill_id not in valid_skill_ids:
+                logger.error(
+                    "ORAKLE: Persistent hallucination of skill_id"
+                    f" '{selected_skill_id}' after retries."
+                )
+                selected_skill_id = None
+                selection_data["skill_id"] = None
+
+            if selected_skill_id:
+                parameters = selection_data.get("parameters", {})
 
             if not selected_skill_id:
                 if selection_data.get("error_msg"):
                     error_msg = selection_data.get("error_msg")
                 else:
-                    error_msg = "I can't complete that request."
+                    error_msg = "couldn't find a skill matching the query"
                 logger.error(
                     f"ORAKLE: {error_msg} LLM response: {selection_response}"
                 )
-                yield f"\nI'm sorry, {error_msg}\n\n"
+                if agentic_mode:
+                    yield f"\nOrakle error: {error_msg}\n\n"
+                else:
+                    yield f"\nI'm sorry, {error_msg}\n\n"
                 return
 
             logger.info(
@@ -497,25 +1038,29 @@ class OrakleMiddleware:
                 logger.info(
                     f"ORAKLE: Executing system skill: {selected_skill_id}"
                 )
-                yield f"\n{skill_intention}\n\n"
+                if skill_intention and not agentic_mode:
+                    yield f"\n{skill_intention}\n\n"
                 yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
 
                 skill_instance = self.system_skills[selected_skill_id]
-                result = skill_instance.run(query, parameters, chat_manager)
+                result = skill_instance.run(query, parameters, chat_history)
 
-                chat_context = self._get_chat_context(chat_manager)
+                chat_context = self._get_chat_context(chat_history)
                 for chunk in self.stream_command_interpretation(
                     result,
                     query,
                     chat_context=chat_context,
                     reasoning_level=final_reasoning_level,
+                    agentic_mode=agentic_mode,
                 ):
                     yield chunk
                 return  # Stop processing, as we've handled this system skill
 
             # --- Handle Regular Skills ---
             # Yield processing message
-            yield f"\n{skill_intention}\n\n"
+            if skill_intention and not agentic_mode:
+                yield f"\n{skill_intention}\n\n"
+            # Needed so agent class recognizes skill execution
             yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
 
             # Get skill info to check its type
@@ -523,11 +1068,15 @@ class OrakleMiddleware:
 
             # Execute the selected skill with parameters
             result = self.execute_orakle_command(
-                selected_skill_id, parameters, chat_manager
+                selected_skill_id, parameters, chat_history
             )
 
             # If the skill is a nexus skill with a UI, yield the component data directly
-            if skill_info and skill_info.get("type") == "nexus" and skill_info.get("ui"):
+            if (
+                skill_info
+                and skill_info.get("type") == "nexus"
+                and skill_info.get("ui")
+            ):
                 component_name = skill_info.get("ui", {}).get("component")
                 try:
                     result_data = json.loads(result)
@@ -541,18 +1090,26 @@ class OrakleMiddleware:
                         "data": result_data,
                     }
                 except json.JSONDecodeError:
-                    error_msg = f"Nexus skill '{selected_skill_id}' did not return valid JSON data."
+                    error_msg = (
+                        f"Nexus skill '{selected_skill_id}' did not return"
+                        " valid JSON data."
+                    )
                     logger.error(f"ORAKLE: {error_msg} Data: {result}")
                     yield f"\nError: {error_msg}\n\n"
                     return
+            # In agentic_mode don't interpret data
+            elif agentic_mode:
+                result_data = json.loads(result)
+                yield f"\nOrakle query '{query}' result:\n{result_data}\n"
             else:
-                chat_context = self._get_chat_context(chat_manager)
+                chat_context = self._get_chat_context(chat_history, memories)
                 # Get interpretation as a stream for regular skills
                 for interpretation_chunk in self.stream_command_interpretation(
                     [result],
                     query,
                     chat_context=chat_context,
                     reasoning_level=final_reasoning_level,
+                    agentic_mode=agentic_mode,
                 ):
                     yield interpretation_chunk
 
@@ -561,6 +1118,11 @@ class OrakleMiddleware:
             logger.error(
                 f"ORAKLE: {error_msg} LLM response: {selection_response}"
             )
+            if provider_name is not None:
+                logger.warning(
+                    f"ORAKLE: Blacklisting provider: {provider_name} (p3)"
+                )
+                self._blacklisted_match_providers.add(provider_name)
             yield f"\nError: {error_msg}\n\n"
 
     # def ndjson(event_type: str, event_name: str, content: Any = None) -> str:
@@ -580,7 +1142,10 @@ class OrakleMiddleware:
     #     return json.dumps(event) + "\n"
 
     def execute_orakle_command(
-        self, skill_id: str, params: dict, chat_manager=None
+        self,
+        skill_id: str,
+        params: dict,
+        chat_history: Optional[List[Dict]] = None,
     ) -> str:
         """
         Execute an Orakle command and return the result.
@@ -588,79 +1153,38 @@ class OrakleMiddleware:
         Args:
             skill_id: The ID of the skill to execute
             params: Dictionary of parameters for the skill
-            chat_manager: Optional ChatManager instance to get chat history
+            chat_history: Optional chat history list for context
 
         Returns:
             Command execution result as a string
         """
-        for server in self.orakle_servers:
-            try:
-                logger.info(
-                    f"ORAKLE Executing skill '{skill_id}' with params:"
-                    f" {params}"
-                )
+        logger.info(
+            f"ORAKLE Executing skill '{skill_id}' with params: {params}"
+        )
 
-                # Check if skill requires additional data
-                skill_info = self._get_skill_info(skill_id)
+        # Check if skill requires additional data
+        skill_info = self._get_skill_info(skill_id)
 
-                if not skill_info:
-                    logger.error(
-                        f"Could not find skill info for {skill_id} before"
-                        " execution."
-                    )
-                    return (
-                        f"Error: Skill '{skill_id}' not found or unavailable."
-                    )
+        if not skill_info:
+            logger.error(
+                f"Could not find skill info for {skill_id} before execution."
+            )
+            return f"Error: Skill '{skill_id}' not found or unavailable."
 
-                # Add chat history if the skill requires it and chat_manager is provided
-                if chat_manager and any(
-                    param.get("name") == "_chat_history"
-                    for param in skill_info.get("parameters", [])
-                ):
-                    params = chat_manager.add_chat_history_to_params(
-                        params, skill_info
-                    )
-                    logger.debug(
-                        f"Added chat history to params for skill {skill_id}"
-                    )
+        # Add chat history if the skill requires it
+        if chat_history and any(
+            param.get("name") == "_chat_history"
+            for param in skill_info.get("parameters", [])
+        ):
+            formatted_history = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in chat_history
+                if msg.get("role") in ["user", "assistant"]
+            ]
+            params["_chat_history"] = formatted_history
+            logger.debug(f"Added chat history to params for skill {skill_id}")
 
-                # Make request to Orakle server
-                endpoint = f"{server.rstrip('/')}/run/{skill_id}"
-
-                response = requests.post(endpoint, json=params, timeout=60)
-
-                if response.status_code == 200:
-                    try:
-                        json_response = response.json()
-                        if not json_response:
-                            return "Empty response received"
-                        if isinstance(json_response, str):
-                            return json_response
-                        return json.dumps(json_response, indent=2)
-                    except json.JSONDecodeError:
-                        text_response = response.text
-                        return (
-                            text_response
-                            if text_response
-                            else "Empty response"
-                        )
-                else:
-                    error_msg = (
-                        f"Error: Server returned {response.status_code}"
-                    )
-                    try:
-                        error_details = response.json()
-                        error_msg += (
-                            f"\nDetails: {json.dumps(error_details, indent=2)}"
-                        )
-                    except (ValueError, json.JSONDecodeError):
-                        if response.text:
-                            error_msg += f"\nDetails: {response.text}"
-                    return error_msg
-
-            except requests.RequestException:
-                continue
-        return "Error: No Orakle servers available"
+        return call_skill(self.orakle_servers, skill_id, params)
 
     def _get_skill_info(self, skill_id: str) -> dict:
         """
@@ -690,7 +1214,9 @@ class OrakleMiddleware:
                 module_name = f"ainara.framework.system_skills.{filename[:-3]}"
                 try:
                     module = importlib.import_module(module_name)
-                    for name, obj in inspect.getmembers(module, inspect.isclass):
+                    for name, obj in inspect.getmembers(
+                        module, inspect.isclass
+                    ):
                         if (
                             issubclass(obj, BaseSystemSkill)
                             and obj is not BaseSystemSkill
@@ -698,9 +1224,9 @@ class OrakleMiddleware:
                             skill_instance = obj()
                             skill_definition = skill_instance.get_definition()
                             self.capabilities.append(skill_definition)
-                            self.system_skills[
-                                skill_instance.name
-                            ] = skill_instance
+                            self.system_skills[skill_instance.name] = (
+                                skill_instance
+                            )
                             logger.info(
                                 f"Loaded system skill: {skill_instance.name}"
                             )
@@ -709,44 +1235,48 @@ class OrakleMiddleware:
                         f"Failed to load system skill from {filename}: {e}"
                     )
 
-    def _get_chat_context(self, chat_manager) -> dict:
-        """Extracts relevant context from the ChatManager."""
+    def _get_chat_context(
+        self,
+        chat_history: Optional[List[Dict]] = None,
+        memories: Optional[List[Dict]] = None,
+    ) -> dict:
+        """Extracts relevant context from the chat history and memories.
+
+        Note: This method provides basic context extraction. For richer context
+        (user profile, conversation summary), the caller should pass
+        a chat_history that already includes this information in the system message
+        or provide it through other means.
+        """
         chat_context = {}
-        if not chat_manager:
+        if not chat_history:
             return chat_context
 
-        # User profile summary
-        if hasattr(chat_manager, "user_profile_summary") and getattr(
-            chat_manager, "user_profile_summary"
-        ):
-            chat_context["user_profile_summary"] = getattr(
-                chat_manager, "user_profile_summary"
-            )
-
-        # Conversation summary
-        if hasattr(chat_manager, "current_summary") and getattr(
-            chat_manager, "current_summary"
-        ):
-            chat_context["conversation_summary"] = getattr(
-                chat_manager, "current_summary"
-            )
-
         # Recent chat history (e.g., last 4 messages / 2 rounds)
-        if hasattr(chat_manager, "chat_history") and getattr(
-            chat_manager, "chat_history"
-        ):
-            history_text = ""
-            # Take last 4 messages
-            recent_messages = getattr(chat_manager, "chat_history")[-4:]
-            for msg in recent_messages:
-                # Skip system messages to avoid redundant context
-                if msg.get("role") == "system":
-                    continue
-                role = msg.get("role", "unknown").capitalize()
-                content = msg.get("content", "")
-                history_text += f"{role}: {content}\n"
-            if history_text:
-                chat_context["recent_history"] = history_text.strip()
+        history_text = ""
+        # Take last 4 messages
+        recent_messages = chat_history[-4:]
+        for msg in recent_messages:
+            # Skip system messages to avoid redundant context
+            if msg.get("role") == "system":
+                continue
+            role = msg.get("role", "unknown").capitalize()
+            content = msg.get("content", "")
+            history_text += f"{role}: {content}\n"
+        if history_text:
+            chat_context["recent_history"] = history_text.strip()
+
+        # Add memories if provided
+        if memories and len(memories) > 0:
+            logger.info(
+                f"Injecting {len(memories)} dynamically retrieved memories"
+                " into ORAKLE context."
+            )
+            context_memories_prompt = self.template_manager.render(
+                "framework.chat_manager.user_memories_prompt",
+                {"memories": memories},
+            )
+            chat_context["memories"] = f"\n\n{context_memories_prompt}"
+
         return chat_context
 
     def _strip_think_blocks_from_stream(
@@ -784,6 +1314,7 @@ class OrakleMiddleware:
         query: str,
         chat_context: Optional[dict] = None,
         reasoning_level: float = 0.0,
+        agentic_mode: bool = False,
     ) -> Generator[str, None, None]:
         """
         Stream LLM interpretation of command results.
@@ -804,16 +1335,29 @@ class OrakleMiddleware:
             except json.JSONDecodeError:
                 formatted_results.append(f"```text\n{r}\n```")
 
+        # Skip context enrichment in agentic mode
+        if agentic_mode:
+            # Use minimal context to avoid redundant information
+            effective_context = {}
+        else:
+            effective_context = chat_context or {}
+
         interpretation_prompt = self.template_manager.render(
             "framework.chat_manager.command_interpretation",
             {
                 "formatted_results": "\n".join(formatted_results),
                 "query": query,
-                "chat_context": chat_context or {},
+                "chat_context": effective_context,
+                "language": self.current_language or "English",
             },
         )
 
-        logger.info(f"ORAKLE interpretation_prompt: {interpretation_prompt}")
+        logger.debug(f"ORAKLE interpretation_prompt: {interpretation_prompt}")
+
+        if not self.system_message:
+            raise ValueError(
+                "system_message is not initialized in OrakleMiddleware"
+            )
 
         # Get interpretation as a stream
         interpretation_stream = self.llm.chat(
@@ -826,101 +1370,192 @@ class OrakleMiddleware:
         )
 
         # Wrap the stream to strip out <think> blocks
-        cleaned_stream = self._strip_think_blocks_from_stream(interpretation_stream)
+        cleaned_stream = self._strip_think_blocks_from_stream(
+            interpretation_stream
+        )
 
         # Yield each chunk as it comes
         for chunk in cleaned_stream:
             if chunk:
                 yield chunk
 
-    def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
+    def _spawn_ephemeral_agent(
+        self,
+        query: str,
+        chat_history: Optional[List[Dict]] = None,
+        reasoning_level: float = 0.0,
+    ) -> Optional[str]:
         """
-        Process raw skill capabilities into structured format.
+        Spawn an ephemeral agent via Bureau to handle multi-step queries.
 
         Args:
-            raw_capabilities: Raw capabilities dictionary from Orakle server
+            query: The user's query
+            chat_history: Optional chat history for context
+            reasoning_level: Reasoning effort level
 
         Returns:
-            List of processed skill dictionaries
+            Agent's final response or None on failure
         """
-        skills = []
-        for skill_name, skill_info in raw_capabilities.items():
-            # logger.info(f"skill_info: {pprint.pformat(skill_info)}")
-            skill_name = skill_name.strip("/")
-            skill_data = {
-                "name": skill_name,
-                "description": (
-                    skill_info.get("description", "").replace("\n", "")
+        bureau_config = self.config_manager.get("bureau", {})
+        bureau_host = bureau_config.get("host", "127.0.0.1")
+        bureau_port = bureau_config.get("port", 8010)
+        bureau_url = f"http://{bureau_host}:{bureau_port}"
+
+        try:
+            # Create agent
+            logger.info(f"Spawning ephemeral agent for query: '{query}'")
+
+            # Build blueprint for the agent
+            blueprint = {
+                "name": "EphemeralAgent",
+                "system_message": (
+                    "\n\nYou are an autonomous agent handling a multi-step"
+                    " task. Work systematically toward the goal."
                 ),
-                "matcher_info": (
-                    skill_info.get("matcher_info", "").replace("\n", "")
-                ),
-                "run_info": skill_info.get("run_info", ""),
-                # Attempt to get full description (e.g., from docstring)
-                # Adjust the key based on actual capabilities response structure
-                "full_description": (
-                    skill_info.get("run", {}).get(
-                        "docstring", skill_info.get("description", "")
-                    )
-                ),
-                "embeddings_boost_factor": skill_info.get("embeddings_boost_factor", 1.0),
-                "type": skill_info.get("type"),
-                "ui": skill_info.get("ui"),
-                "vendor": skill_info.get("vendor"),
-                "bundle": skill_info.get("bundle"),
-                "parameters": [],
+                "allowed_skills": ["*"],
             }
 
-            # Process parameters
-            if skill_data["run_info"].get("parameters"):
-                run_info = skill_data["run_info"]
-                for param_name, param_info in run_info.get(
-                    "parameters", {}
-                ).items():
-                    param_data = {
-                        "name": param_name,
-                        "type": param_info.get("type", "any"),
-                        "description": param_info.get("description", ""),
-                    }
-                    skill_data["parameters"].append(param_data)
+            # Build user context from chat history
+            user_context = {}
+            if chat_history:
+                recent_messages = chat_history[-6:]  # Last 3 exchanges
+                context_summary = "\n".join(
+                    [
+                        f"{msg.get('role', 'unknown')}:"
+                        f" {msg.get('content', '')[:200]}"
+                        for msg in recent_messages
+                        if msg.get("role") in ["user", "assistant"]
+                    ]
+                )
+                user_context["recent_conversation"] = context_summary
 
-            skills.append(skill_data)
-        return skills
+            # Create agent via Bureau API
+            create_response = requests.post(
+                f"{bureau_url}/v1/agents",
+                json={
+                    "goal": query,
+                    "blueprint": blueprint,
+                    "user_context": user_context,
+                    "max_turns": 15,
+                    "execution_timeout": 600,
+                },
+                timeout=5,
+            )
 
-    def get_orakle_capabilities(self) -> dict:
-        """
-        Query Orakle servers for capabilities and store them in structured format.
+            if create_response.status_code != 202:
+                logger.error(f"Failed to create agent: {create_response.text}")
+                return None
 
-        Returns:
-            Dictionary with processed capabilities
-        """
-        capabilities = []
+            agent_data = create_response.json()
+            agent_id = agent_data.get("agent_id")
 
-        for server in self.orakle_servers:
-            try:
-                response = requests.get(f"{server}/capabilities", timeout=2)
-                if response.status_code == 200:
-                    raw_capabilities = response.json()
+            if not agent_id:
+                logger.error("No agent_id returned from Bureau")
+                return None
 
-                    # Process skills
-                    capabilities = self._process_orakle_skills(
-                        raw_capabilities
-                    )
+            logger.info(f"Agent created with ID: {agent_id}")
+
+            # Poll for completion
+            max_wait = 120  # 2 minutes max
+            poll_interval = 2  # seconds
+            elapsed = 0
+
+            while elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+                status_response = requests.get(
+                    f"{bureau_url}/v1/agents/{agent_id}", timeout=5
+                )
+
+                # Handle different status codes
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    status = status_data.get("status")
 
                     logger.info(
-                        "Successfully loaded"
-                        f" {len(capabilities)} skills from Orakle"
-                        f" server: {server}"
+                        f"Agent {agent_id} status: {status} (elapsed:"
+                        f" {elapsed}s)"
                     )
-                    return capabilities
-            except requests.RequestException as e:
-                logger.warning(
-                    f"Failed to connect to Orakle server {server}: {str(e)}"
-                )
-                continue
 
-        if self.orakle_servers:
-            logger.warning(
-                "No Orakle capabilities found, is the Orakle server running?"
+                    if status == "COMPLETED":
+                        response = status_data.get("response", "")
+                        # Extract the actual response text if it's a dictionary
+                        if isinstance(response, dict):
+                            response = response.get("response", "")
+                        logger.info(
+                            "Agent completed successfully. "
+                            f"Turns: {status_data.get('turns_used')}, "
+                            f"Skills: {status_data.get('skills_executed')}"
+                        )
+                        return response
+                    elif status == "FAILED":
+                        # Agent executed but didn't achieve goal
+                        failure_reason = status_data.get(
+                            "failure_reason", "Unknown reason"
+                        )
+                        response = status_data.get("response", "")
+                        # Extract the actual response text if it's a dictionary
+                        if isinstance(response, dict):
+                            response = response.get("response", "")
+                        logger.warning(
+                            f"Agent failed to achieve goal: {failure_reason}. "
+                            f"Turns: {status_data.get('turns_used')}, "
+                            f"Skills: {status_data.get('skills_executed')}"
+                        )
+                        # Return the response even on failure so user gets explanation
+                        return (
+                            response
+                            if response
+                            else (
+                                "I couldn't complete that request."
+                                f" {failure_reason}"
+                            )
+                        )
+
+                elif status_response.status_code == 424:
+                    # Failed Dependency - goal not achieved
+                    status_data = status_response.json()
+                    failure_reason = status_data.get(
+                        "failure_reason", "Goal not achieved"
+                    )
+                    response = status_data.get("response", "")
+                    # Extract the actual response text if it's a dictionary
+                    if isinstance(response, dict):
+                        response = response.get("response", "")
+                    logger.warning(f"Agent failed (424): {failure_reason}")
+                    return (
+                        response
+                        if response
+                        else (
+                            "I couldn't complete that request."
+                            f" {failure_reason}"
+                        )
+                    )
+
+                elif status_response.status_code == 500:
+                    # Internal Server Error - execution error
+                    status_data = status_response.json()
+                    error = status_data.get("error", "Unknown error")
+                    logger.error(f"Agent execution error (500): {error}")
+                    return None
+
+                else:
+                    logger.error(
+                        "Unexpected status code"
+                        f" {status_response.status_code}:"
+                        f" {status_response.text}"
+                    )
+                    return None
+
+            logger.warning(f"Agent {agent_id} timed out after {max_wait}s")
+            return None
+
+        except requests.RequestException as e:
+            logger.error(f"Bureau connection error: {e}")
+            return None
+        except Exception as e:
+            logger.error(
+                f"Unexpected error spawning agent: {e}", exc_info=True
             )
-        return capabilities
+            return None

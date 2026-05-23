@@ -20,7 +20,7 @@ const { shell } = require('electron');
 const { marked } = require('marked');
 const DOMPurify = require('dompurify');
 const Tablesort = require('tablesort');
-
+const ConfigManager = require('../framework/config');
 
 class BaseComponent extends HTMLElement {
     constructor() {
@@ -28,6 +28,7 @@ class BaseComponent extends HTMLElement {
         this.attachShadow({ mode: 'open' });
         this.state = {};
         this._eventHandlers = new Map();
+        this.config = new ConfigManager();
 
         // Open external links in the default browser
         this.delegate('click', 'a', (event, target) => {
@@ -219,8 +220,26 @@ class BaseComponent extends HTMLElement {
         console.log(`Total tables initialized: ${totalTables}`);
     }
 
-    parseMarkdown(text, generateLinks = false) {
-        // Store code blocks temporarily
+    parseMarkdown(text, isChatLog = false) {
+        if (isChatLog) {
+            // Split by timestamp pattern to process messages individually
+            // Pattern looks for `HH:MM:SS` **U:** or **A:**
+            // We use lookahead to split without consuming the delimiter
+            const parts = text.split(/(?=`\d{2}:\d{2}:\d{2}` \*\*[UA]:\*\*)/);
+            return parts.map(part => {
+                try {
+                    return this._processMarkdownBlock(part, true);
+                } catch (error) {
+                    console.error('Error parsing chat log part:', error);
+                    return `<div class="parse-error">${this.sanitizeText(part)}</div>`;
+                }
+            }).join('');
+        }
+        return this._processMarkdownBlock(text, isChatLog);
+    }
+
+    _processMarkdownBlock(text, isChatLog = false) {
+         // Store code blocks temporarily
         const codeBlocks = [];
         let blockIndex = 0;
 
@@ -234,31 +253,56 @@ class BaseComponent extends HTMLElement {
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
 
-        if (generateLinks) {
+        // Extract ORAKLE data blocks
+        text = text.replace(/_orakle_nexus_data_\|([^\n]+)/gm, (text, skill) => {
+            try {
+                const orakleUrl = this.config.get('orakle.api_url');
+                const json = JSON.parse(skill);
+                
+                // Encode data to be safe in HTML attribute
+                const encodedData = encodeURIComponent(JSON.stringify(json.data));
+                const src = `${orakleUrl}${json.component_path}`;
+                
+                const output = `<iframe class='nexus-frame' src='${src}' data-nexus-data='${encodedData}' sandbox='allow-scripts allow-same-origin allow-forms'></iframe>`;
+                codeBlocks.push(output);
+            } catch (error) {
+                console.error('Error details:', error);
+            }
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+
+        if (isChatLog) {
+            // generate links in the format expected by the chat log view
             text = text.replace(/```([^ \n]*)([\s\S]*?)```/gm, (match, codetype, content) => {
-                // if (this.isMarkdownTable(content)) {
                 // TODO Disabled markdown table process by now
-                if (0) { // eslint-disable-line no-constant-condition
-                    let html_content = this.renderSortableTable(content);
-                    codeBlocks.push(`<div class="code-block-wrapper">
-                    <span class="code-type">markdown2html</span>
-                    <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
-                    <div>${html_content}</div>
-                </div>`);
-                } else {
-                    codeBlocks.push(`<div class="code-block-wrapper">
+                // if (this.isMarkdownTable(content)) {
+                //     let html_content = this.renderSortableTable(content);
+                //     codeBlocks.push(`<div class="code-block-wrapper">
+                //     <span class="code-type">markdown2html</span>
+                //     <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
+                //     <div>${html_content}</div>
+                // </div>`);
+                codeBlocks.push(`<div class="code-block-wrapper">
                     <span class="code-type">${codetype}</span>
                     <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
                     <code>${content}</code>
                 </div>`);
-                    return `%%CODEBLOCK${blockIndex++}%%`;
-                }
+                return `%%CODEBLOCK${blockIndex++}%%`;
             });
             // Extract and replace single backtick inline code
             text = text.replace(/`([\s\S]*?)`/gm, (match, content) => {
                 codeBlocks.push(`<div class="code-block-wrapper-inline">
                     <code>${content}</code>
                 </div>`);
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            });
+            // Process links
+            text = text.replace(
+                /(http(s)?:\/\/.)(www\.)?[-a-zA-Z0-9@:%._+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_+.~#?&//=]*)/gm, (match) => {
+                let link = isChatLog ?
+                    `<a href="${match}">${match}</a>` :
+                    match;
+                codeBlocks.push(link);
                 return `%%CODEBLOCK${blockIndex++}%%`;
             });
         }
@@ -269,70 +313,15 @@ class BaseComponent extends HTMLElement {
             [/\*\*(.*?)\*\*|__(.*?)__/gm, '<strong>$1$2</strong>'], // Bold
             [/\*(.*?)\*|_(.*?)_/gm, '<em>$1$2</em>'], // Italic
             [/\n/gm, '<br>'], // Line breaks (CR)
-            [/^### (.*?)\n/gm, '<b>$1</b>'], // H3
-            [/^## (.*?)\n/gm, '<b>$1</b>'], // H2
-            [/^# (.*?)\n/gm, '<b>$1</b>'], // H1
+            [/^### (.*?)\n/gm, '<h3>$1</h3>'], // H3
+            [/^## (.*?)\n/gm, '<h2>$1</h2>'], // H2
+            [/^# (.*?)\n/gm, '<h1>$1</h1>'], // H1
         ];
 
         // Apply all replacements efficiently
         text = markdownPatterns.reduce((acc, [pattern, repl]) => {
             return acc.replace(pattern, repl);
         }, text);
-
-        // // Handle links [text](url)
-        // text = text.replace(/\[(.*?)\]\((.*?)\)/gm, function(match, linkText, url) {
-        //     // Extract domain from URL
-        //     let domain = "";
-        //     try {
-        //         domain = new URL(url).hostname.replace(/^www\./, '');
-        //         // Truncate if too long
-        //         if (domain.length > 20) {
-        //             domain = domain.substring(0, 17) + '...';
-        //         }
-        //     } catch (e) {
-        //         // If URL parsing fails, skip domain
-        //         console.log("Error parsing: " + e);
-        //     }
-        //
-        //     // Create a properly formatted HTML string
-        //     return '"' + linkText + '"' +
-        //            (domain ? ' [' + domain + ']' : '');
-        // });
-
-        // Autolink URLs
-        if (generateLinks) {
-            const urlPattern = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
-            text = text.replace(urlPattern, (url) => {
-                let cleanUrl = url;
-                // Strip trailing punctuation that is unlikely to be part of the URL
-                while (/[.,;!?\)\]\}]$/.test(cleanUrl)) { // eslint-disable-line no-useless-escape
-                    cleanUrl = cleanUrl.slice(0, -1);
-                }
-                const trailingChars = url.substring(cleanUrl.length);
-
-                const href = cleanUrl.startsWith('www.') ? `http://${cleanUrl}` : cleanUrl;
-                return `<a href="${href}">${cleanUrl}</a>` + trailingChars;
-            });
-        } else {
-            text = text.replace(/\[(.*?)\]\((.*?)\)/g, function(match, linkText, url) {
-                // Extract domain from URL
-                let domain = "";
-                try {
-                    domain = new URL(url).hostname.replace(/^www\./, '');
-                    // Truncate if too long
-                    if (domain.length > 15) {
-                        domain = domain.substring(0, 12) + '...';
-                    }
-                } catch (e) {
-                    // If URL parsing fails, skip domain
-                    console.log("Error parsing: " + e);
-                }
-
-                // Create a properly formatted HTML string
-                return '"' + linkText + '"' +
-                       (domain ? ' [' + domain + ']' : '');
-            });
-        }
 
         // Restore code blocks
         text = text.replace(/%%CODEBLOCK(\d+)%%/g, (match, index) => {

@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 
+import copy
 import json
 import logging
 import os
@@ -27,18 +28,21 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Generator, List, Literal, Optional, Union
+from typing import Any, Dict, Generator, List, Literal, Optional, Union
 
+from pycountry import languages
 from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
 from ainara.framework.green_memories import GREENMemories
 from ainara.framework.loading_animation import LoadingAnimation
-from ainara.framework.orakle_middleware import OrakleMiddleware
+from ainara.framework.orakle_middleware import (OrakleCapabilityFetcher,
+                                                OrakleMiddleware)
+from ainara.framework.storage.base import StorageBackend
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
-from ainara.framework.utils import load_spacy_model
+from ainara.framework.utils import load_spacy_model, format_relative_time
 
 # import pprint
 
@@ -78,6 +82,7 @@ class ChatManager:
         llm,
         orakle_servers: List[str],
         green_memories: GREENMemories,
+        storage_backend: StorageBackend,
         flask_app=None,
         backup_file: Optional[str] = None,
         tts: Optional[TTSBackend] = None,
@@ -95,6 +100,11 @@ class ChatManager:
         self.ndjson = ndjson
         self.new_summary = "-"
         self.nexus_test = 0
+        self.processed_memories_for_template = None
+        self.current_lang_code = None
+        self.current_language = None
+        self.storage_backend = storage_backend
+        self.first_turn = True
 
         # Load spaCy model for sentence segmentation
         self.nlp = load_spacy_model()
@@ -108,6 +118,10 @@ class ChatManager:
         self.user_profile_summary = user_profile_summary
         self.memory_enabled = config.get("memory.enabled", True)
         self.summary_enabled = config.get("memory.summary_enabled", True)
+        self.notifications_enabled = config.get(
+            "memory.notifications_enabled", True
+        )
+        self.notifications_prompt = ""
 
         self.max_guardrail_retries = config.get("guardrails.max_retries", 2)
         # --- Memory Decay Tracking (persisted between sessions) ---
@@ -123,29 +137,23 @@ class ChatManager:
             and self.memory_decay_interval > 0
         ):
             self.turn_counter = self.green_memories.get_turn_counter()
+            last_messages = self.storage_backend.get_messages(1)
+            last_message_previous_chat = (
+                last_messages[0] if last_messages else {}
+            )
+            self.last_chat_timestamp = last_message_previous_chat.get(
+                "timestamp"
+            )
+            self.last_chat_relative_time = format_relative_time(
+                self.last_chat_timestamp
+            )
 
-        # Render the system message template
-        self.system_message = self.template_manager.render(
-            "framework.chat_manager.system_prompt",
-            {
-                "skills_description_list": (
-                    ""
-                ),  # Will be populated by middleware
-            },
-        )
-
-        # Initialize Orakle middleware
+        # Fetch capabilities first
         if capabilities:
             self.capabilities = capabilities
         else:
-            self.capabilities = []
-
-        self.orakle_middleware = OrakleMiddleware(
-            llm=llm,
-            orakle_servers=orakle_servers,
-            system_message=self.system_message,
-            capabilities=capabilities,
-        )
+            fetcher = OrakleCapabilityFetcher(self.orakle_servers)
+            self.capabilities = fetcher.fetch_capabilities()
 
         # --- Reasoning Level Heuristic ---
         self.reasoning_heuristic_enabled = config.get(
@@ -158,13 +166,11 @@ class ChatManager:
             )
             logger.info("Reasoning level heuristic enabled.")
 
-        # Get capabilities from middleware
-        self.capabilities = self.orakle_middleware.capabilities
-
-        # Update system message with skills descriptions
-        skills_description_list = ""
+        # Format skills descriptions as a comma-separated list for the ephemeral hint
+        skills_names = []
         for skill in self.capabilities:
-            skills_description_list += "\n - " + skill["description"]
+            skills_names.append(skill["name"])
+        self.skills_hint_text = ", ".join(skills_names)
 
         # Check if the user profile is new to show an onboarding message
         user_memories_empty = (
@@ -181,14 +187,42 @@ class ChatManager:
         else:
             is_new_profile = False
 
-        # Update system message with skills descriptions
+        # Compute static-per-session context for the system prompt
+        # These values never change during the session → cache-friendly
+        self.recent_memories_summary = None
+        if self.memory_enabled and self.green_memories:
+            self.recent_memories_summary = (
+                self.green_memories.generate_recent_memories_summary()
+            )
+            if self.recent_memories_summary:
+                logger.info("Recent memories summary computed at session init.")
+
+        # Update system message with all static-per-session content
+        if self.last_chat_timestamp and not self.first_turn:
+            # Disable greeting advice after first turn
+            self.last_chat_timestamp = ""
+
         self.system_message = self.template_manager.render(
             "framework.chat_manager.system_prompt",
             {
-                "skills_description_list": skills_description_list,
                 "is_new_profile": is_new_profile,
+                "skills_hint_text": self.skills_hint_text,
+                "user_profile_summary": self.user_profile_summary or "",
+                "recent_memories_summary": self.recent_memories_summary or "",
+                "last_chat_timestamp": getattr(
+                    self, "last_chat_relative_time", None
+                ) or "",
             },
         )
+
+        # Initialize Orakle middleware with the rendered system message
+        self.orakle_middleware = OrakleMiddleware(
+            llm=llm,
+            orakle_servers=orakle_servers,
+            system_message=self.system_message,
+            capabilities=self.capabilities,
+        )
+
         self.llm.add_msg(self.system_message, self.chat_history, "system")
 
         # Initialize executor if either summary or decay is enabled
@@ -196,6 +230,12 @@ class ChatManager:
         if self.summary_enabled:
             self.summary_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="SummaryThread"
+            )
+
+        self.notification_executor = None
+        if self.notifications_enabled:
+            self.notification_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="NotificationThread"
             )
 
         self.decay_executor = None
@@ -216,6 +256,11 @@ class ChatManager:
             self.summary_in_progress = False
             self.current_summary = "-"
 
+        if self.notifications_enabled:
+            # Lock specifically for buffer operations
+            self.notifications_lock = threading.Lock()
+            self.notification_in_progress = False
+
     def update_llm(self, llm):
         self.llm = llm
         self.orakle_middleware.update_llm(llm)
@@ -226,7 +271,8 @@ class ChatManager:
         """Initializes memory components if they haven't been already."""
         if self.chat_memory is None:
             logger.info("Initializing ChatMemory on-demand...")
-            self.chat_memory = ChatMemory()
+            # TODO ahora esto necesita el storage
+            self.chat_memory = ChatMemory(storage_backend=self.storage_backend)
             logger.info("Chat memory initialized.")
 
         if self.green_memories is None:
@@ -237,7 +283,7 @@ class ChatManager:
             )
             logger.info("User Memories Manager initialized.")
             # Perform initial consolidation
-            logger.info("Processing existing messages for user profile...")
+            logger.info("Processing existing messages for GREEN memories...")
             self.green_memories.process_new_messages_for_update()
             logger.info("Message processing complete.")
 
@@ -686,6 +732,47 @@ class ChatManager:
         # Submit the task to our executor
         self.summary_executor.submit(_background_summary_task)
 
+    def _update_notifications_in_background(self):
+        """Trigger background task to update the notifications notification"""
+        # Check if notification is already in progress without locking the buffer
+        if self.notification_in_progress:
+            return
+
+        # Check if there are messages to summarize
+        with self.notifications_lock:
+            self.notification_in_progress = True
+
+        def _background_notification_task():
+            try:
+                self.app.notification_manager.consolidate_events()
+                pending_items = (
+                    self.app.notification_manager.get_and_clear_notifications()
+                )
+                _notifications_prompt = ""
+                for item in pending_items:
+                    _notifications_prompt += (
+                        f"- [{item['source']} - {item['timestamp']}]:"
+                        f" {item['summary']}\n"
+                    )
+                # Safely update the notifications_prompt with the lock
+                with self.notifications_lock:
+                    if _notifications_prompt:
+                        self.notifications_prompt = _notifications_prompt
+                    self.notification_in_progress = False
+                    logger.info(
+                        "Generated new notifications:"
+                        f" {self.notifications_prompt[:50]}..."
+                    )
+
+            except Exception as e:
+                logger.error(f"Error in background notification task: {e}")
+                with self.notifications_lock:
+                    self.notification_in_progress = False
+                    self.notifications_prompt = ""
+
+        # Submit the task to our executor
+        self.notification_executor.submit(_background_notification_task)
+
     def shutdown(self):
         """Saves persistent state and gracefully shuts down background threads."""
         logger.info("Shutting down thread executors")
@@ -720,12 +807,14 @@ class ChatManager:
             with self.decay_lock:
                 self.decay_in_progress = False
 
-    def trim_context(self, max_tokens=None):
+    def trim_context(self, max_tokens=None, reserved_tokens=0):
         """
         Trim the chat history to stay within token limits while preserving context.
 
         Args:
             max_tokens: Maximum tokens to allow (defaults to model's context window)
+            reserved_tokens: Tokens to reserve for per-turn dynamic injections
+                (e.g. system_hint content appended to the shadow copy)
         """
         if not self.chat_history:
             logger.info("No chat history to trim")
@@ -745,9 +834,14 @@ class ChatManager:
 
         system_message = self.chat_history[0]
         system_tokens = system_message["tokens"]
-        available_tokens = max_tokens - system_tokens
+        available_tokens = max_tokens - system_tokens - reserved_tokens
 
         logger.info(f"System message uses {system_tokens} tokens")
+        if reserved_tokens > 0:
+            logger.info(
+                f"Reserving {reserved_tokens} tokens for per-turn"
+                " dynamic hint injection"
+            )
         logger.info(
             f"Available tokens for conversation: {available_tokens} tokens"
         )
@@ -869,6 +963,36 @@ class ChatManager:
 
         self.chat_history = new_history
 
+    def _handle_test_tts_command(self, question: str, stream: str):
+        parts = question.strip().split(" ", 1)
+        if len(parts) < 1:
+            usage_msg = "Usage: /testtts <content>"
+            yield ndjson("signal", "loading", {"state": "start"})
+            yield ndjson(
+                "message",
+                "stream",
+                {
+                    "content": usage_msg,
+                    "flags": {"command": False, "audio": False},
+                },
+            )
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+            return
+
+        message = parts[1]
+        if stream == "json":
+            yield ndjson("signal", "loading", {"state": "start"})
+            audio_file, duration = self.tts.generate_audio(message)
+            event_data = self._create_audio_stream_event(
+                audio_file=audio_file,
+                text_content=message,
+                duration=duration,
+            )
+            yield ndjson("message", "stream", event_data)
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+
     def _handle_test_doc_view_stream(self, question: str, stream: str):
         parts = question.strip().split(" ", 1)
         if len(parts) < 2 or "," not in parts[1]:
@@ -978,10 +1102,7 @@ class ChatManager:
                 "query": f"Test #{self.nexus_test}",
             }
             # Create a descriptive message for the chat history
-            history_message = (
-                "Nexus component data was generated and sent to the UI. "
-                f"Data: {json.dumps(nexus_data)}"
-            )
+            history_message = f"_orakle_nexus_data_|{json.dumps(nexus_data)}"
             self.llm.add_msg(history_message, self.chat_history, "assistant")
             yield ndjson("ui", "renderNexus", nexus_data)
             yield ndjson("signal", "loading", {"state": "stop"})
@@ -1098,6 +1219,9 @@ class ChatManager:
         if command.lower().startswith("/testnexus"):
             return self._handle_test_nexus_command(command, stream)
 
+        if command.lower().startswith("/tts"):
+            return self._handle_test_tts_command(command, stream)
+
         return None
 
     def _calculate_reasoning_level_heuristic(self, query: str) -> float:
@@ -1106,7 +1230,16 @@ class ChatManager:
         This rule-based approach identifies linguistic features that suggest a need for
         reasoning, such as specific verbs, question structures, and comparative language.
         """
-        if not self.reasoning_heuristic_enabled:
+        # TEMP disable this heuristic in LiteLLM models
+        selected_provider_id = config.get("llm.selected_provider", "")
+        if (
+            not self.reasoning_heuristic_enabled
+            or not selected_provider_id.startswith("ollama/")
+        ):
+            logger.info(
+                "Skipping heuristic reasoning level calculation for provider"
+                f" {selected_provider_id}"
+            )
             return 0.0
 
         # Basic filter for very short queries that are unlikely to require reasoning
@@ -1119,15 +1252,39 @@ class ChatManager:
         # --- Define linguistic features and their weights ---
         # High-impact verbs that strongly suggest analysis, synthesis, or evaluation
         reasoning_verbs = {
-            "analyze", "assess", "compare", "conduct", "contrast", "critique",
-            "describe", "design", "develop", "differentiate", "evaluate",
-            "explain", "find", "formulate", "investigate", "justify",
-            "predict", "recommend", "suggest", "summarize", "synthesize",
-            "write", "tell", "analysis", "scrutinize"
+            "analyze",
+            "assess",
+            "compare",
+            "conduct",
+            "contrast",
+            "critique",
+            "describe",
+            "design",
+            "develop",
+            "differentiate",
+            "evaluate",
+            "explain",
+            "find",
+            "formulate",
+            "investigate",
+            "justify",
+            "predict",
+            "recommend",
+            "suggest",
+            "summarize",
+            "synthesize",
+            "write",
+            "tell",
+            "analysis",
+            "scrutinize",
         }
         # Phrases that indicate hypothetical or causal reasoning
         hypothetical_phrases = [
-            "what if", "what would", "what are", "what is", "would you"
+            "what if",
+            "what would",
+            "what are",
+            "what is",
+            "would you",
         ]
         # Interrogatives that often require explanation
         explanatory_interrogatives = {"why", "how", "what"}
@@ -1237,6 +1394,7 @@ class ChatManager:
         self,
         turn_chat_history: List[dict],
         reasoning_level_heuristic: float,
+        memories: Optional[List[Dict]] = None,
     ) -> Generator[Union[str, dict, _GuardrailRetrySignal], None, None]:
         """
         Streams LLM response, checks for guardrail violations, and handles retries.
@@ -1248,6 +1406,7 @@ class ChatManager:
         Args:
             turn_chat_history: The chat history for the current turn.
             reasoning_level_heuristic: The calculated reasoning level for the query.
+            memories: Optional list of memory dictionaries for context
 
         Yields:
             Union[str, dict, _GuardrailRetrySignal]: Chunks of the processed LLM
@@ -1262,19 +1421,26 @@ class ChatManager:
                 reasoning_level=reasoning_level_heuristic,
             )
 
-            processed_stream = self._process_thinking_markers(llm_response_stream)
+            processed_stream = self._process_thinking_markers(
+                llm_response_stream
+            )
 
             stream_processor = self.orakle_middleware.process_stream(
                 processed_stream,
-                self,
+                self.chat_history,
                 reasoning_level_heuristic=reasoning_level_heuristic,
+                current_language=self.current_language,
+                memories=memories,
             )
 
             has_guardrail = False
             guardrail_message = ""
 
             for chunk in stream_processor:
-                if isinstance(chunk, str) and "[__AINARA_GUARDRAIL__]" in chunk:
+                if (
+                    isinstance(chunk, str)
+                    and "[__AINARA_GUARDRAIL__]" in chunk
+                ):
                     has_guardrail = True
                     guardrail_message += chunk
                     # Stop streaming to the client for this attempt
@@ -1289,13 +1455,6 @@ class ChatManager:
                     f" {guardrail_retries}/{self.max_guardrail_retries}):"
                     f" {guardrail_message.strip()}"
                 )
-
-                # Clean up any temporary guardrail messages from history for the next attempt
-                turn_chat_history[:] = [
-                    msg
-                    for msg in turn_chat_history
-                    if "[__AINARA_GUARDRAIL__]" not in msg.get("content", "")
-                ]
 
                 if guardrail_retries > self.max_guardrail_retries:
                     logger.error("Max retries reached. Responding with error.")
@@ -1339,6 +1498,12 @@ class ChatManager:
                 - "cli": CLI streaming with prints and loading animation
                 - "json": Streams JSON events in NDJSON format
         """
+
+        self.current_lang_code = config.get("stt.language", "en")
+        self.current_language = languages.get(
+            alpha_2=self.current_lang_code
+        ).name or "English"
+        logger.info("Will answer in language: " + self.current_language)
 
         # Handle legacy bool value for backward compatibility
         if isinstance(stream, bool):
@@ -1411,9 +1576,7 @@ class ChatManager:
             if is_sticky:
                 self.chat_history[-1]["sticky"] = True
 
-            # --- Summary and Memory Injection ---
-            turn_chat_history = self.chat_history
-
+            # --- Summary Update ---
             # Atomically check and apply any new summary
             if self.summary_enabled:
                 with self.buffer_lock:  # Use the existing lock for consistency
@@ -1424,51 +1587,49 @@ class ChatManager:
                         )
                         logger.info("Retrieved new summary for application")
 
-            # Prepare combined system prompt content
-            final_system_content = self.system_message
+            # ============================================================
+            # PHASE 1: Build system_hint_content (per-turn dynamic content)
+            # ============================================================
+            # Only content that changes per turn goes here. Static-per-
+            # session content (user_profile_summary, recent_memories_summary,
+            # last_chat_timestamp) is in the system prompt template.
+
+            system_hint_content = ""
+
+            # --- Skills Names Hint (compact per-turn enforcement) ---
+            # TODO Apparently a good idea, but seems to confuse smaller models
+            # if self.skills_hint_text:
+            #     system_hint_content += (
+            #         "These ORAKLE capabilities are available:"
+            #         f" {self.skills_hint_text}. If the user query can be"
+            #         " fulfilled using them, you must use the"
+            #         " <orakle>full query intent</orakle>"
+            #     )
+            #     if self.first_turn:
+            #         self.first_turn = False
+            #         logger.info("SKILLS HINT injected (first turn)")
+
+            # --- Conversation Summary (dynamic, updated by background thread) ---
             if (
                 self.summary_enabled
                 and self.current_summary
                 and self.current_summary != "-"
             ):
-                final_system_content += (
-                    f"\n\n--- Conversation Summary ---\n{self.current_summary}"
+                system_hint_content += (
+                    f"\n\n--- Conversation Summary ---\n"
+                    f"{self.current_summary}"
                 )
 
-            # --- User Profile Injection (from cached summary) ---
-            if self.memory_enabled and self.user_profile_summary:
-                # final_system_content += f"\n\n--- Next paragraph contains key information about the user, possibly including the user's name, which I MUST take into account:\n{self.user_profile_summary}"
-                final_system_content += (
-                    "\n\n--- IMPORTANT: The following is key information"
-                    " about the user you are talking to. You MUST use this"
-                    " information, such as their name, to personalize your"
-                    f" responses. ---\n{self.user_profile_summary}"
-                )
-
-            # --- Recent Memories Summary Injection ---
+            # --- Context Memories (dynamic per turn) ---
+            self.processed_memories_for_template = None
             if self.memory_enabled and self.green_memories:
-                recent_memories_summary = (
-                    self.green_memories.generate_recent_memories_summary()
-                )
-                if recent_memories_summary:
-                    final_system_content += (
-                        "\n\n--- This is a summary of topics and facts that"
-                        " have been discussed in the last conversations. Use this to maintain"
-                        " conversation continuity."
-                        f" ---\n{recent_memories_summary}"
-                    )
-
-            # --- Context Memories ---
-            if self.memory_enabled and self.green_memories:
-                # 1. Create a search query from the last few turns for better context
+                # Build search query from recent turns for semantic search
                 history_for_search = self.prepare_chat_history_for_skill()[
                     -10:
                 ]  # Last 5 exchanges
 
                 search_context_parts = []
                 if self.current_summary and self.current_summary != "-":
-                    # add the current conversation summary as the first element
-                    # of the search_context dict
                     summary_text = (
                         "This is a summary of the conversation so far:"
                         f" {self.current_summary}"
@@ -1484,46 +1645,104 @@ class ChatManager:
                 search_context_parts.append(history_text)
                 search_context = "\n\n".join(search_context_parts)
 
-                # logger.info(f"search_context: {search_context}")
-
                 relevant_memories = self.green_memories.get_relevant_memories(
                     search_context
                 )
-                # logger.info(f"relevant_memories: {relevant_memories}")
 
                 if relevant_memories:
-                    # Pre-process memories to format the relevance score for display
-                    processed_memories_for_template = []
+                    # Pre-process memories to format the relevance score
+                    self.processed_memories_for_template = []
                     for mem in relevant_memories:
                         processed_mem = mem.copy()
                         processed_mem["relevance_score"] = (
                             f"{processed_mem.get('relevance', 0.0):.2f}"
                         )
-                        processed_memories_for_template.append(processed_mem)
+                        self.processed_memories_for_template.append(
+                            processed_mem
+                        )
 
                     logger.info(
                         "Injecting"
-                        f" {len(processed_memories_for_template)} dynamically"
-                        " retrieved memories into context."
+                        f" {len(self.processed_memories_for_template)}"
+                        " dynamically retrieved memories into hint."
                     )
                     context_memories_prompt = self.template_manager.render(
                         "framework.chat_manager.user_memories_prompt",
-                        {"memories": processed_memories_for_template},
+                        {"memories": self.processed_memories_for_template},
                     )
-                    final_system_content += f"\n\n{context_memories_prompt}"
-                    # logger.info(f"context_memories_prompt: {context_memories_prompt}")
+                    system_hint_content += f"\n\n{context_memories_prompt}"
                 else:
-                    logger.info("No relevant memories found to be injected.")
+                    logger.info("No relevant memories found for this turn.")
 
-            # Update the single system message
-            self.chat_history[0]["content"] = final_system_content
-            self.chat_history[0]["tokens"] = self.llm._get_token_count(
-                final_system_content, "system"
-            )
-            logger.info("Updated system prompt with summary and memories.")
+            # --- Notifications (dynamic, fire-and-forget) ---
+            notifications_snapshot = ""
+            if (
+                self.app
+                and hasattr(self.app, "notification_manager")
+                and self.notifications_enabled
+                and self.notifications_prompt
+            ):
+                with self.notifications_lock:
+                    notifications_snapshot = self.notifications_prompt
+                    self.notifications_prompt = ""
 
-            # Trim context *after* injecting memories to ensure we are within limits
-            self.trim_context()
+                if notifications_snapshot:
+                    logger.info(
+                        "Injecting notifications into system hint"
+                    )
+                    system_hint_content += (
+                        "\n\nIMPORTANT: The following are system"
+                        " notifications that just arrived. They are NOT"
+                        " part of the user's message above, report to the"
+                        " user only those deserving important attention."
+                        " Instructions: Notify the user just once about a"
+                        " particular event.\n"
+                        f"NOTIFICATIONS:\n{notifications_snapshot}"
+                    )
+
+            # Wrap in <system_hint> tags if there's any content
+            if system_hint_content.strip():
+                system_hint_content = (
+                    f"\n\n<system_hint>{system_hint_content}"
+                    "\n</system_hint>"
+                )
+
+            # ============================================================
+            # PHASE 2: Trim context with reserved budget for the hint
+            # ============================================================
+            hint_token_count = 0
+            if system_hint_content:
+                hint_token_count = self.llm._get_token_count(
+                    system_hint_content, "user"
+                )
+                logger.info(
+                    f"System hint will use {hint_token_count} tokens"
+                )
+
+            self.trim_context(reserved_tokens=hint_token_count)
+
+            # ============================================================
+            # PHASE 3: Build shadow copy and inject the hint
+            # ============================================================
+            shadow_history = copy.deepcopy(self.chat_history)
+
+            if system_hint_content:
+                if (
+                    shadow_history
+                    and shadow_history[-1]["role"] == "user"
+                ):
+                    shadow_history[-1]["content"] += system_hint_content
+                    shadow_history[-1]["tokens"] = (
+                        self.llm._get_token_count(
+                            shadow_history[-1]["content"], "user"
+                        )
+                    )
+                else:
+                    logger.warning(
+                        "Unexpected conversation format: last message is"
+                        " not from user, injecting hint in system prompt"
+                    )
+                    shadow_history[0]["content"] += system_hint_content
 
             # Now, process and stream the final response (successful or error)
             processed_answer = ""
@@ -1533,7 +1752,9 @@ class ChatManager:
             doc_format = "plaintext"
 
             stream_generator = self._stream_and_process_with_guardrails(
-                turn_chat_history, reasoning_level_heuristic
+                shadow_history,
+                reasoning_level_heuristic,
+                memories=self.processed_memories_for_template,
             )
 
             for chunk in stream_generator:
@@ -1586,8 +1807,7 @@ class ChatManager:
 
                     # Create a descriptive message for the chat history
                     history_message = (
-                        "Nexus component data was generated and sent to the"
-                        f" UI. Data: {json.dumps(nexus_data)}"
+                        f"_orakle_nexus_data_|{json.dumps(nexus_data)}"
                     )
                     processed_answer += f"\n{history_message}\n"
 
@@ -1731,6 +1951,9 @@ class ChatManager:
             # Trigger background summary generation
             if self.summary_enabled:
                 self._update_summary_in_background()
+
+            if self.notifications_enabled:
+                self._update_notifications_in_background()
 
             # --- Memory Decay ---
             if self.memory_enabled and self.memory_decay_interval > 0:

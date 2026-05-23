@@ -58,7 +58,7 @@ class DocumentIndexManager:
             collection_name="user_documents",
             embedding_model=self.config.get(
                 "document_index.embedding_model",
-                "sentence-transformers/all-mpnet-base-v2",
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             ),
         )
         logger.info(f"Document vector storage initialized at {vector_db_path}")

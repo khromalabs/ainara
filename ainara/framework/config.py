@@ -17,7 +17,7 @@
 # Lesser General Public License for more details.
 
 import copy
-# import logging
+import logging
 import os
 import shutil
 import sys
@@ -26,6 +26,8 @@ from pathlib import Path
 import yaml
 import json
 from jsonschema import Draft7Validator
+
+logger = logging.getLogger(__name__)
 
 from ainara.framework.platform_utils import (
     get_default_cache_dir,
@@ -110,15 +112,15 @@ class ConfigManager:
         dry_run = False
 
         if self.needs_load():
-            print("INFO: Configuration file has changed won't update")
+            logger.info("INFO: Configuration file has changed won't update")
             dry_run = True
 
         default_path = self._get_default_config_path()
 
         if not default_path:
-            print("ERROR: Default configuration template not found.")
-            print("Ainara cannot start without a configuration file.")
-            print(
+            logger.info("ERROR: Default configuration template not found.")
+            logger.info("Ainara cannot start without a configuration file.")
+            logger.info(
                 "Please ensure the file 'resources/ainara.yaml.defaults'"
                 " exists."
             )
@@ -129,9 +131,12 @@ class ConfigManager:
         os.makedirs(target_dir, exist_ok=True)
 
         if not dry_run:
+            # backup previous config if exists
+            if os.path.isfile(target_path):
+                 shutil.copy(target_path, f"{target_path}.bak")
             # Copy the default config
             shutil.copy(default_path, target_path)
-            print(f"Created new configuration file at: {target_path}")
+            logger.info(f"Created new configuration file at: {target_path}")
 
         return target_path
 
@@ -148,7 +153,7 @@ class ConfigManager:
             if config_path.exists():
                 try:
                     if self.config and not force and not self.needs_load():
-                        print("Avoiding configuration reload")
+                        logger.info("Avoiding configuration reload")
                         return  # File hasn't changed since last load
 
                     with open(config_path) as f:
@@ -157,7 +162,7 @@ class ConfigManager:
                     # --- Validate Configuration ---
                     schema_path = self._get_schema_path()
                     if not schema_path:
-                        print("WARNING: Schema not found, skipping validation.")
+                        logger.info("WARNING: Schema not found, skipping validation.")
                         self.config = user_config
                     else:
                         with open(schema_path) as f:
@@ -174,13 +179,13 @@ class ConfigManager:
                                 f"{'.'.join(map(str, e.path)) or 'root'}: {e.message}"
                                 for e in errors
                             ]
-                            print("ERROR: Configuration validation failed. Attempting to restore invalid sections from defaults.")
+                            logger.info("ERROR: Configuration validation failed. Attempting to restore invalid sections from defaults.")
                             for error in self.validation_errors:
-                                print(f" - {error}")
+                                logger.info(f" - {error}")
 
                             default_path = self._get_default_config_path()
                             if not default_path:
-                                print("ERROR: Default configuration not found. Re-creating entire configuration file.")
+                                logger.info("ERROR: Default configuration not found. Re-creating entire configuration file.")
                                 self.create_default_config(config_path)
                                 with open(config_path) as f:
                                     self.config = yaml.safe_load(f) or {}
@@ -215,14 +220,14 @@ class ConfigManager:
                             self.config = corrected_config
                             with open(config_path, "w") as f:
                                 yaml.dump(self.config, f, default_flow_style=False)
-                            print(f"Configuration automatically corrected and saved to: {config_path}")
+                            logger.info(f"Configuration automatically corrected and saved to: {config_path}")
                         else:
                             self.config = user_config
                     # --- End Validation ---
 
                     self.config_file_path = config_path
                     self.last_modified_time = os.path.getmtime(config_path)
-                    print(f"Configuration loaded from: {config_path}")
+                    logger.info(f"Configuration loaded from: {config_path}")
 
                     # Set up log directory in config
                     if "logging" not in self.config:
@@ -279,15 +284,16 @@ class ConfigManager:
 
                     return
                 except Exception as e:
-                    print(
+                    logger.info(
                         f"Error loading configuration from {config_path}: {e}"
                     )
-                    # trace = traceback.print_exc()
-                    # print(f"Traceback: {trace}")
+                    # trace = traceback.logger.info_exc()
+                    # logger.info(f"Traceback: {trace}")
 
         # If we get here, no config file was found - create one
         # Use the first path from the OS-specific list (skip env var path)
         default_config_location = self._get_config_paths()[0]
+
         self.config_file_path = self.create_default_config(
             default_config_location
         )
@@ -308,7 +314,7 @@ class ConfigManager:
         """Get a config value using dot notation"""
         # Check if the config file has been modified and reload if necessary
         if self.needs_load():
-            print("INFO: Configuration file has changed, reloading.")
+            logger.info("INFO: Configuration file has changed, reloading.")
             self.load_config()
 
         keys = key_path.split(".")
@@ -327,16 +333,21 @@ class ConfigManager:
         if not self.config_file_path:
             raise ValueError("No configuration file path set")
 
+        # backup previous config if exists
+        if os.path.isfile(self.config_file_path):
+            shutil.copy(self.config_file_path, f"{self.config_file_path}.bak")
+
         with open(self.config_file_path, "w") as f:
+            # backup original file
             yaml.dump(self.config, f, default_flow_style=False)
-            print(f"Configuration saved to: {self.config_file_path}")
+            logger.info(f"Configuration saved to: {self.config_file_path}")
         self.last_modified_time = os.path.getmtime(self.config_file_path)
 
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""
 
         if self.needs_load():
-            print("INFO: Configuration file has changed, reloading.")
+            logger.info("INFO: Configuration file has changed, reloading.")
             self.load_config()
             return True
 
@@ -471,7 +482,7 @@ class ConfigManager:
         # a more formal schema validation
 
         if self.needs_load():
-            print("INFO: Configuration file has changed, reloading.")
+            logger.info("INFO: Configuration file has changed, reloading.")
             self.load_config()
 
         result = {"valid": True, "errors": []}

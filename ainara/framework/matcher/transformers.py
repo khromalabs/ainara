@@ -17,17 +17,18 @@
 # Lesser General Public License for more details.
 
 import logging
-import pprint
+# import pprint
 import re
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
 try:
-    from sentence_transformers import SentenceTransformer
-    from sentence_transformers.util import cos_sim
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
+    from fastembed import TextEmbedding
+
+    FASTEMBED_AVAILABLE = True
 except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    FASTEMBED_AVAILABLE = False
 
 from ainara.framework.config import ConfigManager
 from ainara.framework.utils import load_spacy_model
@@ -43,7 +44,10 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
     understanding and intelligent skill matching.
     """
 
-    def __init__(self, model_name: str = "sentence-transformers/all-mpnet-base-v2"):
+    def __init__(
+        self,
+        model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    ):
         """
         Initialize the matcher with a specified transformer model.
 
@@ -55,16 +59,16 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         self.model = None
         self.config = ConfigManager()
 
-        if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        if not FASTEMBED_AVAILABLE:
             raise ImportError(
-                "sentence-transformers library not found. Please run 'pip"
-                " install sentence-transformers'."
+                "fastembed library not found. Please run 'pip"
+                " install fastembed'."
             )
 
         try:
-            self.model = SentenceTransformer(
-                model_name,
-                cache_folder=self.config.get("cache.directory")
+            self.model = TextEmbedding(
+                model_name=model_name,
+                cache_dir=self.config.get("cache.directory"),
             )
             logger.info(
                 "Initialized OrakleMatcherTransformers with model:"
@@ -76,7 +80,10 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
 
         self.nlp = load_spacy_model()
         if not self.nlp:
-            logger.error("Failed to load spaCy model. Some functionality may be limited.")
+            logger.error(
+                "Failed to load spaCy model. Some functionality may be"
+                " limited."
+            )
 
     def register_skill(
         self, skill_id: str, description: str, metadata: Optional[Dict] = None
@@ -156,7 +163,10 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         if text in self.embeddings_cache:
             return self.embeddings_cache[text]
 
-        embedding = self.model.encode(text)
+        # fastembed returns a generator of numpy arrays
+        embedding_gen = self.model.embed([text])
+        embedding = next(embedding_gen)
+
         self.embeddings_cache[text] = embedding
         return embedding
 
@@ -166,7 +176,18 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         """
         Calculate cosine similarity between query and skill embeddings
         """
-        return cos_sim(query_embedding, skill_embedding).item()
+        # Calculate dot product
+        dot_product = np.dot(query_embedding, skill_embedding)
+
+        # Calculate norms
+        norm_query = np.linalg.norm(query_embedding)
+        norm_skill = np.linalg.norm(skill_embedding)
+
+        # Avoid division by zero
+        if norm_query == 0 or norm_skill == 0:
+            return 0.0
+
+        return dot_product / (norm_query * norm_skill)
 
     def _clean_query(self, query: str) -> str:
         """
@@ -186,11 +207,25 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             )
             return query  # Fallback if spaCy failed to load
 
+        # Pre-process to catch file paths before spaCy tokenizes them
+        path_pattern = re.compile(
+            r"(?:"
+            r'["\'](?:[a-zA-Z]:\\|~?/|\.\.?/)[^"\']*["\']'  # Quoted paths (handles spaces)
+            r"|"
+            r"[a-zA-Z]:\\[\w.-]+(?:\\[\w.-]+)*\\?"  # Windows paths
+            r"|"
+            r"(?:~|\.\.?|)(?:/[\w.-]+)+/?"  # Unix/Mac/Relative paths
+            r")"
+        )
+        query = re.sub(path_pattern, " __PATH_TOKEN__ ", query)
+
         doc = self.nlp(query)
         cleaned_tokens = []
 
         for token in doc:
-            if token.like_url:
+            if token.text.lower() == "__path_token__":
+                cleaned_tokens.append("[PATH]")
+            elif token.like_url:
                 cleaned_tokens.append("[URL]")
             elif token.like_email:
                 cleaned_tokens.append("[EMAIL]")
@@ -204,7 +239,7 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
         return " ".join(cleaned_tokens)
 
     def match(
-        self, query: str, threshold: float = 0.15, top_k: int = 6
+        self, query: str, threshold: float = 0.05, top_k: int = 6
     ) -> List[Dict[str, Any]]:
         """
         Find the best matching skills for a given query.
@@ -218,33 +253,45 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
             List of matching skills with scores
         """
 
-        # Clean the query to remove noise like URLs and stopwords
-        cleaned_query = self._clean_query(query)
-        logger.info(f"Original query: {query}")
-        logger.info(f"Cleaned query: {cleaned_query}")
+        logger.info("MATCH query: " + query)
+        query_embedding = ""
 
-        query_embedding = self._get_embedding(cleaned_query)
+        do_score_filtering = len(self.skills_registry.items()) > top_k
+        logger.info(f"MATCH do_score_filtering: {do_score_filtering}")
         matches = []
 
-        logger.info("MATCH query: " + query)  # Original query for context
-        logger.info("MATCH (cleaned) query for embedding: " + cleaned_query)
-        logger.info("MATCH threshold: " + str(threshold))
-        logger.info("MATCH top_k: " + str(top_k))
+        if do_score_filtering:
+            # Clean the query to remove noise like URLs and stopwords
+            cleaned_query = self._clean_query(query)
+            logger.info("MATCH cleaned_query: " + cleaned_query)
+            query_embedding = self._get_embedding(cleaned_query)
+            logger.debug("MATCH threshold: " + str(threshold))
+            logger.debug("MATCH top_k: " + str(top_k))
 
         for skill_id, skill_data in self.skills_registry.items():
             embeddings_boost_factor = skill_data.get("metadata", {}).get(
                 "embeddings_boost_factor", 1.0
             )
-            # logger.info(f"MATCH embeddings_boost_factor: {embeddings_boost_factor}")
+            logger.debug(
+                f"MATCH embeddings_boost_factor: {embeddings_boost_factor}"
+            )
             similarity = (
-                self._calculate_similarity(
-                    query_embedding, skill_data["embedding"]
+                (
+                    self._calculate_similarity(
+                        query_embedding, skill_data["embedding"]
+                    )
+                    * embeddings_boost_factor
                 )
-                * embeddings_boost_factor
+                if do_score_filtering
+                else 1
             )
 
             # skills with a boost factor of 3 or more get always included
-            if similarity >= threshold or embeddings_boost_factor >= 3:
+            if (
+                not do_score_filtering
+                or similarity >= threshold
+                or embeddings_boost_factor >= 3
+            ):
                 matches.append(
                     {
                         "skill_id": skill_id,
@@ -257,16 +304,17 @@ class OrakleMatcherTransformers(OrakleMatcherBase):
                 )
 
         # Sort by score and usage count
-        matches.sort(
-            key=lambda x: (
-                0  # Skills with boost_factor >= 3 are always present
-                if self.skills_registry[x["skill_id"]]
-                .get("metadata", {})
-                .get("embeddings_boost_factor", 1.0)
-                >= 3
-                else 1-x["score"]
+        if do_score_filtering:
+            matches.sort(
+                key=lambda x: (
+                    0  # Skills with boost_factor >= 3 are always present
+                    if self.skills_registry[x["skill_id"]]
+                    .get("metadata", {})
+                    .get("embeddings_boost_factor", 1.0)
+                    >= 3
+                    else 1 - x["score"]
+                )
             )
-        )
+            return matches[:top_k]
 
-        logger.info("MATCH MATCHES: " + pprint.pformat(matches))
-        return matches[:top_k]
+        return matches
