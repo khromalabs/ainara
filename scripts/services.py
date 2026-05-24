@@ -36,15 +36,18 @@ LOG_DIR = "/tmp"
 ORAKLE_LOG = os.path.join(LOG_DIR, "orakle.log")
 PYBRIDGE_LOG = os.path.join(LOG_DIR, "pybridge.log")
 OLLAMA_LOG = os.path.join(LOG_DIR, "ollama.log")
+BUREAU_LOG = os.path.join(LOG_DIR, "bureau.log")
 
 # Service commands
 ORAKLE_CMD = "python -m ainara.orakle.server"
 PYBRIDGE_CMD = "python -m ainara.framework.pybridge"
+BUREAU_CMD = "python -m ainara.bureau.server"
 OLLAMA_CMD = "ollama"
 
 # Service health endpoints
 ORAKLE_HEALTH_URL = "http://127.0.0.1:8100/health"
 PYBRIDGE_HEALTH_URL = "http://127.0.0.1:8101/health"
+BUREAU_HEALTH_URL = "http://127.0.0.1:8010/health"
 
 # Frontend command
 POLARIS_CMD = "npm run start"
@@ -72,9 +75,9 @@ def check_service_health(url, service_name, timeout=10):
         response_json = json.loads(response.text)
         # print(pprint.pformat(response_json))
         # print("-----------")
-        if (
-            response.status_code == 200
-            and response_json["status"].strip().lower() == "ok"
+        if response.status_code == 200 and (
+            response_json["status"].strip().lower() == "ok"
+            or response_json["status"].strip().lower() == "healthy"
         ):
             return True
         else:
@@ -98,7 +101,7 @@ def watch_services_health(
         global WATCH_SERVICES_HEALTH_FIRST
         print("Monitoring...")
         fails = 0
-        fails_limit = 100
+        fails_limit = 20
         was_unhealthy = False
         polaris_started = False
 
@@ -230,6 +233,7 @@ def get_services_status():
         "pybridge": (
             "running" if is_service_running(PYBRIDGE_CMD) else "stopped"
         ),
+        "bureau": "running" if is_service_running(BUREAU_CMD) else "stopped",
     }
     status["ollama"] = (
         "running"
@@ -246,6 +250,7 @@ def stop_services():
         service_identifiers = {
             "orakle": "ainara.orakle.server",
             "pybridge": "ainara.framework.pybridge",
+            "bureau": "ainara.bureau.server",
         }
         if argsg.start_ollama:
             service_identifiers["ollama"] = OLLAMA_CMD
@@ -288,7 +293,7 @@ def stop_services():
                     pass
 
         # Clean logs
-        for log_file in [ORAKLE_LOG, PYBRIDGE_LOG, OLLAMA_LOG]:
+        for log_file in [ORAKLE_LOG, PYBRIDGE_LOG, OLLAMA_LOG, BUREAU_LOG]:
             if os.path.exists(log_file):
                 os.remove(log_file)
 
@@ -310,6 +315,13 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
     elif service == "pybridge":
         cmd = PYBRIDGE_CMD
         log_file = PYBRIDGE_LOG
+        args = []
+        # Add profiling arguments if enabled
+        if argsg.enable_profiling:
+            args.extend(["--profile"])
+    elif service == "bureau":
+        cmd = BUREAU_CMD
+        log_file = BUREAU_LOG
         args = []
         # Add profiling arguments if enabled
         if argsg.enable_profiling:
@@ -362,7 +374,7 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
             # If we're using a venv and this is a Python service, use the venv python
             # move one directory up
             # cwd = os.getcwd()
-            if venv_active and service in ["orakle", "pybridge"]:
+            if venv_active and service in ["orakle", "pybridge", "bureau"]:
                 # Get the module part from the command
                 module = cmd.split(" -m ")[1]
 
@@ -447,6 +459,7 @@ def tail_logs():
         colors = {
             "orakle": "\033[31m",  # Red
             "pybridge": "\033[33m",  # Yellow
+            "bureau": "\033[34m",  # Yellow
             # "whisper": "\033[32m",  # Green
             "ollama": "\033[36m",  # Cyan
         }
@@ -477,6 +490,10 @@ def tail_logs():
         if not argsg.skip_pybridge:
             log_files["pybridge"] = open(PYBRIDGE_LOG, "r")
             log_positions["pybridge"] = 0
+
+        if not argsg.skip_bureau:
+            log_files["bureau"] = open(BUREAU_LOG, "r")
+            log_positions["bureau"] = 0
 
         if argsg.start_ollama:
             log_files["ollama"] = open(OLLAMA_LOG, "r")
@@ -577,6 +594,11 @@ def main():
         help="Skip starting the Pybridge server",
     )
     parser.add_argument(
+        "--skip-bureau",
+        action="store_true",
+        help="Skip starting the Bureau server",
+    )
+    parser.add_argument(
         "--start-ollama",
         action="store_true",
         help="Start the Ollama LLM server (disabled by default)",
@@ -619,7 +641,10 @@ def main():
         "--health-interval",
         type=int,
         default=10,
-        help="Interval in seconds between health checks when enabled (default: 30)",
+        help=(
+            "Interval in seconds between health checks when enabled"
+            " (default: 30)"
+        ),
     )
     parser.add_argument(
         "--start-polaris",
@@ -650,6 +675,7 @@ def main():
         print("Service Status:")
         print(f"  Orakle:   {status['orakle']}")
         print(f"  Pybridge: {status['pybridge']}")
+        print(f"  Bureau: {status['bureau']}")
         print(f"  Ollama:   {status['ollama']}")
         if not argsg.start_ollama:
             print(
@@ -715,6 +741,15 @@ def main():
         "pybridge", args, results, venv_active, venv_path
     )
 
+    # Wait a bit before starting Bureau
+    time.sleep(5)
+
+    # Start Bureau
+    print("Starting Bureau...")
+    service_failed = check_and_start_service(
+        "bureau", args, results, venv_active, venv_path
+    )
+
     # If a service failed and we're not forcing, stop everything and exit
     if handle_service_failure(service_failed, results):
         return 1
@@ -758,9 +793,13 @@ def main():
                 services_to_watch["orakle"] = ORAKLE_HEALTH_URL
             if not args.skip_pybridge:
                 services_to_watch["pybridge"] = PYBRIDGE_HEALTH_URL
+            if not args.skip_bureau:
+                services_to_watch["bureau"] = BUREAU_HEALTH_URL
 
             if services_to_watch:
-                watch_services_health(services_to_watch, args.start_polaris, args.health_interval)
+                watch_services_health(
+                    services_to_watch, args.start_polaris, args.health_interval
+                )
             else:
                 print("No services to monitor for health.")
                 print("Running...")
