@@ -86,8 +86,6 @@ class Conductor:
     and orchestrates DAG-based agent execution with a per-run scratchpad.
 
     Future improvement ideas:
-    - Conditional branching: skip steps based on previous results
-      (e.g. don't run trader if screener found no setups)
     - Reflection loops: a reviewer step that can send results back
       for refinement before proceeding
     - Human-in-the-loop: a 'type: approval' step that pauses the DAG
