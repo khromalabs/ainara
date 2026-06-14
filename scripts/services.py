@@ -62,19 +62,21 @@ VENV_PATHS = [
     ),
 ]
 
-WATCH_SERVICES_HEALTH_FIRST = True
+# Watchdog configuration
+HEALTH_CHECK_TIMEOUT = 3  # Seconds to wait for a health endpoint response
+RESTART_GRACE_PERIOD = 30  # Seconds to wait for a service to become healthy after restart
+RESTART_GRACE_POLL_INTERVAL = 5  # Seconds between health polls during grace period
+MAX_RESTART_ATTEMPTS = 3  # Consecutive failed restarts before giving up
+HEARTBEAT_LOG_INTERVAL = 60  # Seconds between watchdog heartbeat log messages
 
 
-def check_service_health(url, service_name, timeout=10):
+def check_service_health(url, service_name, timeout=None):
     """Check if a service is healthy by calling its health endpoint"""
+    if timeout is None:
+        timeout = HEALTH_CHECK_TIMEOUT
     try:
-        # print("-----------")
-        # print(service_name)
         response = requests.get(url, timeout=timeout)
-        # print(pprint.pformat(response))
         response_json = json.loads(response.text)
-        # print(pprint.pformat(response_json))
-        # print("-----------")
         if response.status_code == 200 and (
             response_json["status"].strip().lower() == "ok"
             or response_json["status"].strip().lower() == "healthy"
@@ -86,71 +88,168 @@ def check_service_health(url, service_name, timeout=10):
         return False
 
 
+def restart_service(service_name, venv_active, venv_path):
+    """
+    Stop a service, restart it, and verify it becomes healthy.
+
+    Returns True if the service restarted and passed health check,
+    False otherwise.
+    """
+    service_identifiers = {
+        "orakle": "ainara.orakle.server",
+        "pybridge": "ainara.framework.pybridge",
+        "bureau": "ainara.bureau.server",
+    }
+
+    health_urls = {
+        "orakle": ORAKLE_HEALTH_URL,
+        "pybridge": PYBRIDGE_HEALTH_URL,
+        "bureau": BUREAU_HEALTH_URL,
+    }
+
+    identifier = service_identifiers.get(service_name)
+    health_url = health_urls.get(service_name)
+
+    if not identifier or not health_url:
+        print(f"  Unknown service for restart: {service_name}")
+        return False
+
+    # Stop the service process
+    print(f"  Stopping {service_name}...")
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmdline = proc.info["cmdline"]
+            if not cmdline:
+                continue
+            cmdline_str = " ".join(cmdline)
+            if identifier in cmdline_str:
+                try:
+                    p = psutil.Process(proc.pid)
+                    p.send_signal(2)  # SIGINT
+                    gone, alive = psutil.wait_procs([p], timeout=3)
+                    if alive:
+                        p.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.ZombieProcess,
+        ):
+            pass
+
+    time.sleep(2)  # Brief pause before restarting
+
+    # Restart the service
+    print(f"  Starting {service_name}...")
+    result = start_service(
+        service_name,
+        skip=False,
+        venv_active=venv_active,
+        venv_path=venv_path,
+    )
+
+    if result["status"] == "error":
+        print(f"  Failed to start {service_name}: {result['message']}")
+        return False
+
+    # Poll health during grace period
+    print(
+        f"  Waiting up to {RESTART_GRACE_PERIOD}s for {service_name} to"
+        " become healthy..."
+    )
+    elapsed = 0
+    while elapsed < RESTART_GRACE_PERIOD:
+        time.sleep(RESTART_GRACE_POLL_INTERVAL)
+        elapsed += RESTART_GRACE_POLL_INTERVAL
+        if check_service_health(health_url, service_name):
+            print(f"  {service_name} is healthy after restart")
+            return True
+
+    print(
+        f"  {service_name} did not become healthy within"
+        f" {RESTART_GRACE_PERIOD}s"
+    )
+    return False
+
+
 def watch_services_health(
-    services_to_watch, start_polaris=False, check_interval=10
+    services_to_watch, start_polaris=False, check_interval=10,
+    venv_active=False, venv_path=None
 ):
     """
-    Watch the health of services and report any issues
+    Watch the health of services, restart unhealthy ones, and give up
+    after MAX_RESTART_ATTEMPTS consecutive failures per service.
 
     Args:
         services_to_watch: Dict of service names to their health URLs
-        check_interval: How often to check health in seconds
         start_polaris: Whether to start the Polaris frontend when services are healthy
+        check_interval: How often to check health in seconds
+        venv_active: Whether a virtual environment is active
+        venv_path: Path to the virtual environment
     """
     try:
-        global WATCH_SERVICES_HEALTH_FIRST
-        print("Monitoring...")
-        fails = 0
-        fails_limit = 20
-        was_unhealthy = False
+        print("Watchdog: monitoring services...")
+        restart_counters = {service: 0 for service in services_to_watch}
         polaris_started = False
+        first_healthy = True
+        last_heartbeat = time.time()
 
         while True:
-            health_status = {}
-            unhealthy_services = []
             time.sleep(check_interval)
 
-            for service, url in services_to_watch.items():
-                is_healthy = check_service_health(url, service)
-                health_status[service] = (
-                    "healthy" if is_healthy else "unhealthy"
+            # Periodic heartbeat log
+            now = time.time()
+            if now - last_heartbeat >= HEARTBEAT_LOG_INTERVAL:
+                print(
+                    f"Watchdog: heartbeat — monitoring"
+                    f" {len(services_to_watch)} service(s)"
                 )
+                last_heartbeat = now
 
-                if not is_healthy:
+            unhealthy_services = []
+
+            for service, url in services_to_watch.items():
+                if not check_service_health(url, service):
                     unhealthy_services.append(service)
 
-            # Alert about unhealthy services
             if unhealthy_services:
-                was_unhealthy = True
-                print(
-                    "ERROR: The following service(s) are unhealthy:"
-                    f" {', '.join(unhealthy_services)}"
-                )
-                fails += 1
-                if fails == fails_limit:
-                    print("Max fail limits reached, exiting...")
-                    stop_services()
-                    sys.exit(1)
-                else:
-                    print("Retrying...")
+                for service in unhealthy_services:
+                    print(
+                        f"Watchdog: {service} is unhealthy (attempt"
+                        f" {restart_counters[service] + 1}/{MAX_RESTART_ATTEMPTS})"
+                    )
+                    success = restart_service(
+                        service, venv_active, venv_path
+                    )
+                    if success:
+                        restart_counters[service] = 0
+                    else:
+                        restart_counters[service] += 1
+                        if restart_counters[service] >= MAX_RESTART_ATTEMPTS:
+                            print(
+                                f"Watchdog: {service} failed to restart after"
+                                f" {MAX_RESTART_ATTEMPTS} consecutive"
+                                " attempts. Shutting down all services."
+                            )
+                            stop_services()
+                            sys.exit(1)
             else:
-                if was_unhealthy or WATCH_SERVICES_HEALTH_FIRST:
-                    WATCH_SERVICES_HEALTH_FIRST = False
-                    print("Services are healthy now")
-                    was_unhealthy = False
+                if first_healthy:
+                    first_healthy = False
+                    print("Watchdog: all services are healthy")
+
+                # Reset all counters when everything is healthy
+                for service in restart_counters:
+                    restart_counters[service] = 0
 
                 # Start Polaris if requested and not already started
-                if (
-                    start_polaris
-                    and not polaris_started
-                    and not unhealthy_services
-                ):
+                if start_polaris and not polaris_started:
                     print(
-                        "All services are healthy. Starting Polaris"
+                        "Watchdog: all services healthy, starting Polaris"
                         " frontend..."
                     )
                     try:
-                        # Start the frontend in a new process
                         subprocess.Popen(
                             POLARIS_CMD,
                             shell=True,
@@ -158,12 +257,12 @@ def watch_services_health(
                             stderr=subprocess.PIPE,
                         )
                         polaris_started = True
-                        print("Polaris frontend started")
+                        print("Watchdog: Polaris frontend started")
                     except Exception as e:
-                        print(f"Error starting Polaris frontend: {e}")
+                        print(f"Watchdog: error starting Polaris frontend: {e}")
 
     except KeyboardInterrupt:
-        print("Exiting...")
+        print("Watchdog: shutting down...")
         stop_services()
         sys.exit(0)
 
@@ -326,11 +425,12 @@ def start_service(service, skip=False, venv_active=False, venv_path=None):
         # Add profiling arguments if enabled
         if argsg.enable_profiling:
             args.extend(["--profile"])
-    elif service == "ollama" and not args.start_ollama:
-        return {
-            "status": "info",
-            "message": "Ollama not started (use --start-ollama to enable)",
-        }
+    elif service == "ollama":
+        if not argsg.start_ollama:
+            return {
+                "status": "info",
+                "message": "Ollama not started (use --start-ollama to enable)",
+            }
         cmd = OLLAMA_CMD
         log_file = OLLAMA_LOG
         args = ["serve"]
@@ -551,7 +651,7 @@ def run_setup(install=False):
         return {"status": "error", "message": f"Error running setup: {e}"}
 
 
-def handle_service_failure(service_failed, results):
+def handle_service_failure(service_failed):
     """Handle a service failure by stopping all services and exiting"""
     if service_failed:
         print("A service failed to start. Stopping all services...")
@@ -571,7 +671,7 @@ def check_and_start_service(
             venv_active=venv_active,
             venv_path=venv_path,
         )
-        if results[service_name]["status"] == "error" and not args.force:
+        if results[service_name]["status"] == "error":
             print(
                 f"ERROR: Failed to start {service_name}:"
                 f" {results[service_name]['message']}"
@@ -628,11 +728,6 @@ def main():
         help="Specify the Ollama model to use (default: llama3)",
     )
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Continue even if some services fail to start",
-    )
-    parser.add_argument(
         "--no-health-check",
         action="store_true",
         help="Disable health monitoring of services after starting",
@@ -659,6 +754,10 @@ def main():
     args = parser.parse_args()
     global argsg
     argsg = args
+
+    # Remove stale force attribute for backward compat
+    if not hasattr(args, 'force'):
+        args.force = False
 
     # Set Ollama model if specified
     if args.ollama_model:
@@ -728,8 +827,8 @@ def main():
         "orakle", args, results, venv_active, venv_path
     )
 
-    # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results):
+    # If a service failed, stop everything and exit
+    if handle_service_failure(service_failed):
         return 1
 
     # Wait a bit before starting Pybridge
@@ -741,6 +840,10 @@ def main():
         "pybridge", args, results, venv_active, venv_path
     )
 
+    # If a service failed, stop everything and exit
+    if handle_service_failure(service_failed):
+        return 1
+
     # Wait a bit before starting Bureau
     time.sleep(5)
 
@@ -750,12 +853,8 @@ def main():
         "bureau", args, results, venv_active, venv_path
     )
 
-    # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results):
-        return 1
-
-    # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results):
+    # If a service failed, stop everything and exit
+    if handle_service_failure(service_failed):
         return 1
 
     # Start Ollama
@@ -763,8 +862,8 @@ def main():
         "ollama", args, results, venv_active, venv_path
     )
 
-    # If a service failed and we're not forcing, stop everything and exit
-    if handle_service_failure(service_failed, results):
+    # If a service failed, stop everything and exit
+    if handle_service_failure(service_failed):
         return 1
 
     # Output results
@@ -798,7 +897,11 @@ def main():
 
             if services_to_watch:
                 watch_services_health(
-                    services_to_watch, args.start_polaris, args.health_interval
+                    services_to_watch,
+                    args.start_polaris,
+                    args.health_interval,
+                    venv_active=venv_active,
+                    venv_path=venv_path,
                 )
             else:
                 print("No services to monitor for health.")
