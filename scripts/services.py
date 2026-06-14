@@ -201,8 +201,9 @@ def watch_services_health(
             # Periodic heartbeat log
             now = time.time()
             if now - last_heartbeat >= HEARTBEAT_LOG_INTERVAL:
+                readable_time = time.ctime(now)
                 print(
-                    f"Watchdog: heartbeat — monitoring"
+                    f"[{readable_time}] Watchdog: heartbeat — monitoring"
                     f" {len(services_to_watch)} service(s)"
                 )
                 last_heartbeat = now
