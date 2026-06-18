@@ -17,3 +17,5 @@ scripts/migration/drop_*/sugar.log
 polaris/**/*.jsc
 ainara/nexus/*
 docs
+node_modules/
+venv/

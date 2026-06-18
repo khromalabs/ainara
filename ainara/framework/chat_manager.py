@@ -1943,14 +1943,21 @@ class ChatManager:
         finally:
             # Always add the processed answer to chat history, even if it's empty or an error
             if processed_answer:
+                # Strip internal orakle control signals before storing in history.
+                # Leaving them in causes the LLM to learn and regenerate the signals
+                # in subsequent turns, which triggers the forbidden-signal guardrail.
+                history_answer = re.sub(
+                    r"\n?_orakle_loading_signal_\|[^\n]*\n?", "\n", processed_answer
+                ).strip()
+
                 # Add the processed answer to chat history
                 self.llm.add_msg(
-                    processed_answer, self.chat_history, "assistant"
+                    history_answer, self.chat_history, "assistant"
                 )
 
                 # Log assistant response to chat memory
                 if self.memory_enabled and self.chat_memory and save_to_memory:
-                    self.chat_memory.add_entry(processed_answer, "assistant")
+                    self.chat_memory.add_entry(history_answer, "assistant")
             else:
                 # If there's no processed answer, add a placeholder
                 yield ndjson(

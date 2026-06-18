@@ -34,6 +34,10 @@ from .base import CapabilityProvider
 logger = logging.getLogger(__name__)
 
 
+def _to_pascal(s: str) -> str:
+    return "".join(w.capitalize() for w in s.split("_") if w)
+
+
 class BasePythonSkillProvider(CapabilityProvider):
     """Abstract base provider for discovering Python-based skills from the filesystem."""
 
@@ -306,8 +310,8 @@ class BasePythonSkillProvider(CapabilityProvider):
                     dir_name, file_name = parts
                     class_name = (
                         class_name_prefix
-                        + dir_name.capitalize()
-                        + file_name.capitalize()
+                        + _to_pascal(dir_name)
+                        + _to_pascal(file_name)
                     )
                 else:
                     logger.warning(

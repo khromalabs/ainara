@@ -34,8 +34,8 @@ def create_tts_backend(tts_config: Dict[str, Any] = None) -> TTSBackend:
         tts_config = {}
 
     # Piper is the default option
-    # backend_name = tts_config.get("selected_module", "piper").lower()
-    backend_name = "kokoro"
+    backend_name = tts_config.get("selected_module", "piper").lower()
+    # backend_name = "kokoro"
     logger.info(f"Initializing TTS backend: {backend_name}")
 
     try:
