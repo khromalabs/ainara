@@ -124,6 +124,7 @@ class ChatManager:
         self.notifications_prompt = ""
 
         self.max_guardrail_retries = config.get("guardrails.max_retries", 2)
+        self._orakle_trailing_text_violation = False
         # --- Memory Decay Tracking (persisted between sessions) ---
         self.memory_decay_interval = config.get(
             "memories.decay_interval_turns", 5
@@ -1700,6 +1701,18 @@ class ChatManager:
                         f"NOTIFICATIONS:\n{notifications_snapshot}"
                     )
 
+            # --- ORAKLE Policy Guardrail (persistent after first violation) ---
+            if self._orakle_trailing_text_violation:
+                system_hint_content += (
+                    "\n\nORAKLE POLICY REMINDER: In a previous turn, you"
+                    " generated text after an Orakle query which was"
+                    " discarded. Per policy, do not output any additional"
+                    " text after orakle tags. All content after the last"
+                    " closing </orakle> tag is ignored. Do not generate"
+                    " explanations, summaries, or any other text after"
+                    " your Orakle commands."
+                )
+
             # Wrap in <system_hint> tags if there's any content
             if system_hint_content.strip():
                 system_hint_content = (
@@ -1775,6 +1788,13 @@ class ChatManager:
                     continue
                 if "_AINARA_THINKING_STOP_" in chunk:
                     yield ndjson("signal", "thinking", {"state": "stop"})
+                    continue
+                if "_orakle_trailing_text_discarded_" in chunk:
+                    self._orakle_trailing_text_violation = True
+                    logger.info(
+                        "ORAKLE POLICY: Trailing text violation detected,"
+                        " hint will be injected in subsequent turns."
+                    )
                     continue
 
                 if (

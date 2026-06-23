@@ -575,6 +575,18 @@ class OrakleMiddleware:
                         pre_text = buffer[last_end:start]
                         if pre_text:
                             yield pre_text
+                    else:
+                        # Inter-tag text is being discarded; signal if it
+                        # contains alphabetic characters
+                        inter_text = buffer[last_end:start]
+                        if inter_text and any(
+                            c.isalpha() for c in inter_text
+                        ):
+                            logger.info(
+                                "ORAKLE GUARD: Ignoring inter-tag text:"
+                                f" '{inter_text.strip()}'"
+                            )
+                            yield "\n_orakle_trailing_text_discarded_\n"
 
                     found_orakle = True
 
@@ -603,6 +615,10 @@ class OrakleMiddleware:
                             "ORAKLE GUARD: Ignoring trailing text after"
                             f" command: '{buffer.strip()}'"
                         )
+                        # Signal trailing text violation if it contains
+                        # alphabetic characters (actual generated content)
+                        if any(c.isalpha() for c in buffer):
+                            yield "\n_orakle_trailing_text_discarded_\n"
                         buffer = ""
 
             # If buffer is getting large and no complete tag found,
@@ -641,6 +657,18 @@ class OrakleMiddleware:
                         pre_text = buffer[last_end:start]
                         if pre_text:
                             yield pre_text
+                    else:
+                        # Inter-tag text is being discarded; signal if it
+                        # contains alphabetic characters
+                        inter_text = buffer[last_end:start]
+                        if inter_text and any(
+                            c.isalpha() for c in inter_text
+                        ):
+                            logger.info(
+                                "ORAKLE GUARD: Ignoring inter-tag text:"
+                                f" '{inter_text.strip()}'"
+                            )
+                            yield "\n_orakle_trailing_text_discarded_\n"
 
                     found_orakle = True
                     logger.info(f"ORAKLE command to process: '{query}'")
@@ -659,6 +687,13 @@ class OrakleMiddleware:
                 remaining = buffer[last_end:]
                 if remaining and not found_orakle:
                     yield remaining
+                elif remaining and found_orakle:
+                    if any(c.isalpha() for c in remaining):
+                        logger.info(
+                            "ORAKLE GUARD: Ignoring trailing text after"
+                            f" command: '{remaining.strip()}'"
+                        )
+                        yield "\n_orakle_trailing_text_discarded_\n"
             elif not found_orakle:
                 # No tags found, yield remaining buffer
                 yield buffer

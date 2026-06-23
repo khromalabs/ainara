@@ -187,6 +187,7 @@ class Agent:
         turn = 0
         max_turns_without_skills = 3
         turn_without_skills = 0
+        trailing_text_violation = False
 
         while turn < max_turns:
             turn += 1
@@ -221,6 +222,10 @@ INSTRUCTIONS:
 IMPORTANT: The limit to achieve the goal is {max_turns} turns of conversation. Use the <orakle>intent</orakle> tag for queries about real time data or external actions.
 Attempt a single action per ORAKLE query. Use multiple queries if necessary.
 </system_hint>"
+"""
+                if trailing_text_violation:
+                    skills_hint += """
+ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT add any additional text, commentary, or explanation. The system will discard anything after the closing </orakle> tag. Place all your reasoning BEFORE the orakle tag, then end your response immediately after it.
 """
 
                 # Create a copy to avoid polluting the actual history
@@ -263,6 +268,9 @@ Attempt a single action per ORAKLE query. Use multiple queries if necessary.
                                 skills_executed.append(skill_id)
                         skill_executed = True
                         # We don't add the signal to the final text response
+                        continue
+                    if "_orakle_trailing_text_discarded_" in chunk:
+                        trailing_text_violation = True
                         continue
                     turn_response += chunk
                 elif isinstance(chunk, dict):
