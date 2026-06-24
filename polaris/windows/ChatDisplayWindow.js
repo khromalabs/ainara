@@ -91,7 +91,8 @@ class ChatDisplayWindow extends BaseWindow {
             opacity: 1.0, // Full window opacity
             alwaysOnTop: true,
             show: false,
-            hasShadow: false
+            hasShadow: false,
+            level: 'floating'
         };
 
         super(config, 'chatDisplay', options, basePath);

@@ -119,6 +119,34 @@ a {
     border: 2px solid #f0f000;
 }
 
+.nav-button:hover:active:enabled {
+    background: #fff;
+}
+
+.nav-button:hover:enabled {
+    background: #bbb;
+}
+
+.nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  /* background: transparent; */
+  border: none;
+  border-radius: 3px;
+  color: var(--text-color, #000);
+  cursor: pointer;
+  /* transition: all 0.2s ease; */
+}
+
+.nav-button svg {
+  width: 18px;
+  height: 18px;
+}
+
 .close-button {
     background: transparent;
     border: 2px solid transparent;

@@ -197,43 +197,51 @@ class DocumentView extends BaseComponent {
 
             const prevButton = document.createElement('button');
             prevButton.className = 'nav-button prev';
-            prevButton.innerHTML = '&lt;';
+            prevButton.innerHTML = `
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            `;
             prevButton.title = 'Previous Day';
             prevButton.addEventListener('click', () => this.emitEvent('history-prev-clicked'));
             controls.appendChild(prevButton);
 
             const nextButton = document.createElement('button');
             nextButton.className = 'nav-button next';
-            nextButton.innerHTML = '&gt;';
+            nextButton.innerHTML = `
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            `;
             nextButton.title = 'Next Day';
             nextButton.addEventListener('click', () => this.emitEvent('history-next-clicked'));
             controls.appendChild(nextButton);
 
-            // Add scroll to top button
-            const scrollTopButton = document.createElement('button');
-            scrollTopButton.className = 'nav-button scroll-top';
-            scrollTopButton.innerHTML = '▲';
-            scrollTopButton.title = 'Scroll to Top';
-            scrollTopButton.addEventListener('click', () => {
-                const contentArea = documentElement.querySelector('.document-content');
-                contentArea?.scrollTo({ top: 0, behavior: 'auto' });
-            });
-            controls.appendChild(scrollTopButton);
+            // // Add scroll to top button
+            // const scrollTopButton = document.createElement('button');
+            // scrollTopButton.className = 'nav-button scroll-top';
+            // scrollTopButton.innerHTML = '▲';
+            // scrollTopButton.title = 'Scroll to Top';
+            // scrollTopButton.addEventListener('click', () => {
+            //     const contentArea = documentElement.querySelector('.document-content');
+            //     contentArea?.scrollTo({ top: 0, behavior: 'auto' });
+            // });
+            // controls.appendChild(scrollTopButton);
 
-            // Add scroll to bottom button
-            const scrollBottomButton = document.createElement('button');
-            scrollBottomButton.className = 'nav-button scroll-bottom';
-            scrollBottomButton.innerHTML = '▼';
-            scrollBottomButton.title = 'Scroll to Bottom';
-            scrollBottomButton.addEventListener('click', () => {
-                const contentArea = documentElement.querySelector('.document-content');
-                contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
-            });
-            controls.appendChild(scrollBottomButton);
-            documentElement.addEventListener('mouseup', () => {
-                this.selectedText = window.getSelection().toString();
-                navigator.clipboard.writeText(this.selectedText);
-            })
+            // // Add scroll to bottom button
+            // const scrollBottomButton = document.createElement('button');
+            // scrollBottomButton.className = 'nav-button scroll-bottom';
+            // scrollBottomButton.innerHTML = '▼';
+            // scrollBottomButton.title = 'Scroll to Bottom';
+            // scrollBottomButton.addEventListener('click', () => {
+            //     const contentArea = documentElement.querySelector('.document-content');
+            //     contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+            // });
+            // controls.appendChild(scrollBottomButton);
+            // documentElement.addEventListener('mouseup', () => {
+            //     this.selectedText = window.getSelection().toString();
+            //     navigator.clipboard.writeText(this.selectedText);
+            // })
         }
 
         if (format !== 'nexus') {
@@ -317,6 +325,11 @@ class DocumentView extends BaseComponent {
         if (scrollBottom && format === 'chat-history') {
             const contentArea = documentElement.querySelector('.document-content');
             contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+        }
+
+        if (format === 'chat-history') {
+            const contentArea = documentElement.querySelector('.document-content');
+            contentArea.focus();
         }
     }
 
