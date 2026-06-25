@@ -507,6 +507,13 @@ class ComRing extends BaseComponent {
             this.circle.style.opacity = isTypingMode ? '0.3' : '1';
         });
 
+        // Listen for document-view becoming empty (all items closed)
+        this.documentView.addEventListener('documentview-empty', () => {
+            if (!this.onAnimation) {
+                this.switchToRingView();
+            }
+        });
+
         // Listen for history navigation events from the document-view component
         this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
         this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));

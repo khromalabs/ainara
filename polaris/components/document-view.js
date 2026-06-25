@@ -274,6 +274,11 @@ class DocumentView extends BaseComponent {
                 iframe.src = 'about:blank';
             }
             documentElement.remove();
+
+            // If container is now empty, notify parent to switch back to ring view
+            if (!this.container.firstElementChild) {
+                this.emitEvent('empty');
+            }
         });
         controls.appendChild(closeButton);
 
