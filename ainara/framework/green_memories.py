@@ -819,9 +819,9 @@ class GREENMemories:
             if self.context_window <= 8000:
                 top_k = 35
             elif self.context_window <= 32768:
-                top_k = 50
+                top_k = 40
             else:
-                top_k = 75
+                top_k = 60
             logger.info(
                 f"Context window is {self.context_window}, dynamically setting"
                 f" top_k for profile summary to {top_k}"
