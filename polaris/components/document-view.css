@@ -120,11 +120,16 @@ a {
 }
 
 .nav-button:hover:active:enabled {
-    background: #fff;
+    background: #555;
 }
 
 .nav-button:hover:enabled {
-    background: #bbb;
+    background: #666;
+}
+
+.nav-button:disabled {
+    background: #343434;
+    color: #888;
 }
 
 .nav-button {
@@ -137,7 +142,8 @@ a {
   /* background: transparent; */
   border: none;
   border-radius: 3px;
-  color: var(--text-color, #000);
+  color: #fff;
+  background: #444;
   cursor: pointer;
   /* transition: all 0.2s ease; */
 }
