@@ -92,9 +92,10 @@ a {
 }
 
 .format-badge {
-    background-color: #3c3c3c;
+    background-color: #343434;
+    color: #aaa;
     padding: 2px 6px;
-    border-radius: 3px;
+    border-radius: 2px;
     font-weight: bold;
     text-transform: uppercase;
     flex-shrink: 0;
@@ -156,7 +157,6 @@ a {
 .today-button {
   width: auto;
   padding: 0 8px;
-  margin-right: 20px;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -166,8 +166,15 @@ a {
     font-weight: bold;
     cursor: pointer;
     white-space: nowrap;
-    margin-left: 8px;
+    margin-left: 4px;
+    margin-right: 4px;
     user-select: none;
+}
+
+.date-picker-text {
+    display: inline-block;
+    width: 85px;
+    text-align: center;
 }
 
 .date-picker-trigger:hover .date-picker-text {

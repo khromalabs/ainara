@@ -179,8 +179,13 @@ class DocumentView extends BaseComponent {
                 }
                 .is-today .pika-button {
                     color: #f0f000;
-                    background-color: #2a2a2a !important;
-                    border-radius: 3px;
+                }
+                .is-selected .pika-button {
+                    background: #4a4a4a !important;
+                }
+                .pika-label:hover {
+                    color: #f0f000;
+                    cursor: pointer;
                 }
             `;
             this.shadowRoot.appendChild(style);
@@ -215,14 +220,6 @@ class DocumentView extends BaseComponent {
         controls.className = 'doc-controls';
 
         if (format === 'chat-history') {
-            // Add "Return to Today" button (hidden by default)
-            const todayButton = document.createElement('button');
-            todayButton.className = 'nav-button today-button';
-            todayButton.textContent = 'Return to Today';
-            todayButton.title = 'Return to Today';
-            todayButton.style.display = 'none';
-            todayButton.addEventListener('click', () => this.emitEvent('history-today-clicked'));
-            controls.appendChild(todayButton);
 
             // Add Search Control
             const searchContainer = document.createElement('div');
@@ -294,27 +291,6 @@ class DocumentView extends BaseComponent {
                 }
             });
 
-            const prevButton = document.createElement('button');
-            prevButton.className = 'nav-button prev';
-            prevButton.innerHTML = `
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6"></polyline>
-              </svg>
-            `;
-            prevButton.title = 'Previous Day';
-            prevButton.addEventListener('click', () => this.emitEvent('history-prev-clicked'));
-            controls.appendChild(prevButton);
-
-            const nextButton = document.createElement('button');
-            nextButton.className = 'nav-button next';
-            nextButton.innerHTML = `
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"></polyline>
-              </svg>
-            `;
-            nextButton.title = 'Next Day';
-            nextButton.addEventListener('click', () => this.emitEvent('history-next-clicked'));
-            controls.appendChild(nextButton);
 
             // // Add scroll to top button
             // const scrollTopButton = document.createElement('button');
@@ -369,7 +345,47 @@ class DocumentView extends BaseComponent {
                 datePicker.appendChild(dateText);
                 datePicker.appendChild(pikaContainer);
                 datePicker.appendChild(pikaField);
+
+                // Prev button (left of date picker)
+                const prevButton = document.createElement('button');
+                prevButton.className = 'nav-button prev';
+                prevButton.innerHTML = `
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                  </svg>
+                `;
+                prevButton.title = 'Previous Day';
+                prevButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.emitEvent('history-prev-clicked');
+                });
+                docInfo.appendChild(prevButton);
+
                 docInfo.appendChild(datePicker);
+
+                // Next button (right of date picker)
+                const nextButton = document.createElement('button');
+                nextButton.className = 'nav-button next';
+                nextButton.innerHTML = `
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                `;
+                nextButton.title = 'Next Day';
+                nextButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.emitEvent('history-next-clicked');
+                });
+                docInfo.appendChild(nextButton);
+
+                // Add "Return to Today" button (hidden by default, next to nav cluster)
+                const todayButton = document.createElement('button');
+                todayButton.className = 'nav-button today-button';
+                todayButton.textContent = 'Return to Today';
+                todayButton.title = 'Return to Today';
+                todayButton.style.display = 'none';
+                todayButton.addEventListener('click', () => this.emitEvent('history-today-clicked'));
+                docInfo.appendChild(todayButton);
 
                 // Destroy previous Pikaday instance if any
                 if (this.pikadayInstance) {
@@ -551,14 +567,14 @@ class DocumentView extends BaseComponent {
     formatRelativeDate(dateStr) {
         if (!dateStr) return '';
         const today = new Date();
-        const todayStr = today.toISOString().split('T')[0];
-
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-        if (dateStr === todayStr) return 'Today';
-        if (dateStr === yesterdayStr) return 'Yesterday';
+        // const todayStr = today.toISOString().split('T')[0];
+        //
+        // const yesterday = new Date(today);
+        // yesterday.setDate(yesterday.getDate() - 1);
+        // const yesterdayStr = yesterday.toISOString().split('T')[0];
+        //
+        // if (dateStr === todayStr) return 'Today';
+        // if (dateStr === yesterdayStr) return 'Yesterday';
 
         // Use locale-aware format: "Jun 15" or "Jun 15, 2024" if different year
         const date = new Date(dateStr + 'T12:00:00');
