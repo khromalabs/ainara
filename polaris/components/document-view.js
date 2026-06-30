@@ -381,8 +381,8 @@ class DocumentView extends BaseComponent {
                 // Add "Return to Today" button (hidden by default, next to nav cluster)
                 const todayButton = document.createElement('button');
                 todayButton.className = 'nav-button today-button';
-                todayButton.textContent = 'Return to Today';
-                todayButton.title = 'Return to Today';
+                todayButton.textContent = 'Today';
+                todayButton.title = 'Return to Current Day';
                 todayButton.style.display = 'none';
                 todayButton.addEventListener('click', () => this.emitEvent('history-today-clicked'));
                 docInfo.appendChild(todayButton);
