@@ -1,6 +1,11 @@
 /* global BaseComponent */
 /* eslint no-undef: "error" */
 
+const fs = require('fs');
+const Pikaday = require('pikaday');
+const pikadayCSS = fs.readFileSync(
+    require.resolve('pikaday/css/pikaday.css'), 'utf8'
+);
 
 class DocumentView extends BaseComponent {
 
@@ -20,6 +25,7 @@ class DocumentView extends BaseComponent {
             // Inject styles for search popup
             const style = document.createElement('style');
             style.textContent = `
+                ${pikadayCSS}
                 .search-container {
                     position: relative;
                     display: flex;
@@ -91,6 +97,90 @@ class DocumentView extends BaseComponent {
                 @keyframes flash-highlight {
                     0% { background-color: rgba(255, 255, 0, 0.3); }
                     100% { background-color: transparent; }
+                }
+                /* Pikaday container */
+                .pika-container-wrapper {
+                    position: absolute;
+                    top: 100%;
+                    left: 0;
+                    z-index: 1001;
+                    display: none;
+                    margin-top: 5px;
+                }
+                .pika-container-wrapper.visible {
+                    display: block;
+                }
+                /* Pikaday dark theme */
+                .pika-single {
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    color: #eee;
+                    font-family: inherit;
+                }
+                .pika-single.is-bound {
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                }
+                .pika-title {
+                    background: #252526;
+                    border-bottom: 1px solid #333;
+                    padding: 4px 0;
+                }
+                .pika-label {
+                    color: #eee;
+                    background: transparent;
+                    font-size: 14px;
+                }
+                .pika-prev, .pika-next {
+                    filter: invert(1);
+                    opacity: 0.7;
+                }
+                .pika-prev:hover, .pika-next:hover {
+                    opacity: 1;
+                }
+                .pika-table th {
+                    color: #888;
+                    font-size: 12px;
+                }
+                .pika-table td {
+                    border: none;
+                }
+                .pika-button {
+                    background: transparent;
+                    color: #ddd;
+                    border-radius: 3px;
+                    text-align: center;
+                }
+                .pika-button:hover {
+                    background: #333 !important;
+                    color: #fff;
+                    border-radius: 3px;
+                }
+                .is-today .pika-button {
+                    color: #f0f000;
+                }
+                .is-selected .pika-button {
+                    background: rgba(80, 214, 219, 0.4) !important;
+                    color: #fff;
+                    box-shadow: none;
+                    border-radius: 3px;
+                }
+                .is-disabled .pika-button,
+                .is-outside-current-month .pika-button {
+                    color: #555;
+                    opacity: 0.5;
+                    pointer-events: none;
+                }
+                .pika-select {
+                    background: #333;
+                    color: #eee;
+                    border: 1px solid #555;
+                }
+                .is-today .pika-button {
+                    color: #f0f000;
+                    background-color: #2a2a2a !important;
+                    border-radius: 3px;
                 }
             `;
             this.shadowRoot.appendChild(style);
@@ -269,23 +359,63 @@ class DocumentView extends BaseComponent {
                 const dateText = document.createElement('span');
                 dateText.className = 'date-picker-text';
 
-                const dateInput = document.createElement('input');
-                dateInput.type = 'date';
-                dateInput.className = 'date-picker-input';
-                dateInput.max = new Date().toISOString().split('T')[0];
-                dateInput.addEventListener('change', (e) => {
-                    if (e.target.value) {
-                        this.emitEvent('history-date-picked', { date: e.target.value });
-                    }
-                });
-                dateInput.addEventListener('keydown', (e) => e.stopPropagation());
+                const pikaContainer = document.createElement('div');
+                pikaContainer.className = 'pika-container-wrapper';
 
-                datePicker.addEventListener('click', () => dateInput.showPicker());
+                const pikaField = document.createElement('input');
+                pikaField.type = 'hidden';
 
                 datePicker.appendChild(dateIcon);
                 datePicker.appendChild(dateText);
-                datePicker.appendChild(dateInput);
+                datePicker.appendChild(pikaContainer);
+                datePicker.appendChild(pikaField);
                 docInfo.appendChild(datePicker);
+
+                // Destroy previous Pikaday instance if any
+                if (this.pikadayInstance) {
+                    this.pikadayInstance.destroy();
+                    this.pikadayInstance = null;
+                }
+
+                // Initialize Pikaday date picker
+                console.log('Pikaday: Initializing instance, container:', pikaContainer);
+                this.pikadayInstance = new Pikaday({
+                    field: pikaField,
+                    container: pikaContainer,
+                    bound: false,
+                    maxDate: new Date(),
+                    defaultDate: new Date(),
+                    setDefaultDate: true,
+                    onSelect: (date) => {
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const dateStr = `${year}-${month}-${day}`;
+                        this.emitEvent('history-date-picked', { date: dateStr });
+                        pikaContainer.classList.remove('visible');
+                    }
+                });
+                console.log('Pikaday: Instance created:', this.pikadayInstance);
+                console.log('Pikaday: Container children after init:', pikaContainer.children.length, pikaContainer.innerHTML.substring(0, 200));
+
+                // Toggle calendar on trigger click
+                datePicker.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const wasVisible = pikaContainer.classList.contains('visible');
+                    pikaContainer.classList.toggle('visible');
+                    console.log('Pikaday: Toggle clicked, was visible:', wasVisible, 'now visible:', pikaContainer.classList.contains('visible'));
+                    console.log('Pikaday: Container display:', window.getComputedStyle(pikaContainer).display);
+                    console.log('Pikaday: Container dimensions:', pikaContainer.offsetWidth, 'x', pikaContainer.offsetHeight);
+                    console.log('Pikaday: .pika-single element:', pikaContainer.querySelector('.pika-single'));
+                });
+
+                // Close calendar when clicking outside
+                document.addEventListener('click', (e) => {
+                    const path = e.composedPath();
+                    if (!path.includes(datePicker)) {
+                        pikaContainer.classList.remove('visible');
+                    }
+                });
             }
 
             const copyButton = document.createElement('button');
@@ -297,8 +427,9 @@ class DocumentView extends BaseComponent {
         }
 
         const helpElement = document.createElement('span');
-        helpElement.textContent = "Press Escape to exit document view";
+        helpElement.textContent = " | Press Escape to exit document view";
         helpElement.title = helpElement.textContent;
+        helpElement.className = 'help-element';
         docInfo.appendChild(helpElement);
 
 
@@ -417,13 +548,33 @@ class DocumentView extends BaseComponent {
         this.blur();
     }
 
+    formatRelativeDate(dateStr) {
+        if (!dateStr) return '';
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
+
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+        if (dateStr === todayStr) return 'Today';
+        if (dateStr === yesterdayStr) return 'Yesterday';
+
+        // Use locale-aware format: "Jun 15" or "Jun 15, 2024" if different year
+        const date = new Date(dateStr + 'T12:00:00');
+        const options = { month: 'short', day: 'numeric' };
+        if (date.getFullYear() !== today.getFullYear()) {
+            options.year = 'numeric';
+        }
+        return date.toLocaleDateString(undefined, options);
+    }
+
     updateNavControls(state) {
         // state = { prev: boolean, next: boolean, date: string }
         const prevButton = this.shadowRoot.querySelector('.nav-button.prev');
         const nextButton = this.shadowRoot.querySelector('.nav-button.next');
         const todayButton = this.shadowRoot.querySelector('.today-button');
         const dateText = this.shadowRoot.querySelector('.date-picker-text');
-        const dateInput = this.shadowRoot.querySelector('.date-picker-input');
 
         if (prevButton) {
             prevButton.disabled = !state.prev;
@@ -435,10 +586,10 @@ class DocumentView extends BaseComponent {
             todayButton.style.display = state.next ? 'inline-flex' : 'none';
         }
         if (dateText) {
-            dateText.textContent = state.date || '';
+            dateText.textContent = this.formatRelativeDate(state.date) || '';
         }
-        if (dateInput) {
-            dateInput.value = state.date || '';
+        if (this.pikadayInstance && state.date) {
+            this.pikadayInstance.setDate(new Date(state.date + 'T12:00:00'), true);
         }
     }
 
@@ -565,6 +716,11 @@ class DocumentView extends BaseComponent {
     }
 
     clear() {
+        // Destroy Pikaday instance if present
+        if (this.pikadayInstance) {
+            this.pikadayInstance.destroy();
+            this.pikadayInstance = null;
+        }
         // Remove all document items from the container
         while (this.container.firstChild) {
             const child = this.container.firstChild;

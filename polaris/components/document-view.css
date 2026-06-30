@@ -162,6 +162,7 @@ a {
 }
 
 .date-picker-trigger {
+    position: relative;
     font-weight: bold;
     cursor: pointer;
     white-space: nowrap;
@@ -173,14 +174,6 @@ a {
     text-decoration: underline;
 }
 
-.date-picker-input {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-    overflow: hidden;
-    pointer-events: none;
-}
 
 .close-button {
     background: transparent;
