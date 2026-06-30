@@ -401,6 +401,7 @@ class DocumentView extends BaseComponent {
                     bound: false,
                     maxDate: new Date(),
                     defaultDate: new Date(),
+                    keyboardInput: false,
                     setDefaultDate: true,
                     onSelect: (date) => {
                         const year = date.getFullYear();
