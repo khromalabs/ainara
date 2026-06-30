@@ -518,6 +518,7 @@ class ComRing extends BaseComponent {
         this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
         this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));
         this.documentView.addEventListener('documentview-history-today-clicked', () => this.fetchAndDisplayChatHistory());
+        this.documentView.addEventListener('documentview-history-date-picked', (e) => this.fetchAndDisplayChatHistory(e.detail.date, false));
 
         // Listen for search events
         this.documentView.addEventListener('documentview-search-requested', async (e) => {
@@ -1586,12 +1587,13 @@ Visit our project site at: https://ainara.app
                 this.documentView.addDocument(
                     data.history,
                     'chat-history',
-                    `Chat History: ${this.historyDate}`,
+                    ' ',
                     scrollBottom
                 );
                 this.documentView.updateNavControls({
                     prev: data.has_previous,
-                    next: data.has_next
+                    next: data.has_next,
+                    date: this.historyDate
                 });
                 sttStatus.classList.remove('active');
                 sttStatus.textContent = '';

@@ -259,6 +259,35 @@ class DocumentView extends BaseComponent {
             formatBadge.textContent = format;
             docInfo.appendChild(formatBadge);
 
+            if (format === 'chat-history') {
+                const datePicker = document.createElement('span');
+                datePicker.className = 'date-picker-trigger';
+
+                const dateIcon = document.createElement('span');
+                dateIcon.textContent = '📅 ';
+
+                const dateText = document.createElement('span');
+                dateText.className = 'date-picker-text';
+
+                const dateInput = document.createElement('input');
+                dateInput.type = 'date';
+                dateInput.className = 'date-picker-input';
+                dateInput.max = new Date().toISOString().split('T')[0];
+                dateInput.addEventListener('change', (e) => {
+                    if (e.target.value) {
+                        this.emitEvent('history-date-picked', { date: e.target.value });
+                    }
+                });
+                dateInput.addEventListener('keydown', (e) => e.stopPropagation());
+
+                datePicker.addEventListener('click', () => dateInput.showPicker());
+
+                datePicker.appendChild(dateIcon);
+                datePicker.appendChild(dateText);
+                datePicker.appendChild(dateInput);
+                docInfo.appendChild(datePicker);
+            }
+
             const copyButton = document.createElement('button');
             copyButton.className = 'copy-button';
             copyButton.textContent = 'Copy';
@@ -389,10 +418,12 @@ class DocumentView extends BaseComponent {
     }
 
     updateNavControls(state) {
-        // state = { prev: boolean, next: boolean }
+        // state = { prev: boolean, next: boolean, date: string }
         const prevButton = this.shadowRoot.querySelector('.nav-button.prev');
         const nextButton = this.shadowRoot.querySelector('.nav-button.next');
         const todayButton = this.shadowRoot.querySelector('.today-button');
+        const dateText = this.shadowRoot.querySelector('.date-picker-text');
+        const dateInput = this.shadowRoot.querySelector('.date-picker-input');
 
         if (prevButton) {
             prevButton.disabled = !state.prev;
@@ -401,8 +432,13 @@ class DocumentView extends BaseComponent {
             nextButton.disabled = !state.next;
         }
         if (todayButton) {
-            // Show "Return to Today" when there are newer days (we're in the past)
             todayButton.style.display = state.next ? 'inline-flex' : 'none';
+        }
+        if (dateText) {
+            dateText.textContent = state.date || '';
+        }
+        if (dateInput) {
+            dateInput.value = state.date || '';
         }
     }
 
