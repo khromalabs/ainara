@@ -5,7 +5,7 @@
     left: 40px;
     right: 40px;
     bottom: 170px; /* Leave space for the ring at the bottom */
-    /* background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */ */
+    /* background-color: rgba(30, 30, 30, 0.9); */
     color: #d4d4d4;
     font-family: 'Menlo', 'Consolas', monospace;
     border-radius: 12px; /* Match the inner frame's radius */
@@ -151,6 +151,13 @@ a {
 .nav-button svg {
   width: 18px;
   height: 18px;
+}
+
+.today-button {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .close-button {

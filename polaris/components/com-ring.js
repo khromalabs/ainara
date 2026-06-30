@@ -517,6 +517,7 @@ class ComRing extends BaseComponent {
         // Listen for history navigation events from the document-view component
         this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
         this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));
+        this.documentView.addEventListener('documentview-history-today-clicked', () => this.fetchAndDisplayChatHistory());
 
         // Listen for search events
         this.documentView.addEventListener('documentview-search-requested', async (e) => {
@@ -1626,10 +1627,13 @@ Visit our project site at: https://ainara.app
         }
         this.navigatingHistory = true;
         if (this.currentView != 'document') {
+            this.navigatingHistory = false;
             return;
         }
-        if (!this.historyDate)
+        if (!this.historyDate) {
+            this.navigatingHistory = false;
             return;
+        }
 
         // The 'T12:00:00Z' avoids timezone-related date change issues
         const currentDate = new Date(`${this.historyDate}T12:00:00Z`);

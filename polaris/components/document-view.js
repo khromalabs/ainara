@@ -125,6 +125,15 @@ class DocumentView extends BaseComponent {
         controls.className = 'doc-controls';
 
         if (format === 'chat-history') {
+            // Add "Return to Today" button (hidden by default)
+            const todayButton = document.createElement('button');
+            todayButton.className = 'nav-button today-button';
+            todayButton.textContent = 'Return to Today';
+            todayButton.title = 'Return to Today';
+            todayButton.style.display = 'none';
+            todayButton.addEventListener('click', () => this.emitEvent('history-today-clicked'));
+            controls.appendChild(todayButton);
+
             // Add Search Control
             const searchContainer = document.createElement('div');
             searchContainer.className = 'search-container';
@@ -383,12 +392,17 @@ class DocumentView extends BaseComponent {
         // state = { prev: boolean, next: boolean }
         const prevButton = this.shadowRoot.querySelector('.nav-button.prev');
         const nextButton = this.shadowRoot.querySelector('.nav-button.next');
+        const todayButton = this.shadowRoot.querySelector('.today-button');
 
         if (prevButton) {
             prevButton.disabled = !state.prev;
         }
         if (nextButton) {
             nextButton.disabled = !state.next;
+        }
+        if (todayButton) {
+            // Show "Return to Today" when there are newer days (we're in the past)
+            todayButton.style.display = state.next ? 'inline-flex' : 'none';
         }
     }
 
