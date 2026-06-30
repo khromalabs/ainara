@@ -173,7 +173,7 @@ a {
 
 .date-picker-text {
     display: inline-block;
-    width: 85px;
+    /* width: 85px; */
     text-align: center;
 }
 
