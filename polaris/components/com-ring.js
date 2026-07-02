@@ -1511,8 +1511,8 @@ class ComRing extends BaseComponent {
     async showAbout() {
         const helpTitle = 'About Ainara Polaris';
         const helpContent = `
-### About Ainara Polaris v${this.config.get("setup.version")} (testing)
-Copyright 2025 &copy; Rubén Gómez - https://khromalabs.org
+### About Ainara Polaris v${this.config.get("setup.version")} (beta)
+Copyright 2025-2026 &copy; Rubén Gómez - https://khromalabs.org
 Visit our project site at: https://ainara.app
         `.trim().replace(/^\s+/gm, '');
 

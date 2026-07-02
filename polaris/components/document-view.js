@@ -187,6 +187,10 @@ class DocumentView extends BaseComponent {
                     color: #f0f000;
                     cursor: pointer;
                 }
+                .is-disabled .pika-button {
+                    background: #1a1a1a;
+                    color: #888;
+                }
             `;
             this.shadowRoot.appendChild(style);
 

@@ -22,6 +22,10 @@ a {
     color: rgb(80,214,219);
 }
 
+a:hover {
+    color: rgb(120,254,255);
+}
+
 :host(.visible) {
     /* Final state for animation: visible */
     opacity: 1;
