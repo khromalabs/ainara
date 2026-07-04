@@ -42,35 +42,86 @@ plans:
 
 """
 
-import argparse
-import json
 import os
-import signal
-import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
-import psutil
-import requests
-import yaml
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+# ---------------------------------------------------------------------------
+# Self-re-exec under virtual environment (before any third-party imports)
+# ---------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+_VENV_PATHS = [
+    os.path.expanduser("~/ainara-env"),
+    os.path.expanduser("~/.venv"),
+    os.path.expanduser("~/venv"),
+    os.path.join(str(PROJECT_ROOT), "venv"),
+]
+
+
+def _running_in_venv():
+    """Return True if the current interpreter is inside a virtual environment."""
+    return (
+        hasattr(sys, "real_prefix")  # old-style virtualenv
+        or (sys.prefix != sys.base_prefix)  # stdlib venv / modern virtualenv
+    )
+
+
+def _find_venv_python():
+    """Find a venv python binary from known locations (stdlib only)."""
+    for venv_path in _VENV_PATHS:
+        venv_dir = Path(venv_path)
+        if os.name == "nt":
+            candidate = venv_dir / "Scripts" / "python.exe"
+        else:
+            candidate = venv_dir / "bin" / "python"
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+if not _running_in_venv():
+    _venv_python = _find_venv_python()
+    if _venv_python:
+        # Re-exec the same script under the venv interpreter
+        os.execv(_venv_python, [_venv_python] + sys.argv)
+    else:
+        print(
+            "WARNING: No virtual environment found and not running inside one. "
+            "Third-party dependencies may be missing.",
+            file=sys.stderr,
+        )
+
+# ---------------------------------------------------------------------------
+# Now safe to import third-party packages
+# ---------------------------------------------------------------------------
+import argparse  # noqa: E402
+import json  # noqa: E402
+import signal  # noqa: E402
+import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+import psutil  # noqa: E402
+import requests  # noqa: E402
+import yaml  # noqa: E402
+from apscheduler.schedulers.background import BackgroundScheduler  # noqa: E402
+from apscheduler.triggers.cron import CronTrigger  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Add project root to sys.path so we can import ainara.framework
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ainara.framework.config import ConfigManager  # noqa: E402
 
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 LOG_DIR = "/tmp"
+PID_FILE = os.path.join(LOG_DIR, "ainara-scheduler.pid")
 ORAKLE_LOG = os.path.join(LOG_DIR, "orakle.log")
 BUREAU_LOG = os.path.join(LOG_DIR, "bureau.log")
 
@@ -104,6 +155,32 @@ def log_error(msg):
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+DEFAULT_SCHEDULER_YAML = """\
+# Ainara Scheduler configuration
+# Place this file in your ainara config directory (e.g. ~/.config/ainara/)
+
+# Daemon settings (uncomment to override defaults)
+#bureau_url: "http://127.0.0.1:8010"
+#orakle_health_url: "http://127.0.0.1:8100/health"
+#health_check_interval: 10
+#restart_grace_period: 30
+#restart_grace_poll_interval: 5
+#max_restart_attempts: 3
+
+# Plan schedules
+plans:
+  # Example plan (disabled by default):
+  # trading_routine:
+  #   cron: "0 9 * * 1-5"
+  #   enabled: true
+  #   avoid_if:
+  #     - other_plan_name
+  # news_digest:
+  #   cron: "0 8 * * *"
+  #   enabled: false
+"""
+
+
 def find_scheduler_yaml(config_manager):
     """Find scheduler.yaml in the platform-specific ainara config directory.
 
@@ -124,7 +201,10 @@ def find_scheduler_yaml(config_manager):
 def load_scheduler_yaml(config_manager):
     """Load and parse the scheduler.yaml file.
 
-    Returns the full parsed dict, or an empty dict if not found.
+    If no scheduler.yaml exists, creates a default template in the first
+    available config directory.
+
+    Returns the full parsed dict, or an empty dict if not found/created.
     """
     path = find_scheduler_yaml(config_manager)
     if path:
@@ -132,7 +212,23 @@ def load_scheduler_yaml(config_manager):
             data = yaml.safe_load(f) or {}
         log_info(f"Loaded scheduler config from: {path}")
         return data
-    log_info("No scheduler.yaml found, using defaults (no plans scheduled)")
+
+    # No file found — create a default template
+    config_paths = config_manager._get_config_paths()
+    if config_paths:
+        config_dir = config_paths[0].parent
+        config_dir.mkdir(parents=True, exist_ok=True)
+        new_path = config_dir / "scheduler.yaml"
+        try:
+            new_path.write_text(DEFAULT_SCHEDULER_YAML)
+            log_info(f"Created default scheduler.yaml at: {new_path}")
+        except OSError as e:
+            log_error(f"Failed to create default scheduler.yaml: {e}")
+    else:
+        log_info(
+            "No scheduler.yaml found and no config directory available"
+        )
+
     return {}
 
 
@@ -164,7 +260,57 @@ def load_schedules(raw):
 
     Returns a dict of plan_name -> {"cron": str, "enabled": bool}
     """
-    return raw.get("plans", {})
+    return raw.get("plans") or {}
+
+
+# ---------------------------------------------------------------------------
+# PID file lock (single-instance guard)
+# ---------------------------------------------------------------------------
+def acquire_pid_lock():
+    """Ensure only one scheduler instance runs at a time.
+
+    If a PID file exists and the process is still alive, abort.
+    If the PID file is stale, overwrite it.
+    """
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                old_pid = int(f.read().strip())
+            if psutil.pid_exists(old_pid):
+                # Extra check: verify it's actually our scheduler process
+                try:
+                    proc = psutil.Process(old_pid)
+                    cmdline = " ".join(proc.cmdline())
+                    if "scheduler" in cmdline:
+                        log_error(
+                            f"Another scheduler instance is already running "
+                            f"(PID {old_pid}). Use --stop first or --logs to "
+                            f"view output."
+                        )
+                        sys.exit(1)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass  # Process gone or inaccessible — stale lock
+        except (ValueError, OSError):
+            pass  # Corrupt PID file — overwrite it
+
+    # Write our PID
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except OSError as e:
+        log_error(f"Failed to write PID file: {e}")
+
+
+def release_pid_lock():
+    """Remove the PID file on exit."""
+    try:
+        if os.path.exists(PID_FILE):
+            with open(PID_FILE) as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(PID_FILE)
+    except (ValueError, OSError):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -309,13 +455,21 @@ def restart_service(service_name, cmd, log_file, health_url, sched_config):
 # ---------------------------------------------------------------------------
 # Plan triggering
 # ---------------------------------------------------------------------------
-def trigger_plan(plan_name, bureau_url):
+def trigger_plan(plan_name, bureau_url, avoid_if=None):
     """Trigger a plan execution via Bureau API."""
     url = f"{bureau_url}/v1/conductor/plans/{plan_name}/run"
+    body = {}
+    if avoid_if:
+        body["avoid_if"] = avoid_if
     try:
-        response = requests.post(url, timeout=30)
-        if response.status_code == 200:
+        response = requests.post(url, json=body or None, timeout=30)
+        if response.status_code == 200 or response.status_code == 202:
             log_info(f"Plan '{plan_name}' triggered successfully")
+            return True
+        elif response.status_code == 409:
+            log_info(
+                f"Plan '{plan_name}' skipped (conflict): {response.text}"
+            )
             return True
         else:
             log_error(
@@ -361,10 +515,11 @@ def build_scheduler(schedules, bureau_url):
                 month=parts[3],
                 day_of_week=parts[4],
             )
+            avoid_if = plan_config.get("avoid_if")
             scheduler.add_job(
                 trigger_plan,
                 trigger=trigger,
-                args=[plan_name, bureau_url],
+                args=[plan_name, bureau_url, avoid_if],
                 id=plan_name,
                 name=f"Plan: {plan_name}",
                 replace_existing=True,
@@ -379,8 +534,13 @@ def build_scheduler(schedules, bureau_url):
 # ---------------------------------------------------------------------------
 # Log streaming (--logview)
 # ---------------------------------------------------------------------------
-def stream_logs(stop_event):
-    """Stream color-coded logs from service log files in a background thread."""
+def stream_logs(stop_event=None):
+    """Stream color-coded logs from service log files.
+
+    If stop_event is provided, runs in a background thread and stops when the
+    event is set.  If stop_event is None, runs in the foreground until
+    interrupted with Ctrl+C.
+    """
     colors = {
         "orakle": "\033[31m",  # Red
         "bureau": "\033[34m",  # Blue
@@ -402,7 +562,12 @@ def stream_logs(stop_event):
     log_files = {}
     positions = {}
 
-    while not stop_event.is_set():
+    def _should_stop():
+        if stop_event is not None:
+            return stop_event.is_set()
+        return False
+
+    while not _should_stop():
         # Open files lazily once they exist
         for name, path in [("orakle", ORAKLE_LOG), ("bureau", BUREAU_LOG)]:
             if name not in log_files and os.path.exists(path):
@@ -540,14 +705,27 @@ def parse_args():
         help="Show service and schedule status",
     )
     parser.add_argument(
-        "--logview",
+        "--quiet",
         action="store_true",
-        help="Stream color-coded service logs to stdout",
+        help="Suppress log streaming in main mode (run as silent daemon)",
+    )
+    parser.add_argument(
+        "--logs",
+        action="store_true",
+        help="Attach to a running instance and stream service logs",
     )
     parser.add_argument(
         "--run-plan",
         metavar="PLAN_NAME",
         help="Trigger a specific plan immediately and exit",
+    )
+    parser.add_argument(
+        "--avoid-if",
+        metavar="PLANS",
+        help=(
+            "Comma-separated list of plan names that block execution "
+            "(used with --run-plan)"
+        ),
     )
     return parser.parse_args()
 
@@ -571,6 +749,20 @@ def main():
         print_status(sched_config, schedules)
         return
 
+    # Handle --logs (attach to running instance)
+    if args.logs:
+        if not os.path.exists(ORAKLE_LOG) and not os.path.exists(BUREAU_LOG):
+            log_error(
+                "No log files found. Is the scheduler running?"
+            )
+            sys.exit(1)
+        log_info("Streaming logs (Ctrl+C to detach)...")
+        try:
+            stream_logs()  # Foreground, blocks until Ctrl+C
+        except KeyboardInterrupt:
+            pass
+        return
+
     # Handle --run-plan (trigger one plan immediately)
     if args.run_plan:
         bureau_healthy = check_service_health(
@@ -579,11 +771,20 @@ def main():
         if not bureau_healthy:
             log_error("Bureau is not running. Start the scheduler first.")
             sys.exit(1)
-        success = trigger_plan(args.run_plan, sched_config["bureau_url"])
+        avoid_if = (
+            [p.strip() for p in args.avoid_if.split(",")]
+            if args.avoid_if
+            else None
+        )
+        success = trigger_plan(
+            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if
+        )
         sys.exit(0 if success else 1)
 
     # --- Main mode: start services + watchdog + scheduler ---
+    acquire_pid_lock()
     log_info("Ainara Scheduler starting...")
+    log_info(f"Using Python: {sys.executable}")
 
     # Start Orakle
     log_info("Starting Orakle...")
@@ -634,10 +835,10 @@ def main():
     scheduler.start()
     log_info("Scheduler started")
 
-    # Start log streaming thread if requested
+    # Start log streaming thread (default on, suppress with --quiet)
     stop_event = threading.Event()
     log_thread = None
-    if args.logview:
+    if not args.quiet:
         log_thread = threading.Thread(
             target=stream_logs, args=(stop_event,), daemon=True
         )
@@ -652,6 +853,7 @@ def main():
         stop_event.set()
         scheduler.shutdown(wait=False)
         stop_services()
+        release_pid_lock()
         if log_thread:
             log_thread.join(timeout=2)
 
