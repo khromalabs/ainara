@@ -18,7 +18,7 @@
 # Lesser General Public License for more details.
 
 """
-Ainara Scheduler — starts Bureau + Orakle, monitors health, and triggers
+Ainara Sentinel Scheduler — starts Bureau + Orakle, monitors health, and triggers
 orchestration plans on cron schedules defined in scheduler.yaml.
 
 Sample config for `<ainara_config>/scheduler.yaml`:
@@ -85,7 +85,7 @@ if not _running_in_venv():
     if _venv_python:
         # Re-exec the same script under the venv interpreter
         os.execv(_venv_python, [_venv_python] + sys.argv)
-    else:
+    elif not getattr(sys, "frozen", False) and not hasattr(sys, "_MEIPASS"):
         print(
             "WARNING: No virtual environment found and not running inside one. "
             "Third-party dependencies may be missing.",
@@ -156,7 +156,7 @@ def log_error(msg):
 # Configuration
 # ---------------------------------------------------------------------------
 DEFAULT_SCHEDULER_YAML = """\
-# Ainara Scheduler configuration
+# Ainara Sentinel Scheduler configuration
 # Place this file in your ainara config directory (e.g. ~/.config/ainara/)
 
 # Daemon settings (uncomment to override defaults)
@@ -691,7 +691,7 @@ def print_status(sched_config, schedules):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Ainara Scheduler — manage services and orchestration plans"
+            "Ainara Sentinel Scheduler — manage services and orchestration plans"
         )
     )
     parser.add_argument(
@@ -783,7 +783,7 @@ def main():
 
     # --- Main mode: start services + watchdog + scheduler ---
     acquire_pid_lock()
-    log_info("Ainara Scheduler starting...")
+    log_info("Ainara Sentinel Scheduler starting...")
     log_info(f"Using Python: {sys.executable}")
 
     # Start Orakle

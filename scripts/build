@@ -5,7 +5,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 # Function to display usage information
 usage() {
-    echo "Usage: $0 [options]"
+    echo "Usage: `basename $0` [options]"
     echo "Options:"
     echo "  --skip-pyinstaller    Skip the PyInstaller Python build step"
     echo "  --skip-npm-build      Skip the npm build step"

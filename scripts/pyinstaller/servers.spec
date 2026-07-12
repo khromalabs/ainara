@@ -360,6 +360,10 @@ pybridge_imports = []
 bureau_datas = []
 bureau_imports = []
 
+# Sentinel data and imports
+sentinel_datas = []
+sentinel_imports = []
+
 # Create a runtime hook to help with imports
 with open(os.path.join(SPECPATH, 'runtime_hook.py'), 'w') as f:
     f.write("""
@@ -480,11 +484,28 @@ a_bureau = Analysis(
     noarchive=True,
 )
 
+# Analysis for Sentinel
+a_sentinel = Analysis(
+    [os.path.join(project_root, 'scripts', 'scheduler.py')],
+    pathex=[project_root],
+    binaries=binaries,
+    datas=[*common_datas, *sentinel_datas],
+    hiddenimports=[*common_imports, *sentinel_imports],
+    hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
+    hooksconfig={},
+    runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
+    excludes=platform_excludes,
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=True,
+)
 # MERGE statement to combine the analyses
 MERGE(
     (a_orakle, 'orakle', 'orakle'),
     (a_pybridge, 'pybridge', 'pybridge'),
-    (a_bureau, 'bureau', 'bureau')
+    (a_bureau, 'bureau', 'bureau'),
+    (a_sentinel, 'sentinel', 'sentinel')
 )
 
 
@@ -496,6 +517,9 @@ pyz_pybridge = PYZ(a_pybridge.pure, a_pybridge.zipped_data, cipher=block_cipher)
 
 # PYZ for Bureau
 pyz_bureau = PYZ(a_bureau.pure, a_bureau.zipped_data, cipher=block_cipher)
+
+# PYZ for Sentinel
+pyz_sentinel = PYZ(a_sentinel.pure, a_sentinel.zipped_data, cipher=block_cipher)
 
 
 # EXE for Orakle
@@ -540,6 +564,20 @@ exe_bureau = EXE(
     console=True,
 )
 
+# EXE for Sentinel
+exe_sentinel = EXE(
+    pyz_sentinel,
+    a_sentinel.scripts,
+    [],
+    exclude_binaries=True,
+    name='sentinel',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+)
+
 # COLLECT to create the final bundle with both executables
 coll = COLLECT(
     exe_orakle,
@@ -554,6 +592,10 @@ coll = COLLECT(
     a_bureau.binaries,
     a_bureau.zipfiles,
     a_bureau.datas,
+    exe_sentinel,
+    a_sentinel.binaries,
+    a_sentinel.zipfiles,
+    a_sentinel.datas,
     strip=False,
     upx=False,
     upx_exclude=[],

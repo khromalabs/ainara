@@ -13,7 +13,7 @@ en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_
 faster-whisper==1.1.1
 google-api-python-client==2.166.0
 jsonschema==4.24.0
-litellm==1.81.10
+litellm==1.92.0
 lxml_html_clean==0.4.1
 matplotlib==3.10.5
 mcp[cli]>=1.7.1
