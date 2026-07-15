@@ -129,9 +129,20 @@ def cancel(name):
     if not hasattr(v, "cancel_order"):
         return jsonify(error=f"{name} cancel not implemented"), 501
     body = request.get_json(force=True, silent=True) or {}
-    symbol, oid = body.get("symbol"), body.get("oid")
-    if not symbol or oid is None:
-        return jsonify(error="symbol and oid are required"), 400
+    symbol = body.get("symbol")
+    if not symbol:
+        return jsonify(error="symbol is required"), 400
+    if name == "dydx":
+        # dYdX stateful cancel needs the client_id + good_til_block_time from place
+        cid, gtbt = body.get("client_id"), body.get("good_til_block_time")
+        if cid is None or gtbt is None:
+            return jsonify(error="dydx cancel needs client_id and "
+                                 "good_til_block_time"), 400
+        logger.info("CANCEL dydx %s client_id=%s", symbol, cid)
+        return jsonify(result=_resolve(v.cancel_order(symbol, cid, gtbt)))
+    oid = body.get("oid")
+    if oid is None:
+        return jsonify(error="oid is required"), 400
     logger.info("CANCEL %s %s oid=%s", name, symbol, oid)
     return jsonify(result=_resolve(v.cancel_order(symbol, oid)))
 

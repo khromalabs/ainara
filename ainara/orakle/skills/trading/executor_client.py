@@ -92,7 +92,13 @@ class TradingExecutorClient(Skill):
         is_buy: Annotated[bool, "True to buy/long, False to sell/short"] = True,
         size: Annotated[Optional[float], "Order size in base units"] = None,
         price: Annotated[Optional[float], "Limit price"] = None,
-        oid: Annotated[Optional[int], "Order id to cancel"] = None,
+        oid: Annotated[Optional[int], "Hyperliquid order id to cancel"] = None,
+        client_id: Annotated[
+            Optional[int], "dYdX client_id to cancel (from the place response)"
+        ] = None,
+        good_til_block_time: Annotated[
+            Optional[int], "dYdX good_til_block_time to cancel (from place response)"
+        ] = None,
         reduce_only: Annotated[bool, "Order may only reduce an existing position"] = False,
         dry_run: Annotated[
             bool,
@@ -117,8 +123,17 @@ class TradingExecutorClient(Skill):
                 "reduce_only": reduce_only, "dry_run": dry_run,
             })
         if action == "cancel":
-            if not symbol or oid is None:
-                return {"error": "cancel requires symbol and oid"}
+            if not symbol:
+                return {"error": "cancel requires symbol"}
+            if venue == "dydx":
+                if client_id is None or good_til_block_time is None:
+                    return {"error": "dydx cancel requires client_id and "
+                            "good_til_block_time (from the place response)"}
+                return self._request("POST", f"/venues/{venue}/cancel", {
+                    "symbol": symbol, "client_id": client_id,
+                    "good_til_block_time": good_til_block_time})
+            if oid is None:
+                return {"error": "hyperliquid cancel requires oid"}
             return self._request("POST", f"/venues/{venue}/cancel",
                                  {"symbol": symbol, "oid": oid})
         return {"error": f"unknown action '{action}'"}
