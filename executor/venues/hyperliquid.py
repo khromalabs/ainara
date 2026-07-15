@@ -79,15 +79,26 @@ class HyperliquidExecutor:
         """Perp account value and open positions."""
         st = self._info({"type": "clearinghouseState", "user": self.master})
         ms = st.get("marginSummary", {})
-        positions = [
-            {
-                "coin": p["position"]["coin"],
-                "szi": float(p["position"]["szi"]),
-                "entry_px": p["position"].get("entryPx"),
-                "unrealized_pnl": p["position"].get("unrealizedPnl"),
-            }
-            for p in st.get("assetPositions", [])
-        ]
+        positions = []
+        for p in st.get("assetPositions", []):
+            pos = p["position"]
+            szi = float(pos["szi"])
+            liq_px = pos.get("liquidationPx")
+            pos_val = float(pos.get("positionValue", 0) or 0)
+            # mark implied by the position's own value (avoids an extra call)
+            mark = pos_val / abs(szi) if szi else None
+            liq_dist = None
+            if liq_px is not None and mark:
+                liq_dist = abs(mark - float(liq_px)) / mark * 100
+            positions.append({
+                "coin": pos["coin"],
+                "szi": szi,
+                "entry_px": pos.get("entryPx"),
+                "mark_px": mark,
+                "liquidation_px": float(liq_px) if liq_px is not None else None,
+                "liq_distance_pct": liq_dist,
+                "unrealized_pnl": pos.get("unrealizedPnl"),
+            })
         spot = self._info({"type": "spotClearinghouseState", "user": self.master})
         usdc_spot = next(
             (float(b["total"]) for b in spot.get("balances", [])
