@@ -1,0 +1,8 @@
+# Ainara Trading Executor — ISOLATED venv only.
+# Do NOT install these into the Orakle/PyBridge venv: dydx-v4-client forces
+# httpx<0.28, which breaks solana (used by ainara/framework/auth.py).
+hyperliquid-python-sdk==0.24.0
+dydx-v4-client==1.1.6
+bech32==1.2.0
+PyYAML>=6.0
+Flask>=3.0
