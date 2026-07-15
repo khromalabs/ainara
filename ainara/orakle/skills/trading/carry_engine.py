@@ -16,13 +16,29 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import datetime
 import logging
+import time
 from typing import Annotated, Any, Dict, List, Literal, Optional
+
+import requests
 
 from ainara.framework.config import config
 from ainara.framework.skill import Skill
 
 HOURS_PER_YEAR = 24 * 365
+HOUR_MS = 3_600_000
+
+# Public funding endpoints. Decisions default to MAINNET data (the real economic
+# signal) even when trading on testnet, since testnet funding is thin/artificial.
+_HL_INFO = {
+    "mainnet": "https://api.hyperliquid.xyz/info",
+    "testnet": "https://api.hyperliquid-testnet.xyz/info",
+}
+_DYDX_INDEXER = {
+    "mainnet": "https://indexer.dydx.trade",
+    "testnet": "https://indexer.v4testnet.dydx.exchange",
+}
 
 
 class TradingCarryEngine(Skill):
@@ -292,45 +308,124 @@ class TradingCarryEngine(Skill):
     # Dispatcher
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Self-contained decision (fetches its own history — for orchestration)
+    # ------------------------------------------------------------------
+
+    def _hl_funding_history(self, coin, network, hours):
+        """HL hourly funding (oldest-first) as {hour_ms: rate}."""
+        start = int(time.time() * 1000) - hours * HOUR_MS
+        rows = requests.post(_HL_INFO[network], json={
+            "type": "fundingHistory", "coin": coin, "startTime": start},
+            timeout=30).json()
+        return {int(r["time"]) - (int(r["time"]) % HOUR_MS): float(r["fundingRate"])
+                for r in rows}
+
+    def _dydx_funding_history(self, coin, network, hours):
+        """dYdX hourly funding (oldest-first) as {hour_ms: rate}, paginated back."""
+        idx = _DYDX_INDEXER[network]
+        out, before = {}, datetime.datetime.now(datetime.UTC).isoformat().replace(
+            "+00:00", "Z")
+        for _ in range(hours // 100 + 2):
+            rows = requests.get(
+                f"{idx}/v4/historicalFunding/{coin}-USD",
+                params={"limit": 100, "effectiveBeforeOrAt": before},
+                timeout=30).json().get("historicalFunding", [])
+            if not rows:
+                break
+            for r in rows:
+                t = datetime.datetime.fromisoformat(r["effectiveAt"].replace("Z", "+00:00"))
+                out[int(t.timestamp() * 1000) // HOUR_MS * HOUR_MS] = float(r["rate"])
+            oldest = min(r["effectiveAt"] for r in rows)
+            if len(out) >= hours:
+                break
+            t = datetime.datetime.fromisoformat(oldest.replace("Z", "+00:00"))
+            before = (t - datetime.timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+        return out
+
+    def _current_price(self, coin, network):
+        mids = requests.post(_HL_INFO[network], json={"type": "allMids"},
+                             timeout=20).json()
+        return float(mids[coin])
+
+    def decide(self, coin="BTC", capital_usd=500.0, lookback_days=30,
+               funding_network="mainnet") -> Dict[str, Any]:
+        """Fetch aligned funding history for both venues and return a flat verdict
+        (with a `sit_out` boolean for the plan's avoid_step_if gate)."""
+        hours = int(lookback_days * 24)
+        try:
+            hl = self._hl_funding_history(coin, funding_network, hours)
+            dy = self._dydx_funding_history(coin, funding_network, hours)
+        except Exception as e:
+            return {"action": "sit_out", "sit_out": True, "coin": coin,
+                    "reason": f"funding history fetch failed: {e}"}
+        common = sorted(set(hl) & set(dy))
+        if len(common) < self.default_span_hours + 2:
+            return {"action": "sit_out", "sit_out": True, "coin": coin,
+                    "reason": f"insufficient aligned history ({len(common)}h)",
+                    "samples": len(common)}
+        fa = [hl[t] for t in common]
+        fb = [dy[t] for t in common]
+        ev = self.evaluate("hyperliquid", "dydx", fa, fb, capital_usd=capital_usd)
+
+        verdict = {
+            "coin": coin, "capital_usd": capital_usd, "samples": len(common),
+            "funding_network": funding_network,
+            "action": ev["action"],
+            "sit_out": ev["action"] == "sit_out",
+            "smoothed_spread_annual_pct": ev.get("smoothed_spread_annual_pct"),
+            "reason": ev.get("reason", "smoothed edge clears threshold"),
+        }
+        if ev["action"] == "open":
+            price = self._current_price(coin, funding_network)
+            notional = capital_usd * ev["leverage"]
+            size = round(notional / price, 4)
+            verdict.update({
+                "short_venue": ev["short_venue"], "long_venue": ev["long_venue"],
+                "short_symbol": (coin if ev["short_venue"] == "hyperliquid"
+                                 else f"{coin}-USD"),
+                "long_symbol": (coin if ev["long_venue"] == "hyperliquid"
+                                else f"{coin}-USD"),
+                "size": size, "ref_price": price, "leverage": ev["leverage"],
+                "net_annual_pct_on_capital_if_spread_holds":
+                    ev.get("net_annual_pct_on_capital_if_spread_holds"),
+            })
+        return verdict
+
     async def run(
         self,
-        funding_a_hourly: Annotated[
-            List[float],
-            "Recent hourly funding fractions for venue A, oldest-first (e.g. from"
-            " the hyperliquid skill's history)",
-        ],
-        funding_b_hourly: Annotated[
-            List[float],
-            "Recent hourly funding fractions for venue B, oldest-first, aligned to"
-            " the same hours as venue A",
-        ],
         action: Annotated[
-            Literal["evaluate", "backtest"],
-            "'evaluate' = decide open/sit-out on the latest point (point-in-time,"
-            " optimistic net); 'backtest' = walk the full history for realized net",
-        ] = "evaluate",
-        venue_a: Annotated[str, "Name of venue A"] = "hyperliquid",
-        venue_b: Annotated[str, "Name of venue B"] = "dydx",
+            Literal["decide", "evaluate", "backtest"],
+            "'decide' = self-contained: fetch history for `coin` and return an"
+            " actionable open/sit-out verdict (for orchestration); 'evaluate' /"
+            " 'backtest' = operate on supplied funding arrays",
+        ] = "decide",
+        coin: Annotated[str, "Coin for 'decide', e.g. BTC, ETH, SOL"] = "BTC",
         capital_usd: Annotated[
             Optional[float], "Capital to size the position against, USD"
+        ] = 500.0,
+        funding_a_hourly: Annotated[
+            Optional[List[float]],
+            "For evaluate/backtest: hourly funding for venue A, oldest-first",
         ] = None,
+        funding_b_hourly: Annotated[
+            Optional[List[float]], "For evaluate/backtest: venue B, aligned"
+        ] = None,
+        venue_a: Annotated[str, "Name of venue A"] = "hyperliquid",
+        venue_b: Annotated[str, "Name of venue B"] = "dydx",
         expected_hold_days: Annotated[
-            float, "Expected holding period in days, used to amortize entry/exit fees"
+            float, "Expected holding period in days, to amortize entry/exit fees"
         ] = 14.0,
     ) -> Dict[str, Any]:
-        """Evaluate a delta-neutral carry decision, or backtest it over history."""
+        """Decide a delta-neutral carry action (self-contained), or evaluate/backtest
+        supplied funding arrays."""
+        if action == "decide":
+            return self.decide(coin=coin, capital_usd=capital_usd or 500.0)
+        if funding_a_hourly is None or funding_b_hourly is None:
+            return {"error": f"action '{action}' requires funding_a_hourly and "
+                    "funding_b_hourly arrays"}
         if action == "backtest":
-            return self.backtest(
-                venue_a=venue_a,
-                venue_b=venue_b,
-                funding_a_hourly=funding_a_hourly,
-                funding_b_hourly=funding_b_hourly,
-            )
-        return self.evaluate(
-            venue_a=venue_a,
-            venue_b=venue_b,
-            funding_a_hourly=funding_a_hourly,
-            funding_b_hourly=funding_b_hourly,
-            capital_usd=capital_usd,
-            expected_hold_days=expected_hold_days,
-        )
+            return self.backtest(venue_a, venue_b, funding_a_hourly, funding_b_hourly)
+        return self.evaluate(venue_a, venue_b, funding_a_hourly, funding_b_hourly,
+                             capital_usd=capital_usd,
+                             expected_hold_days=expected_hold_days)

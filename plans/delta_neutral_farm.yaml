@@ -1,0 +1,77 @@
+# Ainara Conductor plan: delta-neutral funding-carry farm.
+#
+# Runs on a schedule via scripts/scheduler.py (Ainara Sentinel Scheduler). To
+# activate, copy this file into your Ainara config's bureau/ directory
+# (e.g. %APPDATA%/ainara/bureau/) so the Conductor loads it, then reference it in
+# scheduler.yaml with a cron.
+#
+# Flow:  evaluate (deterministic) -> execute (agent, only if not sitting out) -> report
+#
+# SAFETY: the execute step only runs when the engine says "open". It places live
+# orders through the executor daemon, which enforces its own dry_run / testnet /
+# mainnet-jurisdiction gate. Keep the executor on testnet until you have fully
+# validated a live run.
+
+on_failure: notify
+max_parallel: 1
+scratchpad_max_chars: 12000
+
+defaults:
+  execution_timeout: 180
+  max_turns: 12
+
+steps:
+
+  # 1. Deterministic decision. carry_engine.decide fetches its own funding
+  #    history for both venues, computes the EMA-smoothed cross-venue spread, and
+  #    returns a flat verdict including `sit_out` (the gate for the next step).
+  evaluate:
+    type: skill
+    skill: trading_carry_engine
+    params:
+      action: decide
+      coin: BTC
+      capital_usd: 500
+
+  # 2. Execution. Skipped entirely when the engine says sit out (avoid_step_if on
+  #    the truthy `sit_out`). Otherwise an agent places BOTH legs via the executor.
+  execute:
+    type: agent
+    depends_on: [evaluate]
+    avoid_step_if: "evaluate.response.sit_out"
+    goal: |
+      A delta-neutral funding-carry decision has been produced:
+      {{evaluate.response}}
+
+      The decision's action is "open". Open the delta-neutral position by placing
+      BOTH legs through the trading executor. From the decision above use:
+        - short leg: place a SELL on `short_venue` for `short_symbol`
+        - long leg:  place a BUY  on `long_venue`  for `long_symbol`
+        - both legs use `size` for the order size and a limit price at `ref_price`
+          (buy at or just below ref_price, sell at or just above it)
+        - both orders must be live: set dry_run to false
+
+      Place the short leg first, confirm it was accepted, then place the long leg.
+      After both, read back the account state on each venue to confirm the two
+      positions exist and are on opposite sides.
+
+      CRITICAL: never leave a single naked leg. If one leg is placed but the other
+      fails or is refused, immediately cancel/close the leg that did go through, so
+      the account returns flat. Report exactly what was placed, filled, or unwound.
+
+  # 3. Report the outcome (runs whether or not execute was skipped).
+  report:
+    type: agent
+    depends_on: [evaluate]
+    goal: |
+      Summarize this delta-neutral funding-carry run in a few plain sentences for
+      the operator. The engine's decision was:
+      {{evaluate.response}}
+
+      If the action was "sit_out", state that no position was opened and why (the
+      smoothed spread did not clear the entry threshold). If the action was "open",
+      summarize the execution outcome:
+      {{execute.response}}
+
+      Keep it concise and factual: the coin, the decision, the venues/sides if
+      opened, and whether the position is confirmed hedged or was unwound.
