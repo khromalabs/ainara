@@ -134,12 +134,22 @@ class DydxExecutor:
                     "address": self.account_address, "subaccount_exists": False,
                     "note": "no subaccount yet (fund it before trading)"}
         s = next((x for x in subs if x.get("subaccountNumber") == subaccount), subs[0])
+        positions = []
+        for mkt, p in (s.get("openPerpetualPositions") or {}).items():
+            sz = abs(float(p.get("size", 0)))
+            signed = sz if p.get("side") == "LONG" else -sz  # sign like HL's szi
+            positions.append({
+                "coin": mkt, "size": signed, "side": p.get("side"),
+                "entry_px": p.get("entryPrice"),
+                "liq_distance_pct": None,  # dYdX liq math (margin-based) not yet wired
+            })
         return {
             "venue": "dydx", "network": self.network,
             "address": self.account_address, "subaccount": s.get("subaccountNumber"),
             "equity": float(s.get("equity", 0)),
             "free_collateral": float(s.get("freeCollateral", 0)),
-            "open_positions": list((s.get("openPerpetualPositions") or {}).keys()),
+            "positions": positions,
+            "open_positions": [p["coin"] for p in positions],
         }
 
     def open_orders(self, subaccount=0):
@@ -150,6 +160,12 @@ class DydxExecutor:
 
     def _api_key_hex(self):
         return self._api_key[2:] if self._api_key.startswith("0x") else self._api_key
+
+    def oracle_price(self, ticker):
+        md = requests.get(
+            f"{self.indexer}/v4/perpetualMarkets?ticker={ticker}", timeout=20
+        ).json()["markets"][ticker]
+        return float(md["oraclePrice"])
 
     def _market(self, ticker):
         md = requests.get(
@@ -201,6 +217,31 @@ class DydxExecutor:
         code = getattr(getattr(resp, "tx_response", resp), "code", None)
         return {"submitted": code == 0, "order": order, "tx_code": code,
                 "client_id": client_id, "good_til_block_time": gtbt}
+
+    async def place_market_reduce(self, market, is_buy, size, slippage=0.1):
+        """Flatten/reduce a position with a SHORT_TERM IOC reduce-only order.
+
+        dYdX rejects reduce_only on resting (stateful) orders (code 9003) — it
+        requires IOC/FOK — so a close must use this short-term, immediately
+        crossing path rather than place_order().
+        """
+        node = await self._node()
+        mkt = self._market(market)
+        wallet, tx_options = await self._signer(node)
+        height = await node.latest_block_height()
+        oracle = self.oracle_price(market)
+        px = round(oracle * (1 + slippage) if is_buy else oracle * (1 - slippage))
+        client_id = random.randint(0, MAX_CLIENT_ID)
+        order_id = mkt.order_id(self.account_address, 0, client_id,
+                                OrderFlags.SHORT_TERM)
+        side = Order.Side.SIDE_BUY if is_buy else Order.Side.SIDE_SELL
+        proto = mkt.order(order_id, OrderType.LIMIT, side, float(size), float(px),
+                          Order.TimeInForce.TIME_IN_FORCE_IOC, reduce_only=True,
+                          good_til_block=height + 10)
+        resp = await node.place_order(wallet, proto, tx_options=tx_options)
+        code = getattr(getattr(resp, "tx_response", resp), "code", None)
+        return {"submitted": code == 0, "tx_code": code, "price": px,
+                "client_id": client_id}
 
     async def cancel_order(self, market, client_id, good_til_block_time):
         """Cancel a stateful order by the client_id + gtbt returned from place."""

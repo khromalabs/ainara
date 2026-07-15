@@ -31,26 +31,37 @@ reads live state, assesses, and — only in 'active' mode — acts. Default mode
 'monitor' (report only); acting is opt-in via config trading.watchdog.mode.
 """
 
+import asyncio
+import concurrent.futures
 import logging
 import time
 
 logger = logging.getLogger("executor.watchdog")
 
 
+def _run_coro(coro):
+    """Run a coroutine to completion whether or not a loop is already running in
+    this thread. The watchdog's own loop is synchronous, but _act may also be
+    invoked from an async caller (tests, a future async host)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # no running loop — simplest path
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        return pool.submit(lambda: asyncio.run(coro)).result()
+
+
 def _leg(state):
     """Normalize an adapter state dict to {open, size, liq_distance_pct} for the
-    first (single-market MVP) position, or a flat leg."""
+    first (single-market MVP) position, or a flat leg. Handles both venues: HL
+    positions carry 'szi', dYdX carry 'size' — both signed."""
     positions = state.get("positions")
-    if positions:  # hyperliquid shape
+    if positions:
         p = positions[0]
-        return {"open": abs(p["szi"]) > 0, "size": p["szi"],
+        size = p.get("szi", p.get("size", 0)) or 0
+        return {"open": abs(size) > 0, "size": size,
                 "liq_distance_pct": p.get("liq_distance_pct"),
                 "coin": p.get("coin")}
-    # dydx shape (open_positions is a list of market names; sizes via indexer TODO)
-    op = state.get("open_positions")
-    if op:
-        return {"open": True, "size": None, "liq_distance_pct": None,
-                "coin": op[0]}
     return {"open": False, "size": 0.0, "liq_distance_pct": None, "coin": None}
 
 
@@ -134,22 +145,29 @@ class Watchdog:
         return report
 
     def _act(self, actions):
-        """Execute protective actions. Only 'close_leg' on HL is wired today; the
-        rest are recorded for the caller until dYdX execution + reduce/rebalance
-        order construction land."""
+        """Execute protective actions. 'close_leg' flattens the exposed leg on
+        either venue with a reduce-only, aggressively-priced (crossing) order.
+        reduce/rebalance are recorded until their order construction lands."""
         done = []
         for act in actions:
             if act["type"] == "close_leg" and act["venue"] == "hyperliquid":
-                # flatten by market-closing the position (reduce_only)
                 pos = (self.hl.state().get("positions") or [None])[0]
                 if pos and abs(pos["szi"]) > 0:
-                    is_buy = pos["szi"] < 0  # buy to close a short, sell to close a long
+                    is_buy = pos["szi"] < 0  # buy to close short, sell to close long
                     px = pos["mark_px"] or 0
-                    # aggressive price to ensure fill (IOC-like via crossing limit)
                     limit = px * (1.05 if is_buy else 0.95)
                     res = self.hl.place_order(pos["coin"], is_buy, abs(pos["szi"]),
                                               round(limit), reduce_only=True,
                                               tif="Ioc", dry_run=False)
+                    done.append({"action": act, "result": res})
+                else:
+                    done.append({"action": act, "result": "no position to close"})
+            elif act["type"] == "close_leg" and act["venue"] == "dydx":
+                pos = (self.dydx.state().get("positions") or [None])[0]
+                if pos and abs(pos["size"]) > 0:
+                    is_buy = pos["size"] < 0  # buy to close short, sell to close long
+                    res = _run_coro(self.dydx.place_market_reduce(
+                        pos["coin"], is_buy, abs(pos["size"])))
                     done.append({"action": act, "result": res})
                 else:
                     done.append({"action": act, "result": "no position to close"})
