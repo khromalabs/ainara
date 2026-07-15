@@ -27,6 +27,7 @@ import logging
 
 import requests
 from eth_account import Account
+from hyperliquid.exchange import Exchange
 
 from executor.compliance import check_submission
 
@@ -45,7 +46,7 @@ class HyperliquidExecutor:
         self.base = BASE_URL[self.network]
         self.master = creds.get("account_address")
         self._agent_key = creds.get("agent_private_key")
-        self._exchange = None  # lazily built only when a live order is needed
+        self._exchange_client = None  # lazily built only when a live order is needed
 
     # ---- reads (public /info, no signing) ----
 
@@ -103,23 +104,38 @@ class HyperliquidExecutor:
 
     # ---- writes (signing SDK; gated) ----
 
-    def place_order(self, coin, is_buy, size, limit_px, reduce_only=False,
-                    dry_run=True):
-        """Construct (and, if permitted, submit) a limit order.
+    def _exchange(self):
+        """Lazily build the signing Exchange (agent wallet trades for master)."""
+        if self._exchange_client is None:
+            wallet = Account.from_key(self._agent_key)
+            self._exchange_client = Exchange(
+                wallet, self.base, account_address=self.master
+            )
+        return self._exchange_client
 
-        NOT YET WIRED TO LIVE SUBMIT — this increment returns the constructed
-        order and the gate decision only. The live SDK submit path lands in the
-        next increment, behind exactly the gate returned here.
+    def open_orders(self):
+        return self._info({"type": "openOrders", "user": self.master})
+
+    def place_order(self, coin, is_buy, size, limit_px, reduce_only=False,
+                    tif="Gtc", dry_run=True):
+        """Construct, then (if the gate permits) submit a limit order.
+
+        tif: 'Gtc' resting, 'Alo' post-only/maker, 'Ioc' immediate-or-cancel.
         """
         order = {
             "venue": "hyperliquid", "network": self.network, "coin": coin,
             "side": "buy" if is_buy else "sell", "size": size,
-            "limit_px": limit_px, "reduce_only": reduce_only,
+            "limit_px": limit_px, "reduce_only": reduce_only, "tif": tif,
         }
         gate = check_submission(self.config, self.network, dry_run)
         if gate is not None:
             return {"submitted": False, "order": order, "gate": gate}
-        # TODO(next increment): build Exchange(agent_wallet, base, account_address
-        # =master) and call .order(...); return the exchange response.
-        return {"submitted": False, "order": order,
-                "gate": {"refused": "live_submit_not_implemented"}}
+        resp = self._exchange().order(
+            coin, is_buy, size, limit_px, {"limit": {"tif": tif}},
+            reduce_only=reduce_only,
+        )
+        return {"submitted": True, "order": order, "response": resp}
+
+    def cancel_order(self, coin, oid):
+        """Cancel a resting order by its oid. Not gated (reduces exposure)."""
+        return self._exchange().cancel(coin, oid)
