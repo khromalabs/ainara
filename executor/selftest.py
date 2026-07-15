@@ -22,6 +22,8 @@ gate refuses to submit by default. Places NO orders. Run:
     AINARA_CONFIG=<path> python -m executor.selftest
 """
 
+import asyncio
+import inspect
 import json
 
 from executor.config import ExecutorConfig
@@ -29,7 +31,12 @@ from executor.venues.dydx import DydxExecutor
 from executor.venues.hyperliquid import HyperliquidExecutor
 
 
-def main():
+async def _maybe_await(value):
+    """Adapters mix sync (HL SDK) and async (dYdX node) calls; normalize both."""
+    return await value if inspect.isawaitable(value) else value
+
+
+async def main():
     cfg = ExecutorConfig()
     print(f"config: {cfg.path}")
     print(f"jurisdiction_acknowledged: {cfg.jurisdiction_acknowledged()}\n")
@@ -38,21 +45,22 @@ def main():
         v = Adapter(cfg)
         name = v.__class__.__name__
         print(f"=== {name} ===")
-        print("validate:", json.dumps(v.validate(), indent=2))
+        print("validate:", json.dumps(await _maybe_await(v.validate()), indent=2))
         try:
-            print("state:   ", json.dumps(v.state(), indent=2))
+            print("state:   ", json.dumps(await _maybe_await(v.state()), indent=2))
         except Exception as e:
             print("state:    <error>", e)
-        # Prove the gate: a would-be live order must be refused (dry_run default).
-        probe = v.place_order(
+        # Prove the safety gate WITHOUT placing anything: dry_run always refuses
+        # to submit (it never reaches the venue). NEVER pass dry_run=False here —
+        # on testnet the gate permits it and a real order would be placed.
+        probe = await _maybe_await(v.place_order(
             *(("BTC", True, 0.001, 50000) if name == "HyperliquidExecutor"
               else ("BTC-USD", True, 0.001, 50000)),
-            dry_run=False,  # deliberately try to go live...
-        )
-        print("order gate (network testnet, live attempt):",
-              json.dumps(probe["gate"], indent=2))
+            dry_run=True,
+        ))
+        print("order gate (dry_run, no submit):", json.dumps(probe["gate"], indent=2))
         print()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
