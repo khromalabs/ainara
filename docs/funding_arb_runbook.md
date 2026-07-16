@@ -77,6 +77,11 @@ apis:
 
 trading:
   jurisdiction_acknowledged: false   # testnet doesn't need it; leave false
+  max_account_margin_pct: 20         # per-leg margin ≤ this % of the SMALLER account
+  carry_engine:
+    leverage: 3.0
+  executor:
+    max_order_notional_usd: 200      # absolute hard ceiling per opening order
   watchdog:
     mode: active                     # REQUIRED for auto-close (see below)
 ```
@@ -100,6 +105,38 @@ trading:
 
 On startup it prints its mode. `mode=active` = armed. If you see the monitor-mode
 warning, stop and fix the config — you'd be running without the safety net.
+
+## Risk controls
+
+Four independent guards. A trade must clear all of them, and **none of the size
+caps can ever block a position *close*** — a limit can never trap you in a naked
+leg. All are config-driven; no code changes to tune.
+
+| Guard | Config key | What it does |
+|-------|-----------|--------------|
+| **Dynamic margin cap** | `trading.max_account_margin_pct` | Each leg's margin ≤ this % of the **smaller** account's free collateral (× leverage). Scales with the account; keeps a liquidation buffer. Both legs matched off the binding account. |
+| **Hard notional cap** | `trading.executor.max_order_notional_usd` | Absolute per-opening-order ceiling. "Never bigger than this, period." |
+| **Dilution guard** | *(automatic)* | The engine subtracts estimated order-book slippage at the sized notional from the net edge; if net goes ≤ 0, or the book can't absorb the size, it **sits out**. Dormant at small size; auto-protects the edge as size scales. |
+| **Position watchdog** | `trading.watchdog.mode: active` | Auto-flattens a leg that goes naked (broken hedge) or nears liquidation. |
+
+**Effective order size = `min(margin cap, hard cap)`.** At small testnet balances
+the hard cap usually binds first — e.g. with a ~$994 smaller account,
+`20% × 994 × 3 = ~$596` from the margin rule, clamped to `$200` by the hard cap, so
+trades are ~$200 notional per leg. That's a deliberately conservative first run.
+Once validated, raise or remove the `$200` hard cap and the margin rule takes over
+and scales with the account on its own.
+
+**Where each is enforced:**
+
+- The carry engine *sizes* to the margin rule (reading live balances) and runs the
+  dilution guard when it decides — so the intended order is already correct.
+- The executor daemon *independently backstops* the margin cap and the notional cap
+  on every opening order — so neither the sizing logic nor the LLM execute agent
+  can exceed them. (The daemon caps on account **equity**, which stays stable as the
+  two legs open, so it can't tighten mid-open and strand a naked leg.)
+
+Every decision the engine makes carries a `sizing` and `slippage` breakdown in its
+output, visible in the Bureau logs — so you can see exactly how it sized and why.
 
 ## Startup sequence
 
