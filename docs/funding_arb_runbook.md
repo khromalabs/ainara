@@ -37,13 +37,17 @@ executor venv.
 
 ## One-time prerequisites
 
-**1. Create the executor venv** (isolated signing SDKs):
+**1. Create the executor venv** (isolated signing SDKs).
+
+> **Use Python 3.12, not 3.13.** The signing SDKs (`coincurve`, etc.) have no 3.13
+> wheels yet, so a 3.13 venv falls back to source builds that fail. The simplest
+> way to guarantee 3.12 is to build the executor venv *from the main project venv's
+> interpreter* (which is 3.12):
 
 ```powershell
-cd C:\Users\jzb38\Projects\ainara\executor
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-cd ..
+cd C:\Users\jzb38\Projects\ainara
+venv\Scripts\python.exe -m venv executor\.venv
+executor\.venv\Scripts\python.exe -m pip install -r executor\requirements.txt
 ```
 
 **2. Install the plan** where the Conductor loads plans (`<config>/bureau/`):
