@@ -348,6 +348,126 @@ class TradingCarryEngine(Skill):
                              timeout=20).json()
         return float(mids[coin])
 
+    def _free_collateral(self):
+        """Live free collateral (USD) from BOTH trading accounts, on the network
+        each venue is configured to trade on. Read-only (public, needs only the
+        account address). Returns (hl_free, dydx_free), or (None, None) on failure.
+        """
+        try:
+            hl_net = config.get("apis.hyperliquid.network", "testnet")
+            hl_addr = config.get(f"apis.hyperliquid.{hl_net}.account_address")
+            st = requests.post(_HL_INFO[hl_net], json={
+                "type": "clearinghouseState", "user": hl_addr}, timeout=20).json()
+            ms = st.get("marginSummary", {})
+            hl_free = float(ms.get("accountValue", 0)) - float(
+                ms.get("totalMarginUsed", 0))
+
+            dy_net = config.get("apis.dydx.network", "testnet")
+            dy_addr = config.get(f"apis.dydx.{dy_net}.account_address")
+            d = requests.get(
+                f"{_DYDX_INDEXER[dy_net]}/v4/addresses/{dy_addr}", timeout=20).json()
+            subs = d.get("subaccounts") or []
+            dydx_free = float(subs[0].get("freeCollateral", 0)) if subs else 0.0
+            return hl_free, dydx_free
+        except Exception as e:
+            self.logger.warning(f"free-collateral read failed: {e}")
+            return None, None
+
+    def _size_position(self, price, leverage, capital_usd):
+        """Return (size, sizing_detail). Primary rule: each leg's margin is capped
+        at max_account_margin_pct% of the SMALLER account's free collateral, so
+        both matched legs stay within that budget with a liquidation buffer. Also
+        clamped by the hard notional cap. Falls back to capital_usd if balances
+        can't be read (so nothing silently mis-sizes)."""
+        hard_cap = config.get("trading.executor.max_order_notional_usd")
+        hard_cap = float(hard_cap) if hard_cap is not None else None
+        hl_free, dydx_free = self._free_collateral()
+
+        if hl_free is not None and dydx_free is not None:
+            pct = float(config.get("trading.max_account_margin_pct", 50))
+            binding = min(hl_free, dydx_free)
+            margin_per_leg = pct / 100.0 * binding
+            margin_notional = margin_per_leg * leverage
+            notional = margin_notional
+            capped_by = "margin_rule"
+            if hard_cap is not None and hard_cap < notional:
+                notional, capped_by = hard_cap, "hard_notional_cap"
+            detail = {
+                "method": "margin_rule",
+                "binding_account": "hyperliquid" if hl_free <= dydx_free else "dydx",
+                "hl_free_collateral": round(hl_free, 2),
+                "dydx_free_collateral": round(dydx_free, 2),
+                "margin_pct": pct, "margin_per_leg": round(margin_per_leg, 2),
+                "margin_notional_per_leg": round(margin_notional, 2),
+                "hard_notional_cap": hard_cap,
+                "effective_notional_per_leg": round(notional, 2),
+                "capped_by": capped_by,
+            }
+        else:
+            notional = (capital_usd or 500.0) * leverage
+            if hard_cap is not None and hard_cap < notional:
+                notional = hard_cap
+            detail = {"method": "capital_fallback",
+                      "reason": "could not read account balances",
+                      "effective_notional_per_leg": round(notional, 2),
+                      "hard_notional_cap": hard_cap}
+        return round(notional / price, 6), detail
+
+    @staticmethod
+    def _walk_book(levels, mid, notional, side):
+        """Avg-fill slippage vs mid (fraction) to fill *notional* USD. side 'buy'
+        walks asks, 'sell' walks bids. None if the book can't absorb the size."""
+        remaining, filled_usd, base = notional, 0.0, 0.0
+        for px, sz in levels:
+            take = min(remaining, px * sz)
+            if take <= 0:
+                continue
+            base += take / px
+            filled_usd += take
+            remaining -= take
+            if remaining <= 0:
+                break
+        if base <= 0 or remaining > 0:  # empty or book too thin for the size
+            return None
+        return abs(filled_usd / base - mid) / mid
+
+    def _venue_book(self, coin, venue, network):
+        if venue == "hyperliquid":
+            b = requests.post(_HL_INFO[network], json={
+                "type": "l2Book", "coin": coin}, timeout=20).json()["levels"]
+            bids = [(float(x["px"]), float(x["sz"])) for x in b[0]]
+            asks = [(float(x["px"]), float(x["sz"])) for x in b[1]]
+        else:
+            b = requests.get(
+                f"{_DYDX_INDEXER[network]}/v4/orderbooks/perpetualMarket/{coin}-USD",
+                timeout=20).json()
+            bids = [(float(x["price"]), float(x["size"])) for x in b.get("bids", [])]
+            asks = [(float(x["price"]), float(x["size"])) for x in b.get("asks", [])]
+        mid = (bids[0][0] + asks[0][0]) / 2 if bids and asks else None
+        return bids, asks, mid
+
+    def _round_trip_slippage(self, coin, short_venue, long_venue, notional, network):
+        """Round-trip slippage (open + close) as a fraction of notional, summed
+        over both legs. Returns (fraction_or_None, detail)."""
+        try:
+            sb, _, smid = self._venue_book(coin, short_venue, network)
+            _, la, lmid = self._venue_book(coin, long_venue, network)
+            if not smid or not lmid:
+                return None, {"note": "order book unavailable"}
+            s_short = self._walk_book(sb, smid, notional, "sell")  # short leg sells
+            s_long = self._walk_book(la, lmid, notional, "buy")    # long leg buys
+            if s_short is None or s_long is None:
+                return None, {"note": "book too thin to fill this size",
+                              "book_too_thin": True}
+            one_way = s_short + s_long
+            return 2 * one_way, {
+                "short_venue_slip_bps": round(s_short * 1e4, 3),
+                "long_venue_slip_bps": round(s_long * 1e4, 3),
+                "round_trip_slip_pct_notional": round(2 * one_way * 100, 4),
+            }
+        except Exception as e:
+            return None, {"note": f"slippage estimate failed: {e}"}
+
     def decide(self, coin="BTC", capital_usd=500.0, lookback_days=30,
                funding_network="mainnet") -> Dict[str, Any]:
         """Fetch aligned funding history for both venues and return a flat verdict
@@ -378,18 +498,50 @@ class TradingCarryEngine(Skill):
         }
         if ev["action"] == "open":
             price = self._current_price(coin, funding_network)
-            notional = capital_usd * ev["leverage"]
-            size = round(notional / price, 4)
-            verdict.update({
-                "short_venue": ev["short_venue"], "long_venue": ev["long_venue"],
-                "short_symbol": (coin if ev["short_venue"] == "hyperliquid"
-                                 else f"{coin}-USD"),
-                "long_symbol": (coin if ev["long_venue"] == "hyperliquid"
-                                else f"{coin}-USD"),
-                "size": size, "ref_price": price, "leverage": ev["leverage"],
-                "net_annual_pct_on_capital_if_spread_holds":
-                    ev.get("net_annual_pct_on_capital_if_spread_holds"),
-            })
+            size, sizing = self._size_position(price, ev["leverage"], capital_usd)
+            notional = size * price
+
+            # Dilution guard: does the edge survive fees AND slippage at THIS size?
+            hold_days = 14.0
+            slip_frac, slip_detail = self._round_trip_slippage(
+                coin, ev["short_venue"], ev["long_venue"], notional, funding_network)
+            verdict["sizing"] = sizing
+            verdict["slippage"] = slip_detail
+
+            if slip_detail.get("book_too_thin"):
+                # size exceeds what the book can absorb — never trade into that
+                verdict["action"] = "sit_out"
+                verdict["sit_out"] = True
+                verdict["reason"] = (
+                    "order size exceeds available order-book depth — sitting out"
+                    " (dilution guard)")
+                return verdict
+
+            slip = slip_frac if slip_frac is not None else 0.0
+            gross_over_hold = (ev["gross_edge_annual_pct"] / 100.0) * (
+                hold_days / 365.0)
+            fees_frac = ev["round_trip_cost_pct_notional"] / 100.0
+            net_over_hold = gross_over_hold - fees_frac - slip
+            verdict["net_after_costs_pct_notional_over_hold"] = round(
+                net_over_hold * 100, 4)
+
+            if net_over_hold <= 0:
+                verdict["action"] = "sit_out"
+                verdict["sit_out"] = True
+                verdict["reason"] = (
+                    "net edge non-positive after fees + slippage at this size —"
+                    " sitting out (dilution guard)")
+            else:
+                verdict.update({
+                    "short_venue": ev["short_venue"], "long_venue": ev["long_venue"],
+                    "short_symbol": (coin if ev["short_venue"] == "hyperliquid"
+                                     else f"{coin}-USD"),
+                    "long_symbol": (coin if ev["long_venue"] == "hyperliquid"
+                                    else f"{coin}-USD"),
+                    "size": size, "ref_price": price, "leverage": ev["leverage"],
+                    "net_annual_pct_on_capital_if_spread_holds":
+                        ev.get("net_annual_pct_on_capital_if_spread_holds"),
+                })
         return verdict
 
     async def run(

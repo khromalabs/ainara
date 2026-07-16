@@ -105,10 +105,12 @@ class HyperliquidExecutor:
              if b.get("coin") == "USDC"),
             0.0,
         )
+        free = float(ms.get("accountValue", 0)) - float(ms.get("totalMarginUsed", 0))
         return {
             "venue": "hyperliquid",
             "network": self.network,
             "perp_account_value": float(ms.get("accountValue", 0)),
+            "free_collateral": max(0.0, free),
             "usdc_spot": usdc_spot,
             "positions": positions,
         }

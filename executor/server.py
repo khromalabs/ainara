@@ -58,6 +58,30 @@ def _venue(name):
     return cls(config) if cls else None
 
 
+def _margin_cap_notional():
+    """Max notional per leg allowed by the margin rule, from BOTH live balances.
+    None if the rule isn't configured or balances can't be read.
+
+    Uses EQUITY (account value), not free collateral: equity is stable as the two
+    legs open, so the cap doesn't tighten after leg 1 and wrongly refuse leg 2
+    (which would strand a naked leg). When flat, equity == free collateral, so it
+    matches the carry engine's sizing.
+    """
+    pct = config.get("trading.max_account_margin_pct")
+    if pct is None:
+        return None
+    try:
+        hl_eq = _venue("hyperliquid").state().get("perp_account_value")
+        dy_eq = _resolve(_venue("dydx").state()).get("equity")
+        if hl_eq is None or dy_eq is None:
+            return None
+        leverage = float(config.get("trading.carry_engine.leverage", 3.0))
+        return float(pct) / 100.0 * min(float(hl_eq), float(dy_eq)) * leverage
+    except Exception as e:
+        logger.warning("margin-cap read failed: %s", e)
+        return None
+
+
 @app.get("/health")
 def health():
     return jsonify(
@@ -108,6 +132,25 @@ def order(name):
     reduce_only = bool(body.get("reduce_only", False))
     if not symbol or size is None or price is None:
         return jsonify(error="symbol, size and price are required"), 400
+    # Deterministic margin backstop: refuse any OPENING order above the margin rule,
+    # regardless of what the carry engine sized or the LLM agent requested. Closes
+    # are never capped.
+    if not reduce_only:
+        mcap = _margin_cap_notional()
+        notional = float(size) * float(price)
+        if mcap is not None and notional > mcap:
+            logger.info("ORDER REFUSED (margin cap): %s notional=%.2f cap=%.2f",
+                        name, notional, mcap)
+            return jsonify({
+                "submitted": False,
+                "order": {"venue": name, "symbol": symbol, "size": size,
+                          "price": price, "reduce_only": reduce_only},
+                "gate": {
+                    "refused": "order_exceeds_margin_cap",
+                    "detail": (f"notional ${notional:,.2f} exceeds the margin-rule "
+                               f"cap ${mcap:,.2f} (trading.max_account_margin_pct)."),
+                },
+            })
     logger.info(
         "ORDER %s %s %s size=%s px=%s reduce_only=%s dry_run=%s",
         name, symbol, "buy" if is_buy else "sell", size, price, reduce_only, dry_run,
