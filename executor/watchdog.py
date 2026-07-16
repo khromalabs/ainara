@@ -184,3 +184,38 @@ class Watchdog:
             except Exception as e:  # never let the guard die silently
                 logger.error("watchdog loop error: %s", e)
             time.sleep(self.interval)
+
+
+def main():
+    """Standalone entry point: python -m executor.watchdog
+
+    Wires the two venue adapters and runs the guard loop. Mode comes from config
+    (trading.watchdog.mode): 'monitor' (default) logs warnings only; 'active'
+    auto-flattens the exposed leg on a broken hedge.
+    """
+    import logging as _logging
+
+    from executor.config import ExecutorConfig
+    from executor.venues.dydx import DydxExecutor
+    from executor.venues.hyperliquid import HyperliquidExecutor
+
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    config = ExecutorConfig()
+    wd = Watchdog(HyperliquidExecutor(config), DydxExecutor(config), config)
+    if wd.mode != "active":
+        logger.warning(
+            "watchdog mode is '%s' — it will REPORT risks but NOT auto-close."
+            " Set trading.watchdog.mode: active in ainara.yaml to enable"
+            " automatic leg flattening.", wd.mode,
+        )
+    try:
+        wd.run()
+    except KeyboardInterrupt:
+        logger.info("watchdog stopped")
+
+
+if __name__ == "__main__":
+    main()
