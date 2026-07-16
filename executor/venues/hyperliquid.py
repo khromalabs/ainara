@@ -29,7 +29,7 @@ import requests
 from eth_account import Account
 from hyperliquid.exchange import Exchange
 
-from executor.compliance import check_submission
+from executor.compliance import check_order_cap, check_submission
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,10 @@ class HyperliquidExecutor:
             "side": "buy" if is_buy else "sell", "size": size,
             "limit_px": limit_px, "reduce_only": reduce_only, "tif": tif,
         }
+        cap = check_order_cap(self.config, float(size) * float(limit_px),
+                              reduce_only)
+        if cap is not None:
+            return {"submitted": False, "order": order, "gate": cap}
         gate = check_submission(self.config, self.network, dry_run)
         if gate is not None:
             return {"submitted": False, "order": order, "gate": gate}

@@ -46,7 +46,7 @@ from dydx_v4_client.node.market import Market
 from dydx_v4_client.wallet import Wallet
 from v4_proto.dydxprotocol.clob.order_pb2 import Order
 
-from executor.compliance import check_submission
+from executor.compliance import check_order_cap, check_submission
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,9 @@ class DydxExecutor:
         order = {"venue": "dydx", "network": self.network, "market": market,
                  "side": "buy" if is_buy else "sell", "size": size,
                  "price": price, "reduce_only": reduce_only, "mode": self.mode}
+        cap = check_order_cap(self.config, float(size) * float(price), reduce_only)
+        if cap is not None:
+            return {"submitted": False, "order": order, "gate": cap}
         gate = check_submission(self.config, self.network, dry_run)
         if gate is not None:
             return {"submitted": False, "order": order, "gate": gate}

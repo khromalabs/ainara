@@ -32,6 +32,36 @@ _compliance.py). It confers no permission or protection.
 """
 
 
+def check_order_cap(config, notional_usd, reduce_only):
+    """Refuse an OPENING order whose USD notional exceeds the configured cap.
+
+    Deterministic hard ceiling, enforced in the daemon regardless of what the
+    carry engine sized or an LLM agent requested. Reduce-only / closing orders are
+    NEVER capped — a size limit must never be able to trap you in a naked leg.
+
+    Cap: trading.executor.max_order_notional_usd (unset = no cap).
+    Returns None to proceed, or a refusal dict.
+    """
+    if reduce_only:
+        return None
+    cap = config.get("trading.executor.max_order_notional_usd")
+    if cap is None:
+        return None
+    try:
+        cap = float(cap)
+    except (TypeError, ValueError):
+        return None
+    if notional_usd > cap:
+        return {
+            "refused": "order_exceeds_max_notional",
+            "detail": (
+                f"order notional ${notional_usd:,.2f} exceeds the configured cap "
+                f"${cap:,.2f} (trading.executor.max_order_notional_usd)."
+            ),
+        }
+    return None
+
+
 def check_submission(config, network, dry_run):
     """Return None if submission may proceed, else a refusal dict.
 
