@@ -16,8 +16,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import json
 import logging
-from typing import Annotated, Any, Dict, Literal, Optional
+from typing import Annotated, Any, Dict, Literal, Optional, Union
 
 import requests
 
@@ -76,13 +77,103 @@ class TradingExecutorClient(Skill):
         return data
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _unwrap_decision(decision) -> Union[dict, str]:
+        """Normalize a carry-engine verdict to a plain dict.
+
+        Accepts the dict itself, its JSON string (how a Conductor param arrives,
+        since scratchpad templates stringify), and the {"result": {...}} envelope
+        skill results are wrapped in. Returns an error string if it can't.
+        """
+        if isinstance(decision, str):
+            try:
+                decision = json.loads(decision)
+            except (ValueError, TypeError):
+                return "decision is not valid JSON"
+        if not isinstance(decision, dict):
+            return f"decision must be an object, got {type(decision).__name__}"
+        inner = decision.get("result")
+        if isinstance(inner, dict):
+            decision = inner
+        return decision
+
+    def _open_hedge(self, decision, dry_run: bool) -> Dict[str, Any]:
+        """Open both legs from a decide verdict, deterministically.
+
+        Re-checks the engine's own sit_out/action verdict before submitting. The
+        Conductor's avoid_step_if guard fails OPEN on an unresolvable path, so
+        this is the check that actually holds if the plan's gate is misspelled.
+        """
+        if decision is None:
+            return {"error": "open_hedge requires the carry engine's decision"}
+        d = self._unwrap_decision(decision)
+        if isinstance(d, str):
+            return {"error": d}
+
+        if d.get("sit_out") is True or d.get("action") == "sit_out":
+            return {"opened": False, "status": "sit_out",
+                    "detail": "engine says sit out; no orders sent",
+                    "reason": d.get("reason")}
+        if d.get("action") != "open":
+            return {"opened": False, "status": "refused",
+                    "detail": f"unexpected action {d.get('action')!r}; "
+                              "expected 'open'"}
+
+        body = {k: d.get(k) for k in ("short_venue", "long_venue", "short_symbol",
+                                      "long_symbol", "size", "ref_price")}
+        missing = [k for k, v in body.items() if v in (None, "")]
+        if missing:
+            return {"error": "decision is missing required field(s): "
+                             f"{', '.join(missing)}"}
+        body["dry_run"] = dry_run
+        return self._request("POST", "/hedge/open", body)
+
+    def _close_hedge(self, decision, dry_run: bool) -> Dict[str, Any]:
+        """Close an open hedge from a decide_exit verdict, deterministically.
+
+        Re-checks the verdict's own action before closing, mirroring _open_hedge:
+        the Conductor's avoid_step_if fails OPEN, so this is the check that holds
+        if the plan's gate is ever misspelled. Refusing to close is safe (the
+        position simply stays), so this errs toward doing nothing.
+        """
+        if decision is None:
+            return {"error": "close_hedge requires the exit decision"}
+        d = self._unwrap_decision(decision)
+        if isinstance(d, str):
+            return {"error": d}
+
+        if d.get("action") != "close" or d.get("skip_close") is True:
+            return {"closed": False, "status": "skipped",
+                    "detail": f"exit verdict is {d.get('action')!r}; not closing",
+                    "reason": d.get("reason")}
+
+        coin = d.get("coin")
+        if not coin:
+            return {"error": "exit decision is missing 'coin'"}
+        # Venue symbol conventions: bare coin on HL, USD-quoted pair on dYdX.
+        return self._request("POST", "/hedge/close", {
+            "legs": {"hyperliquid": coin, "dydx": f"{coin}-USD"},
+            "dry_run": dry_run,
+        })
+
+    # ------------------------------------------------------------------
     async def run(
         self,
         action: Annotated[
-            Literal["validate", "state", "orders", "place", "cancel", "health"],
+            Literal["validate", "state", "orders", "place", "cancel", "health",
+                    "open_hedge", "close_hedge"],
             "What to do: check daemon 'health'; 'validate' credentials; read"
-            " account 'state'; list open 'orders'; 'place' or 'cancel' an order",
+            " account 'state'; list open 'orders'; 'place' or 'cancel' an order;"
+            " 'open_hedge' to open BOTH legs of a carry-engine decision at once;"
+            " 'close_hedge' to flatten both legs from a decide_exit verdict",
         ] = "state",
+        decision: Annotated[
+            Optional[Union[str, dict]],
+            "For 'open_hedge': the carry engine's decide verdict (dict, or the"
+            " JSON string of it). Supplies both venues, symbols, size and"
+            " ref_price, so no field has to be retyped. For 'close_hedge': the"
+            " decide_exit verdict.",
+        ] = None,
         venue: Annotated[
             Literal["hyperliquid", "dydx"], "Which venue"
         ] = "hyperliquid",
@@ -122,6 +213,10 @@ class TradingExecutorClient(Skill):
                 "symbol": symbol, "is_buy": is_buy, "size": size, "price": price,
                 "reduce_only": reduce_only, "dry_run": dry_run,
             })
+        if action == "open_hedge":
+            return self._open_hedge(decision, dry_run)
+        if action == "close_hedge":
+            return self._close_hedge(decision, dry_run)
         if action == "cancel":
             if not symbol:
                 return {"error": "cancel requires symbol"}

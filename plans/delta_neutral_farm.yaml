@@ -33,36 +33,40 @@ steps:
       coin: BTC
       capital_usd: 500
 
-  # 2. Execution. Skipped entirely when the engine says sit out (avoid_step_if on
-  #    the truthy `sit_out`). Otherwise an agent places BOTH legs via the executor.
+  # 2. Execution — deterministic, no LLM. The engine's verdict is already a
+  #    complete instruction, so there is no judgement left to exercise here; an
+  #    agent could only retype the fields, slowly and unreliably.
+  #
+  #    The daemon's /hedge/open owns the whole sequence: refuse unless flat ->
+  #    short leg -> confirm filled -> long leg -> confirm filled -> unwind the
+  #    short if the long fails. The only outcomes are BOTH legs on or NOTHING on,
+  #    and the unwind is code rather than a prose instruction.
+  #
+  #    Two independent gates guard this step: avoid_step_if below, and the skill's
+  #    own re-check of the verdict's sit_out (which holds even if the Conductor
+  #    fails to resolve the path — it fails OPEN).
   execute:
-    type: agent
+    type: skill
+    skill: trading_executor_client
     depends_on: [evaluate]
-    avoid_step_if: "evaluate.response.sit_out"
-    goal: |
-      A delta-neutral funding-carry decision has been produced:
-      {{evaluate.response}}
+    avoid_step_if: "evaluate.response.result.sit_out"
+    params:
+      action: open_hedge
+      # The whole verdict, not field-by-field: scratchpad templates only resolve
+      # one level ({{step.field}}), so {{evaluate.response.result.size}} would
+      # silently not resolve. The skill unwraps and parses this.
+      decision: "{{evaluate.response}}"
+      dry_run: false
 
-      The decision's action is "open". Open the delta-neutral position by placing
-      BOTH legs through the trading executor. From the decision above use:
-        - short leg: place a SELL on `short_venue` for `short_symbol`
-        - long leg:  place a BUY  on `long_venue`  for `long_symbol`
-        - both legs use `size` for the order size and a limit price at `ref_price`
-          (buy at or just below ref_price, sell at or just above it)
-        - both orders must be live: set dry_run to false
-
-      Place the short leg first, confirm it was accepted, then place the long leg.
-      After both, read back the account state on each venue to confirm the two
-      positions exist and are on opposite sides.
-
-      CRITICAL: never leave a single naked leg. If one leg is placed but the other
-      fails or is refused, immediately cancel/close the leg that did go through, so
-      the account returns flat. Report exactly what was placed, filled, or unwound.
-
-  # 3. Report the outcome (runs whether or not execute was skipped).
+  # 3. Report the outcome (runs whether or not execute was skipped — a skipped
+  #    step still completes, with an empty response). This is the one step where
+  #    an LLM earns its place: it turns the run into prose for a human, after the
+  #    money has already moved, so a bad summary costs a paragraph, not capital.
+  #    It must depend on `execute`, not just `evaluate` — it reads
+  #    {{execute.response}}, and without the edge the DAG is free to run it first.
   report:
     type: agent
-    depends_on: [evaluate]
+    depends_on: [evaluate, execute]
     goal: |
       Summarize this delta-neutral funding-carry run in a few plain sentences for
       the operator. The engine's decision was:
