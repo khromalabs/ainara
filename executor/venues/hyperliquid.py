@@ -156,3 +156,43 @@ class HyperliquidExecutor:
     def cancel_order(self, coin, oid):
         """Cancel a resting order by its oid. Not gated (reduces exposure)."""
         return self._exchange().cancel(coin, oid)
+
+    def mid_price(self, coin):
+        """Live mid for `coin`. None if unavailable.
+
+        Deliberately independent of any position payload: state()'s mark_px is
+        derived as positionValue/szi, so a missing positionValue silently yields
+        0.0 rather than an error. This is the fallback that keeps a close from
+        being priced off that zero.
+        """
+        mids = self._info({"type": "allMids"})
+        px = mids.get(coin)
+        return float(px) if px is not None else None
+
+    def flatten(self, coin, dry_run=False):
+        """Close the whole `coin` position with a reduce-only crossing IOC.
+
+        Single home for HL close pricing — server._close_leg and watchdog._act
+        both used to build this themselves off `mark_px or 0`, which meant a
+        missing positionValue produced a limit of ZERO: closing a short became a
+        buy at 0 (never fills, leg stays naked) and closing a long became a sell
+        at 0 (crosses the whole book at any price). Both look like well-formed
+        orders and neither logs anything.
+
+        Prices from the position's mark, falls back to the live mid, and REFUSES
+        if neither is usable — an unpriceable close must be reported, not sent.
+        """
+        pos = next((p for p in (self.state().get("positions") or [])
+                    if p.get("coin") == coin), None)
+        if not pos or not abs(float(pos["szi"])):
+            return {"closed": True, "note": "no position to close"}
+        szi = float(pos["szi"])
+        is_buy = szi < 0  # buy to close a short
+        px = pos.get("mark_px") or self.mid_price(coin)
+        if not px or float(px) <= 0:
+            return {"submitted": False,
+                    "error": f"cannot price close for {coin}: no usable mark or "
+                             "mid — refusing to send an order at 0"}
+        limit = float(px) * (1.05 if is_buy else 0.95)
+        return self.place_order(coin, is_buy, abs(szi), round(limit),
+                                reduce_only=True, tif="Ioc", dry_run=dry_run)
