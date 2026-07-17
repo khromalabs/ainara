@@ -19,3 +19,4 @@ ainara/nexus/*
 docs
 node_modules/
 venv/
+.venv/
