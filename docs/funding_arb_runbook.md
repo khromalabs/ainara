@@ -5,9 +5,15 @@ Operational guide for the delta-neutral funding-carry system. See
 stand it up and fire it.
 
 > **This places real orders.** On testnet the compliance gate permits live
-> submission, and the plan tells the execute agent to go live — so a run *will*
-> place real testnet trades. Keep the executor on `network: testnet` until a full
-> supervised run has been validated. Never point this at mainnet casually.
+> submission, and the plans set `dry_run: false` — so a run *will* place real testnet
+> trades. Keep the executor on `network: testnet` until a full supervised run has been
+> validated. Never point this at mainnet casually.
+
+> **dYdX testnet cannot close.** Its book is dead (~19 trades/24h, empty bid side), so
+> a close IOC lands on-chain with `tx_code: 0` and never fills. You can open there but
+> not exit; positions are one-way and must be abandoned. As a result the entry path now
+> correctly **sits out** on testnet — the dilution guard refuses to size against a book
+> it cannot measure. Testnet has told us everything it can; see *Caveats*.
 
 ## Runtime topology
 
@@ -50,12 +56,18 @@ venv\Scripts\python.exe -m venv executor\.venv
 executor\.venv\Scripts\python.exe -m pip install -r executor\requirements.txt
 ```
 
-**2. Install the plan** where the Conductor loads plans (`<config>/bureau/`):
+**2. Install the plans** where the Conductor loads plans (`<config>/bureau/`) — both
+of them; entry without exit means positions are entered and never left:
 
 ```powershell
 mkdir "$env:APPDATA\ainara\bureau" -Force
 copy plans\delta_neutral_farm.yaml "$env:APPDATA\ainara\bureau\"
+copy plans\delta_neutral_exit.yaml "$env:APPDATA\ainara\bureau\"
 ```
+
+> The Conductor loads plans **at startup only** — restart the Bureau after copying, or
+> the trigger returns `404 Plan not found`. It resolves `<config>` from the config file
+> it actually loaded, so this follows `AINARA_CONFIG` (see step 5).
 
 **3. Config** (`%APPDATA%\ainara\ainara.yaml`) — the following must be present:
 
@@ -80,11 +92,30 @@ trading:
   max_account_margin_pct: 20         # per-leg margin ≤ this % of the SMALLER account
   carry_engine:
     leverage: 3.0
+    enter_threshold_annual_pct: 4.0  # smoothed edge must clear this to open
+    # exit_threshold_annual_pct: 4.0 # defaults to the ENTER threshold, which is what
+                                     # the backtest models. Lowering it adds hysteresis
+                                     # (fewer round trips) but is NOT backtested.
   executor:
     max_order_notional_usd: 200      # absolute hard ceiling per opening order
+    # cross_pct: 0.05                # how far each leg crosses the book to guarantee a
+                                     # taker fill. A worst-case CAP, not a cost — a
+                                     # crossing limit fills at the resting order's price.
+    # fill_timeout_s: 15             # how long to wait for a leg to fill before unwinding
   watchdog:
     mode: active                     # REQUIRED for auto-close (see below)
+    # confirm_polls: 3               # consecutive broken-hedge sightings before acting.
+                                     # A two-leg open is TRANSIENTLY broken, and dYdX
+                                     # state comes from a lagging indexer — acting on the
+                                     # first sighting flattens healthy hedges mid-open.
+    # escalate_after: 3              # failed close attempts before raising the alarm
+    # backoff_base_seconds: 30       # retry backoff once escalated (30→60→…→cap)
+    # backoff_max_seconds: 300
 ```
+
+> **Temporarily raising `enter_threshold_annual_pct` will make the farm plan sit out
+> until you put it back.** It's also the fallback for the exit threshold, so bumping it
+> to force an exit test changes entry too. Easy to forget; it looks exactly like a bug.
 
 **4. Funded testnet accounts** — Hyperliquid perp balance (transfer USDC spot→perp
 in the HL testnet UI), and dYdX testnet USDC in subaccount 0.
@@ -116,8 +147,8 @@ leg. All are config-driven; no code changes to tune.
 |-------|-----------|--------------|
 | **Dynamic margin cap** | `trading.max_account_margin_pct` | Each leg's margin ≤ this % of the **smaller** account's free collateral (× leverage). Scales with the account; keeps a liquidation buffer. Both legs matched off the binding account. |
 | **Hard notional cap** | `trading.executor.max_order_notional_usd` | Absolute per-opening-order ceiling. "Never bigger than this, period." |
-| **Dilution guard** | *(automatic)* | The engine subtracts estimated order-book slippage at the sized notional from the net edge; if net goes ≤ 0, or the book can't absorb the size, it **sits out**. Dormant at small size; auto-protects the edge as size scales. |
-| **Position watchdog** | `trading.watchdog.mode: active` | Auto-flattens a leg that goes naked (broken hedge) or nears liquidation. |
+| **Dilution guard** | *(automatic)* | The engine subtracts estimated order-book slippage at the sized notional from the net edge; if net goes ≤ 0, or **either side** of **either** book can't absorb the size, it **sits out**. It walks all four legs — entry *and* exit — because being unable to get out is the real risk, and it reads each venue's book from the network that venue actually trades on. If it cannot measure a book at all, it sits out rather than assuming trading is free. |
+| **Position watchdog** | `trading.watchdog.mode: active` | Auto-flattens a leg that goes naked (broken hedge) or nears liquidation — on **both** venues. Debounces before acting, verifies by re-reading the position, escalates when it can't fix things, and backs off instead of retrying forever. |
 
 **Effective order size = `min(margin cap, hard cap)`.** At small testnet balances
 the hard cap usually binds first — e.g. with a ~$994 smaller account,
@@ -131,9 +162,16 @@ and scales with the account on its own.
 - The carry engine *sizes* to the margin rule (reading live balances) and runs the
   dilution guard when it decides — so the intended order is already correct.
 - The executor daemon *independently backstops* the margin cap and the notional cap
-  on every opening order — so neither the sizing logic nor the LLM execute agent
-  can exceed them. (The daemon caps on account **equity**, which stays stable as the
-  two legs open, so it can't tighten mid-open and strand a naked leg.)
+  on every opening order, so the sizing logic can't exceed them whatever it asked for.
+  (The daemon caps on account **equity**, which stays stable as the two legs open, so
+  it can't tighten mid-open and strand a naked leg.) `/hedge/open` applies the same
+  `min(margin cap, hard cap)` itself, since it calls the venue adapters directly and
+  therefore bypasses the per-order route where that backstop lives.
+- `/hedge/open` **floors the size to fit the binding cap at the crossing price**, both
+  legs equally so delta-neutrality can't be broken by the shave. Sizing to a cap
+  exactly is not safe: the buy leg breaches it the moment it crosses up, and the venue
+  then refuses the long *after* the short has already filled.
+- **Nothing caps a close.** A size limit must never be able to trap you in a naked leg.
 
 Every decision the engine makes carries a `sizing` and `slippage` breakdown in its
 output, visible in the Bureau logs — so you can see exactly how it sized and why.
@@ -168,15 +206,56 @@ venv\Scripts\python.exe scripts\scheduler.py --run-plan delta_neutral_farm
 (For scheduled runs instead of a one-shot: add a cron under `plans:` in
 `%APPDATA%\ainara\scheduler.yaml` and just leave Terminal 2 running.)
 
+## Scheduling the exit
+
+**An exit that only runs when you remember to run it is not an exit.** `decide` is
+stateless — it can only ever open — so without the exit plan on a timer, a position is
+entered and then held forever regardless of what the spread does. Both venues fund
+hourly, so an hourly check matches the signal:
+
+```yaml
+plans:
+  delta_neutral_exit:
+    cron: "5 * * * *"          # :05 past the hour, just clear of the funding stamp
+    enabled: false             # flip to true once you've run it by hand at least once
+    avoid_if:
+      - delta_neutral_farm     # never let entry and exit race: an exit firing mid-open
+                               # would read a half-built hedge as a position to close
+```
+
+It ships **disabled** deliberately — it trades unattended. Run it by hand first
+(`--run-plan delta_neutral_exit`), confirm it reports `hold` against a healthy
+position, then enable it.
+
+To automate entry too, mirror the above with `avoid_if: [delta_neutral_exit]` so the
+pair can never overlap.
+
 ## What happens when you fire it
 
+**Entry** (`--run-plan delta_neutral_farm`):
+
 1. **evaluate** (deterministic skill) — `carry_engine.decide` fetches live
-   cross-venue funding, computes the EMA-smoothed spread, returns a verdict with a
-   `sit_out` flag.
-2. **execute** — skipped entirely if `sit_out` is true (the `avoid_step_if` gate).
-   Otherwise an LLM agent reads the decision and places both legs via the executor,
-   instructed never to leave a naked leg.
-3. **report** — summarizes the outcome.
+   cross-venue funding, computes the EMA-smoothed spread, sizes the position, runs the
+   dilution guard, and returns a verdict with a `sit_out` flag.
+2. **execute** (deterministic skill) — skipped if `sit_out` is true. Otherwise it hands
+   the whole verdict to `/hedge/open`, which refuses unless flat, places the short,
+   confirms it filled *by reading the position*, places the long, confirms, and unwinds
+   the short if the long doesn't land. Both legs on, or nothing on.
+3. **report** (agent) — summarizes the outcome in prose. The only LLM in the plan, and
+   it runs after everything financial has already happened.
+
+**Exit** (`--run-plan delta_neutral_exit`, or the hourly cron):
+
+1. **evaluate_exit** — reads the current position, compares it to the smoothed spread,
+   returns close / hold / none.
+2. **close** — skipped unless the verdict is `close`. Otherwise `/hedge/close` flattens
+   every leg and confirms flat.
+3. **report** — as above.
+
+> **Two independent gates guard each acting step**: the plan's `avoid_step_if`, and the
+> skill's own re-check of the verdict. The second one is what actually holds — the
+> Conductor's gate fails *open* on an unresolvable path, so a typo in it disarms the
+> gate silently rather than failing loudly.
 
 ## What each terminal tells you
 
@@ -184,12 +263,21 @@ venv\Scripts\python.exe scripts\scheduler.py --run-plan delta_neutral_farm
   what hit the venues.
 - **T2 (Bureau):** the Conductor stepping `evaluate → execute → report`, including
   when `execute` is skipped by the sit-out gate.
-- **T3 (watchdog):** quiet while hedged; a `risk=critical BROKEN HEDGE` line the
-  instant one leg exists without the other — and in active mode, the auto-close
-  immediately after.
+- **T3 (watchdog):** quiet while hedged. On a break: `risk=critical BROKEN HEDGE`, then
+  `broken hedge seen 1/3 — holding off` while it debounces, then the close attempts —
+  each logging **the venue's actual response**. If it can't fix it:
+  `WATCHDOG CANNOT FLATTEN <venue> AFTER n ATTEMPTS`, after which retries back off
+  (30s → 60 → … → 300s cap) while monitoring continues every poll.
 
 Cross-check positions in the venue testnet UIs, or via
 `GET http://127.0.0.1:8130/venues/hyperliquid/state` and `.../venues/dydx/state`.
+
+`GET http://127.0.0.1:8130/health` also carries **`watchdog_alarm`** — the watchdog is
+a separate process, so it escalates through a file the daemon surfaces here. That makes
+"the watchdog cannot flatten a leg" something you can *poll*, rather than a line that
+scrolled off a console an hour ago. `null` means no alarm; `stale: true` means the
+alarm is over 5 minutes old and the watchdog may be dead — don't read a dead
+watchdog's alarm as live.
 
 ## Stopping / kill switch
 
@@ -200,11 +288,29 @@ Cross-check positions in the venue testnet UIs, or via
 
 ## Caveats
 
-- **The execute agent is the newest link.** Everything beneath it is tested live
-  (the executor places/cancels on both venues; the watchdog auto-closes). But the
-  LLM agent translating a decision into executor calls end-to-end is exercised for
-  the first time in a full run — supervise the first fire and keep the kill switch
-  handy.
+- **The exit's `close` branch is the newest link — and it has never succeeded.**
+  Everything else is tested live: both venues place and cancel, the full stack has
+  opened a real hedge on its own, the watchdog flattens naked legs, and the exit's
+  `hold` path correctly declines to close a paying position. But an actual close has
+  never run end-to-end, and **it cannot be tested on dYdX testnet** (below). It gets
+  its first honest execution on mainnet. Supervise that one.
+- **dYdX testnet is one-way.** The book is dead (~19 trades/24h; the bid side is
+  empty), so closes never fill — an IOC reduce-only lands with `tx_code: 0` and finds
+  nothing to match, forever. This is not a code, key, or permission problem; it took a
+  while to prove that. Consequences: positions opened there must be abandoned, and the
+  entry path now correctly **sits out** on testnet because the dilution guard won't
+  size against a book it can't measure. Rehearse close logic against Hyperliquid.
 - **Monitor-mode watchdog = no protection.** Verify `mode=active` at startup.
 - **Testnet trades are real.** They cost testnet balance and behave like live
   orders; thin testnet books can fill at poor prices.
+- **Plans load at Bureau startup.** Edit a plan → restart the Bureau, or you're running
+  the old one. A missing plan returns `404 Plan not found`.
+- **A plan's ✅ does not mean the hedge is on.** Read the `status` field in the step
+  output: `hedged` / `unwound` / `aborted_flat` / `sit_out` are all legitimate
+  outcomes, and only the first means you hold a position. A genuine fault
+  (`NAKED_LEG_UNWIND_FAILED`, an unpriceable close) *does* fail the step and fire
+  `on_failure: notify`.
+- **Watch the second leg's fill on the first mainnet run.** The window between leg one
+  filling and leg two landing is the only moment you're naked-directional. It's
+  seconds by design, the watchdog debounces so it won't fight the opener, and the
+  opener unwinds on failure — but that's the sequence to have eyes on.
