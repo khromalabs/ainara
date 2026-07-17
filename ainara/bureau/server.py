@@ -38,7 +38,6 @@ from ainara.framework.connectors.router import ConnectorRouter
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
-from ainara.framework.platform_utils import get_default_config_paths
 
 # Configure logging
 logging.basicConfig(
@@ -281,9 +280,13 @@ def initialize_components():
 
     # 6. Initialize the Conductor
     global conductor
-    config_paths = get_default_config_paths()
+    # Derive the plans dir from the config file that was actually loaded, so
+    # that an AINARA_CONFIG override points the Conductor at the same config
+    # directory every other component uses.
     plans_dir = (
-        Path(config_paths[0]).parent / "bureau" if config_paths else None
+        Path(config_manager.config_file_path).parent / "bureau"
+        if config_manager.config_file_path
+        else None
     )
 
     if plans_dir:
@@ -408,6 +411,9 @@ def run_agent_in_process(
                     blacklisted_providers.append(provider)
 
                 reason_msg = failure_reason if failure_reason else "Empty response from agent"
+                # Record it: this is a real failure, and without it the caller
+                # only ever sees "Last error: None" once every provider is tried.
+                last_error = f"[{provider}] {reason_msg}"
                 logger.warning(f"Agent execution failed with provider '{provider}': {reason_msg}. Retrying next...")
                 # Do not return, let the loop continue to the next provider
             else:
