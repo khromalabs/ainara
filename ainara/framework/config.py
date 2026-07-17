@@ -501,3 +501,13 @@ class ConfigManager:
 
 # Global config instance
 config = ConfigManager()
+
+
+def get_data_dir() -> Path:
+    """Return the user data directory, honouring the 'data.directory' config key.
+
+    Prefer this over platform_utils.get_default_data_dir(), which ignores the
+    configured location. Falls back to the platform default when the key is
+    unset (e.g. before a config file has been written).
+    """
+    return Path(config.get("data.directory") or get_default_data_dir())

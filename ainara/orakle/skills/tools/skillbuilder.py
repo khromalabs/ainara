@@ -128,9 +128,9 @@ Framework rules (IMPORTANT — the skill runs inside the Ainara framework):
   - Never hardcode secrets, SMTP servers, or credentials. Read configuration with:
         from ainara.framework.config import config
         value = config.get("some.config.path")
-  - For persistent skill data files, use the platform data directory:
-        from ainara.framework.platform_utils import get_default_data_dir
-        data_dir = Path(get_default_data_dir())
+  - For persistent skill data files, use the configured data directory:
+        from ainara.framework.config import get_data_dir
+        data_dir = get_data_dir()
   - Do NOT create or block on an event loop (no asyncio.run); the body may use
     already-awaited results but the run() method is already async.
 

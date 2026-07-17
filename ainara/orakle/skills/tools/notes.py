@@ -6,10 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from ainara.framework.platform_utils import get_default_data_dir
+from ainara.framework.config import get_data_dir
 from ainara.framework.skill import Skill
 
-_DEFAULT_NOTES_DIR = Path(get_default_data_dir()) / "notes"
+_DEFAULT_NOTES_DIR = get_data_dir() / "notes"
 
 
 class ToolsNotes(Skill):

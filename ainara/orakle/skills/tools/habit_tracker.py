@@ -3,13 +3,12 @@
 import logging
 import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Annotated, Any, Dict, Literal, Optional
 
 import pytz
 from dateutil import parser
 
-from ainara.framework.platform_utils import get_default_data_dir
+from ainara.framework.config import get_data_dir
 from ainara.framework.skill import Skill
 
 
@@ -23,7 +22,7 @@ class ToolsHabitTracker(Skill):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(__name__)
-        db_dir = Path(get_default_data_dir())
+        db_dir = get_data_dir()
         db_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = str(db_dir / "habits.db")
 

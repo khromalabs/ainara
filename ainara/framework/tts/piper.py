@@ -32,7 +32,7 @@ import soundfile as sf
 from pygame import USEREVENT, mixer
 
 from ..config import config
-from ..platform_utils import get_default_data_dir
+from ..config import get_data_dir
 from .base import TTSBackend
 
 
@@ -65,7 +65,7 @@ class PiperTTS(TTSBackend):
         # Define Model Directories
         # 1. User Data Directory (Persistent downloads)
         self.user_models_dir = (
-            Path(get_default_data_dir()) / "tts" / "piper" / "models"
+            get_data_dir() / "tts" / "piper" / "models"
         )
         # 2. Bundled Resources Directory (App distribution)
         self.bundled_models_dir = (
