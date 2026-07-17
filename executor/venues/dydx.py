@@ -56,6 +56,45 @@ INDEXER = {
 }
 
 
+def liquidation_price(equity, size_signed, mark_px, mmf):
+    """Cross-margin liquidation price for a SINGLE-position subaccount.
+
+    Hyperliquid hands us a liquidationPx; dYdX does not, so we derive it. dYdX v4
+    is cross-margined per subaccount: liquidation triggers once equity falls to
+    the maintenance margin requirement. With one open position:
+
+        equity(P) = equity_now + size * (P - mark)      (unrealized PnL moves it)
+        MMR(P)    = |size| * P * mmf
+        solve equity(P) == MMR(P):
+            P = (equity_now - size*mark) / (|size|*mmf - size)
+
+    Returns None when price alone can never liquidate the position — a long whose
+    equity exceeds its notional runs out of downside at P=0 and simply cannot be
+    liquidated. None therefore means "no reachable liquidation", NOT "unknown";
+    callers that could not read the risk params must say so separately.
+
+    Single-position only: with several positions the MMR is the sum across them,
+    which the rest of this stack (watchdog._leg, positions[0]) does not model yet.
+    """
+    s = float(size_signed)
+    mark_px = float(mark_px)
+    if not s or mark_px <= 0:
+        return None
+    denom = abs(s) * float(mmf) - s
+    if denom == 0:
+        return None
+    p = (float(equity) - s * mark_px) / denom
+    if p <= 0:
+        return None  # unreachable: price cannot fall below zero
+    # A long liquidates BELOW the mark, a short ABOVE it. Anything else means the
+    # inputs disagree — report nothing rather than a number that reads as safe.
+    if s > 0 and p >= mark_px:
+        return None
+    if s < 0 and p <= mark_px:
+        return None
+    return p
+
+
 def _compress(pub: bytes) -> bytes:
     if len(pub) == 65:
         return (b"\x02" if pub[64] % 2 == 0 else b"\x03") + pub[1:33]
@@ -123,6 +162,24 @@ class DydxExecutor:
             "ok": bool(matched) and str(matched.id) == cfg_id,
         }
 
+    def _market_risk(self, ticker):
+        """(oracle_price, maintenance_margin_fraction) for a market, or (None, None).
+
+        MMF is a market parameter, not an account setting — dYdX BTC-USD ships
+        imf=0.02 (the '50x') / mmf=0.012.
+        """
+        try:
+            md = requests.get(
+                f"{self.indexer}/v4/perpetualMarkets?ticker={ticker}", timeout=20
+            ).json()["markets"][ticker]
+            return float(md["oraclePrice"]), float(md["maintenanceMarginFraction"])
+        except Exception as e:
+            # Say it out loud: without these the leg is invisible to the
+            # watchdog's liquidation check, which is the whole point of wiring it.
+            logger.warning("dydx market risk params unavailable for %s: %s",
+                           ticker, e)
+            return None, None
+
     def state(self, subaccount=0):
         """Subaccount equity / free collateral from the public indexer."""
         r = requests.get(
@@ -134,14 +191,31 @@ class DydxExecutor:
                     "address": self.account_address, "subaccount_exists": False,
                     "note": "no subaccount yet (fund it before trading)"}
         s = next((x for x in subs if x.get("subaccountNumber") == subaccount), subs[0])
+        equity = float(s.get("equity", 0))
         positions = []
         for mkt, p in (s.get("openPerpetualPositions") or {}).items():
             sz = abs(float(p.get("size", 0)))
             signed = sz if p.get("side") == "LONG" else -sz  # sign like HL's szi
+            mark, mmf = self._market_risk(mkt)
+            liq = liq_dist = None
+            if mark is None:
+                note = "liquidation unknown: market risk params unavailable"
+            else:
+                liq = liquidation_price(equity, signed, mark, mmf)
+                if liq is None:
+                    note = ("not liquidatable by price alone (equity exceeds"
+                            " notional)")
+                else:
+                    liq_dist = abs(mark - liq) / mark * 100
+                    note = None
             positions.append({
                 "coin": mkt, "size": signed, "side": p.get("side"),
                 "entry_px": p.get("entryPrice"),
-                "liq_distance_pct": None,  # dYdX liq math (margin-based) not yet wired
+                "mark_px": mark,
+                "liquidation_px": liq,
+                "liq_distance_pct": liq_dist,
+                "liq_note": note,
+                "maintenance_margin_fraction": mmf,
             })
         return {
             "venue": "dydx", "network": self.network,
