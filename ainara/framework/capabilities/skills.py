@@ -18,16 +18,17 @@
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 import sys
 from pathlib import Path
-from typing import (Annotated, Any, Dict, Optional, Union, get_args, get_origin,
-                    get_type_hints, is_typeddict)
+from typing import (Annotated, Any, Dict, Optional, Union, get_args,
+                    get_origin, get_type_hints, is_typeddict)
 
-from ainara.framework.mcp.client_manager import MCPClientManager
 # from ainara.framework.connectors.manager import ConnectorManager
 from ainara.framework.connectors.router import ConnectorRouter
+from ainara.framework.mcp.client_manager import MCPClientManager
 
 from .base import CapabilityProvider
 
@@ -142,7 +143,9 @@ class BasePythonSkillProvider(CapabilityProvider):
         # Handle TypedDict
         if is_typeddict(type_hint):
             properties = {}
-            required_keys = getattr(type_hint, "__required_keys__", frozenset())
+            required_keys = getattr(
+                type_hint, "__required_keys__", frozenset()
+            )
 
             # If __required_keys__ is empty but total=True (default), all keys are required
             if not required_keys and getattr(type_hint, "__total__", True):
@@ -155,14 +158,16 @@ class BasePythonSkillProvider(CapabilityProvider):
                 "type": "object",
                 "properties": properties,
                 "required": list(required_keys),
-                "title": type_hint.__name__
+                "title": type_hint.__name__,
             }
 
         # Handle List
-        if origin is list or origin is list:  # Handle both typing.List and built-in list
+        if (
+            origin is list or origin is list
+        ):  # Handle both typing.List and built-in list
             return {
                 "type": "array",
-                "items": self._generate_json_schema(args[0]) if args else {}
+                "items": self._generate_json_schema(args[0]) if args else {},
             }
 
         # Handle Dict
@@ -170,7 +175,11 @@ class BasePythonSkillProvider(CapabilityProvider):
             # Dict[Key, Value] -> JSON object with additionalProperties
             return {
                 "type": "object",
-                "additionalProperties": self._generate_json_schema(args[1]) if len(args) > 1 else {}
+                "additionalProperties": (
+                    self._generate_json_schema(args[1])
+                    if len(args) > 1
+                    else {}
+                ),
             }
 
         # Handle Optional / Union
@@ -257,7 +266,7 @@ class BasePythonSkillProvider(CapabilityProvider):
                     "required": param.default is param.empty,
                     "description": param_desc,
                     "hidden": is_hidden,
-                    "schema": json_schema
+                    "schema": json_schema,
                 }
         except Exception as e:
             logger.error(
@@ -275,13 +284,32 @@ class BasePythonSkillProvider(CapabilityProvider):
         name = re.sub("([a-z0-9])([A-Z])", r"\1_\2", name)
         return name.lower()
 
+    def _load_metadata_registry(self, skills_dir: Path) -> Dict[str, Any]:
+        """Load pre-computed skill metadata from JSON if it exists."""
+        metadata_file = skills_dir / "skills_metadata.json"
+        if metadata_file.exists():
+            try:
+                with open(metadata_file, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(
+                    "Failed to load skills_metadata.json from"
+                    f" {metadata_file}: {e}"
+                )
+        return {}
+
     def discover(
-        self, skills_dir: Path, prefix_module: str, class_name_prefix: str = "", capability_type: str = "skill"
+        self,
+        skills_dir: Path,
+        prefix_module: str,
+        class_name_prefix: str = "",
+        capability_type: str = "skill",
     ) -> Dict[str, Dict[str, Any]]:
         """Load native skills and add them to the capabilities dictionary."""
         import importlib
 
         self.capabilities = {}
+        metadata = self._load_metadata_registry(skills_dir)
         is_frozen = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
         # In frozen mode, look for .pyc and .py files; in dev mode, look for .py files
@@ -291,7 +319,9 @@ class BasePythonSkillProvider(CapabilityProvider):
         for pattern in glob_patterns:
             skill_files.update(skills_dir.glob(pattern))
 
-        logger.info(f"Scanning for skills in: {skills_dir} (pattern: {glob_patterns})")
+        logger.info(
+            f"Scanning for skills in: {skills_dir} (pattern: {glob_patterns})"
+        )
 
         for skill_file in skill_files:
             # For .pyc files, stem is like "analysis" from "analysis.pyc"
@@ -333,7 +363,9 @@ class BasePythonSkillProvider(CapabilityProvider):
                         sys.modules[full_module_path] = module
                         spec.loader.exec_module(module)
                     else:
-                        raise ImportError(f"Could not load spec for {load_path}")
+                        raise ImportError(
+                            f"Could not load spec for {load_path}"
+                        )
                 else:
                     # Development mode - use standard import
                     module = importlib.import_module(full_module_path)
@@ -360,25 +392,35 @@ class BasePythonSkillProvider(CapabilityProvider):
                                     )
                                 )
 
+                            # Use pre-computed metadata if available, otherwise fallback to runtime inspection
+                            meta = metadata.get(snake_name, {})
                             capability_info = {
                                 "instance": instance,
                                 "type": capability_type,
                                 "origin": "local",
-                                "description": (
+                                "description": meta.get(
+                                    "description",
                                     getattr(instance.__class__, "__doc__", "")
-                                    or ""
+                                    or "",
                                 ),
-                                "matcher_info": getattr(
-                                    instance, "matcher_info", ""
+                                "matcher_info": meta.get(
+                                    "matcher_info",
+                                    getattr(instance, "matcher_info", ""),
                                 ),
-                                "hidden": getattr(
-                                    instance, "hiddenCapability", False
+                                "hidden": meta.get(
+                                    "hidden",
+                                    getattr(
+                                        instance, "hiddenCapability", False
+                                    ),
                                 ),
                                 "embeddings_boost_factor": (
                                     embeddings_boost_factor
                                 ),
-                                "run_info": self._get_method_details(
-                                    instance, "run", snake_name
+                                "run_info": meta.get(
+                                    "run_info",
+                                    self._get_method_details(
+                                        instance, "run", snake_name
+                                    ),
                                 ),
                             }
                             self.capabilities[snake_name] = capability_info

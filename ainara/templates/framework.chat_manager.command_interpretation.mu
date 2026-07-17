@@ -50,9 +50,9 @@ This query was sent to the ORAKLE server and the server returned a result, provi
 - Make clear distinction between real-time, recent, and historical data, paying special attention to dates (including dates embedded in URLs if any).
 - Include at the end of your interpretation the most meaningful and valuable full URLs received in the ORAKLE command results if there is any.
 - Do not output raw data structures (JSON, CSV, etc) unless explicitly asked for it. Synthesize results in natural language.
-- Use standard triple backtick Markdown code blocks for code, files, documents, notes or tables (e.g., ```python...```).
-- Today is: {{current_date}} {{current_time}}
+- For blocks of code, reproduction of files or documents, generation of notes or tables, ALWAYS enclose content using triple backtick Markdown blocks, specially when the user requested a note or a table. (e.g., ```python...```).
 
+Today is: {{current_date}} {{current_time}}
 The ORAKLE command returned the following result:
 
 {{{formatted_results}}}

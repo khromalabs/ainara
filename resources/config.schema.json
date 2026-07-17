@@ -3,6 +3,11 @@
     "title": "Ainara Configuration Schema",
     "type": "object",
     "properties": {
+        "skills": {
+            "type": "object",
+            "description": "Container for skills configuration.",
+            "additionalProperties": true
+        },
         "apis": {
             "type": "object",
             "description": "Container for various external API keys and settings.",
