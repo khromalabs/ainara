@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 import asyncio
+import json
 import logging
 import multiprocessing
 import threading
@@ -34,6 +35,30 @@ from ainara.framework.platform_utils import get_default_log_dir
 logger = logging.getLogger(__name__)
 
 
+def _skill_reported_error(result_str: str) -> Optional[str]:
+    """Return a failure reason if the skill's own result carries an error.
+
+    ``call_skill`` only signals transport-level problems, as an "Error: ..."
+    string. A skill that completes the round trip but returns a structured
+    ``{"error": ...}`` otherwise counts as a completed step — so the plan reports
+    SUCCESS and ``on_failure`` never fires. Results arrive as the JSON of Orakle's
+    ``{"result": {...}}`` envelope.
+    """
+    try:
+        payload = json.loads(result_str)
+    except (ValueError, TypeError):
+        return None  # not JSON — nothing to inspect
+    if not isinstance(payload, dict):
+        return None
+    inner = payload.get("result")
+    if isinstance(inner, dict):
+        payload = inner
+    error = payload.get("error")
+    if error:
+        return f"Skill '{{skill}}' reported an error: {error}"
+    return None
+
+
 def _run_skill_in_process(
     orakle_servers: list,
     skill_id: str,
@@ -49,6 +74,22 @@ def _run_skill_in_process(
         result_str = call_skill(
             orakle_servers, skill_id, params, timeout=timeout
         )
+
+        reported = _skill_reported_error(result_str)
+        if reported:
+            reported = reported.format(skill=skill_id)
+            logger.warning("Skill step '%s' reported an error: %s",
+                           skill_id, reported)
+            result_queue.put(
+                {
+                    "response": result_str,
+                    "turns_used": 0,
+                    "skills_executed": [skill_id],
+                    "failure_reason": reported,
+                },
+                timeout=5,
+            )
+            return
 
         # Check if the result indicates an error
         if result_str.startswith("Error:"):
