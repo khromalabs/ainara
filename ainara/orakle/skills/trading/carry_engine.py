@@ -18,6 +18,7 @@
 
 import datetime
 import logging
+import math
 import time
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
@@ -343,6 +344,81 @@ class TradingCarryEngine(Skill):
             before = (t - datetime.timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
         return out
 
+    def _current_side(self, coin):
+        """Which way we are positioned RIGHT NOW, read-only from public APIs.
+
+        Positions are public per account address, so this needs no keys and keeps
+        the engine key-free like the rest of it.
+
+        Returns (side, detail):
+          +1  short hyperliquid / long dydx  (what a positive smoothed spread wants)
+          -1  short dydx / long hyperliquid
+           0  flat
+        side is None when the read failed or the legs are not a clean hedge — the
+        caller must never guess a position it could not confirm.
+        """
+        try:
+            hl_net = config.get("apis.hyperliquid.network", "testnet")
+            hl_addr = config.get(f"apis.hyperliquid.{hl_net}.account_address")
+            st = requests.post(_HL_INFO[hl_net], json={
+                "type": "clearinghouseState", "user": hl_addr}, timeout=20).json()
+            hl_szi = 0.0
+            for p in st.get("assetPositions", []):
+                pos = p.get("position", {})
+                if pos.get("coin") == coin:
+                    hl_szi = float(pos.get("szi", 0) or 0)
+                    break
+
+            dy_net = config.get("apis.dydx.network", "testnet")
+            dy_addr = config.get(f"apis.dydx.{dy_net}.account_address")
+            d = requests.get(
+                f"{_DYDX_INDEXER[dy_net]}/v4/addresses/{dy_addr}", timeout=20).json()
+            subs = d.get("subaccounts") or []
+            dy_size = 0.0
+            if subs:
+                for mkt, p in (subs[0].get("openPerpetualPositions") or {}).items():
+                    if mkt.split("-")[0] == coin:
+                        sz = abs(float(p.get("size", 0) or 0))
+                        dy_size = sz if p.get("side") == "LONG" else -sz
+                        break
+        except Exception as e:
+            self.logger.warning(f"position read failed: {e}")
+            return None, {"error": f"position read failed: {e}"}
+
+        detail = {"hyperliquid_szi": hl_szi, "dydx_size": dy_size}
+        hl_open, dy_open = abs(hl_szi) > 0, abs(dy_size) > 0
+        if not hl_open and not dy_open:
+            return 0, {**detail, "state": "flat"}
+        if hl_open != dy_open:
+            # Half a hedge. Closing is the watchdog's job, not the exit rule's.
+            return None, {**detail, "state": "broken_hedge",
+                          "note": "only one leg open — the position watchdog owns"
+                                  " this, not the exit rule"}
+        if hl_szi < 0 < dy_size:
+            return 1, {**detail, "state": "short_hyperliquid_long_dydx"}
+        if dy_size < 0 < hl_szi:
+            return -1, {**detail, "state": "short_dydx_long_hyperliquid"}
+        return None, {**detail, "state": "not_delta_neutral",
+                      "note": "both legs same direction — not a hedge"}
+
+    @staticmethod
+    def _venue_network(venue):
+        """The network a venue actually TRADES on (apis.<venue>.network).
+
+        Deliberately NOT funding_network. The two answer different questions:
+
+          funding_network -> where the SIGNAL is read. Mainnet, always: testnet
+                             funding is thin and artificial.
+          venue network   -> where the ORDER lands. Whatever the venue is
+                             configured for, and the only book that can fill you.
+
+        Conflating them is how run e8868482 opened: the dilution guard priced
+        mainnet's deep book at 0.0031% slippage while the order went to a testnet
+        book with no bids at all, leaving a position that could never be closed.
+        Read prices and depth from the venue you are actually going to hit.
+        """
+        return config.get(f"apis.{venue}.network", "testnet")
+
     def _current_price(self, coin, network):
         mids = requests.post(_HL_INFO[network], json={"type": "allMids"},
                              timeout=20).json()
@@ -372,6 +448,82 @@ class TradingCarryEngine(Skill):
         except Exception as e:
             self.logger.warning(f"free-collateral read failed: {e}")
             return None, None
+
+    def decide_exit(self, coin="BTC", funding_network="mainnet", lookback_days=30):
+        """Should an OPEN carry position be closed? The other half of `decide`.
+
+        Implements the exit the backtest has always modelled (see `backtest`:
+        ``want = sign(sig) if |sig| > thresh else 0``, closing whenever
+        ``want != pos``). `decide` is stateless and can only ever say open/sit_out,
+        so without this the live system enters and never leaves.
+
+        Verdict is flat, with `skip_close` for the plan's avoid_step_if gate:
+          close -> the smoothed edge decayed inside the band, or flipped sign
+          hold  -> still being paid on the side we hold
+          none  -> nothing to close (flat), or not ours to touch (broken hedge)
+
+        The exit threshold defaults to the ENTRY threshold, matching the backtest
+        exactly. `trading.carry_engine.exit_threshold_annual_pct` can lower it to
+        add hysteresis (fewer round trips), but that is NOT what was backtested.
+        """
+        # mainnet by default, exactly like `decide`: testnet funding is thin and
+        # artificial, and entry/exit MUST read the same signal or they disagree.
+        c = config.get("trading.carry_engine", {}) or {}
+        thresh_pct = float(c.get("exit_threshold_annual_pct",
+                                 self.default_threshold_pct))
+        span = self.default_span_hours
+
+        side, pos_detail = self._current_side(coin)
+        base = {"coin": coin, "funding_network": funding_network,
+                "position": pos_detail,
+                "exit_threshold_annual_pct": thresh_pct}
+        if side is None:
+            return {**base, "action": "none", "skip_close": True,
+                    "reason": pos_detail.get("note")
+                              or pos_detail.get("error")
+                              or "position could not be confirmed — not closing"}
+        if side == 0:
+            return {**base, "action": "none", "skip_close": True,
+                    "reason": "no open position to close"}
+
+        try:
+            hl = self._hl_funding_history(coin, funding_network, int(lookback_days * 24))
+            dy = self._dydx_funding_history(coin, funding_network, int(lookback_days * 24))
+        except Exception as e:
+            # Never close on a failed read: an unreadable signal is not a reason to
+            # abandon a position that is still being paid.
+            return {**base, "action": "hold", "skip_close": True,
+                    "reason": f"funding history fetch failed, holding: {e}"}
+        common = sorted(set(hl) & set(dy))
+        if len(common) < span + 2:
+            return {**base, "action": "hold", "skip_close": True,
+                    "samples": len(common),
+                    "reason": f"insufficient aligned history ({len(common)}h), holding"}
+
+        spread = [hl[t] - dy[t] for t in common]  # +ve => HL funds higher
+        smoothed = self._ema(spread, span)
+        thresh_hourly = thresh_pct / 100.0 / HOURS_PER_YEAR
+        want = 1 if smoothed > thresh_hourly else (-1 if smoothed < -thresh_hourly else 0)
+
+        verdict = {
+            **base,
+            "samples": len(common),
+            "current_side": side,
+            "wanted_side": want,
+            "smoothed_spread_annual_pct": round(smoothed * HOURS_PER_YEAR * 100, 3),
+            "smoothing_span_hours": span,
+        }
+        if want == side:
+            return {**verdict, "action": "hold", "skip_close": True,
+                    "reason": "smoothed edge still clears the threshold on the side"
+                              " we hold"}
+        if want == 0:
+            return {**verdict, "action": "close", "skip_close": False,
+                    "reason": "smoothed edge decayed inside the threshold band —"
+                              " no longer paid for the risk"}
+        return {**verdict, "action": "close", "skip_close": False,
+                "reason": "smoothed spread flipped sign — close now; the entry plan"
+                          " re-opens on the other side"}
 
     def _size_position(self, price, leverage, capital_usd):
         """Return (size, sizing_detail). Primary rule: each leg's margin is capped
@@ -411,7 +563,13 @@ class TradingCarryEngine(Skill):
                       "reason": "could not read account balances",
                       "effective_notional_per_leg": round(notional, 2),
                       "hard_notional_cap": hard_cap}
-        return round(notional / price, 6), detail
+        # FLOOR, never round: the notional above is a hard ceiling, so rounding the
+        # size up breaches it. round(300/64106.5, 6) = 0.00468 is $300.02 — enough
+        # for the daemon's cap to refuse the leg, which is exactly what happened on
+        # 2026-07-16 (run 331efb33). Flooring can only ever size under the cap.
+        size = math.floor(notional / price * 1e6) / 1e6
+        detail["notional_at_ref"] = round(size * price, 2)
+        return size, detail
 
     @staticmethod
     def _walk_book(levels, mid, notional, side):
@@ -446,32 +604,73 @@ class TradingCarryEngine(Skill):
         mid = (bids[0][0] + asks[0][0]) / 2 if bids and asks else None
         return bids, asks, mid
 
-    def _round_trip_slippage(self, coin, short_venue, long_venue, notional, network):
-        """Round-trip slippage (open + close) as a fraction of notional, summed
-        over both legs. Returns (fraction_or_None, detail)."""
+    def _round_trip_slippage(self, coin, short_venue, long_venue, notional):
+        """Full round-trip slippage as a fraction of notional. (fraction|None, detail).
+
+        FOUR book walks, not two doubled:
+            entry: sell into short venue's BIDS, buy into long venue's ASKS
+            exit:  buy back into short venue's ASKS, sell out into long venue's BIDS
+
+        The old version walked only the ENTRY sides and returned 2*that, assuming
+        the exit side is as deep as the entry. That assumption is exactly what
+        failed on 2026-07-16: dYdX testnet had asks (we bought in fine) and no bids
+        (we could never sell out). Doubling the entry cost cannot tell you whether
+        you can GET OUT — and being unable to exit is the whole risk.
+
+        Each venue's book comes from the network THAT venue trades on; see
+        _venue_network. `book_too_thin` now fires on an unfillable EXIT too, which
+        is the case worth refusing.
+        """
         try:
-            sb, _, smid = self._venue_book(coin, short_venue, network)
-            _, la, lmid = self._venue_book(coin, long_venue, network)
+            s_net = self._venue_network(short_venue)
+            l_net = self._venue_network(long_venue)
+            s_bids, s_asks, smid = self._venue_book(coin, short_venue, s_net)
+            l_bids, l_asks, lmid = self._venue_book(coin, long_venue, l_net)
+            nets = {short_venue: s_net, long_venue: l_net}
             if not smid or not lmid:
-                return None, {"note": "order book unavailable"}
-            s_short = self._walk_book(sb, smid, notional, "sell")  # short leg sells
-            s_long = self._walk_book(la, lmid, notional, "buy")    # long leg buys
-            if s_short is None or s_long is None:
-                return None, {"note": "book too thin to fill this size",
-                              "book_too_thin": True}
-            one_way = s_short + s_long
-            return 2 * one_way, {
-                "short_venue_slip_bps": round(s_short * 1e4, 3),
-                "long_venue_slip_bps": round(s_long * 1e4, 3),
-                "round_trip_slip_pct_notional": round(2 * one_way * 100, 4),
+                return None, {"note": "order book unavailable",
+                              "book_networks": nets}
+
+            # (levels, mid, side) — _walk_book's `side` is documentation; the levels
+            # passed are what decide the walk.
+            walks = {
+                f"entry_sell_{short_venue}": (s_bids, smid, "sell"),
+                f"entry_buy_{long_venue}": (l_asks, lmid, "buy"),
+                f"exit_buy_{short_venue}": (s_asks, smid, "buy"),
+                f"exit_sell_{long_venue}": (l_bids, lmid, "sell"),
             }
+            slips = {name: self._walk_book(lv, mid, notional, side)
+                     for name, (lv, mid, side) in walks.items()}
+
+            unfillable = [n for n, v in slips.items() if v is None]
+            if unfillable:
+                return None, {
+                    "note": "book too thin to fill this size: "
+                            + ", ".join(unfillable),
+                    "book_too_thin": True,
+                    "unfillable": unfillable,
+                    "book_networks": nets,
+                }
+            total = sum(slips.values())
+            detail = {n: round(v * 1e4, 3) for n, v in slips.items()}
+            detail.update({
+                "round_trip_slip_pct_notional": round(total * 100, 4),
+                "measured": "all four legs (entry + exit), not entry doubled",
+                "book_networks": nets,
+            })
+            return total, detail
         except Exception as e:
             return None, {"note": f"slippage estimate failed: {e}"}
 
     def decide(self, coin="BTC", capital_usd=500.0, lookback_days=30,
                funding_network="mainnet") -> Dict[str, Any]:
         """Fetch aligned funding history for both venues and return a flat verdict
-        (with a `sit_out` boolean for the plan's avoid_step_if gate)."""
+        (with a `sit_out` boolean for the plan's avoid_step_if gate).
+
+        `funding_network` is the SIGNAL source only (mainnet — testnet funding is
+        artificial). Price and book depth come from each venue's own trading
+        network via _venue_network(); do not pass funding_network to either.
+        """
         hours = int(lookback_days * 24)
         try:
             hl = self._hl_funding_history(coin, funding_network, hours)
@@ -490,21 +689,29 @@ class TradingCarryEngine(Skill):
 
         verdict = {
             "coin": coin, "capital_usd": capital_usd, "samples": len(common),
+            # Two DIFFERENT networks, reported separately so they can never be
+            # silently conflated again: the signal's, and the ones we trade on.
             "funding_network": funding_network,
+            "trading_networks": {v: self._venue_network(v)
+                                 for v in ("hyperliquid", "dydx")},
             "action": ev["action"],
             "sit_out": ev["action"] == "sit_out",
             "smoothed_spread_annual_pct": ev.get("smoothed_spread_annual_pct"),
             "reason": ev.get("reason", "smoothed edge clears threshold"),
         }
         if ev["action"] == "open":
-            price = self._current_price(coin, funding_network)
+            # Price from the network we TRADE on, not the one we read funding from.
+            # This is the reference the executor prices both legs against, so it
+            # must come from a book that can actually fill us.
+            trade_net = self._venue_network("hyperliquid")
+            price = self._current_price(coin, trade_net)
             size, sizing = self._size_position(price, ev["leverage"], capital_usd)
             notional = size * price
 
             # Dilution guard: does the edge survive fees AND slippage at THIS size?
             hold_days = 14.0
             slip_frac, slip_detail = self._round_trip_slippage(
-                coin, ev["short_venue"], ev["long_venue"], notional, funding_network)
+                coin, ev["short_venue"], ev["long_venue"], notional)
             verdict["sizing"] = sizing
             verdict["slippage"] = slip_detail
 
@@ -517,7 +724,21 @@ class TradingCarryEngine(Skill):
                     " (dilution guard)")
                 return verdict
 
-            slip = slip_frac if slip_frac is not None else 0.0
+            if slip_frac is None:
+                # Slippage could not be measured at all — an empty or unreadable
+                # book. This used to default to 0.0, i.e. the most OPTIMISTIC
+                # assumption available, which is how run e8868482 opened against a
+                # dYdX testnet book with no bids: unmeasurable cost read as free.
+                # A guard that cannot see must refuse, not wave you through.
+                verdict["action"] = "sit_out"
+                verdict["sit_out"] = True
+                verdict["reason"] = (
+                    "could not measure order-book slippage"
+                    f" ({slip_detail.get('note')}) — sitting out rather than"
+                    " assuming it is free (dilution guard)")
+                return verdict
+
+            slip = slip_frac
             gross_over_hold = (ev["gross_edge_annual_pct"] / 100.0) * (
                 hold_days / 365.0)
             fees_frac = ev["round_trip_cost_pct_notional"] / 100.0
@@ -547,10 +768,11 @@ class TradingCarryEngine(Skill):
     async def run(
         self,
         action: Annotated[
-            Literal["decide", "evaluate", "backtest"],
+            Literal["decide", "decide_exit", "evaluate", "backtest"],
             "'decide' = self-contained: fetch history for `coin` and return an"
-            " actionable open/sit-out verdict (for orchestration); 'evaluate' /"
-            " 'backtest' = operate on supplied funding arrays",
+            " actionable open/sit-out verdict (for orchestration); 'decide_exit' ="
+            " the mirror: should an OPEN position be closed now (close/hold/none);"
+            " 'evaluate' / 'backtest' = operate on supplied funding arrays",
         ] = "decide",
         coin: Annotated[str, "Coin for 'decide', e.g. BTC, ETH, SOL"] = "BTC",
         capital_usd: Annotated[
@@ -573,6 +795,8 @@ class TradingCarryEngine(Skill):
         supplied funding arrays."""
         if action == "decide":
             return self.decide(coin=coin, capital_usd=capital_usd or 500.0)
+        if action == "decide_exit":
+            return self.decide_exit(coin=coin)
         if funding_a_hourly is None or funding_b_hourly is None:
             return {"error": f"action '{action}' requires funding_a_hourly and "
                     "funding_b_hourly arrays"}
