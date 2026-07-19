@@ -18,3 +18,4 @@ polaris/**/*.jsc
 ainara/nexus/*
 docs
 pyarmor.bug.log
+pyarmor-*
