@@ -31,12 +31,11 @@ import asyncio
 import sys
 
 from dydx_v4_client.key_pair import KeyPair
-from dydx_v4_client.network import TESTNET, make_mainnet
 from dydx_v4_client.node.client import NodeClient
 from dydx_v4_client.wallet import Wallet
 
 from executor.config import ExecutorConfig
-from executor.venues.dydx import _address_from_mnemonic
+from executor.venues.dydx import _address_from_mnemonic, dydx_network
 from executor.venues.dydx_permissioned import (
     build_trading_authenticator,
     find_authenticator_ids,
@@ -78,7 +77,11 @@ async def main(broadcast: bool):
           f"markets(clobPairId) {MAJORS_CLOB_IDS}")
     print(f"authenticator  : {auth.todict().get('type')} (trade-only, no withdraw/transfer)")
 
-    node = await NodeClient.connect(TESTNET.node if network == "testnet" else None)
+    # Was: TESTNET.node if testnet else None — i.e. mainnet registration could
+    # never work. Share the adapter's network resolution so both agree.
+    node = await NodeClient.connect(
+        dydx_network(network, creds.get("node_url")).node
+    )
     # Construct the main wallet (reads account number/sequence — no broadcast).
     main_wallet = await Wallet.from_mnemonic(node, main_mnemonic, main_address)
     print(f"node connected : yes  (main wallet account_number="
@@ -97,8 +100,8 @@ async def main(broadcast: bool):
     ids_after = await find_authenticator_ids(node, main_address)
     new_ids = [i for i in ids_after if i not in existing]
     print(f"  authenticator ids now: {ids_after}  (new: {new_ids})")
-    print("\nSAVE THESE TO ainara.yaml under apis.dydx.testnet:")
-    print(f"  bot_mnemonic:     <the 24 words below — trade-only key>")
+    print(f"\nSAVE THESE TO ainara.yaml under apis.dydx.{network}:")
+    print("  bot_mnemonic:     <the 24 words below — trade-only key>")
     print(f"  authenticator_id: {new_ids[0] if new_ids else '<see ids above>'}")
     print(f"\n  {bot_mnemonic}\n")
     print("After saving, the MAIN mnemonic can be removed from config — the running"

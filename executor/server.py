@@ -228,8 +228,34 @@ def cancel(name):
 # owns the SDKs and the gates, means the unwind cannot be lost to a dead caller.
 
 
+def _hedge_size_step(short_venue, short_symbol, long_venue, long_symbol):
+    """Coarsest size increment across both venues, or None if unreadable.
+
+    The venues quantize differently — dYdX BTC-USD steps 0.0001, Hyperliquid BTC
+    0.00001 — and each silently rounds whatever we send. Sending one size to both
+    therefore fills two DIFFERENT sizes, and the difference is unhedged
+    directional exposure. Quantizing to the coarsest step first makes both legs
+    exactly equal.
+
+    The error is bounded by one step regardless of position size, so it hurts
+    proportionally more the smaller you trade: at $60/leg it was ~3.2% of the
+    position (~$1.94 naked), against an expected edge of ~$0.20 over a two-week
+    hold — noise larger than the signal.
+    """
+    steps = []
+    for venue, symbol in ((short_venue, short_symbol), (long_venue, long_symbol)):
+        try:
+            s = _venue(venue).size_increment(symbol)
+        except Exception as e:
+            logger.warning("size_increment failed for %s/%s: %s", venue, symbol, e)
+            s = None
+        if s:
+            steps.append(float(s))
+    return max(steps) if steps else None
+
+
 def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
-                    cap_notional=None):
+                    cap_notional=None, size_step=None):
     """Pure: build the two crossing limit orders for a delta-neutral open.
 
     A taker fill needs the limit to cross the book — sell BELOW ref, buy ABOVE.
@@ -277,12 +303,34 @@ def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
                                 "at the crossing price"}
             size = fitted
 
+    # Quantize LAST, to the coarsest venue step: both legs must be a size each
+    # venue can express exactly, or they fill different amounts and the residual
+    # is naked delta. Flooring here keeps us under any cap applied above.
+    quantized = None
+    if size_step:
+        size_step = float(size_step)
+        stepped = math.floor(size / size_step) * size_step
+        # Re-round: float division leaves 0.00089999... artefacts that would then
+        # be truncated by the venue anyway.
+        stepped = round(stepped, 10)
+        if stepped <= 0:
+            raise ValueError(
+                f"size {size} is smaller than one venue step ({size_step}); "
+                "increase capital or the notional cap"
+            )
+        if stepped != size:
+            quantized = {"pre_quantize_size": size, "size_step": size_step,
+                         "reason": "size floored to the coarsest venue step so "
+                                   "both legs fill exactly equal"}
+        size = stepped
+
     return {
         "short": {"symbol": short_symbol, "is_buy": False,
                   "price": sell_px, "size": size},
         "long": {"symbol": long_symbol, "is_buy": True,
                  "price": buy_px, "size": size},
         "shaved": shaved,
+        "quantized": quantized,
     }
 
 
@@ -415,12 +463,15 @@ def hedge_open():
                                   config.get("trading.executor.fill_timeout_s", 15)))
     try:
         cap = _effective_cap_notional()
+        step = _hedge_size_step(short_venue, short_symbol, long_venue, long_symbol)
         legs = plan_hedge_legs(short_symbol, long_symbol, size, ref_price,
-                               cross_pct, cap_notional=cap)
+                               cross_pct, cap_notional=cap, size_step=step)
     except ValueError as e:
         return jsonify(error=str(e)), 400
     if legs["shaved"]:
         logger.info("HEDGE size shaved to fit cap: %s", legs["shaved"])
+    if legs["quantized"]:
+        logger.info("HEDGE size quantized to venue step: %s", legs["quantized"])
 
     # 1. Preflight — only open from flat. Stacking onto an existing position
     #    would silently change the size the engine sized for.

@@ -39,7 +39,7 @@ import requests
 from dydx_v4_client import MAX_CLIENT_ID, OrderFlags
 from dydx_v4_client.indexer.rest.constants import OrderType
 from dydx_v4_client.key_pair import KeyPair
-from dydx_v4_client.network import TESTNET
+from dydx_v4_client.network import TESTNET, make_mainnet
 from dydx_v4_client.node.builder import TxOptions
 from dydx_v4_client.node.client import NodeClient
 from dydx_v4_client.node.market import Market
@@ -54,6 +54,36 @@ INDEXER = {
     "testnet": "https://indexer.v4testnet.dydx.exchange",
     "mainnet": "https://indexer.dydx.trade",
 }
+
+WS_INDEXER = {
+    "testnet": "wss://indexer.v4testnet.dydx.exchange/v4/ws",
+    "mainnet": "wss://indexer.dydx.trade/v4/ws",
+}
+
+# Public mainnet validator gRPC. Verified reachable at the time of writing; these
+# are third-party endpoints and can rate-limit or disappear, so it is overridable
+# via `apis.dydx.mainnet.node_url`. Known-good alternatives:
+#   dydx-grpc.publicnode.com:443
+#   dydx-grpc.kingnodes.com:443
+MAINNET_NODE_URL = "dydx-ops-grpc.kingnodes.com:443"
+
+
+def dydx_network(network, node_url=None):
+    """Network config for `network`, so reads and writes hit the SAME chain.
+
+    The adapter previously connected to TESTNET.node unconditionally while
+    resolving the *indexer* by network — so a mainnet config would read mainnet
+    state and submit orders to testnet. Orders would fail on chain-id mismatch,
+    but so would the watchdog's close: a mainnet position with its safety net
+    pointed at the wrong chain.
+    """
+    if network == "testnet":
+        return TESTNET
+    return make_mainnet(
+        rest_indexer=INDEXER["mainnet"],
+        websocket_indexer=WS_INDEXER["mainnet"],
+        node_url=node_url or MAINNET_NODE_URL,
+    )
 
 
 def liquidation_price(equity, size_signed, mark_px, mmf):
@@ -131,8 +161,25 @@ class DydxExecutor:
         return _compress(KeyPair.from_hex(k).public_key_bytes)
 
     async def _node(self):
-        # Only testnet node wired here; mainnet node added when we go live there.
-        return await NodeClient.connect(TESTNET.node)
+        """Connect to the node for the CONFIGURED network (see dydx_network)."""
+        net = dydx_network(self.network, self._creds.get("node_url"))
+        return await NodeClient.connect(net.node)
+
+    def size_increment(self, market):
+        """Smallest tradable size step for `market` (dYdX `stepSize`), or None.
+
+        dYdX truncates any order to this, so a size that is not a multiple of it
+        produces a leg SMALLER than the one Hyperliquid fills — i.e. residual
+        unhedged delta. See server._hedge_size_step.
+        """
+        try:
+            md = requests.get(
+                f"{self.indexer}/v4/perpetualMarkets?ticker={market}", timeout=20
+            ).json()["markets"][market]
+            return float(md["stepSize"])
+        except Exception as e:
+            logger.warning("dydx stepSize unavailable for %s: %s", market, e)
+            return None
 
     # ------------------------------------------------------------------
     async def validate(self):

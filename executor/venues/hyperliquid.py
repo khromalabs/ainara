@@ -157,6 +157,17 @@ class HyperliquidExecutor:
         """Cancel a resting order by its oid. Not gated (reduces exposure)."""
         return self._exchange().cancel(coin, oid)
 
+    def size_increment(self, coin):
+        """Smallest tradable size step for `coin` (10^-szDecimals), or None."""
+        try:
+            meta = self._info({"type": "meta"})
+            for a in meta.get("universe", []):
+                if a.get("name") == coin:
+                    return 10 ** -int(a["szDecimals"])
+        except Exception as e:
+            logger.warning("hyperliquid szDecimals unavailable for %s: %s", coin, e)
+        return None
+
     def mid_price(self, coin):
         """Live mid for `coin`. None if unavailable.
 
