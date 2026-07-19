@@ -28,6 +28,7 @@ account, so the running bot never holds the main wallet's mnemonic.
 """
 
 import asyncio
+import os
 import sys
 
 from dydx_v4_client.key_pair import KeyPair
@@ -57,12 +58,29 @@ def _bot_pubkey_bytes(bot_mnemonic):
 async def main(broadcast: bool):
     cfg = ExecutorConfig()
     network, creds = cfg.venue("dydx")
-    if network != "testnet" and not broadcast:
-        pass
-    main_mnemonic = creds.get("mnemonic")
+
+    # Prefer the env var: this is the MAIN wallet key — it can withdraw, which is
+    # exactly the authority the permissioned-key setup exists to keep out of the
+    # running bot. It is needed here only to SIGN the registration, once.
+    #
+    # Keeping it out of ainara.yaml matters concretely: ConfigManager.save()
+    # copies the config to ainara.yaml.bak before writing, and Orakle exposes
+    # PUT /config — so a save while the mnemonic is in the file leaves a copy in
+    # .bak that survives deleting it from the original.
+    main_mnemonic = os.environ.get("DYDX_MAIN_MNEMONIC") or creds.get("mnemonic")
     if not main_mnemonic:
-        sys.exit("No dydx mnemonic in config.")
+        sys.exit(
+            "No dydx main mnemonic.\n"
+            "  Preferred (never touches disk), in the shell you run this from:\n"
+            "    $env:DYDX_MAIN_MNEMONIC = 'word word ...'\n"
+            "  It disappears when that terminal closes.\n"
+            "  Fallback: apis.dydx.<network>.mnemonic in ainara.yaml — if you use\n"
+            "  this, delete BOTH ainara.yaml and ainara.yaml.bak afterwards."
+        )
+    source = ("env DYDX_MAIN_MNEMONIC" if os.environ.get("DYDX_MAIN_MNEMONIC")
+              else "ainara.yaml (consider the env var instead)")
     main_address = _address_from_mnemonic(main_mnemonic)
+    print(f"main key source: {source}")
 
     # A fresh, dedicated bot key — the trade-only credential.
     from bip_utils import Bip39MnemonicGenerator, Bip39WordsNum
