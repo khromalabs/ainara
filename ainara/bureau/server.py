@@ -38,7 +38,6 @@ from ainara.framework.connectors.router import ConnectorRouter
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
-from ainara.framework.platform_utils import get_default_config_paths
 
 # Configure logging
 logging.basicConfig(
@@ -281,7 +280,7 @@ def initialize_components():
 
     # 6. Initialize the Conductor
     global conductor
-    config_paths = get_default_config_paths()
+    config_paths = config_manager.get_default_config_paths()
     plans_dir = (
         Path(config_paths[0]).parent / "bureau" if config_paths else None
     )

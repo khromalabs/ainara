@@ -401,7 +401,7 @@ from pathlib import Path
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     sys.path.insert(0, sys._MEIPASS)
 
-from ainara.framework.platform_utils import get_default_log_dir, get_default_cache_dir
+from ainara.framework.config import config
 
 # --- Set up logging to a file ---
 # Use a writable location for logs, respecting environment variables first.
@@ -409,7 +409,7 @@ log_dir_str = os.environ.get("AINARA_LOGS")
 if log_dir_str:
     log_dir = Path(os.path.expanduser(log_dir_str))
 else:
-    log_dir = get_default_log_dir()
+    log_dir = config.get_default_log_dir()
 
 os.makedirs(log_dir, exist_ok=True)
 log_file = log_dir / 'pyinstaller_debug.log'
@@ -436,7 +436,7 @@ if 'TRANSFORMERS_CACHE' not in os.environ:
     if cache_dir_str:
         cache_dir = Path(os.path.expanduser(cache_dir_str))
     else:
-        cache_dir = get_default_cache_dir()
+        cache_dir = config.get_default_cache_dir()
 
     transformers_cache_dir = cache_dir / 'transformers'
     os.makedirs(transformers_cache_dir, exist_ok=True)

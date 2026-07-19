@@ -29,7 +29,6 @@ from typing import Any, Dict, Optional  # List,
 from ainara.bureau.plan import Plan, PlanValidationError, StepNode
 from ainara.bureau.scratchpad import Scratchpad
 from ainara.framework.orakle_client import call_skill
-from ainara.framework.platform_utils import get_default_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -501,7 +500,7 @@ class Conductor:
             end_time = datetime.now(timezone.utc)
             duration = end_time - start_time
 
-            reports_dir = Path(get_default_log_dir()) / "bureau" / "reports"
+            reports_dir = Path(self.config_manager.get_default_log_dir()) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
             report_path = reports_dir / f"plan_{plan_name}_{run_id}.md"
 

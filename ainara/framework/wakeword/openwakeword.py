@@ -5,7 +5,6 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import platform
 
-from ainara.framework.platform_utils import get_default_data_dir
 from ainara.framework.wakeword.base import WakeWordBackend
 
 logger = logging.getLogger(__name__)
@@ -25,7 +24,7 @@ class OpenWakeWordBackend(WakeWordBackend):
 
         # Define Model Directories
         # 1. User Data Directory (Persistent downloads/custom models)
-        self.user_models_dir = Path(get_default_data_dir()) / "wakeword"
+        self.user_models_dir = Path(self.config.get_default_data_dir()) / "wakeword"
 
         # 2. Bundled Resources Directory (App distribution)
         self.bundled_models_dir = (
