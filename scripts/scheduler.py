@@ -189,7 +189,7 @@ def find_scheduler_yaml(config_manager):
 
     Returns the Path to scheduler.yaml if found, None otherwise.
     """
-    config_paths = config_manager._get_config_paths()
+    config_paths = config_manager.get_default_config_paths()
     for config_path in config_paths:
         # config_path points to ainara.yaml; parent is the config directory
         scheduler_yaml = config_path.parent / "scheduler.yaml"
@@ -214,7 +214,7 @@ def load_scheduler_yaml(config_manager):
         return data
 
     # No file found — create a default template
-    config_paths = config_manager._get_config_paths()
+    config_paths = config_manager.get_default_config_paths()
     if config_paths:
         config_dir = config_paths[0].parent
         config_dir.mkdir(parents=True, exist_ok=True)

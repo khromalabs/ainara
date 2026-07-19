@@ -25,16 +25,10 @@ from pathlib import Path
 # import traceback
 import yaml
 import json
+import platform
 from jsonschema import Draft7Validator
 
 logger = logging.getLogger(__name__)
-
-from ainara.framework.platform_utils import (
-    get_default_cache_dir,
-    get_default_config_paths,
-    get_default_data_dir,
-    get_default_log_dir,
-)
 
 
 class ConfigManager:
@@ -48,19 +42,122 @@ class ConfigManager:
         self.initial_config_valid = True
         self.load_config()
 
-    def _get_config_paths(self):
-        """Get platform-specific configuration paths"""
+    def _get_windows_documents_path(self):
+        """Get the real Documents path on Windows using Windows API"""
+        import ctypes.wintypes
+        buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf)  # CSIDL_PERSONAL = 5
+        return Path(buf.value)
+
+    def get_default_config_paths(self):
+        """Get list of default platform-specific configuration file paths"""
         # First check environment variable
         env_config_path = os.environ.get("AINARA_CONFIG")
         if env_config_path:
             return [Path(env_config_path)]
 
-        # Determine OS-specific config locations
-        config_paths = get_default_config_paths()
+        system = platform.system()
+        config_paths = []
 
+        if system == "Linux" or system == "Darwin":  # Linux or macOS
+            # XDG standard for Linux, similar location for macOS
+            config_home = os.environ.get(
+                "XDG_CONFIG_HOME", os.path.expanduser("~/.config")
+            )
+            config_paths.extend([
+                Path(config_home) / "ainara/ainara.yaml",
+                Path("/etc/ainara/ainara.yaml"),
+            ])
+        elif system == "Windows":
+            # Always use Documents/Ainara/Config on Windows
+            docs_path = self._get_windows_documents_path()
+            config_paths.append(docs_path / "Ainara" / "Config" / "ainara.yaml")
+        else:
+            # Fallback for other systems
+            config_paths.append(Path(os.path.expanduser("~/.ainara/ainara.yaml")))
+
+        # Add current directory as last resort for development environments
+        config_paths.append(Path("config/ainara.yaml"))
         return config_paths
 
-    def _get_default_config_path(self):
+    def get_default_log_dir(self):
+        """Get default platform-specific log directory path"""
+
+        # First check environment variable
+        env_log_path = os.environ.get("AINARA_LOGS")
+        if env_log_path:
+            log_dir = Path(os.path.expanduser(env_log_path))
+            os.makedirs(log_dir, exist_ok=True)
+            return log_dir
+
+        system = platform.system()
+
+        if system == "Windows":
+            docs_path = self._get_windows_documents_path()
+            log_dir = docs_path / "Ainara" / "Logs"
+        elif system == "Linux":
+            data_home = os.environ.get(
+                "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+            )
+            log_dir = Path(data_home) / "ainara/logs"
+        elif system == "Darwin":  # macOS
+            log_dir = Path(os.path.expanduser("~/Library/Logs/Ainara"))
+        else:
+            log_dir = Path(os.path.expanduser("~/.ainara/logs"))
+
+        # Ensure the directory exists
+        os.makedirs(log_dir, exist_ok=True)
+        return log_dir
+
+    def get_default_cache_dir(self):
+        """Get default platform-specific cache directory path"""
+        # First check environment variable
+        env_cache_path = os.environ.get("AINARA_CACHE")
+        if env_cache_path:
+            cache_dir = Path(os.path.expanduser(env_cache_path))
+            os.makedirs(cache_dir, exist_ok=True)
+            return cache_dir
+
+        # Check if user has specified a cache directory in config
+        if "cache" in self.config and "directory" in self.config["cache"]:
+            user_cache_dir = self.config["cache"]["directory"]
+            cache_dir = Path(os.path.expanduser(user_cache_dir))
+            os.makedirs(cache_dir, exist_ok=True)
+            return cache_dir
+
+        system = platform.system()
+        if system == "Windows":
+            docs_path = self._get_windows_documents_path()
+            cache_dir = docs_path / "Ainara" / "Cache"
+        elif system == "Linux":
+            cache_home = os.environ.get(
+                "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
+            )
+            cache_dir = Path(cache_home) / "ainara"
+        elif system == "Darwin":  # macOS
+            cache_dir = Path(os.path.expanduser("~/Library/Caches/Ainara"))
+        else:
+            cache_dir = Path(os.path.expanduser("~/.ainara/cache"))
+
+        # Ensure the directory exists
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+
+    def get_default_data_dir(self, app_name="ainara"):
+        """Get default platform-specific user data directory path"""
+        system = platform.system()
+
+        if system == "Windows":
+            docs_path = self._get_windows_documents_path()
+            return docs_path / "Ainara" / "Data"
+        elif system == "Darwin":  # macOS
+            return os.path.join(
+                os.path.expanduser("~/Library/Application Support"), str(app_name)
+            )
+        else:  # Linux and others
+            return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
+
+    def _get_config_template_path(self):
         """Get the path to the default configuration template"""
         # Look for defaults in several possible locations
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -115,7 +212,7 @@ class ConfigManager:
             logger.info("INFO: Configuration file has changed won't update")
             dry_run = True
 
-        default_path = self._get_default_config_path()
+        default_path = self._get_config_template_path()
 
         if not default_path:
             logger.info("ERROR: Default configuration template not found.")
@@ -133,7 +230,7 @@ class ConfigManager:
         if not dry_run:
             # backup previous config if exists
             if os.path.isfile(target_path):
-                 shutil.copy(target_path, f"{target_path}.bak")
+                shutil.copy(target_path, f"{target_path}.bak")
             # Copy the default config
             shutil.copy(default_path, target_path)
             logger.info(f"Created new configuration file at: {target_path}")
@@ -146,7 +243,7 @@ class ConfigManager:
         Args:
             force: If True, forces reload even if file hasn't changed
         """
-        config_paths = self._get_config_paths()
+        config_paths = self.get_default_config_paths()
 
         # Try to load from existing config file
         for config_path in config_paths:
@@ -183,7 +280,7 @@ class ConfigManager:
                             for error in self.validation_errors:
                                 logger.info(f" - {error}")
 
-                            default_path = self._get_default_config_path()
+                            default_path = self._get_config_template_path()
                             if not default_path:
                                 logger.info("ERROR: Default configuration not found. Re-creating entire configuration file.")
                                 self.create_default_config(config_path)
@@ -234,7 +331,7 @@ class ConfigManager:
                         self.config["logging"] = {}
                     if "directory" not in self.config["logging"]:
                         self.config["logging"]["directory"] = str(
-                            self._get_log_directory()
+                            self.get_default_log_dir()
                         )
 
                     # Set up cache directory in config
@@ -242,7 +339,7 @@ class ConfigManager:
                         self.config["cache"] = {}
                     if "directory" not in self.config["cache"]:
                         self.config["cache"]["directory"] = str(
-                            self._get_cache_directory()
+                            self.get_default_cache_dir()
                         )
 
                     # Set up sentence_transformers cache directory
@@ -261,7 +358,7 @@ class ConfigManager:
                         self.config["data"] = {}
                     if "directory" not in self.config["data"]:
                         self.config["data"]["directory"] = str(
-                            self._get_data_directory()
+                            self.get_default_data_dir()
                         )
 
                     # Set up backup configuration with defaults if not present
@@ -292,7 +389,7 @@ class ConfigManager:
 
         # If we get here, no config file was found - create one
         # Use the first path from the OS-specific list (skip env var path)
-        default_config_location = self._get_config_paths()[0]
+        default_config_location = self.get_default_config_paths()[0]
 
         self.config_file_path = self.create_default_config(
             default_config_location
@@ -307,7 +404,7 @@ class ConfigManager:
             self.config["logging"] = {}
         if "directory" not in self.config["logging"]:
             self.config["logging"]["directory"] = str(
-                self._get_log_directory()
+                self.get_default_log_dir()
             )
 
     def get(self, key_path: str, default=None):
@@ -415,54 +512,6 @@ class ConfigManager:
 
         mask_sensitive_values(safe_config)
         return safe_config
-
-    def _get_log_directory(self):
-        """Get log directory based on platform defaults (private method)"""
-        # First check environment variable
-        env_log_path = os.environ.get("AINARA_LOGS")
-        if env_log_path:
-            log_dir = Path(os.path.expanduser(env_log_path))
-            os.makedirs(log_dir, exist_ok=True)
-            return log_dir
-
-        log_dir = get_default_log_dir()
-
-        # Ensure the directory exists
-        os.makedirs(log_dir, exist_ok=True)
-        return log_dir
-
-    def _get_cache_directory(self):
-        """Get cache directory based on platform defaults
-
-        Args:
-            subdirectory: Optional subdirectory within the cache directory
-
-        Returns:
-            Path object for the cache directory
-        """
-        # First check environment variable
-        env_cache_path = os.environ.get("AINARA_CACHE")
-        if env_cache_path:
-            cache_dir = Path(os.path.expanduser(env_cache_path))
-            os.makedirs(cache_dir, exist_ok=True)
-            return cache_dir
-
-        # Check if user has specified a cache directory in config
-        if "cache" in self.config and "directory" in self.config["cache"]:
-            user_cache_dir = self.config["cache"]["directory"]
-            cache_dir = Path(os.path.expanduser(user_cache_dir))
-            os.makedirs(cache_dir, exist_ok=True)
-            return cache_dir
-
-        cache_dir = get_default_cache_dir()
-
-        # Ensure the directory exists
-        os.makedirs(cache_dir, exist_ok=True)
-        return cache_dir
-
-    def _get_data_directory(self, app_name="ainara"):
-        """Get the appropriate user data directory for the current platform"""
-        return get_default_data_dir(app_name)
 
     def get_subdir(self, directory, subdirectory):
         """Returns a subdirectory ensuring it exists"""
