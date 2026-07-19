@@ -5,6 +5,7 @@ import importlib
 import platform
 import compileall
 import shutil
+import subprocess
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # Get the project root directory (use current working directory as project root)
@@ -14,32 +15,45 @@ project_root = os.path.abspath(os.getcwd())
 if not os.path.exists(os.path.join(project_root, 'ainara')):
     raise ValueError(f"Calculated project_root {project_root} does not contain 'ainara' directory. Ensure the build is run from the project root.")
 
-# Compile Nexus Python files to .pyc
+# Obfuscate Nexus Python files with PyArmor
 nexus_src = os.path.join(project_root, 'ainara', 'nexus')
+nexus_obfuscated_root = os.path.join(project_root, 'build', 'nexus_obfuscated')
+nexus_obfuscated = os.path.join(nexus_obfuscated_root, 'ainara', 'nexus')
 nexus_compiled = os.path.join(project_root, 'build', 'nexus_compiled', 'ainara', 'nexus')
 
 if os.path.exists(nexus_src):
-    # Clean previous build
-    if os.path.exists(os.path.dirname(nexus_compiled)):
-        shutil.rmtree(os.path.dirname(nexus_compiled))
+    # Clean previous builds
+    for d in [os.path.dirname(nexus_compiled), nexus_obfuscated_root]:
+        if os.path.exists(d):
+            shutil.rmtree(d)
 
-    # Copy structure (including _components)
-    shutil.copytree(nexus_src, nexus_compiled)
+    # Locate PyArmor console-script entry point
+    pyarmor_bin = os.path.join(os.path.dirname(sys.executable), 'pyarmor')
+    if sys.platform == 'win32':
+        pyarmor_bin += '.exe'
 
-    # Compile .py to .pyc
-    compileall.compile_dir(nexus_compiled, force=True, legacy=True)
+    # NOTE: Verify the correct subcommand for your PyArmor version.
+    # If 'obfuscate' does not exist, try 'gen' or 'build'.
+    subprocess.run([
+        pyarmor_bin,
+        'gen',
+        '--recursive',
+        '--obf-code', '2',
+        '--restrict',
+        '--mix-str',
+        '--enable-rft',              # Pro: rename all symbols to meaningless tokens
+        # '--enable-bcc',            # Pro: convert functions to native C (optional, requires C compiler)
+        '-O', nexus_obfuscated_root,
+        nexus_src
+    ], check=True, cwd=project_root)
 
-    # Remove .py source files and __pycache__ directories, keep legacy .pyc and non-Python files
-    for root, dirs, files in os.walk(nexus_compiled, topdown=False):
-        for f in files:
-            if f.endswith('.py'):
-                os.remove(os.path.join(root, f))
-        # Remove __pycache__ directories (we use legacy .pyc files instead)
-        for d in dirs:
-            if d == '__pycache__':
-                shutil.rmtree(os.path.join(root, d))
+    if not os.path.exists(nexus_obfuscated):
+        raise FileNotFoundError(f"PyArmor output not found at {nexus_obfuscated}")
 
-    print(f"Compiled Nexus modules to: {nexus_compiled}")
+    # Copy the obfuscated tree to the final compiled location (keeping .py files only)
+    shutil.copytree(nexus_obfuscated, nexus_compiled)
+
+    print(f"Obfuscated Nexus modules to: {nexus_compiled}")
 
 block_cipher = None
 
@@ -91,6 +105,7 @@ packages_to_collect_data_from = [
     'kokoro_onnx',
     'language_tags',
     'espeakng_loader',
+    'pyarmor_runtime',
 ]
 
 # Define rules for platform-specific data files that need special handling.
@@ -278,6 +293,7 @@ common_imports = [
     'tree_sitter',
     'tree_sitter_javascript',
     'tree_sitter_python',
+    'pyarmor_runtime',
 
     # Dependencies for MCP
     'mcp',
