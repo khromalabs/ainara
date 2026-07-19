@@ -18,7 +18,7 @@ if not os.path.exists(os.path.join(project_root, 'ainara')):
 # Obfuscate Nexus Python files with PyArmor
 nexus_src = os.path.join(project_root, 'ainara', 'nexus')
 nexus_obfuscated_root = os.path.join(project_root, 'build', 'nexus_obfuscated')
-nexus_obfuscated = os.path.join(nexus_obfuscated_root, 'ainara', 'nexus')
+nexus_obfuscated = os.path.join(nexus_obfuscated_root, 'nexus')
 nexus_compiled = os.path.join(project_root, 'build', 'nexus_compiled', 'ainara', 'nexus')
 
 if os.path.exists(nexus_src):
@@ -43,6 +43,11 @@ if os.path.exists(nexus_src):
         '--mix-str',
         '--enable-rft',              # Pro: rename all symbols to meaningless tokens
         # '--enable-bcc',            # Pro: convert functions to native C (optional, requires C compiler)
+        # Exclude test directories/files, conftest, __pycache__, and hidden files
+        '--exclude', '*/test*',
+        '--exclude', '*/conftest.py',
+        '--exclude', '*/__pycache__',
+        '--exclude', '*/.*',
         '-O', nexus_obfuscated_root,
         nexus_src
     ], check=True, cwd=project_root)
