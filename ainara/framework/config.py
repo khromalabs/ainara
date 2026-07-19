@@ -149,13 +149,17 @@ class ConfigManager:
 
         if system == "Windows":
             docs_path = self._get_windows_documents_path()
-            return docs_path / "Ainara" / "Data"
+            data_dir = docs_path / "Ainara" / "Data"
         elif system == "Darwin":  # macOS
-            return os.path.join(
+            data_dir = os.path.join(
                 os.path.expanduser("~/Library/Application Support"), str(app_name)
             )
         else:  # Linux and others
-            return os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
+            data_dir = os.path.join(os.path.expanduser("~/.local/state"), str(app_name))
+
+        # Ensure the directory exists
+        os.makedirs(data_dir, exist_ok=True)
+        return data_dir
 
     def _get_config_template_path(self):
         """Get the path to the default configuration template"""
@@ -181,7 +185,7 @@ class ConfigManager:
 
         return None
 
-    def _get_schema_path(self):
+    def _get_config_schema_path(self):
         """Get the path to the configuration schema"""
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             path = Path(sys._MEIPASS + "/resources/config.schema.json")
@@ -257,7 +261,7 @@ class ConfigManager:
                         user_config = yaml.safe_load(f) or {}
 
                     # --- Validate Configuration ---
-                    schema_path = self._get_schema_path()
+                    schema_path = self._get_config_schema_path()
                     if not schema_path:
                         logger.info("WARNING: Schema not found, skipping validation.")
                         self.config = user_config
