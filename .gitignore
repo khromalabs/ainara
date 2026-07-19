@@ -17,3 +17,4 @@ scripts/migration/drop_*/sugar.log
 polaris/**/*.jsc
 ainara/nexus/*
 docs
+pyarmor.bug.log
