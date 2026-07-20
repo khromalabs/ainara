@@ -262,6 +262,8 @@ class Conductor:
         running_step_ids: Dict[str, str] = {}  # step_name -> step_id
         # Track skipped steps for reporting
         skipped_steps: Dict[str, str] = {}  # step_name -> skip_reason
+        # Track avoid_if evaluation errors for reporting
+        avoid_if_errors: Dict[str, Optional[str]] = {}
 
         try:
             while len(completed) < len(plan.steps):
@@ -292,13 +294,14 @@ class Conductor:
                     if step_node.avoid_step_if:
                         skip_step = False
                         for avoid_path in step_node.avoid_step_if:
-                            should_skip, skip_reason = self._should_skip_step(
+                            should_skip, skip_reason, eval_error = self._should_skip_step(
                                 step_name,
                                 step_node,
                                 scratchpad,
                                 log_prefix,
                                 avoid_path,
                             )
+                            avoid_if_errors[step_name] = eval_error
                             if should_skip:
                                 # Mark step as completed but skipped
                                 skipped_result = {
@@ -307,6 +310,7 @@ class Conductor:
                                     "skills_executed": [],
                                     "failure_reason": None,
                                     "skipped": True,
+                                    "avoid_if_error": eval_error,
                                 }
                                 scratchpad.store(step_name, skipped_result)
                                 completed.add(step_name)
@@ -396,6 +400,11 @@ class Conductor:
                             failure_reason,
                         )
                         break
+
+                    # Inject avoid_if_evaluation error, if any
+                    eval_err = avoid_if_errors.get(step_name)
+                    if eval_err:
+                        result["avoid_if_error"] = eval_err
 
                     scratchpad.store(step_name, result)
                     completed.add(step_name)
@@ -533,11 +542,15 @@ class Conductor:
             for step_name in attempted_steps:
                 step_node = plan.steps[step_name]
                 result = scratchpad.get(step_name) or {}
+                avoid_error = result.get("avoid_if_error")
 
                 if step_name in skipped_steps:
                     status = "⏭️ Skipped"
                 elif step_name in completed:
-                    status = "✅ Completed"
+                    if avoid_error:
+                        status = "⚠️ Completed (gate eval error)"
+                    else:
+                        status = "✅ Completed"
                 else:
                     status = "❌ Failed"
 
@@ -551,11 +564,16 @@ class Conductor:
             lines.append("\n## Step Details\n")
             for step_name in attempted_steps:
                 lines.append(f"### Step: `{step_name}`")
+                result = scratchpad.get(step_name) or {}
+                if result.get("avoid_if_error"):
+                    lines.append(
+                        f"\n> ⚠️ **Warning:** The `avoid_step_if` condition could not be "
+                        f"evaluated: {result['avoid_if_error']}\n"
+                    )
                 if step_name in skipped_steps:
                     skip_reason = skipped_steps[step_name]
                     lines.append(f"**Skipped:** {skip_reason}\n")
                 elif step_name in completed:
-                    result = scratchpad.get(step_name) or {}
                     response = result.get("response", "No response recorded.")
                     lines.append(
                         "**Response / Final Answer:**\n```text\n"
@@ -591,20 +609,21 @@ class Conductor:
         scratchpad: Scratchpad,
         log_prefix: str,
         avoid_path: str = "",
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, Optional[str], Optional[str]]:
         """
         Evaluate an ``avoid_step_if`` condition before executing a step.
 
-        Returns a tuple of (should_skip: bool, skip_reason: Optional[str]).
-        - If the condition is truthy, returns (True, reason_string)
-        - If the condition is falsy, returns (False, None)
-        - On error (missing step, invalid JSON, missing path), returns (False, None)
-          and logs an error (execution continues)
+        Returns a tuple of (should_skip: bool, skip_reason: Optional[str],
+        evaluation_error: Optional[str]).
+        - If the condition is truthy, returns (True, reason_string, None)
+        - If the condition is falsy, returns (False, None, None)
+        - On error (missing step, invalid JSON, missing path), returns (False, None, error_string);
+          the step will **run**, but the error string is surfaced prominently in the forensic report.
         """
         import json
 
         if not avoid_path:
-            return False, None
+            return False, None, None
 
         # Parse the reference: "step_name.response.some.path"
         parts = avoid_path.split(".")
@@ -615,16 +634,17 @@ class Conductor:
         referenced_result = scratchpad.get(referenced_step)
 
         if referenced_result is None:
+            error_reason = (
+                f"Referenced step '{referenced_step}' has no result in scratchpad "
+                f"for condition '{avoid_path}'."
+            )
             logger.error(
-                "%s Step '%s' has avoid_step_if='%s' but referenced "
-                "step '%s' has no result in scratchpad. Executing step"
-                " anyway.",
+                "%s Step '%s': %s Executing step anyway.",
                 log_prefix,
                 step_name,
-                avoid_path,
-                referenced_step,
+                error_reason,
             )
-            return False, None
+            return False, None, error_reason
 
         # Start navigation from the step result
         current = referenced_result
@@ -661,16 +681,16 @@ class Conductor:
                         " either."
                     )
             except (json.JSONDecodeError, TypeError) as e:
-                print(f"JSON parse failed: {e}")
-                logger.error(
-                    "%s Step '%s' has avoid_step_if='%s' but 'response' "
-                    "field contains invalid JSON (%s). Executing step anyway.",
-                    log_prefix,
-                    step_name,
-                    avoid_path,
-                    e,
+                error_reason = (
+                    f"Condition '{avoid_path}': 'response' field contains "
+                    f"invalid JSON ({e})."
                 )
-                return False, None
+                logger.error(
+                    "%s %s Executing step anyway.",
+                    log_prefix,
+                    error_reason,
+                )
+                return False, None, error_reason
 
         # Navigate the JSON path
         for i, part in enumerate(json_path):
@@ -683,26 +703,27 @@ class Conductor:
                     try:
                         current = json.loads(current)
                     except (json.JSONDecodeError, TypeError) as e:
-                        logger.error(
-                            "%s Step '%s' has avoid_step_if_not='%s' but"
-                            " 'response' field contains invalid JSON (%s)."
-                            " Executing step anyway.",
-                            log_prefix,
-                            step_name,
-                            avoid_path,
-                            e,
+                        error_reason = (
+                            f"Condition '{avoid_path}': 'response' field contains "
+                            f"invalid JSON ({e})."
                         )
-                        return False, None
+                        logger.error(
+                            "%s %s Executing step anyway.",
+                            log_prefix,
+                            error_reason,
+                        )
+                        return False, None, error_reason
             else:
-                logger.error(
-                    "%s Step '%s' has avoid_step_if='%s' but path '%s' not "
-                    "found in referenced step result. Executing step anyway.",
-                    log_prefix,
-                    step_name,
-                    avoid_path,
-                    part,
+                error_reason = (
+                    f"Path '{avoid_path}' not reachable: '{part}' not found "
+                    f"in step '{referenced_step}' result."
                 )
-                return False, None
+                logger.error(
+                    "%s %s Executing step anyway.",
+                    log_prefix,
+                    error_reason,
+                )
+                return False, None, error_reason
 
         # JS-style truthy evaluation
         is_truthy = not (
@@ -723,7 +744,7 @@ class Conductor:
                 avoid_path,
                 current,
             )
-            return True, skip_reason
+            return True, skip_reason, None
 
         logger.info(
             "%s Step '%s' avoid_step_if='%s' evaluated to falsy "
@@ -733,7 +754,7 @@ class Conductor:
             avoid_path,
             current,
         )
-        return False, None
+        return False, None, None
 
     # ------------------------------------------------------------------
     # Agent spawning & polling
