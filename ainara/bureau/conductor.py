@@ -620,24 +620,12 @@ class Conductor:
         - On error (missing step, invalid JSON, missing path), returns (False, None, error_string);
           the step will **run**, but the error string is surfaced prominently in the forensic report.
         """
-        import json
-
         if not avoid_path:
             return False, None, None
 
-        # Parse the reference: "step_name.response.some.path"
-        parts = avoid_path.split(".")
-        referenced_step = parts[0]
-        json_path = parts[1:]  # e.g., ["response", "result", "pending_work"]
-
-        # Get the referenced step's result from scratchpad
-        referenced_result = scratchpad.get(referenced_step)
-
-        if referenced_result is None:
-            error_reason = (
-                f"Referenced step '{referenced_step}' has no result in scratchpad "
-                f"for condition '{avoid_path}'."
-            )
+        current, error = scratchpad.resolve_dotted_path(avoid_path)
+        if error is not None:
+            error_reason = f"Condition '{avoid_path}': {error}"
             logger.error(
                 "%s Step '%s': %s Executing step anyway.",
                 log_prefix,
@@ -645,85 +633,6 @@ class Conductor:
                 error_reason,
             )
             return False, None, error_reason
-
-        # Start navigation from the step result
-        current = referenced_result
-
-        # If the path doesn't start with 'response' but the first part is not found,
-        # try to auto-parse the 'response' field if it exists and is a JSON string
-        if (
-            json_path
-            and json_path[0] != "response"
-            and isinstance(current, dict)
-            and json_path[0] not in current
-            and "response" in current
-            and isinstance(current["response"], str)
-        ):
-            try:
-                parsed_response = json.loads(current["response"])
-                logger.debug(
-                    "JSON parse successful! Parsed keys:"
-                    f" {parsed_response.keys() if isinstance(parsed_response, dict) else 'N/A'}"
-                )
-                # Check if the first path part exists in the parsed response
-                if (
-                    isinstance(parsed_response, dict)
-                    and json_path[0] in parsed_response
-                ):
-                    logger.info(
-                        f"Found '{json_path[0]}' in parsed response. Using"
-                        " parsed response as starting point."
-                    )
-                    current = parsed_response
-                else:
-                    logger.info(
-                        f"'{json_path[0]}' not found in parsed response"
-                        " either."
-                    )
-            except (json.JSONDecodeError, TypeError) as e:
-                error_reason = (
-                    f"Condition '{avoid_path}': 'response' field contains "
-                    f"invalid JSON ({e})."
-                )
-                logger.error(
-                    "%s %s Executing step anyway.",
-                    log_prefix,
-                    error_reason,
-                )
-                return False, None, error_reason
-
-        # Navigate the JSON path
-        for i, part in enumerate(json_path):
-
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-
-                # If we just accessed 'response' and it's a JSON string, parse it
-                if part == "response" and isinstance(current, str):
-                    try:
-                        current = json.loads(current)
-                    except (json.JSONDecodeError, TypeError) as e:
-                        error_reason = (
-                            f"Condition '{avoid_path}': 'response' field contains "
-                            f"invalid JSON ({e})."
-                        )
-                        logger.error(
-                            "%s %s Executing step anyway.",
-                            log_prefix,
-                            error_reason,
-                        )
-                        return False, None, error_reason
-            else:
-                error_reason = (
-                    f"Path '{avoid_path}' not reachable: '{part}' not found "
-                    f"in step '{referenced_step}' result."
-                )
-                logger.error(
-                    "%s %s Executing step anyway.",
-                    log_prefix,
-                    error_reason,
-                )
-                return False, None, error_reason
 
         # JS-style truthy evaluation
         is_truthy = not (
