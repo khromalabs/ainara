@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 import asyncio
+import json
 import logging
 import multiprocessing
 import threading
@@ -49,21 +50,30 @@ def _run_skill_in_process(
             orakle_servers, skill_id, params, timeout=timeout
         )
 
-        # Check if the result indicates an error
-        if result_str.startswith("Error:"):
-            result = {
-                "response": result_str,
-                "turns_used": 0,
-                "skills_executed": [skill_id],
-                "failure_reason": result_str,
-            }
-        else:
-            result = {
-                "response": result_str,
-                "turns_used": 0,
-                "skills_executed": [skill_id],
-                "failure_reason": None,
-            }
+        # Check if the result indicates an application-level error
+        # (the skill completed the round trip but returned an error key)
+        failure_reason = None
+        try:
+            parsed = json.loads(result_str)
+            # Look for an explicit error key at top level or under "result"
+            error = parsed.get("error") or (isinstance(parsed.get("result"), dict) and parsed.get("result", {}).get("error"))
+            if error:
+                failure_reason = f"Skill error: {error}"
+                result_response = str(error)
+            else:
+                result_response = result_str  # keep the pretty-printed JSON as is
+        except json.JSONDecodeError:
+            result_response = result_str
+            # fallback to transport-level check
+            if result_str.startswith("Error:"):
+                failure_reason = result_str
+
+        result = {
+            "response": result_response if not failure_reason else result_response,
+            "turns_used": 0,
+            "skills_executed": [skill_id],
+            "failure_reason": failure_reason,
+        }
 
         result_queue.put(result, timeout=5)
     except Exception as e:
