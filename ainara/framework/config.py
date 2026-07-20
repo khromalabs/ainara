@@ -143,6 +143,64 @@ class ConfigManager:
         os.makedirs(cache_dir, exist_ok=True)
         return cache_dir
 
+    # -------------------------------------------------------------------------
+    # KNOWN ISSUE & FUTURE MIGRATION PLAN (Issue #1.7 / #7)
+    # -------------------------------------------------------------------------
+    # On Windows 11, the Documents folder is frequently redirected to OneDrive
+    # by the "Auto Backup" feature (enabled during OOBE or manually).  Because
+    # AppX / Microsoft Store packaging severely limits where an application can
+    # write persistent, user‑visible data, we originally chose
+    # Documents\Ainara\Data as the default location.  This respects the user’s
+    # expectation that their data survives an uninstall and is easy to locate.
+    #
+    # Unfortunately, storing SQLite databases inside a OneDrive‑synced folder
+    # is a known corruption hazard (WAL mode vs. network locking), and API keys
+    # or other secrets stored in ainara.yaml may unintentionally be uploaded to
+    # Microsoft’s cloud.
+    #
+    # A superior future default is the **Saved Games** known folder
+    # (FOLDERID_SavedGames = {4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}).
+    # Reasons:
+    #   - Never automatically synced by OneDrive (the backup feature only
+    #     covers Desktop, Documents, and Pictures).
+    #   - Survivess application uninstall / reinstall (same as Documents).
+    #   - Fully user‑accessible in File Explorer (typically
+    #     C:\Users\<user>\Saved Games).
+    #   - Already used by many games and productivity tools (OBS Studio,
+    #     Logitech G HUB, etc.) for the exact same reasons.
+    #
+    # Migration plan (to be implemented before switching the default):
+    #   1.  At startup, determine the OLD path  (Documents\Ainara\)  and
+    #       the NEW path  (Saved Games\Ainara\).
+    #   2.  If the OLD path exists, contains identifiable Ainara data
+    #       (ainara.yaml, chat_memory.db, etc.), and the NEW path does
+    #       NOT yet exist, present a modal dialog (Electron) explaining
+    #       why the move is recommended and asking for permission.
+    #   3.  If the user agrees:
+    #       a)  Close any open SQLite connections or file handles.
+    #       b)  Copy the entire data tree to the NEW path using
+    #           shutil.copytree(…, dirs_exist_ok=True).
+    #       c)  Verify critical files (size / checksum) to ensure a
+    #           clean copy.
+    #       d)  Rename the OLD folder to `Documents\Ainara.old` so the
+    #           application never loads from it again, but the user can
+    #           inspect it manually later.
+    #       e)  Update ConfigManager’s internal paths (config_file_path,
+    #           log dir, cache dir, etc.) to point to the NEW location.
+    #       f)  Restart the application (app.relaunch() / app.exit()) to
+    #           pick up all path changes cleanly.
+    #   4.  If the user declines, continue using the OLD path but present
+    #       a persistent warning (status bar / in‑app notification) about
+    #       cloud sync risks and the ability to override via AINARA_CONFIG
+    #       or AINARA_LOGS environment variables.
+    #   5.  Handle edge cases: no UI (headless mode), permission errors,
+    #       running multiple instances, disk full, etc.  Fall back to the
+    #       existing OLD path safely if migration fails at any step.
+    #
+    # For the time being, get_default_data_dir() continues to return the
+    # Documents‑based path on Windows, but that will change once the
+    # migration tooling is in place.
+    # -------------------------------------------------------------------------
     def get_default_data_dir(self, app_name="ainara"):
         """Get default platform-specific user data directory path"""
         system = platform.system()
