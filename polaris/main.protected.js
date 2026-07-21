@@ -23,7 +23,7 @@ const semver = require('semver');
 // const yargs = require('yargs/yargs');
 // const { hideBin } = require('yargs/helpers');
 const path = require('path');
-const { ensureWindowsDataLocation } = require('./framework/WindowsMigration');
+const { migrateToSavedGamesIfNeeded } = require('./framework/WindowsMigration');
 const ConfigManager = require('./framework/config');
 const { WindowManager } = require('./windows/WindowManager');
 const ComRingWindow = require('./windows/ComRingWindow');
@@ -386,7 +386,7 @@ async function appInitialization(firstInitialization = true) {
         // Windows data location migration (must happen before services start)
         if (process.platform === 'win32') {
             splashWindow.updateProgress('Checking data location...', 5);
-            const migrationResult = await ensureWindowsDataLocation();
+            const migrationResult = await migrateToSavedGamesIfNeeded();
             if (!migrationResult.success) {
                 splashWindow.close();
                 dialog.showErrorBox(
@@ -396,8 +396,18 @@ async function appInitialization(firstInitialization = true) {
                 app.quit();
                 return;
             }
-            if (!migrationResult.skipped) {
-                Logger.info('Data migration completed successfully');
+            if (migrationResult.migrated) {
+                // Notify user and restart the app to pick up new paths
+                const notification = new Notification({
+                    title: 'Ainara AI',
+                    body: 'Data successfully migrated to the Saved Games folder for better performance and safety. The app will now restart.',
+                    icon: path.join(__dirname, 'assets', 'icon.png')
+                });
+                notification.show();
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                app.relaunch();
+                app.exit();
+                return; // Will not reach due to exit
             }
         }
 

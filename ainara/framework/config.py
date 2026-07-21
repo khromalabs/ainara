@@ -20,6 +20,7 @@ import copy
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 # import traceback
@@ -42,12 +43,17 @@ class ConfigManager:
         self.initial_config_valid = True
         self.load_config()
 
-    def _get_windows_documents_path(self):
-        """Get the real Documents path on Windows using Windows API"""
-        import ctypes.wintypes
-        buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
-        ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf)  # CSIDL_PERSONAL = 5
-        return Path(buf.value)
+    def _get_windows_saved_games_path(self):
+        """Get the Saved Games path on Windows using PowerShell."""
+        try:
+            result = subprocess.run(
+                ['powershell', '-Command', "[Environment]::GetFolderPath('SavedGames')"],
+                capture_output=True, text=True, check=True
+            )
+            return Path(result.stdout.strip())
+        except Exception:
+            # Fallback to default if PowerShell fails
+            return Path(os.path.expanduser('~/Saved Games'))
 
     def get_default_config_paths(self):
         """Get list of default platform-specific configuration file paths"""
@@ -69,9 +75,9 @@ class ConfigManager:
                 Path("/etc/ainara/ainara.yaml"),
             ])
         elif system == "Windows":
-            # Always use Documents/Ainara/Config on Windows
-            docs_path = self._get_windows_documents_path()
-            config_paths.append(docs_path / "Ainara" / "Config" / "ainara.yaml")
+            # Always use Saved Games\Ainara\Config on Windows
+            saved_games = self._get_windows_saved_games_path()
+            config_paths.append(saved_games / "Ainara" / "Config" / "ainara.yaml")
         else:
             # Fallback for other systems
             config_paths.append(Path(os.path.expanduser("~/.ainara/ainara.yaml")))
@@ -93,8 +99,8 @@ class ConfigManager:
         system = platform.system()
 
         if system == "Windows":
-            docs_path = self._get_windows_documents_path()
-            log_dir = docs_path / "Ainara" / "Logs"
+            saved_games = self._get_windows_saved_games_path()
+            log_dir = saved_games / "Ainara" / "Logs"
         elif system == "Linux":
             data_home = os.environ.get(
                 "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
@@ -127,8 +133,8 @@ class ConfigManager:
 
         system = platform.system()
         if system == "Windows":
-            docs_path = self._get_windows_documents_path()
-            cache_dir = docs_path / "Ainara" / "Cache"
+            saved_games = self._get_windows_saved_games_path()
+            cache_dir = saved_games / "Ainara" / "Cache"
         elif system == "Linux":
             cache_home = os.environ.get(
                 "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
@@ -146,68 +152,21 @@ class ConfigManager:
     # -------------------------------------------------------------------------
     # KNOWN ISSUE & FUTURE MIGRATION PLAN (Issue #1.7 / #7)
     # -------------------------------------------------------------------------
-    # On Windows 11, the Documents folder is frequently redirected to OneDrive
-    # by the "Auto Backup" feature (enabled during OOBE or manually).  Because
-    # AppX / Microsoft Store packaging severely limits where an application can
-    # write persistent, user‑visible data, we originally chose
-    # Documents\Ainara\Data as the default location.  This respects the user’s
-    # expectation that their data survives an uninstall and is easy to locate.
-    #
-    # Unfortunately, storing SQLite databases inside a OneDrive‑synced folder
-    # is a known corruption hazard (WAL mode vs. network locking), and API keys
-    # or other secrets stored in ainara.yaml may unintentionally be uploaded to
-    # Microsoft’s cloud.
-    #
-    # A superior future default is the **Saved Games** known folder
-    # (FOLDERID_SavedGames = {4C5C32FF-BB9D-43B0-B5B4-2D72E54EAAA4}).
-    # Reasons:
-    #   - Never automatically synced by OneDrive (the backup feature only
-    #     covers Desktop, Documents, and Pictures).
-    #   - Survivess application uninstall / reinstall (same as Documents).
-    #   - Fully user‑accessible in File Explorer (typically
-    #     C:\Users\<user>\Saved Games).
-    #   - Already used by many games and productivity tools (OBS Studio,
-    #     Logitech G HUB, etc.) for the exact same reasons.
-    #
-    # Migration plan (to be implemented before switching the default):
-    #   1.  At startup, determine the OLD path  (Documents\Ainara\)  and
-    #       the NEW path  (Saved Games\Ainara\).
-    #   2.  If the OLD path exists, contains identifiable Ainara data
-    #       (ainara.yaml, chat_memory.db, etc.), and the NEW path does
-    #       NOT yet exist, present a modal dialog (Electron) explaining
-    #       why the move is recommended and asking for permission.
-    #   3.  If the user agrees:
-    #       a)  Close any open SQLite connections or file handles.
-    #       b)  Copy the entire data tree to the NEW path using
-    #           shutil.copytree(…, dirs_exist_ok=True).
-    #       c)  Verify critical files (size / checksum) to ensure a
-    #           clean copy.
-    #       d)  Rename the OLD folder to `Documents\Ainara.old` so the
-    #           application never loads from it again, but the user can
-    #           inspect it manually later.
-    #       e)  Update ConfigManager’s internal paths (config_file_path,
-    #           log dir, cache dir, etc.) to point to the NEW location.
-    #       f)  Restart the application (app.relaunch() / app.exit()) to
-    #           pick up all path changes cleanly.
-    #   4.  If the user declines, continue using the OLD path but present
-    #       a persistent warning (status bar / in‑app notification) about
-    #       cloud sync risks and the ability to override via AINARA_CONFIG
-    #       or AINARA_LOGS environment variables.
-    #   5.  Handle edge cases: no UI (headless mode), permission errors,
-    #       running multiple instances, disk full, etc.  Fall back to the
-    #       existing OLD path safely if migration fails at any step.
-    #
-    # For the time being, get_default_data_dir() continues to return the
-    # Documents‑based path on Windows, but that will change once the
-    # migration tooling is in place.
+    # MIGRATION COMPLETED (v0.11): On Windows, the default data location is
+    # now the Saved Games folder (FOLDERID_SavedGames). The migration from
+    # the old Documents\Ainara location (and from legacy AppData paths) is
+    # handled automatically at startup by the Electron layer. The Python
+    # ConfigManager now reads/writes config files from
+    # Saved Games\Ainara\Config. Old folders are renamed to
+    # *.old.migrated_to_savedgames for user inspection.
     # -------------------------------------------------------------------------
     def get_default_data_dir(self, app_name="ainara"):
         """Get default platform-specific user data directory path"""
         system = platform.system()
 
         if system == "Windows":
-            docs_path = self._get_windows_documents_path()
-            data_dir = docs_path / "Ainara" / "Data"
+            saved_games = self._get_windows_saved_games_path()
+            data_dir = saved_games / "Ainara" / "Data"
         elif system == "Darwin":  # macOS
             data_dir = os.path.join(
                 os.path.expanduser("~/Library/Application Support"), str(app_name)
