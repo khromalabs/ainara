@@ -53,12 +53,21 @@ class TradingExecutorClient(Skill):
             "apis.executor.url", "http://127.0.0.1:8130"
         ).rstrip("/")
         self.timeout = float(config.get("apis.executor.timeout", 30))
+        # A hedge open/close runs up to two fill windows back-to-back plus an
+        # unwind, so the read-sized timeout above trips WHILE the daemon is still
+        # placing orders. On 2026-07-22 that client-side timeout was read as a
+        # failed run and re-fired into a duplicate open. Size the write timeout to
+        # the daemon's worst-case wall time: two fill windows + margin.
+        fill_timeout = float(config.get("trading.executor.fill_timeout_s", 15))
+        self.write_timeout = max(self.timeout, 2 * fill_timeout + 30)
 
     # ------------------------------------------------------------------
-    def _request(self, method: str, path: str, body: Optional[dict] = None):
+    def _request(self, method: str, path: str, body: Optional[dict] = None,
+                 timeout: Optional[float] = None):
         url = f"{self.base_url}{path}"
+        timeout = timeout or self.timeout
         try:
-            resp = requests.request(method, url, json=body, timeout=self.timeout)
+            resp = requests.request(method, url, json=body, timeout=timeout)
         except requests.ConnectionError:
             return {
                 "error": f"executor daemon not reachable at {self.base_url}. "
@@ -66,7 +75,14 @@ class TradingExecutorClient(Skill):
                 "reachable": False,
             }
         except requests.Timeout:
-            return {"error": f"executor daemon timed out after {self.timeout}s"}
+            # A write that timed out is INDETERMINATE — the daemon may still be
+            # committing orders on the venue. It is deterministic (it finishes the
+            # hedge or unwinds itself), so the safe response is to VERIFY, never to
+            # retry blindly: a blind retry is what stacked a second position.
+            return {"error": f"executor daemon did not respond within {timeout}s — "
+                    "a write may still be in flight. DO NOT retry; check positions "
+                    "(/venues/<v>/state) and the watchdog alarm before any re-run.",
+                    "indeterminate": True}
         try:
             data = resp.json()
         except ValueError:
@@ -126,7 +142,8 @@ class TradingExecutorClient(Skill):
             return {"error": "decision is missing required field(s): "
                              f"{', '.join(missing)}"}
         body["dry_run"] = dry_run
-        return self._request("POST", "/hedge/open", body)
+        return self._request("POST", "/hedge/open", body,
+                             timeout=self.write_timeout)
 
     def _close_hedge(self, decision, dry_run: bool) -> Dict[str, Any]:
         """Close an open hedge from a decide_exit verdict, deterministically.
@@ -154,7 +171,7 @@ class TradingExecutorClient(Skill):
         return self._request("POST", "/hedge/close", {
             "legs": {"hyperliquid": coin, "dydx": f"{coin}-USD"},
             "dry_run": dry_run,
-        })
+        }, timeout=self.write_timeout)
 
     # ------------------------------------------------------------------
     async def run(

@@ -425,6 +425,34 @@ def _close_leg(venue_name, symbol):
                                           abs(float(pos["size"]))))
 
 
+def _cancel_resting(venue_name, symbol, leg_res):
+    """Cancel a leg's order if the open left one RESTING on the book.
+
+    Hyperliquid opens with Ioc, so it never rests — only dYdX's LONG_TERM open leg
+    does, and its place result carries the client_id + good_til_block_time that
+    cancel_order needs. Returns the cancel result, or None when there is nothing to
+    cancel: an Ioc leg, or a refused leg that never reached the book (neither
+    carries those handles).
+
+    This closes the gap that left an unpaired dYdX long on 2026-07-22: a timed-out
+    open whose short was unwound while its dYdX buy sat resting, then filled minutes
+    later. Abandoning a leg is not the same as cancelling it — a stateful order
+    outlives the request that placed it.
+    """
+    if not isinstance(leg_res, dict):
+        return None
+    client_id = leg_res.get("client_id")
+    gtbt = leg_res.get("good_til_block_time")
+    if client_id is None or gtbt is None:
+        return None
+    try:
+        return _resolve(_venue(venue_name).cancel_order(symbol, client_id, gtbt))
+    except Exception as e:
+        logger.error("resting-order cancel raised for %s/%s: %s",
+                     venue_name, symbol, e)
+        return {"cancelled": False, "error": str(e)}
+
+
 @app.post("/hedge/open")
 def hedge_open():
     """Open both legs of a delta-neutral hedge, or leave the account flat.
@@ -511,10 +539,31 @@ def hedge_open():
                        positions={short_venue: 0.0, long_venue: 0.0})
     short_pos = _await_position(short_venue, short_symbol, False, fill_timeout)
     if not short_pos:
+        # Mirror the long path: if the short was a dYdX LONG_TERM order it may be
+        # RESTING, not gone — cancel it, then confirm flat (a fill can race the
+        # cancel). "aborted_flat" must mean the account is ACTUALLY flat, or the
+        # resting order fills later into a naked short.
+        cancel_short = _cancel_resting(short_venue, short_symbol, short_res)
+        leftover = _signed_position(short_venue, short_symbol)
+        if leftover:
+            _close_leg(short_venue, short_symbol)
+            leftover = _await_flat(short_venue, short_symbol, fill_timeout)
+        if leftover:
+            logger.error("NAKED LEG: %s holds %s after abort cancel/flatten",
+                         short_venue, leftover)
+            return jsonify(opened=False, status="NAKED_LEG_UNWIND_FAILED",
+                           detail=(f"short leg did not confirm and {short_venue} "
+                                   f"{leftover} could not be flattened. The position "
+                                   "watchdog should flatten it; verify now."),
+                           legs={"short": short_res, "long": None},
+                           cancel_short=cancel_short,
+                           positions={short_venue: leftover, long_venue: 0.0}), 500
         logger.info("HEDGE ABORTED: short leg did not fill; account still flat")
         return jsonify(opened=False, status="aborted_flat",
-                       detail="short leg did not fill; nothing opened, account flat",
+                       detail="short leg did not fill; any resting order cancelled; "
+                              "nothing opened, account flat",
                        legs={"short": short_res, "long": None},
+                       cancel_short=cancel_short,
                        positions={short_venue: 0.0, long_venue: 0.0})
 
     # 3. Long leg. From here the short is LIVE — every failure path must unwind.
@@ -538,9 +587,25 @@ def hedge_open():
                        legs={"short": short_res, "long": long_res},
                        positions={short_venue: short_pos, long_venue: long_pos})
 
-    # 4. Long leg failed -> unwind the short so we never hold a naked leg.
-    logger.error("HEDGE BROKEN: long leg not filled — unwinding %s short",
-                 short_venue)
+    # 4. Long leg did not confirm within the fill window. Before unwinding, CANCEL
+    #    it — a dYdX LONG_TERM open leg is still resting on the book and WILL fill
+    #    if price reaches it (the unpaired long of 2026-07-22). The cancel can lose
+    #    a race to a fill, so RE-CHECK: if the long actually filled, the hedge is
+    #    on and we must NOT unwind it. A short window lets the lagging indexer
+    #    surface a just-landed fill without holding the short naked much longer.
+    cancel_long = _cancel_resting(long_venue, long_symbol, long_res)
+    long_pos = _await_position(long_venue, long_symbol, True, min(3.0, fill_timeout))
+    if long_pos:
+        logger.info("HEDGE OPEN OK (long filled while cancelling) short=%s long=%s",
+                    short_pos, long_pos)
+        return jsonify(opened=True, status="hedged",
+                       legs={"short": short_res, "long": long_res},
+                       cancel_long=cancel_long,
+                       positions={short_venue: short_pos, long_venue: long_pos})
+
+    # Long is confirmed off the book -> unwind the short so we never hold a naked leg.
+    logger.error("HEDGE BROKEN: long leg not filled — resting order cancelled, "
+                 "unwinding %s short", short_venue)
     unwind_res, unwind_err = None, None
     try:
         unwind_res = _close_leg(short_venue, short_symbol)
@@ -549,22 +614,30 @@ def hedge_open():
         logger.error("HEDGE UNWIND RAISED: %s", e)
 
     remaining = _signed_position(short_venue, short_symbol)
-    if remaining:
+    # Re-confirm the long stayed flat too: a fill could have landed after the
+    # re-check but before the cancel took effect. Either leftover means NOT flat.
+    long_leftover = _signed_position(long_venue, long_symbol)
+    if remaining or long_leftover:
         # Worst case. Say so loudly; the position watchdog is the backstop.
-        logger.error("NAKED LEG: %s still holds %s after unwind attempt",
-                     short_venue, remaining)
+        logger.error("NAKED LEG after unwind: %s short=%s, %s long=%s",
+                     short_venue, remaining, long_venue, long_leftover)
         return jsonify(opened=False, status="NAKED_LEG_UNWIND_FAILED",
-                       detail=(f"long leg failed and the {short_venue} short could "
-                               f"NOT be unwound — {remaining} still open. The "
-                               f"position watchdog should flatten it; verify now."),
+                       detail=(f"open failed and the account could NOT be returned "
+                               f"to flat — {short_venue} {remaining}, {long_venue} "
+                               f"{long_leftover} still open. The position watchdog "
+                               "should flatten it; verify now."),
                        legs={"short": short_res, "long": long_res},
+                       cancel_long=cancel_long,
                        unwind={"result": unwind_res, "error": unwind_err},
-                       positions={short_venue: remaining, long_venue: 0.0}), 500
+                       positions={short_venue: remaining,
+                                  long_venue: long_leftover}), 500
 
     logger.info("HEDGE UNWOUND: account flat again")
     return jsonify(opened=False, status="unwound",
-                   detail="long leg did not fill; short leg unwound, account flat",
+                   detail="long leg did not fill; resting order cancelled, short "
+                          "leg unwound, account flat",
                    legs={"short": short_res, "long": long_res},
+                   cancel_long=cancel_long,
                    unwind={"result": unwind_res},
                    positions={short_venue: 0.0, long_venue: 0.0})
 
