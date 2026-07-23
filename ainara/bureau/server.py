@@ -45,6 +45,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d] - %(message)s",
 )
 
+# Enable DEBUG logging for scratchpad resolution debugging
+logging.getLogger("ainara.bureau.scratchpad").setLevel(logging.DEBUG)
+
 # Grace period (seconds) after a gentle termination before a hard kill
 GRACE_PERIOD = 20
 logger = logging.getLogger("bureau")
