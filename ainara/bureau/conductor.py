@@ -486,6 +486,17 @@ class Conductor:
         self.plan_status[plan_name].pop("current_run_id", None)
         lock.release()
 
+    @staticmethod
+    def _format_response(response: str) -> str:
+        """Pretty-print JSON if possible, else return as-is."""
+        try:
+            parsed = json.loads(response)
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(parsed, indent=2, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return str(response)
+
     # ------------------------------------------------------------------
     # Forensic report
     # ------------------------------------------------------------------
@@ -521,7 +532,9 @@ class Conductor:
 
             reports_dir = Path(self.config_manager.get_default_log_dir()) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
-            report_path = reports_dir / f"plan_{plan_name}_{run_id}.md"
+            timestamp_str = start_time.strftime("%Y%m%d_%H%M")
+            report_name = f"{plan_name}-{timestamp_str}-{run_id}.md"
+            report_path = reports_dir / report_name
 
             if failed:
                 status_label = "❌ FAILED"
@@ -587,7 +600,7 @@ class Conductor:
                     response = result.get("response", "No response recorded.")
                     lines.append(
                         "**Response / Final Answer:**\n```text\n"
-                        + str(response)
+                        + self._format_response(response)
                         + "\n```\n"
                     )
                 else:
