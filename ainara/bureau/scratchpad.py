@@ -78,19 +78,10 @@ class Scratchpad:
             logger.warning("Scratchpad: %s", msg)
             return None, msg
 
-        logger.info("Resolving '%s': agent_data keys=%s", ref, list(agent_data.keys()))
-
         current = agent_data
 
         # --- walk the path --------------------------------------------------------
         for idx, part in enumerate(rest):
-            logger.info(
-                "  segment[%d]='%s', current_type=%s, current_keys=%s",
-                idx,
-                part,
-                type(current).__name__,
-                list(current.keys()) if isinstance(current, dict) else "N/A",
-            )
             if isinstance(current, dict) and part in current:
                 current = current[part]
                 # auto‑parse JSON response strings
@@ -107,15 +98,7 @@ class Scratchpad:
                 if isinstance(response_val, str):
                     try:
                         parsed = json.loads(response_val)
-                        logger.info(
-                            "  fallback: parsing response JSON, keys=%s",
-                            list(parsed.keys()),
-                        )
                         if isinstance(parsed, dict) and part in parsed:
-                            logger.info(
-                                "  fallback: found '%s' in parsed response, setting current=parsed[part]",
-                                part,
-                            )
                             current = parsed[part]
                             continue
                     except (json.JSONDecodeError, TypeError):
