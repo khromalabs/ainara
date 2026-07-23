@@ -469,6 +469,37 @@ class Conductor:
             self.plan_status[plan_name]["last_failure"] = None
             logger.info("%s Plan completed successfully", log_prefix)
 
+        # --- avoid_report_if ---
+        # Only evaluated on success; if truthy (possibly negated) the
+        # forensic report is suppressed to reduce noise.
+        if not failed and plan.avoid_report_if:
+            condition = plan.avoid_report_if
+            invert = False
+            if condition.startswith('!'):
+                invert = True
+                condition = condition[1:]
+
+            value, error = scratchpad.resolve_dotted_path(condition)
+            if error is not None:
+                logger.warning(
+                    "%s avoid_report_if eval error: %s – generating report anyway",
+                    log_prefix, error
+                )
+            else:
+                is_truthy = self._is_truthy(value)
+                should_avoid = is_truthy if not invert else not is_truthy
+                if should_avoid:
+                    logger.info(
+                        "%s Forensic report avoided by condition '%s' (evaluated to %s)",
+                        log_prefix,
+                        plan.avoid_report_if,
+                        "truthy" if is_truthy else "falsy (negated)",
+                    )
+                    # Clean up state and release lock without writing a report
+                    self.plan_status[plan_name].pop("current_run_id", None)
+                    lock.release()
+                    return
+
         self._generate_forensic_report(
             plan_name=plan_name,
             run_id=run_id,
@@ -496,6 +527,15 @@ class Conductor:
         except (json.JSONDecodeError, TypeError):
             pass
         return str(response)
+
+    @staticmethod
+    def _is_truthy(value: Any) -> bool:
+        """JS-style truthy evaluation: returns True if value is not falsy."""
+        if value is None or value is False or value == 0 or value == '':
+            return False
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Forensic report
@@ -646,7 +686,14 @@ class Conductor:
         if not avoid_path:
             return False, None, None
 
-        current, error = scratchpad.resolve_dotted_path(avoid_path)
+        # Detect negation operator
+        invert = False
+        cleaned_path = avoid_path
+        if avoid_path.startswith('!'):
+            invert = True
+            cleaned_path = avoid_path[1:]
+
+        current, error = scratchpad.resolve_dotted_path(cleaned_path)
         if error is not None:
             error_reason = f"Condition '{avoid_path}': {error}"
             logger.error(
@@ -658,32 +705,30 @@ class Conductor:
             return False, None, error_reason
 
         # JS-style truthy evaluation
-        is_truthy = not (
-            current is None
-            or current is False
-            or current == 0
-            or current == ""
-            or (isinstance(current, (list, dict)) and len(current) == 0)
-        )
+        is_truthy = self._is_truthy(current)
+        should_trigger = is_truthy if not invert else not is_truthy
 
-        if is_truthy:
-            skip_reason = f"Truthy condition: {avoid_path} = {current!r}"
+        if should_trigger:
+            reason_prefix = "Truthy" if is_truthy else "Falsy (negated)"
+            skip_reason = f"{reason_prefix} condition: {avoid_path} = {current!r}"
             logger.info(
-                "%s Step '%s' avoid_step_if='%s' evaluated to truthy "
+                "%s Step '%s' avoid_step_if='%s' evaluated to %s "
                 "(value=%r). Skipping step.",
                 log_prefix,
                 step_name,
                 avoid_path,
+                reason_prefix.lower(),
                 current,
             )
             return True, skip_reason, None
 
         logger.info(
-            "%s Step '%s' avoid_step_if='%s' evaluated to falsy "
+            "%s Step '%s' avoid_step_if='%s' evaluated to %s "
             "(value=%r). Executing step.",
             log_prefix,
             step_name,
             avoid_path,
+            "falsy" if is_truthy else "truthy (negated)",
             current,
         )
         return False, None, None

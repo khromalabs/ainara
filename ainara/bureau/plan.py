@@ -142,6 +142,8 @@ class Plan:
         self.max_parallel = self.raw.get("max_parallel", 4)
         self.scratchpad_max_chars = self.raw.get("scratchpad_max_chars", 10000)
         self.defaults = self.raw.get("defaults", {})
+        # avoid_report_if (optional) – a single condition string
+        self.avoid_report_if = self.raw.get("avoid_report_if")
 
         # Steps (required)
         steps_raw = self.raw.get("steps")
