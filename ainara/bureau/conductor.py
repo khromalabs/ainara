@@ -475,9 +475,9 @@ class Conductor:
         if not failed and plan.avoid_report_if:
             condition = plan.avoid_report_if
             invert = False
-            if condition.startswith('!'):
+            if condition.startswith('not '):
                 invert = True
-                condition = condition[1:]
+                condition = condition[4:].strip()
 
             value, error = scratchpad.resolve_dotted_path(condition)
             if error is not None:
@@ -686,12 +686,34 @@ class Conductor:
         if not avoid_path:
             return False, None, None
 
-        # Detect negation operator
+        # Condition negation syntax: 'not step.field.path'
+        # Example:
+        #   avoid_step_if: not exposure.result.actions_taken
+        #
+        # TODO: Future extension
+        # The condition evaluator could be grown into a full boolean expression
+        # language supporting parentheses, 'and', 'or', and both prefix 'not' and
+        # infix 'not()' operators, e.g.:
+        #   (not path1 and path2) or not path3
+        # or:
+        #   not(path1 and path2)
+        # This would allow arbitrarily rich gating logic while keeping the YAML
+        # configuration readable and requiring no special quoting. The evaluator
+        # would require a small recursive‑descent / Pratt parser but would reuse
+        # the same dot‑path resolution engine we already have for the scratchpad.
         invert = False
         cleaned_path = avoid_path
-        if avoid_path.startswith('!'):
+        if avoid_path.startswith('not '):
             invert = True
-            cleaned_path = avoid_path[1:]
+            cleaned_path = avoid_path[4:].strip()
+            if not cleaned_path:
+                # 'not' without a path is invalid – treat as an error
+                error = "Invalid negation: 'not' must be followed by a path"
+                logger.error(
+                    "%s Step '%s': %s. Executing step anyway.",
+                    log_prefix, step_name, error,
+                )
+                return False, None, error
 
         current, error = scratchpad.resolve_dotted_path(cleaned_path)
         if error is not None:

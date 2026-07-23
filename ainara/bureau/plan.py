@@ -214,13 +214,24 @@ class Plan:
                 continue
 
             for avoid_path in step.avoid_step_if:
+                # Strip leading negation prefix if present
+                cleaned_path = avoid_path
+                if avoid_path.startswith('not '):
+                    cleaned_path = avoid_path[4:].strip()
+                    if not cleaned_path:
+                        raise PlanValidationError(
+                            f"Plan '{self.name}': step '{step.name}' has "
+                            "empty path after 'not' in avoid_step_if"
+                        )
+
                 # Parse the reference: "step_name.response.some.path"
-                parts = avoid_path.split(".")
+                parts = cleaned_path.split(".")
                 if len(parts) < 2:
                     raise PlanValidationError(
                         f"Plan '{self.name}': step '{step.name}' has invalid "
                         f"avoid_step_if='{avoid_path}'. "
-                        "Expected format: 'step_name.response.path'"
+                        "Expected format: 'step_name.response.path' "
+                        "(or 'not step_name.response.path')"
                     )
 
                 referenced_step = parts[0]
