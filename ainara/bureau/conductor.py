@@ -532,8 +532,8 @@ class Conductor:
 
             reports_dir = Path(self.config_manager.get_default_log_dir()) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
-            timestamp_str = start_time.strftime("%Y%m%d_%H%M")
-            report_name = f"{plan_name}-{timestamp_str}-{run_id}.md"
+            timestamp_str = start_time.astimezone().strftime("%Y%m%d_%H%M")
+            report_name = f"plan_{plan_name}-{timestamp_str}-{run_id}.md"
             report_path = reports_dir / report_name
 
             if failed:
