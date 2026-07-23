@@ -214,10 +214,10 @@ class Conductor:
             for avoid_plan in avoid_if:
                 avoid_lock = self._locks.get(avoid_plan)
                 if avoid_lock is None:
-                    logger.info(
-                        "Plan '%s' in avoid_if not found, ignoring.",
-                        avoid_plan,
-                    )
+                    # logger.info(
+                    #     "Plan '%s' in avoid_if not found, ignoring.",
+                    #     avoid_plan,
+                    # )
                     continue
                 if avoid_lock.locked():
                     return None, f"avoid_condition_met:{avoid_plan}"
@@ -297,8 +297,8 @@ class Conductor:
                 for step_name in to_launch:
                     step_node = plan.steps[step_name]
 
-                    logger.info("==== WILL EXECUTE STEP ===")
-                    logger.info(f"{step_node}")
+                    # logger.info("==== WILL EXECUTE STEP ===")
+                    # logger.info(f"{step_node}")
 
                     # Check avoid_step_if conditions before spawning (OR logic)
                     if step_node.avoid_step_if:
