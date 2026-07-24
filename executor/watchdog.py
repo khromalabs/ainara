@@ -162,6 +162,14 @@ class Watchdog:
         self.escalate_after = int(w.get("escalate_after", 3))
         self.alarm_file = w.get("alarm_file") or os.path.join(
             tempfile.gettempdir(), "ainara_executor_watchdog_alarm.json")
+        # Liveness heartbeat. The watchdog has no HTTP surface, so a supervisor
+        # (the scheduler's managed-services layer) can only tell it is alive by a
+        # file it freshens every loop. A silently-dead watchdog otherwise looks
+        # exactly like a healthy quiet one — the very failure this guard exists to
+        # avoid. Written every iteration, even when guard_once raises, because it
+        # means "the loop is turning", not "the last assessment succeeded".
+        self.heartbeat_file = w.get("heartbeat_file") or os.path.join(
+            tempfile.gettempdir(), "ainara_executor_watchdog_heartbeat.txt")
         # Retry backoff, applied only AFTER escalation. The first few attempts
         # fire every poll — a transient API blip or momentary liquidity gap
         # deserves a fast retry. Past escalate_after the failure is structural
@@ -380,14 +388,25 @@ class Watchdog:
                 done.append({"action": act, "result": "not_wired_yet"})
         return done
 
+    def _write_heartbeat(self):
+        """Freshen the liveness file. Best-effort — heartbeat IO must never be
+        able to kill the guard loop."""
+        try:
+            with open(self.heartbeat_file, "w", encoding="utf-8") as fh:
+                fh.write(str(time.time()))
+        except Exception as e:
+            logger.warning("watchdog: could not write heartbeat %s: %s",
+                           self.heartbeat_file, e)
+
     def run(self):
-        logger.info("watchdog starting: mode=%s interval=%ss", self.mode,
-                    self.interval)
+        logger.info("watchdog starting: mode=%s interval=%ss heartbeat=%s",
+                    self.mode, self.interval, self.heartbeat_file)
         while True:
             try:
                 self.guard_once()
             except Exception as e:  # never let the guard die silently
                 logger.error("watchdog loop error: %s", e)
+            self._write_heartbeat()  # after guard, so it reflects a live loop
             time.sleep(self.interval)
 
 
