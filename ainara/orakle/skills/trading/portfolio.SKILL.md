@@ -19,6 +19,11 @@ and does nothing that moves money:
   venue's own PUBLIC history (fills + funding payments), so the strategy can be
   judged on realized results — funding captured, fees paid, hold time, realized
   net — not just what it was predicted to earn.
+- **`analytics`** — realized vs PREDICTED: joins the carry ledger's captured
+  prediction (the `decide` verdict at entry) against realized outcomes rebuilt
+  over each trade's exact window. Headline is `funding_capture_ratio` (realized
+  funding rate ÷ predicted spread); fees are reported separately, and rate metrics
+  are suppressed for holds too short to annualize honestly.
 
 **Key-free and daemon-free.** Every read is a public venue endpoint keyed by the
 account address in config, so it still works when the executor daemon is down —
@@ -42,10 +47,14 @@ or wants to review closed trades and reflect on realized performance.
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| action | Literal["status","review"] | no | "status" | Live status, or reconstruct closed trades |
+| action | Literal["status","review","analytics"] | no | "status" | Live status, reconstruct closed trades, or realized-vs-predicted |
 | coin | str | no | "BTC" | Asset symbol (BTC, ETH, SOL, …) |
 | lookback_days | float | no | 7.0 | For `review`: how far back to reconstruct |
 | size_tolerance_pct | float | no | 15.0 | For `status`: leg mismatch above this reads as imbalanced |
+
+`analytics` reads the carry ledger (`carry_trades` table, written by the executor
+client on each real open/close). It records from the next live open/close onward,
+so it is empty until trades happen with the write path loaded.
 
 ## Returns
 

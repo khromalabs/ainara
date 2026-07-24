@@ -24,6 +24,7 @@ import requests
 
 from ainara.framework.config import config
 from ainara.framework.skill import Skill
+from ainara.orakle.skills.trading import _ledger
 
 
 class TradingExecutorClient(Skill):
@@ -142,8 +143,14 @@ class TradingExecutorClient(Skill):
             return {"error": "decision is missing required field(s): "
                              f"{', '.join(missing)}"}
         body["dry_run"] = dry_run
-        return self._request("POST", "/hedge/open", body,
-                             timeout=self.write_timeout)
+        result = self._request("POST", "/hedge/open", body,
+                               timeout=self.write_timeout)
+        # Record the trade with the PREDICTION that opened it, for realized-vs-
+        # predicted later. Only on a real open (dry runs return opened=False); the
+        # ledger swallows its own errors, so this never affects the returned result.
+        if isinstance(result, dict) and result.get("opened") is True:
+            _ledger.record_open(d, result)
+        return result
 
     def _close_hedge(self, decision, dry_run: bool) -> Dict[str, Any]:
         """Close an open hedge from a decide_exit verdict, deterministically.
@@ -168,10 +175,16 @@ class TradingExecutorClient(Skill):
         if not coin:
             return {"error": "exit decision is missing 'coin'"}
         # Venue symbol conventions: bare coin on HL, USD-quoted pair on dYdX.
-        return self._request("POST", "/hedge/close", {
+        result = self._request("POST", "/hedge/close", {
             "legs": {"hyperliquid": coin, "dydx": f"{coin}-USD"},
             "dry_run": dry_run,
         }, timeout=self.write_timeout)
+        # Stamp the close context onto the open row (exit reason, closing spread) so
+        # the trade window is exact. Only on a real close; ledger errors are
+        # swallowed and never affect the returned result.
+        if isinstance(result, dict) and result.get("closed") is True:
+            _ledger.record_close(coin, d, result)
+        return result
 
     # ------------------------------------------------------------------
     async def run(

@@ -52,8 +52,14 @@ import requests
 
 from ainara.framework.config import config
 from ainara.framework.skill import Skill
+from ainara.orakle.skills.trading import _ledger
 
 HOURS_PER_YEAR = 24 * 365
+DAYS_PER_YEAR = 365.0
+# Below this hold, annualizing a realized rate amplifies noise (a handful of
+# funding hours, or the fixed round-trip fee, scaled to a year) — so realized-vs-
+# predicted RATE metrics are only trusted past it. Raw dollars are always reported.
+MIN_RELIABLE_HOLD_DAYS = 1.0
 
 _HL_INFO = {
     "mainnet": "https://api.hyperliquid.xyz/info",
@@ -375,18 +381,128 @@ class TradingPortfolio(Skill):
         return {"action": "review", "coin": coin, "lookback_days": lookback_days,
                 "summary": summary, "round_trips": trips, "as_of": _now_iso()}
 
-    # ---- per-venue episode reconstruction ----
-    def _episodes_hl(self, coin, since_ms):
-        """Walk HL fills oldest→newest, tracking signed size; an episode runs from
-        the fill that leaves flat to the fill that returns to flat."""
+    # ------------------------------------------------------------------
+    # analytics — realized vs the prediction the engine made at entry
+    # ------------------------------------------------------------------
+    def _analytics(self, coin):
+        """Join the ledger's PREDICTED edge against realized outcomes rebuilt from
+        venue history over each trade's exact window.
+
+        The honest comparison is RATE vs RATE, not dollars: a prediction assumes a
+        ~14-day hold, so comparing its dollar total to a trade closed in hours is
+        meaningless — but 'did we capture the funding EDGE we predicted' holds at
+        any duration. So the headline is `funding_capture_ratio` (realized funding
+        annualized ÷ predicted smoothed spread). Fees are a fixed round-trip cost
+        reported separately, because annualizing them over a short hold produces a
+        scary number that says nothing about the strategy — only about holding too
+        briefly to clear the toll.
+        """
+        rows = _ledger.trades(coin=coin, status="closed")
+        trades, captures, pred_spreads, real_funding_annuals = [], [], [], []
+        net_total = 0.0
+        for row in rows:
+            lo, hi = _iso_ms(row["opened_at"]), _iso_ms(row["closed_at"])
+            hold_days = max((hi - lo) / 86_400_000, 0.0)
+            notional = row.get("notional_usd")
+            realized = self._realized_in_window(coin, lo, hi)
+            net_total += realized["net_usd"]
+
+            # Annualizing a rate over a very short hold amplifies noise: a few lucky
+            # (or unlucky) funding hours, or the fixed round-trip fee, blow up when
+            # scaled to a year. So the rate metrics are only TRUSTED past a minimum
+            # hold; below it we report the raw dollars and flag the rest unreliable,
+            # rather than present noise as a 4x "capture".
+            reliable = hold_days >= MIN_RELIABLE_HOLD_DAYS
+            r_funding_annual = r_net_annual = capture = None
+            if notional and hold_days > 0:
+                r_funding_annual = (realized["funding_usd"] / notional
+                                    / hold_days * DAYS_PER_YEAR * 100)
+                r_net_annual = (realized["net_usd"] / notional
+                                / hold_days * DAYS_PER_YEAR * 100)
+            pred_spread = row.get("pred_smoothed_spread_annual_pct")
+            if reliable and pred_spread and r_funding_annual is not None:
+                capture = r_funding_annual / pred_spread
+                captures.append(capture)
+                pred_spreads.append(pred_spread)
+                real_funding_annuals.append(r_funding_annual)
+
+            trades.append({
+                "opened_at": row["opened_at"], "closed_at": row["closed_at"],
+                "hold_days": round(hold_days, 3), "notional_usd": notional,
+                "exit_reason": row.get("exit_reason"),
+                "annualized_metrics_reliable": reliable,
+                "predicted": {
+                    "smoothed_spread_annual_pct": pred_spread,
+                    "net_annual_pct_on_capital": row.get(
+                        "pred_net_annual_pct_on_capital"),
+                    "net_over_hold_pct_notional": row.get(
+                        "pred_net_over_hold_pct_notional"),
+                },
+                "realized": {
+                    **realized,
+                    "funding_annual_pct_notional": _round(r_funding_annual, 2),
+                    "net_annual_pct_notional": _round(r_net_annual, 2),
+                    "fees_pct_notional": _round(
+                        realized["fees_usd"] / notional * 100, 4)
+                    if notional else None,
+                },
+                "funding_capture_ratio": _round(capture, 3),
+                "held_past_fee_breakeven": (hold_days >= self._fee_breakeven_days(
+                    pred_spread)) if pred_spread else None,
+            })
+
+        short_held = sum(1 for t in trades
+                         if not t["annualized_metrics_reliable"])
+        summary = {
+            "closed_trades_on_record": len(rows),
+            "trades_scored": len(captures),  # only holds long enough to trust a rate
+            "trades_too_short_to_score": short_held,
+            "total_realized_net_usd": round(net_total, 4) if rows else None,
+            "mean_predicted_spread_annual_pct": _round(_mean(pred_spreads), 2),
+            "mean_realized_funding_annual_pct": _round(_mean(real_funding_annuals), 2),
+            "mean_funding_capture_ratio": _round(_mean(captures), 3),
+            "winners": sum(1 for t in trades
+                           if (t["realized"]["net_usd"] or 0) > 0),
+            "losers": sum(1 for t in trades
+                          if (t["realized"]["net_usd"] or 0) < 0),
+        }
+        if not rows:
+            summary["note"] = ("no closed trades on record yet — the ledger records"
+                               " from the next real open/close onward.")
+        elif not captures:
+            summary["note"] = (
+                f"no trade has been held past ~{MIN_RELIABLE_HOLD_DAYS:g} day(s)"
+                " yet, so realized-vs-predicted RATES are not meaningful — a short"
+                " hold makes both funding and fees annualize to noise. Only the raw"
+                " dollars are real: over a short hold, fixed fees dominate.")
+        else:
+            summary["note"] = (
+                "funding_capture_ratio (realized funding rate ÷ predicted) is the"
+                " honest gauge, but only over trades held long enough to trust —"
+                f" {short_held} short-held trade(s) are excluded from the rates.")
+        return {"action": "analytics", "coin": coin, "summary": summary,
+                "trades": trades, "as_of": _now_iso()}
+
+    @staticmethod
+    def _fee_breakeven_days(pred_spread_annual_pct):
+        """Days the predicted funding rate needs to run to cover a round trip's
+        ~0.17%-of-notional fees. Below this a close is a loss no matter the edge."""
+        if not pred_spread_annual_pct or pred_spread_annual_pct <= 0:
+            return float("inf")
+        daily = pred_spread_annual_pct / 100.0 / DAYS_PER_YEAR
+        return (0.0017 / daily) if daily else float("inf")
+
+    # ---- raw per-venue fills (shared by episode reconstruction and window sums) ----
+    def _raw_fills_hl(self, coin, since_ms):
+        """Normalized HL fills for `coin` since `since_ms`, oldest→newest."""
         network, addr = self._target("hyperliquid")
         fills = requests.post(_HL_INFO[network], json={
             "type": "userFillsByTime", "user": addr, "startTime": since_ms,
         }, timeout=20).json()
-        fills = [f for f in fills if f.get("coin") == coin]
-        fills.sort(key=lambda f: f["time"])
         rows = []
         for f in fills:
+            if f.get("coin") != coin:
+                continue
             # HL 'dir' is explicit: a BUY is "Open Long" or "Close Short"; a SELL
             # is "Open Short" or "Close Long". That alone gives the signed delta.
             d = str(f.get("dir", "")).lower()
@@ -395,10 +511,11 @@ class TradingPortfolio(Skill):
             rows.append({"t": int(f["time"]), "sz": sz, "px": float(f["px"]),
                          "buy": buy, "signed": sz if buy else -sz,
                          "fee": float(f.get("fee", 0) or 0)})
-        funding = self._funding_hl(coin, since_ms, addr, network)
-        return _episodes_from_rows(rows, funding, "hyperliquid")
+        rows.sort(key=lambda r: r["t"])
+        return rows
 
-    def _episodes_dydx(self, coin, since_ms):
+    def _raw_fills_dydx(self, coin, since_ms):
+        """Normalized dYdX fills for `<coin>-USD` since `since_ms`, oldest→newest."""
         network, addr = self._target("dydx")
         indexer = _DYDX_INDEXER[network]
         market = f"{coin}-USD"
@@ -412,12 +529,58 @@ class TradingPortfolio(Skill):
                 continue
             sz = float(f["size"])
             buy = f["side"].upper() == "BUY"
-            rows.append({"t": t, "signed": sz if buy else -sz, "px": float(f["price"]),
-                         "sz": sz, "buy": buy,
-                         "fee": float(f.get("fee", 0) or 0), "funding": 0.0})
+            rows.append({"t": t, "sz": sz, "px": float(f["price"]),
+                         "buy": buy, "signed": sz if buy else -sz,
+                         "fee": float(f.get("fee", 0) or 0)})
         rows.sort(key=lambda r: r["t"])
-        funding = self._funding_dydx(coin, since_ms, addr, indexer)
+        return rows
+
+    # ---- per-venue episode reconstruction ----
+    def _episodes_hl(self, coin, since_ms):
+        """Walk HL fills oldest→newest, tracking signed size; an episode runs from
+        the fill that leaves flat to the fill that returns to flat."""
+        network, addr = self._target("hyperliquid")
+        rows = self._raw_fills_hl(coin, since_ms)
+        funding = self._funding_hl(coin, since_ms, addr, network)
+        return _episodes_from_rows(rows, funding, "hyperliquid")
+
+    def _episodes_dydx(self, coin, since_ms):
+        network, addr = self._target("dydx")
+        rows = self._raw_fills_dydx(coin, since_ms)
+        funding = self._funding_dydx(coin, since_ms, addr,
+                                     _DYDX_INDEXER[network])
         return _episodes_from_rows(rows, funding, "dydx")
+
+    # ---- realized outcome over an EXACT window (for ledger-bounded analytics) ----
+    def _realized_in_window(self, coin, lo_ms, hi_ms):
+        """Realized funding / fees / price-PnL between two timestamps, summed from
+        BOTH venues' public history. The ledger supplies exact [open, close]
+        bounds, so this is precise where `review`'s episode pairing was fuzzy.
+
+        Funding is bounded with a small tail so an hourly stamp landing right on
+        the close is not dropped; a payment strictly after the close is excluded.
+        """
+        hi = hi_ms + 1000
+        funding = fees = price_pnl = 0.0
+        _, addr_hl = self._target("hyperliquid")
+        net_hl = self._target("hyperliquid")[0]
+        _, addr_dy = self._target("dydx")
+        indexer = _DYDX_INDEXER[self._target("dydx")[0]]
+        for fetch in (self._raw_fills_hl, self._raw_fills_dydx):
+            for r in fetch(coin, lo_ms):
+                if lo_ms <= r["t"] <= hi:
+                    fees += r["fee"]
+                    # sell brings cash in (+), buy pays out (-); sum = price PnL.
+                    price_pnl += r["px"] * r["sz"] * (1 if not r["buy"] else -1)
+        for t, amt in self._funding_hl(coin, lo_ms, addr_hl, net_hl):
+            if lo_ms <= t <= hi:
+                funding += amt
+        for t, amt in self._funding_dydx(coin, lo_ms, addr_dy, indexer):
+            if lo_ms <= t <= hi:
+                funding += amt
+        return {"funding_usd": round(funding, 4), "fees_usd": round(fees, 4),
+                "price_pnl_usd": round(price_pnl, 4),
+                "net_usd": round(funding + price_pnl - fees, 4)}
 
     def _funding_hl(self, coin, since_ms, addr, network):
         rows = requests.post(_HL_INFO[network], json={
@@ -489,10 +652,12 @@ class TradingPortfolio(Skill):
     def run(
         self,
         action: Annotated[
-            Literal["status", "review"],
+            Literal["status", "review", "analytics"],
             "'status' = live open position (hedge health, liquidation, funding"
             " earned now). 'review' = reconstruct CLOSED round-trips from venue"
-            " history for reflection on realized performance.",
+            " history. 'analytics' = compare each recorded trade's PREDICTED edge"
+            " against realized outcomes (did the strategy earn what the model"
+            " forecast).",
         ] = "status",
         coin: Annotated[str, "Asset symbol, e.g. BTC, ETH, SOL"] = "BTC",
         lookback_days: Annotated[
@@ -507,7 +672,10 @@ class TradingPortfolio(Skill):
                 return self._status(coin, size_tolerance_pct)
             if action == "review":
                 return self._review(coin, lookback_days)
-            return {"error": f"unknown action {action!r}; use 'status' or 'review'"}
+            if action == "analytics":
+                return self._analytics(coin)
+            return {"error": f"unknown action {action!r}; use 'status', 'review'"
+                    " or 'analytics'"}
         except requests.RequestException as e:
             return {"error": f"venue read failed: {e}"}
 
@@ -550,6 +718,14 @@ def _max_iso(a, b):
 def _sum_optional(*vals):
     got = [v for v in vals if v is not None]
     return round(sum(got), 4) if got else None
+
+
+def _round(v, n):
+    return round(v, n) if v is not None else None
+
+
+def _mean(vals):
+    return sum(vals) / len(vals) if vals else None
 
 
 def _overlap(h, d):
