@@ -104,7 +104,11 @@ def liquidation_price(equity, size_signed, mark_px, mmf):
     callers that could not read the risk params must say so separately.
 
     Single-position only: with several positions the MMR is the sum across them,
-    which the rest of this stack (watchdog._leg, positions[0]) does not model yet.
+    and each leg's liquidation couples to the others. state() therefore does NOT
+    call this when a subaccount holds more than one position — it reports
+    "liquidation unknown" instead, so the watchdog alerts rather than trusting an
+    optimistic number. The watchdog itself now assesses every coin (not just
+    positions[0]); this formula stays valid only for a single-position subaccount.
     """
     s = float(size_signed)
     mark_px = float(mark_px)
@@ -239,14 +243,29 @@ class DydxExecutor:
                     "note": "no subaccount yet (fund it before trading)"}
         s = next((x for x in subs if x.get("subaccountNumber") == subaccount), subs[0])
         equity = float(s.get("equity", 0))
+        open_perps = s.get("openPerpetualPositions") or {}
+        # dYdX v4 is cross-margined per SUBACCOUNT: with several open positions the
+        # maintenance-margin requirement is the SUM across them, and each leg's
+        # liquidation price depends on the others. liquidation_price() models a
+        # single-position subaccount, so with more than one position it reads
+        # OPTIMISTICALLY safe. Rather than publish a number the watchdog would
+        # trust, fall back to "liquidation unknown" — the watchdog raises a
+        # liq_unknown alert on that, the same fail-loud-not-silent posture the
+        # rest of this stack uses. (Proper fix later: isolate each coin in its own
+        # subaccount, which makes the single-position formula exact again.)
+        multi = len(open_perps) > 1
         positions = []
-        for mkt, p in (s.get("openPerpetualPositions") or {}).items():
+        for mkt, p in open_perps.items():
             sz = abs(float(p.get("size", 0)))
             signed = sz if p.get("side") == "LONG" else -sz  # sign like HL's szi
             mark, mmf = self._market_risk(mkt)
             liq = liq_dist = None
             if mark is None:
                 note = "liquidation unknown: market risk params unavailable"
+            elif multi:
+                note = ("liquidation unknown: multiple positions share this"
+                        " cross-margin subaccount — single-position formula is"
+                        " not valid, this leg is unmonitored")
             else:
                 liq = liquidation_price(equity, signed, mark, mmf)
                 if liq is None:

@@ -601,12 +601,19 @@ def restart_service(service_name, cmd, log_file, health_url, sched_config):
 # ---------------------------------------------------------------------------
 # Plan triggering
 # ---------------------------------------------------------------------------
-def trigger_plan(plan_name, bureau_url, avoid_if=None):
-    """Trigger a plan execution via Bureau API."""
+def trigger_plan(plan_name, bureau_url, avoid_if=None, plan_vars=None):
+    """Trigger a plan execution via Bureau API.
+
+    plan_vars (a flat dict, e.g. {"coin": "ETH"}) overrides the plan's own vars
+    for this run only — how one coin-parameterized plan is pointed at different
+    assets.
+    """
     url = f"{bureau_url}/v1/conductor/plans/{plan_name}/run"
     body = {}
     if avoid_if:
         body["avoid_if"] = avoid_if
+    if plan_vars:
+        body["vars"] = plan_vars
     try:
         response = requests.post(url, json=body or None, timeout=30)
         if response.status_code == 200 or response.status_code == 202:
@@ -662,10 +669,17 @@ def build_scheduler(schedules, bureau_url):
                 day_of_week=parts[4],
             )
             avoid_if = plan_config.get("avoid_if")
+            # Optional per-schedule vars override (e.g. vars: {coin: ETH}) so the
+            # same coin-parameterized plan can be scheduled per asset. The job id
+            # is still the schedule key, so a coin-specific schedule needs its own
+            # key (e.g. a "target" plan + distinct key) — kept simple here: one
+            # schedule entry, one job, its own vars.
+            plan_vars = plan_config.get("vars")
+            target_plan = plan_config.get("plan", plan_name)
             scheduler.add_job(
                 trigger_plan,
                 trigger=trigger,
-                args=[plan_name, bureau_url, avoid_if],
+                args=[target_plan, bureau_url, avoid_if, plan_vars],
                 id=plan_name,
                 name=f"Plan: {plan_name}",
                 replace_existing=True,
@@ -906,6 +920,14 @@ def parse_args():
             "(used with --run-plan)"
         ),
     )
+    parser.add_argument(
+        "--coin",
+        metavar="SYMBOL",
+        help=(
+            "Override the coin for a coin-parameterized plan, e.g. ETH or SOL "
+            "(used with --run-plan; sends vars={coin: SYMBOL})"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -955,8 +977,10 @@ def main():
             if args.avoid_if
             else None
         )
+        plan_vars = {"coin": args.coin.strip().upper()} if args.coin else None
         success = trigger_plan(
-            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if
+            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if,
+            plan_vars=plan_vars,
         )
         sys.exit(0 if success else 1)
 

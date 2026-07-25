@@ -95,6 +95,11 @@ class Plan:
         self.max_parallel: int = 4
         self.scratchpad_max_chars: int = 10000
         self.defaults: Dict[str, Any] = {}
+        # Plan-level input variables. Seeded into the scratchpad under "vars" at
+        # run start so step params can reference {{vars.<name>}} (e.g. a coin the
+        # whole plan is parameterized on). Defaults defined here; a run may
+        # override any of them (conductor.trigger_plan(vars=...)).
+        self.vars: Dict[str, Any] = {}
         self.steps: Dict[str, StepNode] = {}
 
         self._load()
@@ -142,6 +147,22 @@ class Plan:
         self.max_parallel = self.raw.get("max_parallel", 4)
         self.scratchpad_max_chars = self.raw.get("scratchpad_max_chars", 10000)
         self.defaults = self.raw.get("defaults", {})
+
+        # Optional plan-level input variables (a flat mapping of scalars). Keep it
+        # flat: the scratchpad resolves one level ({{vars.coin}}), so nested
+        # values could not be referenced anyway.
+        vars_raw = self.raw.get("vars", {}) or {}
+        if not isinstance(vars_raw, dict):
+            raise PlanValidationError(
+                f"Plan '{self.name}': 'vars' must be a mapping"
+            )
+        for k, v in vars_raw.items():
+            if isinstance(v, (dict, list)):
+                raise PlanValidationError(
+                    f"Plan '{self.name}': vars.{k} must be a scalar"
+                    " (vars are single-level; {{vars.name}} resolves one level)"
+                )
+        self.vars = dict(vars_raw)
 
         # Steps (required)
         steps_raw = self.raw.get("steps")

@@ -664,8 +664,14 @@ def trigger_conductor_plan(plan_name):
 
     data = request.get_json(silent=True) or {}
     avoid_if = data.get("avoid_if")
+    # Optional per-run variable overrides (e.g. {"coin": "ETH"}) for a
+    # coin-parameterized plan. Must be a flat mapping; ignore anything else.
+    run_vars = data.get("vars")
+    if run_vars is not None and not isinstance(run_vars, dict):
+        return jsonify({"error": "'vars' must be a JSON object"}), 400
 
-    run_id, error = conductor.trigger_plan(plan_name, avoid_if=avoid_if)
+    run_id, error = conductor.trigger_plan(
+        plan_name, avoid_if=avoid_if, vars=run_vars)
 
     if error == "plan_not_found":
         return jsonify({"error": f"Plan '{plan_name}' not found"}), 404

@@ -23,6 +23,14 @@ on_failure: notify
 max_parallel: 1
 scratchpad_max_chars: 12000
 
+# Plan input variables. `coin` parameterizes the whole plan; BTC is the default,
+# and a run overrides it with vars, e.g.:
+#   scripts/scheduler.py --run-plan delta_neutral_exit --coin ETH
+# or a scheduler.yaml entry with `vars: {coin: SOL}`. The exit MUST run per coin
+# on its own cron, exactly as the entry does.
+vars:
+  coin: BTC
+
 defaults:
   execution_timeout: 180
   max_turns: 12
@@ -37,7 +45,7 @@ steps:
     skill: trading_carry_engine
     params:
       action: decide_exit
-      coin: BTC
+      coin: "{{vars.coin}}"
 
   # 2. Close both legs. Skipped whenever the verdict is not "close" (hold, or
   #    nothing open). Two independent gates, as on the entry plan: avoid_step_if

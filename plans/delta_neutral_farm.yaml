@@ -16,6 +16,15 @@ on_failure: notify
 max_parallel: 1
 scratchpad_max_chars: 12000
 
+# Plan input variables. `coin` parameterizes the whole plan; BTC is the default,
+# and a run overrides it with vars, e.g.:
+#   scripts/scheduler.py --run-plan delta_neutral_farm --coin ETH
+# or a scheduler.yaml entry with `vars: {coin: SOL}`. Both venues support the
+# majors (dYdX clobPairId BTC=0, ETH=1, SOL=5); the engine maps coin -> the two
+# venue symbols itself (BTC / BTC-USD).
+vars:
+  coin: BTC
+
 defaults:
   execution_timeout: 180
   max_turns: 12
@@ -30,7 +39,7 @@ steps:
     skill: trading_carry_engine
     params:
       action: decide
-      coin: BTC
+      coin: "{{vars.coin}}"
       capital_usd: 500
 
   # 2. Execution — deterministic, no LLM. The engine's verdict is already a

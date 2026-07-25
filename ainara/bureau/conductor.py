@@ -223,7 +223,8 @@ class Conductor:
     # ------------------------------------------------------------------
 
     def trigger_plan(
-        self, plan_name: str, avoid_if: Optional[Any] = None
+        self, plan_name: str, avoid_if: Optional[Any] = None,
+        vars: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Attempt to start a plan run.  Returns ``(run_id, error_str)``
@@ -232,6 +233,11 @@ class Conductor:
         * ``"plan_not_found"``   – no plan with that name is loaded
         * ``"already_running"``  – the plan's lock is held; run in progress
         * ``"avoid_condition_met:<blocking_plan>"`` – a plan specified in avoid_if is running
+
+        ``vars`` overrides the plan's own ``vars`` defaults for this run only
+        (e.g. ``{"coin": "ETH"}`` to point a coin-parameterized plan at a
+        different asset). Unknown keys are allowed; steps simply won't reference
+        them.
         """
         if plan_name not in self.plans:
             return None, "plan_not_found"
@@ -258,9 +264,15 @@ class Conductor:
             return None, "already_running"
 
         run_id = str(uuid.uuid4())[:8]
+        # Merge this run's overrides onto the plan's vars defaults. A missing
+        # override leaves the default (so BTC stays the default coin); an unknown
+        # key is harmless (no step references it).
+        run_vars = dict(self.plans[plan_name].vars)
+        if vars:
+            run_vars.update(vars)
         thread = threading.Thread(
             target=self._execute_plan,
-            args=(plan_name, run_id, lock),
+            args=(plan_name, run_id, lock, run_vars),
             name=f"conductor-{plan_name}-{run_id}",
             daemon=True,
         )
@@ -272,7 +284,8 @@ class Conductor:
     # ------------------------------------------------------------------
 
     def _execute_plan(
-        self, plan_name: str, run_id: str, lock: threading.Lock
+        self, plan_name: str, run_id: str, lock: threading.Lock,
+        run_vars: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Orchestrate the full DAG execution for a single plan run.
@@ -281,6 +294,12 @@ class Conductor:
         log_prefix = f"[conductor:{plan_name}:{run_id}]"
         plan = self.plans[plan_name]
         scratchpad = Scratchpad(max_chars=plan.scratchpad_max_chars)
+        # Seed plan input variables so step params can resolve {{vars.<name>}}
+        # (e.g. {{vars.coin}}). Stored like any step result, under the reserved
+        # name "vars"; a step called "vars" would be unusual and is not used here.
+        if run_vars:
+            scratchpad.store("vars", dict(run_vars))
+            logger.info("%s Plan vars: %s", log_prefix, run_vars)
 
         # Create a shared list for blacklisted providers in this specific plan run
         manager = multiprocessing.Manager()
