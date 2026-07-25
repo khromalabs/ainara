@@ -86,9 +86,10 @@ Everything is a first-class Ainara citizen — no bolt-ons:
   forever. (Note: this is a *position* watchdog — distinct from the scheduler's
   *service-health* watchdog.)
 
-## What's built and verified (on testnet)
+## What's built and verified
 
-All of this is tested live on Hyperliquid + dYdX v4 testnets:
+Verified end-to-end on Hyperliquid + dYdX v4 testnets **and** on mainnet at small
+size:
 
 - Both read-only skills against live market data.
 - `carry_engine` backtest reproducing the offline study's net figures exactly.
@@ -97,15 +98,18 @@ All of this is tested live on Hyperliquid + dYdX v4 testnets:
 - **The watchdog auto-closing a broken hedge** on both venues (opened a naked leg,
   watched it detect and flatten), and later escalating correctly against a failure it
   genuinely could not fix.
-- **A real delta-neutral hedge opened by the full stack** — scheduler → Conductor →
-  engine → daemon → both venues, deterministically, first attempt.
-- **The exit plan's `hold` path**: reads the live position, compares it to the
-  smoothed spread, and correctly declines to close a position that is still being
-  paid.
-
-**Not proven:** the exit's `close` branch has never succeeded, and cannot be tested on
-dYdX testnet (see below). Its first real execution will be on mainnet. No mainnet
-trial yet.
+- **Full mainnet round trips** — the entry AND exit `close` branch have both fired
+  for real (dYdX mainnet books fill where testnet's dead book never could), opened
+  and closed by the full stack deterministically, with delta neutrality holding
+  through real price moves.
+- **Multiple assets concurrently.** BTC, ETH and SOL have run as independent hedges
+  at the same time. The watchdog assesses each coin's hedge independently, the plans
+  are parameterized on the coin, and the read-only portfolio skill reports per-coin
+  or across the whole book.
+- **A committed unit-test suite** (`scripts/evaluation/tests/test_trading_*.py`)
+  covers the safety-critical pure functions: the watchdog's per-coin risk
+  assessment, the opener's crossing-limit planner, the engine's EMA/backtest maths
+  and funding pagination, and the coin-parameterization.
 
 **A constraint worth knowing before you plan any dYdX testnet work:** that book is
 effectively dead — ~19 trades/24h, and the *bid* side is empty. You can open (asks
@@ -152,15 +156,29 @@ guard can no longer measure a book that isn't there.
   jurisdictions, and the gate makes that responsibility explicit.
 - **Testnet-first, small-capital-mainnet-later**, matching the strategy's
   proof-of-machine posture.
+- **Multi-asset without loosening safety.** Supporting several coins is not a
+  parallel copy of the machine. One deterministic order path, one watchdog, and one
+  set of guards serve every asset: the watchdog groups both venues' positions by
+  coin and assesses each hedge on its own; the plans carry the coin as an input
+  variable (`{{vars.coin}}`, defaulting to BTC) rather than duplicating files; and
+  where a shared guard cannot stay valid across assets — the dYdX cross-margin
+  liquidation price, which couples positions in one subaccount — it degrades to
+  "unknown" and alerts, rather than reporting an optimistic single-position number.
+- **Crossing limits round directionally.** A taker leg must cross the book; the
+  opener floors the sell and ceils the buy to the price tick so rounding can never
+  push a leg to the wrong side of the market. (Nearest-rounding did exactly that on
+  a lower-priced major, resting the leg instead of filling it.)
 
 ## Status
 
-Testnet-validated end-to-end: the full stack has opened a real delta-neutral hedge on
-its own — scheduler → Conductor → engine → daemon → both venues — with symmetric
-watchdog protection, an entry plan and an exit plan, and no LLM anywhere near an
-order. Built on top of your latest `dev011`.
+Validated end-to-end on testnet and on mainnet at small size: the full stack opens
+and closes real delta-neutral hedges on its own — scheduler → Conductor → engine →
+daemon → both venues — with per-coin watchdog protection, entry and exit plans, and
+no LLM anywhere near an order. It now runs **BTC, ETH and SOL concurrently**, each an
+independent hedge. Built on top of your latest `dev011`.
 
-Remaining: the exit's `close` branch has never fired for real (dYdX testnet cannot
-close — see above), so it gets its first honest test on mainnet, at small size. That
-trial is the next milestone, and it's where every guard described here gets exercised
-at once.
+The economics remain a thin, fragile edge — this is proof-of-machine at small size,
+not an income engine — and a few things are deliberately left for later: real
+per-coin dYdX liquidation monitoring (via subaccount isolation, rather than today's
+degrade-and-alert), a ceiling on total concurrent exposure, and the conversational
+control skill that lets an end user start/stop the strategy from chat.

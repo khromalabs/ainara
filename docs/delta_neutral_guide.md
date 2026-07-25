@@ -187,8 +187,19 @@ The order path is defended in depth. From outermost in:
    book is too thin to enter *and exit*, it **sits out** rather than trade into it.
 7. **The position watchdog** — an always-on process that, in `active` mode, flattens
    the surviving leg the moment a hedge breaks, and reacts to liquidation proximity.
+   It guards **every open coin independently**: a broken ETH hedge is flattened
+   without touching a healthy BTC one, and each coin's confirm-before-acting
+   debounce is tracked separately.
 8. **No LLM on the order path.** Every order decision is deterministic code. The AI
    summarizes *after* the money has moved; it never sizes or times a trade.
+
+**One caveat with concurrent positions:** dYdX is cross-margined per subaccount,
+so with more than one position open there the per-leg liquidation price can't be
+derived from the single-position formula. Rather than show a falsely reassuring
+number, the watchdog and status read report that dYdX leg's liquidation as
+**unknown** and treat it as unmonitored (Hyperliquid-side liquidation is still
+tracked normally, and at delta-neutral sizing it sits very far away). Proper
+per-coin dYdX liq monitoring (via subaccount isolation) is on the roadmap.
 
 Closing is deliberately *never* capped or gated — reducing exposure must always be
 allowed.
@@ -231,16 +242,49 @@ venv\Scripts\python.exe scripts\scheduler.py --run-plan delta_neutral_farm
 ```
 
 The engine hunts the spread and **either opens (if the edge clears every gate) or
-sits out**. It only opens when the account is flat, so it can never stack a second
-position onto an open one.
+sits out**. It only opens when **that coin** is flat, so it can never stack a
+second position onto an open one of the same asset.
 
-### Exiting — automated
+**Choosing the asset (multi-asset).** The plan is parameterized on a coin,
+defaulting to BTC. Point it at another major with `--coin`:
 
-The exit runs on an hourly cron (`delta_neutral_exit` in `scheduler.yaml`,
-`enabled: true`). It closes **only** when the smoothed spread decays inside the
-threshold band or flips sign, and holds in every other case — including when the
-signal can't be read. An exit that only runs when you remember it is not an exit;
-this is what stops a position sitting open after its edge has gone.
+```bash
+venv\Scripts\python.exe scripts\scheduler.py --run-plan delta_neutral_farm --coin ETH
+venv\Scripts\python.exe scripts\scheduler.py --run-plan delta_neutral_farm --coin SOL
+```
+
+Positions on different coins are independent hedges and can run **concurrently**
+(e.g. BTC + ETH + SOL at once). The engine sizes each off your remaining free
+collateral, so later opens are smaller; if collateral thins, the dilution guard
+sits the next one out. Both venues support the majors (dYdX clobPairId BTC=0,
+ETH=1, SOL=5). See the note in §8 on what concurrent positions cost you in
+liquidation monitoring.
+
+### Exiting — automated, per coin
+
+The exit is also coin-parameterized and runs on an hourly cron. It closes **only**
+when the smoothed spread decays inside the threshold band or flips sign, and holds
+in every other case — including when the signal can't be read. An exit that only
+runs when you remember it is not an exit; this is what stops a position sitting
+open after its edge has gone.
+
+**Each coin needs its own scheduled exit.** A `scheduler.yaml` entry targets a
+plan and passes its coin via `vars`, so one plan file serves every asset:
+
+```yaml
+delta_neutral_exit:          # BTC (default)
+  plan: delta_neutral_exit
+  cron: "5 * * * *"
+  enabled: true
+delta_neutral_exit_eth:      # ETH — its own schedule key, same plan file
+  plan: delta_neutral_exit
+  vars: { coin: ETH }
+  cron: "6 * * * *"
+  enabled: true
+```
+
+To close a coin on demand instead, run the exit plan manually:
+`--run-plan delta_neutral_exit --coin ETH`.
 
 ### Autopilot (auto-entry) — OFF by default
 
@@ -265,7 +309,16 @@ read-only and answers:
 - **analytics** — compares each trade's realized outcome against the edge the engine
   *predicted* at entry (once trades are held long enough to judge honestly).
 
-The executor daemon's `GET /health` also surfaces any watchdog alarm.
+Each answers for one coin or, by default, for your **whole book at once**: ask
+"how's everything doing?" and it rolls up every open position (worst hedge health,
+combined funding cash-flow, combined unrealized PnL); name a coin ("how's my ETH
+carry?") to scope it. Records are kept per coin, so ETH and SOL history is
+available exactly as BTC's is.
+
+The executor daemon's `GET /health` also surfaces any watchdog alarm. Note the
+concurrent-position liquidation caveat in §5: with several positions open, each
+dYdX leg's liquidation reads "unknown" in status by design — that is the guard
+being honest, not a fault.
 
 ---
 
@@ -283,6 +336,11 @@ The executor daemon's `GET /health` also surfaces any watchdog alarm.
   running to protect it. For continuous operation, use an always-on machine.
 - **Don't force-close** to "test" — you'll pay a round trip of fees for nothing and
   pollute your performance record. Let the exit rule do its job.
+- **Add assets one at a time.** When branching into a second or third coin, open it,
+  confirm the watchdog reports both hedges healthy and the book status looks right,
+  then add the next — rather than opening several at once. Remember that each open
+  eats collateral the others could use, and that dYdX-side liquidation monitoring
+  goes to "unknown" once more than one position shares the subaccount (§5).
 - **Both venues fund hourly**, so the strategy checks and settles on that cadence.
 - **Never share or commit your keys.** The agent/permissioned keys are trade-only,
   but still treat them as secrets.
