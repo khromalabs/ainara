@@ -314,13 +314,36 @@ class TradingCarryEngine(Skill):
     # ------------------------------------------------------------------
 
     def _hl_funding_history(self, coin, network, hours):
-        """HL hourly funding (oldest-first) as {hour_ms: rate}."""
+        """HL hourly funding (oldest-first) as {hour_ms: rate}.
+
+        Paginates FORWARD past HL's 500-row response cap. A single fundingHistory
+        call returns at most 500 rows from startTime, oldest-first, so a request
+        wider than 500h silently yields the OLDEST 500 hours and a window that can
+        END days in the past — not 'now'. On a 30d (720h) request that left the
+        EMA signal reading a window ending ~9 days stale, on BOTH the entry and
+        exit sides. Advancing startTime past the last row and looping accumulates
+        a window that actually reaches the present, which is what the smoothed
+        signal must be computed on.
+        """
         start = int(time.time() * 1000) - hours * HOUR_MS
-        rows = requests.post(_HL_INFO[network], json={
-            "type": "fundingHistory", "coin": coin, "startTime": start},
-            timeout=30).json()
-        return {int(r["time"]) - (int(r["time"]) % HOUR_MS): float(r["fundingRate"])
-                for r in rows}
+        now = int(time.time() * 1000)
+        out = {}
+        # Bound the loop: enough pages to cover `hours` at 500/page, plus slack.
+        for _ in range(hours // 500 + 3):
+            rows = requests.post(_HL_INFO[network], json={
+                "type": "fundingHistory", "coin": coin, "startTime": start},
+                timeout=30).json()
+            if not rows:
+                break
+            for r in rows:
+                out[int(r["time"]) - (int(r["time"]) % HOUR_MS)] = float(
+                    r["fundingRate"])
+            last = max(int(r["time"]) for r in rows)
+            # Stop on a short (final) page, or once we've reached the latest hour.
+            if len(rows) < 500 or last >= now - HOUR_MS:
+                break
+            start = last + 1
+        return out
 
     def _dydx_funding_history(self, coin, network, hours):
         """dYdX hourly funding (oldest-first) as {hour_ms: rate}, paginated back."""
