@@ -272,8 +272,15 @@ def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
     within the cap at ref but over it once the buy leg crossed up, so the venue
     refused the long AFTER the short had already filled.
 
-    Prices are rounded to whole dollars, matching the tick assumption the rest of
-    the executor already makes for BTC (see watchdog._act).
+    Prices are rounded to whole dollars, but DIRECTIONALLY — floor the sell, ceil
+    the buy — so rounding always keeps each leg on its crossing side. Nearest
+    round() breaks on lower-priced majors: SOL at ref ~74.25 rounds BOTH legs to
+    74, and a buy limit of 74 sits BELOW the market, so the long rests and never
+    fills (that half-built the SOL hedge on run f160529d, then unwound). The
+    0.05% cross is only ~$0.04 at SOL's price — smaller than the $1 tick — so the
+    tick, not the cross, must decide the side. floor/ceil guarantee sell <= ref <
+    buy. This still assumes a $1 tick (fine for BTC/ETH/SOL, all >= ~$74); an
+    asset below ~$1 would need a finer per-venue tick threaded in here.
     """
     size = float(size)
     ref_price = float(ref_price)
@@ -283,8 +290,14 @@ def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
     if ref_price <= 0:
         raise ValueError("ref_price must be > 0")
 
-    sell_px = round(ref_price * (1 - cross))
-    buy_px = round(ref_price * (1 + cross))
+    sell_px = math.floor(ref_price * (1 - cross))
+    buy_px = math.ceil(ref_price * (1 + cross))
+    # A whole-dollar tick cannot express a crossing sell below ~$1 (floor -> 0);
+    # refuse rather than send a zero or non-crossing price.
+    if sell_px <= 0 or sell_px >= buy_px:
+        raise ValueError(
+            f"cannot build crossing whole-dollar limits at ref ${ref_price:,.4f}"
+            f" (sell={sell_px}, buy={buy_px}); asset too low-priced for a $1 tick")
 
     shaved = None
     if cap_notional is not None:
