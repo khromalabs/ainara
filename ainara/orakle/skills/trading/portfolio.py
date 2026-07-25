@@ -61,6 +61,9 @@ DAYS_PER_YEAR = 365.0
 # predicted RATE metrics are only trusted past it. Raw dollars are always reported.
 MIN_RELIABLE_HOLD_DAYS = 1.0
 
+# Ordering for rolling several coins' hedge health up to one book-wide verdict.
+_HEALTH_RANK = {"flat": 0, "ok": 1, "warn": 2, "critical": 3}
+
 _HL_INFO = {
     "mainnet": "https://api.hyperliquid.xyz/info",
     "testnet": "https://api.hyperliquid-testnet.xyz/info",
@@ -85,6 +88,10 @@ def _dydx_liquidation_price(equity, size_signed, mark_px, mmf):
     mirrors executor/venues/dydx.liquidation_price, which is validated to reproduce
     Hyperliquid's own reported liq to the dollar; kept in sync by hand because the
     executor lives in a separate venv this skill cannot import.
+
+    SINGLE-POSITION ONLY: with several positions in one subaccount the MMR is the
+    sum across them, so _dydx_leg does NOT call this then — it degrades to
+    "liquidation unknown", mirroring executor/venues/dydx.state().
     """
     s = float(size_signed)
     mark_px = float(mark_px)
@@ -123,7 +130,9 @@ class TradingPortfolio(Skill):
         " how long positions were held. Read-only; it never opens or closes"
         " anything. Keywords: position status, how is my trade doing, am I hedged,"
         " funding earned, carry PnL, review my trades, closed positions, trading"
-        " performance, how did the strategy do."
+        " performance, how did the strategy do. Handles a SINGLE asset (BTC, ETH,"
+        " SOL) or the WHOLE BOOK at once (all positions / my portfolio / how is"
+        " everything doing) via coin='ALL'."
     )
 
     def __init__(self):
@@ -192,15 +201,27 @@ class TradingPortfolio(Skill):
         s = subs[0]
         equity = float(s.get("equity", 0) or 0)
         leg["account_value"] = equity
-        pos = (s.get("openPerpetualPositions") or {}).get(market)
+        open_perps = s.get("openPerpetualPositions") or {}
+        pos = open_perps.get(market)
         if not pos:
             return leg
         sz = abs(float(pos.get("size", 0) or 0))
         signed = sz if pos.get("side") == "LONG" else -sz
         mark, mmf = self._dydx_market_risk(indexer, market)
         liq = liq_dist = note = None
+        # dYdX is cross-margined per subaccount: with more than one open position
+        # the maintenance-margin requirement is the SUM across them, so the
+        # single-position formula below reads OPTIMISTICALLY safe. Mirror the
+        # executor's dydx.state() and report "unknown" rather than a misleadingly
+        # rosy distance. (Proper fix: isolate each coin in its own subaccount.)
+        multi = sum(1 for p in open_perps.values()
+                    if abs(float(p.get("size", 0) or 0)) > 0) > 1
         if mark is None:
             note = "liquidation unknown: market risk params unavailable"
+        elif multi:
+            note = ("liquidation unknown: multiple positions share this"
+                    " cross-margin subaccount — single-position formula is not"
+                    " valid, this leg is unmonitored")
         else:
             liq = _dydx_liquidation_price(equity, signed, mark, mmf)
             if liq is None:
@@ -649,6 +670,114 @@ class TradingPortfolio(Skill):
         }
 
     # ------------------------------------------------------------------
+    # all-coins (book-wide) views — the "how's everything?" question. Each per-coin
+    # result is unchanged; these just enumerate the coins and roll up a summary, so
+    # a request that names no coin no longer silently reports only BTC.
+    # ------------------------------------------------------------------
+    def _open_coins(self):
+        """Base coins with an open leg on EITHER venue (public reads, no keys)."""
+        coins = set()
+        net, addr = self._target("hyperliquid")
+        if addr:
+            st = requests.post(_HL_INFO[net], json={
+                "type": "clearinghouseState", "user": addr}, timeout=20).json()
+            for p in st.get("assetPositions", []):
+                pos = p.get("position", {})
+                if abs(float(pos.get("szi", 0) or 0)) > 0:
+                    coins.add(pos.get("coin"))
+        net, addr = self._target("dydx")
+        if addr:
+            r = requests.get(f"{_DYDX_INDEXER[net]}/v4/addresses/{addr}",
+                             timeout=20).json()
+            subs = r.get("subaccounts") or []
+            if subs:
+                for mkt, pos in (subs[0].get("openPerpetualPositions") or {}).items():
+                    if abs(float(pos.get("size", 0) or 0)) > 0:
+                        coins.add(mkt.split("-")[0])
+        return sorted(c for c in coins if c)
+
+    def _status_all(self, size_tol_pct):
+        coins = self._open_coins()
+        if not coins:
+            return {"action": "status", "scope": "all_open", "health": "flat",
+                    "verdict": "flat — no open positions on either venue",
+                    "open_coins": [], "positions": [], "as_of": _now_iso()}
+        positions = [self._status(c, size_tol_pct) for c in coins]
+        worst = "flat"
+        net_hr, funding_measurable, unrl = 0.0, True, []
+        for p in positions:
+            if _HEALTH_RANK.get(p["health"], 0) > _HEALTH_RANK.get(worst, 0):
+                worst = p["health"]
+            f = (p.get("economics") or {}).get("net_funding_per_hour_usd")
+            if f is None:
+                funding_measurable = False
+            else:
+                net_hr += f
+            if p.get("combined_unrealized_pnl_usd") is not None:
+                unrl.append(p["combined_unrealized_pnl_usd"])
+        summary = {
+            "open_positions": len(positions),
+            "worst_health": worst,
+            "attention_needed": worst in ("warn", "critical"),
+            "net_funding_per_hour_usd": round(net_hr, 5) if funding_measurable else None,
+            "net_funding_per_day_usd": round(net_hr * 24, 4) if funding_measurable else None,
+            "combined_unrealized_pnl_usd": round(sum(unrl), 4) if unrl else None,
+            "note": None if funding_measurable else
+            "one or more legs' funding could not be read; net is incomplete",
+            "delta_note": "net_delta is per-coin (each in its own units); deltas are"
+                          " not summed across assets",
+        }
+        return {"action": "status", "scope": "all_open", "health": worst,
+                "verdict": f"{len(positions)} open position(s); worst health: {worst}",
+                "open_coins": coins, "summary": summary, "positions": positions,
+                "as_of": _now_iso()}
+
+    def _review_all(self, lookback_days):
+        coins = sorted(set(self._open_coins())
+                       | {r["coin"] for r in _ledger.trades() if r.get("coin")})
+        if not coins:
+            return {"action": "review", "scope": "all", "lookback_days": lookback_days,
+                    "summary": {"note": "no open positions or recorded trades"},
+                    "by_coin": {}, "as_of": _now_iso()}
+        by_coin = {c: self._review(c, lookback_days) for c in coins}
+        hedge_net, total_net, have_h, have_t, closed = 0.0, 0.0, False, False, 0
+        for r in by_coin.values():
+            s = r["summary"]
+            if s.get("hedge_realized_net_usd") is not None:
+                hedge_net += s["hedge_realized_net_usd"]; have_h = True
+            if s.get("total_realized_net_usd") is not None:
+                total_net += s["total_realized_net_usd"]; have_t = True
+            closed += s.get("hedge_round_trips_closed", 0)
+        summary = {"coins": coins, "hedge_round_trips_closed": closed,
+                   "hedge_realized_net_usd": round(hedge_net, 4) if have_h else None,
+                   "total_realized_net_usd": round(total_net, 4) if have_t else None}
+        return {"action": "review", "scope": "all", "lookback_days": lookback_days,
+                "summary": summary, "by_coin": by_coin, "as_of": _now_iso()}
+
+    def _analytics_all(self):
+        coins = sorted({r["coin"] for r in _ledger.trades() if r.get("coin")})
+        if not coins:
+            return {"action": "analytics", "scope": "all", "by_coin": {},
+                    "summary": {"note": "no trades on record yet — the ledger records"
+                                " from the next real open/close onward."},
+                    "as_of": _now_iso()}
+        by_coin = {c: self._analytics(c) for c in coins}
+        net_total, have = 0.0, False
+        for a in by_coin.values():
+            t = a["summary"].get("total_realized_net_usd")
+            if t is not None:
+                net_total += t; have = True
+        summary = {
+            "coins": coins,
+            "closed_trades_on_record": sum(
+                a["summary"].get("closed_trades_on_record", 0)
+                for a in by_coin.values()),
+            "total_realized_net_usd": round(net_total, 4) if have else None,
+        }
+        return {"action": "analytics", "scope": "all", "summary": summary,
+                "by_coin": by_coin, "as_of": _now_iso()}
+
+    # ------------------------------------------------------------------
     def run(
         self,
         action: Annotated[
@@ -659,21 +788,35 @@ class TradingPortfolio(Skill):
             " against realized outcomes (did the strategy earn what the model"
             " forecast).",
         ] = "status",
-        coin: Annotated[str, "Asset symbol, e.g. BTC, ETH, SOL"] = "BTC",
+        coin: Annotated[
+            str,
+            "Asset symbol, e.g. BTC, ETH, SOL — or 'ALL' (the default) for a"
+            " book-wide view across EVERY open/recorded coin at once. Use 'ALL'"
+            " whenever the user does not name a specific coin or asks about their"
+            " whole book / all positions.",
+        ] = "ALL",
         lookback_days: Annotated[
             float, "For 'review': how far back to reconstruct trades"] = 7.0,
         size_tolerance_pct: Annotated[
             float, "For 'status': leg-size mismatch above this reads as imbalanced"
         ] = 15.0,
     ) -> Dict[str, Any]:
-        """Report live status or reconstruct closed trades. Read-only."""
+        """Report live status or reconstruct closed trades. Read-only.
+
+        `coin='ALL'` (the default) aggregates across every open/recorded coin so a
+        question that names no asset covers the whole book, not just BTC.
+        """
         try:
+            c = str(coin).strip().upper()
+            allc = c in ("ALL", "*", "")
             if action == "status":
-                return self._status(coin, size_tolerance_pct)
+                return self._status_all(size_tolerance_pct) if allc \
+                    else self._status(c, size_tolerance_pct)
             if action == "review":
-                return self._review(coin, lookback_days)
+                return self._review_all(lookback_days) if allc \
+                    else self._review(c, lookback_days)
             if action == "analytics":
-                return self._analytics(coin)
+                return self._analytics_all() if allc else self._analytics(c)
             return {"error": f"unknown action {action!r}; use 'status', 'review'"
                     " or 'analytics'"}
         except requests.RequestException as e:
