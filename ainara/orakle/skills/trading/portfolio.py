@@ -790,10 +790,12 @@ class TradingPortfolio(Skill):
         ] = "status",
         coin: Annotated[
             str,
-            "Asset symbol, e.g. BTC, ETH, SOL — or 'ALL' (the default) for a"
-            " book-wide view across EVERY open/recorded coin at once. Use 'ALL'"
-            " whenever the user does not name a specific coin or asks about their"
-            " whole book / all positions.",
+            "Which asset(s) to report. Default 'ALL' — a book-wide view across"
+            " EVERY open/recorded coin at once; use it whenever the user does not"
+            " name one specific coin (e.g. 'how are my positions / my book / my"
+            " delta-neutral trades doing?'). Pass a single symbol (BTC, ETH, SOL,"
+            " ...) ONLY when the user explicitly asks about that one asset. Do NOT"
+            " default to BTC.",
         ] = "ALL",
         lookback_days: Annotated[
             float, "For 'review': how far back to reconstruct trades"] = 7.0,
@@ -810,8 +812,21 @@ class TradingPortfolio(Skill):
             c = str(coin).strip().upper()
             allc = c in ("ALL", "*", "")
             if action == "status":
-                return self._status_all(size_tolerance_pct) if allc \
-                    else self._status(c, size_tolerance_pct)
+                if allc:
+                    return self._status_all(size_tolerance_pct)
+                result = self._status(c, size_tolerance_pct)
+                # Breadcrumb: even when the caller scopes to one coin (e.g. the LLM
+                # passed a specific symbol for a general question), never let the
+                # answer hide the rest of the book — name the other open positions
+                # so they can be asked about. Deterministic; does not rely on the
+                # caller having chosen 'ALL'.
+                others = [x for x in self._open_coins() if x != c]
+                if others:
+                    result["other_open_positions"] = others
+                    result["hint"] = (
+                        f"You also have open positions in {', '.join(others)}."
+                        " Ask about your whole book (or 'all') to include them.")
+                return result
             if action == "review":
                 return self._review_all(lookback_days) if allc \
                     else self._review(c, lookback_days)

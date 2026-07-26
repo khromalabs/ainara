@@ -99,5 +99,27 @@ class BookWideStatus(unittest.TestCase):
         self.assertIsNotNone(r["summary"]["note"])
 
 
+class SingleCoinBreadcrumb(unittest.TestCase):
+    """A coin-scoped status must never hide the rest of an open book — even when
+    the LLM router passes a specific symbol for a general question."""
+
+    def setUp(self):
+        self.p = TradingPortfolio()
+
+    def test_surfaces_other_open_positions(self):
+        self.p._open_coins = lambda: ["BTC", "ETH", "SOL"]
+        self.p._status = lambda coin, tol: fake_status(coin, "ok", 0.0005, 0.0)
+        r = self.p.run(action="status", coin="BTC")
+        self.assertEqual(r["coin"], "BTC")
+        self.assertEqual(r["other_open_positions"], ["ETH", "SOL"])
+        self.assertIn("ETH", r["hint"])
+
+    def test_no_breadcrumb_when_that_is_the_only_open_coin(self):
+        self.p._open_coins = lambda: ["BTC"]
+        self.p._status = lambda coin, tol: fake_status(coin, "ok", 0.0005, 0.0)
+        r = self.p.run(action="status", coin="BTC")
+        self.assertNotIn("other_open_positions", r)
+
+
 if __name__ == "__main__":
     unittest.main()
