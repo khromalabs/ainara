@@ -47,6 +47,7 @@ if os.path.exists(nexus_src):
         '--exclude', '*/test*',
         '--exclude', '*/conftest.py',
         '--exclude', '*/__pycache__',
+        '--exclude', '*/generate_',
         '--exclude', '*/.*',
         '-O', nexus_obfuscated_root,
         nexus_src
@@ -219,8 +220,7 @@ common_datas = [
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
-    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria'), 'skills_metadata.json'),
-    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria'), 'providers_registry.json'),
+    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria'), 'ainara/nexus/khromalabs/ataria'),
     *datas,
     *package_datas,
     *datas_from_hooks
