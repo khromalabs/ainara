@@ -540,6 +540,16 @@ class ConfigManager:
         os.makedirs(full_path, exist_ok=True)
         return str(full_path)
 
+    def get_nexus_base_path(self) -> Path:
+        """Return the absolute path to the Nexus bundles/plugins base directory."""
+        custom = self.get("nexus.path")
+        if custom:
+            return Path(custom)
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return Path(sys._MEIPASS) / "ainara" / "nexus"
+        # Development fallback: config.py is in ainara/framework/ → one level up is ainara/
+        return Path(__file__).resolve().parents[1] / "nexus"
+
     def needs_load(self):
         """Check if the config file has been modified since last load"""
         if not self.config_file_path or not os.path.exists(self.config_file_path):

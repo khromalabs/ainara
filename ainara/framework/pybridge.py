@@ -31,7 +31,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import requests
-from flask import Flask, Response, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from flask_sock import Sock
 
@@ -966,6 +966,37 @@ def create_app():
         return send_file(
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
+
+    @app.route("/docs/list", methods=["GET"])
+    def docs_list():
+        """Return list of available documentation sites."""
+        base = config.get_nexus_base_path()
+        sites = []
+        if base.is_dir():
+            for vendor_dir in base.iterdir():
+                if not vendor_dir.is_dir() or vendor_dir.name.startswith(("_", ".")):
+                    continue
+                for app_dir in vendor_dir.iterdir():
+                    if not app_dir.is_dir() or app_dir.name.startswith(("_", ".")):
+                        continue
+                    if (app_dir / "site" / "index.html").is_file():
+                        sites.append({
+                            "publisher": vendor_dir.name,
+                            "application": app_dir.name,
+                        })
+        return jsonify(sites)
+
+    @app.route("/docs/<publisher>/<application>/", defaults={"filename": "index.html"})
+    @app.route("/docs/<publisher>/<application>/<path:filename>")
+    def serve_docs(publisher, application, filename):
+        """Serve static documentation files for a given publisher/application."""
+        if ".." in publisher or ".." in application or ".." in filename:
+            return jsonify({"error": "Invalid path"}), 400
+        base = config.get_nexus_base_path()
+        site_dir = base / publisher / application / "site"
+        if not site_dir.is_dir():
+            return jsonify({"error": "Documentation site not found"}), 404
+        return send_from_directory(str(site_dir), filename)
 
     @app.route("/framework/chat", methods=["POST"])
     def framework_chat():

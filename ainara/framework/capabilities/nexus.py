@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional
 
 from flask import send_from_directory
 
+from ainara.framework.config import config
 from ainara.framework.mcp.client_manager import MCPClientManager
 
 from .skills import BasePythonSkillProvider
@@ -45,8 +46,7 @@ class NexusSkillProvider(BasePythonSkillProvider):
         # Ensure .mjs files are served with the correct MIME type (fixes Windows issue)
         mimetypes.add_type("application/javascript", ".mjs")
 
-        self._configured_path = Path(nexus_path)  # Store original config
-        self.nexus_path = self._get_nexus_base_path()  # Resolve actual path
+        self.nexus_path = config.get_nexus_base_path()
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         if not self.nexus_path.is_dir():
             logger.warning(
@@ -57,14 +57,6 @@ class NexusSkillProvider(BasePythonSkillProvider):
             if not getattr(sys, "frozen", False):
                 self.nexus_path.mkdir(parents=True, exist_ok=True)
 
-    def _get_nexus_base_path(self) -> Path:
-        """Determine the base path for Nexus bundles based on runtime environment."""
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            # Running as PyInstaller bundle (includes APPX)
-            return Path(sys._MEIPASS) / "ainara" / "nexus"
-        else:
-            # Development mode - use configured path
-            return self._configured_path
 
     def discover(self) -> Dict[str, Dict[str, Any]]:
         """Discover and load skills from Nexus bundles."""

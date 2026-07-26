@@ -16,7 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification } = require('electron');
+const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { EventEmitter } = require('events');
 const semver = require('semver');
@@ -67,6 +67,7 @@ let wizardActive = false;
 let updateProgressWindow = null;
 let ollamaClient = null;
 let appReady = false;
+let docsSites = [];
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
 const triggerKey = config.get('shortcuts.trigger', 'Space');
@@ -504,6 +505,19 @@ async function appInitialization(firstInitialization = true) {
 
         // Start background health monitoring now that services are up
         ServiceManager.startHealthCheck();
+
+        // Load documentation sites list from backend
+        try {
+            const response = await net.fetch('http://127.0.0.1:8101/docs/list');
+            if (response.ok) {
+                docsSites = await response.json();
+                Logger.info(`Found ${docsSites.length} documentation sites.`);
+            } else {
+                Logger.warn('Failed to retrieve documentation sites list.');
+            }
+        } catch (e) {
+            Logger.error('Error fetching documentation sites:', e);
+        }
 
         // AUTHENTICATION CHECK
         splashWindow.updateProgress('Verifying Access...', 70);
@@ -975,6 +989,13 @@ async function updateProviderSubmenu() {
                     }
                 }
             },
+            ...(docsSites.length > 0 ? [{
+                label: 'Nexus Apps Documentation',
+                submenu: docsSites.map(site => ({
+                    label: `${capitalize(site.application)} by ${capitalize(site.publisher)}`,
+                    click: () => shell.openExternal(`http://127.0.0.1:8101/docs/${site.publisher}/${site.application}/`)
+                }))
+            }] : []),
             {
                 label: 'About',
                 click: () => {
@@ -1004,6 +1025,8 @@ async function updateProviderSubmenu() {
         Logger.error('Error updating provider submenu:', error);
     }
 }
+
+const capitalize = (str) => str.charAt(0).toUpperCase() + str.slice(1);
 
 function checkForUpdates(interactive = false) {
     Logger.info(`checkForUpdates called. Interactive: ${interactive}`);
