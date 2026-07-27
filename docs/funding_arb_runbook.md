@@ -111,6 +111,24 @@ trading:
     # escalate_after: 3              # failed close attempts before raising the alarm
     # backoff_base_seconds: 30       # retry backoff once escalated (30→60→…→cap)
     # backoff_max_seconds: 300
+    # liq_critical_pct: 5.0          # a leg inside this % of its liquidation price is
+                                     # CRITICAL: shave both legs (see below)
+    # reduce_fraction: 0.5           # how much of each leg one shave takes
+    # reduce_cooldown_seconds: 300   # min gap between shaves on one coin. Without it a
+                                     # 5s loop shaves 50% six times in half a minute and
+                                     # unwinds the book by accident.
+    # reduce_max_attempts: 3         # still in the band after this many shaves -> close
+                                     # the hedge outright instead of slicing again
+  notify:                            # OFF-BOX alerting — see "Alerting" below.
+    webhook_url: "https://ntfy.sh/your-private-topic"
+    heartbeat_url: "https://hc-ping.com/<uuid>"
+    # webhook_format: text           # "text" for ntfy; default "json"
+    # webhook_json_field: content    # "content" Discord, "text" Slack
+    # webhook_headers: {}            # e.g. {Authorization: "Bearer …"}
+    # heartbeat_method: GET          # GET (healthchecks.io, uptime-kuma) | POST
+    # heartbeat_interval_seconds: 60
+    # repeat_seconds: 900            # re-alert interval while a condition persists
+    # timeout_seconds: 5
 ```
 
 > **Temporarily raising `enter_threshold_annual_pct` will make the farm plan sit out
@@ -137,6 +155,59 @@ trading:
 On startup it prints its mode. `mode=active` = armed. If you see the monitor-mode
 warning, stop and fix the config — you'd be running without the safety net.
 
+### What it does about each risk
+
+| Finding | Action in `mode: active` |
+|---|---|
+| **Broken hedge** (one leg gone) | Flatten the surviving leg. Debounced `confirm_polls` first — a two-leg open is transiently broken. |
+| **Near liquidation** (`< liq_critical_pct`) | Shave `reduce_fraction` off **both** legs, threatened venue first, quantized to the coarser venue step so the legs stay equal. Cooldown-gated; after `reduce_max_attempts` it closes the hedge instead. |
+| **Size imbalance** (`> size_tolerance_pct`) | Trim the **larger** leg down to the smaller. Reduce-only, so it can only ever shrink exposure. |
+| **Liquidation distance unknown** | No order exists that fixes this — raises an alarm. That leg is *unmonitored*, which is the thing you need to know. |
+| **Both legs same direction** | Alarm. Not a hedge; needs a human. |
+
+Every one of these raises an alarm too, **including in `monitor` mode and including
+the ones it cannot act on**. The alarm file is refreshed on every poll while the
+condition holds, so `/health` never reports a live emergency as stale.
+
+## Alerting (off-box)
+
+Everything above escalates *locally* — a log line, `%TEMP%\ainara_executor_watchdog_alarm.json`,
+and a field on the daemon's `/health`. All three go quiet together the moment the
+machine does. `trading.notify` adds the two signals that don't, and they fail in
+opposite directions on purpose:
+
+- **`webhook_url`** — push. The watchdog says what it found: alarms (throttled to
+  one per condition per `repeat_seconds`), protective actions it took, and an
+  all-clear when everything resolves. Needs the box alive, so a dead box sends
+  nothing.
+- **`heartbeat_url`** — dead-man's switch. The watchdog pings an external monitor
+  every `heartbeat_interval_seconds`, and **that monitor alerts when the pings
+  stop.** This is the half that covers a failure a local guard structurally cannot
+  report: its own death, a sleeping laptop, a dropped network.
+
+The ping is only sent after a **successful** assessment. A loop spinning blind
+against a dead venue API stops pinging and the monitor fires — pinging
+unconditionally would turn the one check that survives this machine into a rubber
+stamp.
+
+Known-good setups (any HTTP endpoint works; there is no per-service code):
+
+| Service | Config |
+|---|---|
+| ntfy | `webhook_url: https://ntfy.sh/<private-topic>` + `webhook_format: text` |
+| Discord | `webhook_url: <channel webhook>` + `webhook_json_field: content` |
+| Slack | `webhook_url: <incoming webhook>` + `webhook_json_field: text` |
+| healthchecks.io | `heartbeat_url: https://hc-ping.com/<uuid>` (grace ≥ 3× interval) |
+| Uptime Kuma | `heartbeat_url: <push URL>` |
+
+Treat both URLs as **credentials** — anyone holding them can spam your phone or
+silence your dead-man switch. They are redacted in every log line.
+
+Verify the wiring before you need it: start the watchdog and confirm the startup
+push arrives (it sends one on boot for exactly this reason) and that the monitor
+shows a fresh ping. If `trading.notify` is unset the watchdog logs a warning at
+startup saying every alarm will stay on this machine.
+
 ## Risk controls
 
 Four independent guards. A trade must clear all of them, and **none of the size
@@ -148,7 +219,8 @@ leg. All are config-driven; no code changes to tune.
 | **Dynamic margin cap** | `trading.max_account_margin_pct` | Each leg's margin ≤ this % of the **smaller** account's free collateral (× leverage). Scales with the account; keeps a liquidation buffer. Both legs matched off the binding account. |
 | **Hard notional cap** | `trading.executor.max_order_notional_usd` | Absolute per-opening-order ceiling. "Never bigger than this, period." |
 | **Dilution guard** | *(automatic)* | The engine subtracts estimated order-book slippage at the sized notional from the net edge; if net goes ≤ 0, or **either side** of **either** book can't absorb the size, it **sits out**. It walks all four legs — entry *and* exit — because being unable to get out is the real risk, and it reads each venue's book from the network that venue actually trades on. If it cannot measure a book at all, it sits out rather than assuming trading is free. |
-| **Position watchdog** | `trading.watchdog.mode: active` | Auto-flattens a leg that goes naked (broken hedge) or nears liquidation — on **both** venues. Debounces before acting, verifies by re-reading the position, escalates when it can't fix things, and backs off instead of retrying forever. |
+| **Position watchdog** | `trading.watchdog.mode: active` | Auto-flattens a leg that goes naked (broken hedge), shaves both legs when one nears liquidation, and trims a leg-size imbalance — on **both** venues. Debounces before acting, verifies by re-reading the position, escalates when it can't fix things, and backs off instead of retrying forever. |
+| **Off-box alerting** | `trading.notify.webhook_url` / `heartbeat_url` | Pushes every alarm to your phone, and pings an external dead-man monitor that alerts when the watchdog stops reporting. Not a size control — the control that tells you the others are working. |
 
 **Effective order size = `min(margin cap, hard cap)`.** At small testnet balances
 the hard cap usually binds first — e.g. with a ~$994 smaller account,

@@ -10,6 +10,7 @@ Orakle deps — see `executor/README.md`), so the tests do too:
 | Test file | venv | needs |
 |---|---|---|
 | `test_trading_watchdog.py` | any | stdlib only (imports `executor.watchdog`) |
+| `test_trading_notify.py` | any | stdlib only; HTTP transport is stubbed |
 | `test_trading_plan_hedge_legs.py` | **executor** (`executor/.venv`) | Flask + venue SDKs to import `executor.server` |
 | `test_trading_carry_engine.py` | ainara (main) | `ainara` package; HL fetch is mocked |
 | `test_trading_plan_vars.py` | ainara (main) | reads the real `plans/*.yaml` |
@@ -25,7 +26,8 @@ venv/Scripts/python.exe -m unittest \
   scripts.evaluation.tests.test_trading_carry_engine \
   scripts.evaluation.tests.test_trading_plan_vars \
   scripts.evaluation.tests.test_trading_portfolio \
-  scripts.evaluation.tests.test_trading_watchdog
+  scripts.evaluation.tests.test_trading_watchdog \
+  scripts.evaluation.tests.test_trading_notify
 
 # executor venv (for the daemon's order-planner) — run the FILE directly, not
 # via `-m unittest`: the executor venv lacks ainara's deps, and the unittest
@@ -34,7 +36,8 @@ venv/Scripts/python.exe -m unittest \
 executor/.venv/Scripts/python.exe scripts/evaluation/tests/test_trading_plan_hedge_legs.py
 ```
 
-`test_trading_watchdog.py` is stdlib-only and runs under either venv.
+`test_trading_watchdog.py` and `test_trading_notify.py` are stdlib-only and run
+under either venv (or the system Python).
 
 ## What is deliberately NOT unit-tested here
 

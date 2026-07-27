@@ -15,6 +15,8 @@ watchdog that keeps the two legs hedged between Conductor runs.
 - `venues/`     — one adapter per venue (`hyperliquid.py`, `dydx.py`).
 - `server.py`   — HTTP surface (added in a later increment).
 - `watchdog.py` — always-on leg-liquidation guard (later increment).
+- `notify.py`   — off-box push + dead-man heartbeat for the watchdog. Stdlib only,
+  so `watchdog.py` stays importable (and testable) under any venv.
 
 ## Safety model (layered)
 1. `dry_run` defaults to True everywhere — orders are constructed and signed but

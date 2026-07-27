@@ -148,7 +148,9 @@ The `network` key per venue selects which credential block and which chain is us
 | `trading.carry_engine.enter_threshold_annual_pct` | `4.0` | The smoothed funding spread must clear this (annualized %) before it opens. Below it, the engine **sits out**. |
 | `trading.carry_engine.exit_threshold_annual_pct` | `4.0` | The position closes when the smoothed spread decays back inside this band (or flips sign). Defaults to the entry threshold. |
 | `trading.carry_engine.smoothing_span_hours` | `336` | EMA span (~14 days) for the funding signal. The strategy trades the **smoothed** spread, never the raw one — do not set this tiny. |
-| `trading.watchdog.mode` | `monitor` | `monitor` = report risks only. `active` = **auto-flatten** a broken hedge or a near-liquidation leg. Run `active` for any unattended operation. |
+| `trading.watchdog.mode` | `monitor` | `monitor` = report risks only. `active` = **auto-flatten** a broken hedge and **auto-shave** a near-liquidation one. Run `active` for any unattended operation. |
+| `trading.notify.webhook_url` | *(unset)* | Where alarms are pushed (ntfy / Discord / Slack / any HTTP endpoint). Unset = alarms never leave this machine. |
+| `trading.notify.heartbeat_url` | *(unset)* | Dead-man's switch: pinged after every successful check, so an external monitor alerts when the watchdog goes quiet. **Set this for any unattended run.** |
 
 > **Set the two size caps explicitly** — they have no protective built-in default.
 > If `max_order_notional_usd` is unset there is **no hard notional ceiling**, and if
@@ -186,11 +188,17 @@ The order path is defended in depth. From outermost in:
    live order-book slippage at the intended size; if that erases the edge, or the
    book is too thin to enter *and exit*, it **sits out** rather than trade into it.
 7. **The position watchdog** — an always-on process that, in `active` mode, flattens
-   the surviving leg the moment a hedge breaks, and reacts to liquidation proximity.
-   It guards **every open coin independently**: a broken ETH hedge is flattened
-   without touching a healthy BTC one, and each coin's confirm-before-acting
-   debounce is tracked separately.
-8. **No LLM on the order path.** Every order decision is deterministic code. The AI
+   the surviving leg the moment a hedge breaks, **shaves both legs equally** when one
+   drifts near liquidation, and trims a leg-size imbalance back to neutral. It guards
+   **every open coin independently**: a broken ETH hedge is flattened without touching
+   a healthy BTC one, and each coin's confirm-before-acting debounce, shave budget and
+   cooldown are tracked separately.
+8. **Alarms that leave the machine** (`trading.notify`) — every risk it finds is
+   pushed to you, *including the ones no order can fix* (an unmonitored leg, legs
+   pointing the same way). Plus a **dead-man's switch**: the watchdog pings an
+   external monitor, and that monitor alerts when the pings stop. A guard running on
+   your laptop cannot report its own death — only a missing heartbeat can.
+9. **No LLM on the order path.** Every order decision is deterministic code. The AI
    summarizes *after* the money has moved; it never sizes or times a trade.
 
 **One caveat with concurrent positions:** dYdX is cross-margined per subaccount,

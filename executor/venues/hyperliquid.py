@@ -180,8 +180,9 @@ class HyperliquidExecutor:
         px = mids.get(coin)
         return float(px) if px is not None else None
 
-    def flatten(self, coin, dry_run=False):
-        """Close the whole `coin` position with a reduce-only crossing IOC.
+    def reduce(self, coin, size=None, dry_run=False):
+        """Shrink the `coin` position by `size` (None = all of it) with a
+        reduce-only crossing IOC.
 
         Single home for HL close pricing — server._close_leg and watchdog._act
         both used to build this themselves off `mark_px or 0`, which meant a
@@ -192,12 +193,19 @@ class HyperliquidExecutor:
 
         Prices from the position's mark, falls back to the live mid, and REFUSES
         if neither is usable — an unpriceable close must be reported, not sent.
+
+        `size` is clamped to the open position: reduce_only already stops a flip at
+        the venue, but an oversized request would be refused outright, and a
+        partial de-risk that gets refused is a de-risk that did not happen.
         """
         pos = next((p for p in (self.state().get("positions") or [])
                     if p.get("coin") == coin), None)
         if not pos or not abs(float(pos["szi"])):
             return {"closed": True, "note": "no position to close"}
         szi = float(pos["szi"])
+        qty = abs(szi) if size is None else min(abs(float(size)), abs(szi))
+        if qty <= 0:
+            return {"submitted": False, "error": f"reduce size {size} is not > 0"}
         is_buy = szi < 0  # buy to close a short
         px = pos.get("mark_px") or self.mid_price(coin)
         if not px or float(px) <= 0:
@@ -205,5 +213,9 @@ class HyperliquidExecutor:
                     "error": f"cannot price close for {coin}: no usable mark or "
                              "mid — refusing to send an order at 0"}
         limit = float(px) * (1.05 if is_buy else 0.95)
-        return self.place_order(coin, is_buy, abs(szi), round(limit),
+        return self.place_order(coin, is_buy, qty, round(limit),
                                 reduce_only=True, tif="Ioc", dry_run=dry_run)
+
+    def flatten(self, coin, dry_run=False):
+        """Close the whole `coin` position. Thin alias over reduce()."""
+        return self.reduce(coin, None, dry_run=dry_run)
