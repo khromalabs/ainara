@@ -58,6 +58,18 @@ def notifier(**cfg):
     return N.Notifier(_Cfg(**cfg), background=False)
 
 
+class _FakeResponse:
+    """Stands in for urlopen's context-managed response."""
+
+    status = 204
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 class BuildBody(unittest.TestCase):
     def test_structured_json_is_the_default(self):
         body, ctype = N.build_body("T", "m", "critical", data={"coin": "BTC"})
@@ -155,6 +167,46 @@ class Push(unittest.TestCase):
         n = notifier(webhook_url=WEBHOOK)
         n._transport, _ = recorder(ok=False)
         self.assertFalse(n.send("T", "m"))
+
+
+class UserAgent(unittest.TestCase):
+    """Regression: Discord's Cloudflare 403s urllib's default client signature.
+
+    Exercises the real _transport (not the stub), capturing the Request instead of
+    sending it. Every push failed with Cloudflare error 1010 until this was set, and
+    nothing about the webhook or payload was wrong — so this is worth a test.
+    """
+
+    def _capture(self, n):
+        """Send through the real _transport, capturing the Request rather than it."""
+        seen = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["req"] = req
+            return _FakeResponse()
+
+        original = N.urllib.request.urlopen
+        N.urllib.request.urlopen = fake_urlopen
+        try:
+            n.send("T", "m")
+        finally:
+            N.urllib.request.urlopen = original
+        return seen["req"]
+
+    def test_a_real_user_agent_is_always_sent(self):
+        req = self._capture(notifier(webhook_url=WEBHOOK))
+        ua = req.get_header("User-agent")
+        self.assertTrue(ua)
+        self.assertNotIn("urllib", ua.lower())
+
+    def test_config_can_override_it(self):
+        req = self._capture(notifier(webhook_url=WEBHOOK, user_agent="Mine/9"))
+        self.assertEqual(req.get_header("User-agent"), "Mine/9")
+
+    def test_an_explicit_header_still_wins(self):
+        req = self._capture(notifier(webhook_url=WEBHOOK,
+                                     webhook_headers={"User-Agent": "Hdr/1"}))
+        self.assertEqual(req.get_header("User-agent"), "Hdr/1")
 
 
 class EventThrottle(unittest.TestCase):

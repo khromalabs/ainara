@@ -54,6 +54,12 @@ DEFAULT_TIMEOUT = 5.0
 DEFAULT_HEARTBEAT_INTERVAL = 60.0
 DEFAULT_REPEAT_SECONDS = 900.0
 DEFAULT_MAX_MESSAGE_CHARS = 1900  # Discord rejects content over 2000
+# Discord sits behind Cloudflare, which BLOCKS urllib's default "Python-urllib/3.x"
+# signature outright: every push came back 403 with Cloudflare error 1010, while the
+# same request with any real User-Agent reached the API normally. Nothing about the
+# webhook or the payload was wrong, and a bare "403" in the log says none of that —
+# so always identify ourselves.
+DEFAULT_USER_AGENT = "Ainara-Watchdog/1.0 (+https://github.com/khromalabs/Ainara)"
 
 
 def redact(url):
@@ -134,6 +140,7 @@ class Notifier:
         # for a sink that accepts more.
         self.max_message_chars = int(n.get("max_message_chars",
                                            DEFAULT_MAX_MESSAGE_CHARS))
+        self.user_agent = n.get("user_agent") or DEFAULT_USER_AGENT
         self.repeat_seconds = float(n.get("repeat_seconds", DEFAULT_REPEAT_SECONDS))
         # Sends go to a daemon thread so a hung endpoint cannot stretch the guard
         # loop. Tests construct with background=False to assert synchronously.
@@ -166,6 +173,9 @@ class Notifier:
             req.add_header("Content-Type", content_type)
         for k, v in (headers or {}).items():
             req.add_header(str(k), str(v))
+        # Last, and only if the caller didn't set one: see DEFAULT_USER_AGENT.
+        if not req.has_header("User-agent"):
+            req.add_header("User-Agent", self.user_agent)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             status = getattr(resp, "status", None) or resp.getcode()
             return 200 <= int(status) < 300
@@ -180,8 +190,16 @@ class Notifier:
                                redact(url))
             return bool(ok)
         except urllib.error.HTTPError as e:
-            logger.warning("notify: %s to %s failed HTTP %s", what, redact(url),
-                           e.code)
+            # Include the body: a bare status code is not a diagnosis. Discord's 403
+            # carried "error code: 1010" (a Cloudflare client-signature block) and
+            # its 404 carries {"code": 10015, "message": "Unknown Webhook"} — two
+            # completely different fixes that look identical without this.
+            try:
+                detail = e.read()[:200].decode("utf-8", "replace").strip()
+            except Exception:
+                detail = "<no body>"
+            logger.warning("notify: %s to %s failed HTTP %s: %s", what,
+                           redact(url), e.code, detail)
         except Exception as e:
             # Includes URLError/socket timeouts — i.e. the offline case, which is
             # precisely when the dead-man switch (not this) is what saves you.

@@ -130,6 +130,9 @@ trading:
     # repeat_seconds: 900            # re-alert interval while a condition persists
     # timeout_seconds: 5
     # max_message_chars: 1900        # Discord 400s over 2000; truncate, never drop
+    # user_agent: "Ainara-Watchdog/1.0 (+…)"   # do NOT leave this unset-and-default
+                                     # to a library UA: Discord's Cloudflare blocks
+                                     # "Python-urllib/*" with a 403 / error 1010.
 ```
 
 > **Temporarily raising `enter_threshold_annual_pct` will make the farm plan sit out
