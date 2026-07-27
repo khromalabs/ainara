@@ -53,6 +53,7 @@ logger = logging.getLogger("executor.notify")
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_HEARTBEAT_INTERVAL = 60.0
 DEFAULT_REPEAT_SECONDS = 900.0
+DEFAULT_MAX_MESSAGE_CHARS = 1900  # Discord rejects content over 2000
 
 
 def redact(url):
@@ -69,7 +70,7 @@ def redact(url):
 
 
 def build_body(title, message, severity="critical", data=None,
-               json_field=None, fmt="json"):
+               json_field=None, fmt="json", max_chars=None):
     """Pure: the HTTP body for one alert. Returns (bytes, content_type).
 
     Three shapes cover every push service worth wiring, with no per-service code:
@@ -78,8 +79,17 @@ def build_body(title, message, severity="critical", data=None,
                               "text")
       default              -> the full structured payload      (custom endpoints,
                               Zapier, n8n, your own receiver)
+
+    `max_chars` truncates the composed text (never `data`). Services cap message
+    length — Discord rejects content over 2000 chars with a 400 — and the alert most
+    likely to blow the cap is the one listing findings for three coins at once, i.e.
+    exactly the alert you cannot afford to have silently dropped. Truncated is
+    strictly better than refused.
     """
     text = f"{title}\n\n{message}" if message else title
+    if max_chars and len(text) > int(max_chars):
+        keep = max(0, int(max_chars) - 16)
+        text = text[:keep] + "… [truncated]"
     if fmt == "text":
         return text.encode("utf-8"), "text/plain; charset=utf-8"
     if json_field:
@@ -120,6 +130,10 @@ class Notifier:
         self.heartbeat_interval = float(
             n.get("heartbeat_interval_seconds", DEFAULT_HEARTBEAT_INTERVAL))
         self.timeout = float(n.get("timeout_seconds", DEFAULT_TIMEOUT))
+        # Default sits under Discord's 2000-char content limit with headroom; raise it
+        # for a sink that accepts more.
+        self.max_message_chars = int(n.get("max_message_chars",
+                                           DEFAULT_MAX_MESSAGE_CHARS))
         self.repeat_seconds = float(n.get("repeat_seconds", DEFAULT_REPEAT_SECONDS))
         # Sends go to a daemon thread so a hung endpoint cannot stretch the guard
         # loop. Tests construct with background=False to assert synchronously.
@@ -185,7 +199,8 @@ class Notifier:
             return False
         body, ctype = build_body(title, message, severity, data,
                                  json_field=self.webhook_json_field,
-                                 fmt=self.webhook_format)
+                                 fmt=self.webhook_format,
+                                 max_chars=self.max_message_chars)
         run = (lambda: self._request(self.webhook_url, "POST", body, ctype,
                                      self.webhook_headers, what="alert"))
         use_bg = self.background if background is None else background

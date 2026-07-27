@@ -129,6 +129,7 @@ trading:
     # heartbeat_interval_seconds: 60
     # repeat_seconds: 900            # re-alert interval while a condition persists
     # timeout_seconds: 5
+    # max_message_chars: 1900        # Discord 400s over 2000; truncate, never drop
 ```
 
 > **Temporarily raising `enter_threshold_annual_pct` will make the farm plan sit out
@@ -207,6 +208,54 @@ Verify the wiring before you need it: start the watchdog and confirm the startup
 push arrives (it sends one on boot for exactly this reason) and that the monitor
 shows a fresh ping. If `trading.notify` is unset the watchdog logs a warning at
 startup saying every alarm will stay on this machine.
+
+### Wiring it to Discord
+
+Discord covers **push** only. It has no concept of "alert me when messages stop",
+so it cannot be the dead-man switch — pair it with healthchecks.io below.
+
+1. In Discord: **Server Settings → Integrations → Webhooks → New Webhook**. Point it
+   at a channel you own (a private `#ainara-alerts` is better than a shared one —
+   anyone who can read the channel can read your position sizes).
+2. **Copy Webhook URL**, then:
+
+```yaml
+trading:
+  notify:
+    webhook_url: "https://discord.com/api/webhooks/<id>/<token>"
+    webhook_json_field: content     # Discord's field name; Slack uses "text"
+```
+
+No auth header — the token is in the URL, so treat the URL as a password.
+
+3. Smoke-test it without starting the watchdog (executor venv):
+
+```powershell
+executor\.venv\Scripts\python.exe -c "from executor.config import ExecutorConfig; from executor.notify import Notifier; n=Notifier(ExecutorConfig(), background=False); print(n.describe()); print('delivered:', n.send('Ainara test', 'If you can read this, alerting works.', severity='info'))"
+```
+
+`delivered: True` plus a message in the channel means done. `False` prints the
+reason (with the URL redacted) — usually a 401 from a revoked webhook or a typo.
+
+4. **Un-mute the channel on mobile.** A muted channel silently defeats the whole
+   feature: Channel → Notification Settings → *All Messages*, and check Discord's
+   own mobile push is on. This is the single most common way this ends up not
+   working when it matters.
+
+Rate limits are not a concern — Discord allows ~30 requests/minute per webhook and
+alerts are throttled to one per condition per `repeat_seconds` (15 min).
+
+### The dead-man half (healthchecks.io)
+
+1. Create a check at healthchecks.io. Set **period 5 min** and **grace 5 min** — the
+   watchdog pings every 60s, so ~10 minutes of silence is unambiguous.
+2. Copy its ping URL into `heartbeat_url`.
+3. Add healthchecks.io's **own Discord integration**, pointed at the same channel.
+
+That last step is the point: both signals land in one place, but the thing that
+notices your watchdog has *died* runs on someone else's infrastructure. If the
+machine sleeps, drops its network, or the process is killed, the push channel goes
+silent and this is what tells you.
 
 ## Risk controls
 

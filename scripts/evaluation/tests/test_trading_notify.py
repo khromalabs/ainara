@@ -78,6 +78,20 @@ class BuildBody(unittest.TestCase):
         body, _ = N.build_body("T", "", fmt="text")
         self.assertEqual(body, b"T")
 
+    def test_long_text_is_truncated_not_dropped(self):
+        # Discord 400s on content over 2000 chars, and the alert most likely to blow
+        # the cap lists findings for every coin at once — the one you least want
+        # silently refused.
+        body, _ = N.build_body("T", "x" * 5000, fmt="text", max_chars=100)
+        self.assertLessEqual(len(body), 100)
+        self.assertTrue(body.endswith(b"[truncated]"))
+
+    def test_the_cap_applies_inside_the_wrapped_field_too(self):
+        body, _ = N.build_body("T", "x" * 5000, json_field="content",
+                               max_chars=100)
+        import json as _json
+        self.assertLessEqual(len(_json.loads(body)["content"]), 100)
+
 
 class Redaction(unittest.TestCase):
     def test_the_secret_path_never_survives(self):
