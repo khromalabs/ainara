@@ -34,6 +34,7 @@ import json
 import logging
 import math
 import os
+import re
 import tempfile
 import time
 
@@ -45,6 +46,34 @@ from executor.venues.hyperliquid import HyperliquidExecutor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("executor.server")
+
+
+class QuietHealthProbes(logging.Filter):
+    """Drop werkzeug's access line for SUCCESSFUL /health probes.
+
+    The scheduler polls /health every 10 seconds. That was ~700 KB/day of
+    `"GET /health HTTP/1.1" 200` in the one log whose reason for existing is telling
+    you what happened to your orders — and a log you have to page past is a log you
+    stop reading.
+
+    Successful probes ONLY. A /health that returns non-200 means the daemon is
+    failing its own liveness check, which is exactly the line you want to find
+    later, so those are kept. Every other path is untouched.
+    """
+
+    # Anchored on the space (or query string) after /health, so a future /healthz or
+    # /healthcheck route is NOT silently swallowed by this filter.
+    _OK_HEALTH = re.compile(r'"GET /health(?:\?[^"]*)? [^"]*" 2\d\d')
+
+    def filter(self, record):
+        try:
+            return not self._OK_HEALTH.search(record.getMessage())
+        except Exception:
+            return True  # never let log filtering swallow a real line
+
+
+# Attached at import, not in main(), so it applies however the app is launched.
+logging.getLogger("werkzeug").addFilter(QuietHealthProbes())
 
 app = Flask(__name__)
 config = ExecutorConfig()
