@@ -35,6 +35,9 @@ from executor.venues.hyperliquid import HyperliquidExecutor  # noqa: E402
 
 
 class _Cfg:
+    def __init__(self, **settings):
+        self._s = settings  # dotted key -> value, e.g. trading.dydx.subaccounts
+
     def venue(self, name):
         if name == "dydx":
             return "mainnet", {"account_address": "dydx1test",
@@ -44,7 +47,7 @@ class _Cfg:
                            "agent_private_key": "0x" + "2" * 64}
 
     def get(self, dotted, default=None):
-        return default
+        return self._s.get(dotted, default)
 
     def jurisdiction_acknowledged(self):
         return True
@@ -117,6 +120,177 @@ class DydxStateFailsLoud(unittest.TestCase):
         st = self.dy.state()
         self.assertEqual(len(st["positions"]), 1)
         self.assertAlmostEqual(st["positions"][0]["size"], 0.0008)
+
+
+ISOLATED = {"trading.dydx.subaccounts": {"BTC": 0, "ETH": 1, "SOL": 2}}
+
+
+def sub(num, equity, **positions):
+    """One indexer subaccount entry. positions: market -> (size, side)."""
+    return {"subaccountNumber": num, "equity": str(equity),
+            "freeCollateral": str(equity),
+            "openPerpetualPositions": {
+                m: {"size": str(s), "side": side, "entryPrice": "100"}
+                for m, (s, side) in positions.items()}}
+
+
+class SubaccountIsolation(unittest.TestCase):
+    """One coin per subaccount, so the liquidation formula is valid again.
+
+    dYdX v4 is cross-margined per SUBACCOUNT. Three positions sharing subaccount 0
+    share one liquidation: the maintenance requirement is their sum, one leg's losses
+    eat the others' collateral, and liquidation_price() (single-position) stops being
+    valid — which is why every multi-coin dYdX leg reported "liquidation unknown" and
+    went UNMONITORED. At the 2026-07-28 sizing that hid an 11.5% buffer.
+
+    Isolation buys visibility and blast-radius containment. It does NOT create
+    margin: the same equity split three ways leaves each position the same buffer.
+    """
+
+    def setUp(self):
+        self._original_get = D.requests.get
+
+    def tearDown(self):
+        D.requests.get = self._original_get
+
+    def _dydx(self, *subs, **cfg):
+        dy = D.DydxExecutor(_Cfg(**cfg))
+        D.requests.get = lambda *a, **kw: _Resp({"subaccounts": list(subs)})
+        dy._market_risk = lambda t: (100.0, 0.012)
+        return dy
+
+    # ---- mapping -------------------------------------------------------
+
+    def test_maps_market_or_bare_coin_to_its_subaccount(self):
+        dy = self._dydx(**ISOLATED)
+        for symbol, want in (("ETH-USD", 1), ("ETH", 1), ("eth-usd", 1),
+                             ("SOL-USD", 2), ("BTC-USD", 0)):
+            self.assertEqual(dy.subaccount_for(symbol), want, symbol)
+
+    def test_an_unmapped_coin_and_an_unset_map_both_mean_zero(self):
+        self.assertEqual(self._dydx(**ISOLATED).subaccount_for("DOGE-USD"), 0)
+        self.assertEqual(self._dydx().subaccount_for("ETH-USD"), 0)
+
+    # ---- reads ---------------------------------------------------------
+
+    def test_state_reads_EVERY_subaccount_not_just_the_first(self):
+        # The failure this prevents: an ETH position funded in subaccount 1 read as
+        # flat, which would make decide_exit strand it and the watchdog call the
+        # hedge broken.
+        dy = self._dydx(sub(0, 32, **{"BTC-USD": (0.001, "LONG")}),
+                        sub(1, 32, **{"ETH-USD": (0.03, "LONG")}),
+                        sub(2, 32, **{"SOL-USD": (0.7, "LONG")}), **ISOLATED)
+        st = dy.state()
+        self.assertEqual(sorted(st["open_positions"]),
+                         ["BTC-USD", "ETH-USD", "SOL-USD"])
+        self.assertEqual({p["coin"]: p["subaccount"] for p in st["positions"]},
+                         {"BTC-USD": 0, "ETH-USD": 1, "SOL-USD": 2})
+
+    def test_isolation_restores_a_real_liquidation_distance(self):
+        # THE point of the change: one position per subaccount -> the formula is
+        # exact -> the watchdog can finally see the buffer.
+        #
+        # Numbers mirror the live 2026-07-28 sizing: ~$239 notional (2.4 @ mark 100)
+        # against ~$32 of subaccount equity, which is the ~12% buffer that was
+        # invisible while all three coins shared subaccount 0.
+        dy = self._dydx(sub(0, 32, **{"BTC-USD": (2.4, "LONG")}),
+                        sub(1, 32, **{"ETH-USD": (2.4, "LONG")}), **ISOLATED)
+        for p in dy.state()["positions"]:
+            self.assertIsNotNone(p["liq_distance_pct"], p["coin"])
+            self.assertIsNone(p["liq_note"], p["coin"])
+            self.assertAlmostEqual(p["liq_distance_pct"], 12.3, places=1)
+
+    def test_liquidation_is_judged_against_the_holding_subaccounts_equity(self):
+        # Not the primary's, and not the book total: that subaccount is the only
+        # collateral actually backing the position.
+        dy = self._dydx(sub(0, 500, **{"BTC-USD": (2.4, "LONG")}),
+                        sub(1, 20, **{"ETH-USD": (2.4, "LONG")}), **ISOLATED)
+        pos = {p["coin"]: p for p in dy.state()["positions"]}
+        self.assertEqual(pos["ETH-USD"]["subaccount_equity"], 20.0)
+        self.assertEqual(pos["BTC-USD"]["subaccount_equity"], 500.0)
+        # Identical positions, different backing equity, opposite conclusions. The
+        # thin subaccount has a real, reachable liquidation; the fat one cannot be
+        # liquidated by price at all. Judging the ETH leg against the primary's $500
+        # would have reported it as unliquidatable when it is 4% away.
+        self.assertIsNotNone(pos["ETH-USD"]["liq_distance_pct"])
+        self.assertIsNone(pos["BTC-USD"]["liq_distance_pct"])
+        self.assertIn("not liquidatable by price alone",
+                      pos["BTC-USD"]["liq_note"])
+
+    def test_a_shared_subaccount_still_degrades_to_unknown(self):
+        # Without isolation nothing is claimed that cannot be computed.
+        dy = self._dydx(sub(0, 95, **{"BTC-USD": (2.4, "LONG"),
+                                      "ETH-USD": (2.4, "LONG"),
+                                      "SOL-USD": (2.4, "LONG")}))
+        st = dy.state()
+        self.assertFalse(st["isolated"])
+        for p in st["positions"]:
+            self.assertIsNone(p["liq_distance_pct"])
+            self.assertIn("liquidation unknown", p["liq_note"])
+            self.assertIn("trading.dydx.subaccounts", p["liq_note"])
+
+    def test_book_totals_and_the_legacy_shape_coexist(self):
+        dy = self._dydx(sub(0, 30, **{"BTC-USD": (0.001, "LONG")}),
+                        sub(1, 40), sub(2, 25), **ISOLATED)
+        st = dy.state()
+        self.assertEqual(st["equity"], 30.0)          # primary, as before
+        self.assertEqual(st["equity_total"], 95.0)    # book-wide, additive
+        self.assertEqual(sorted(st["subaccounts"]), [0, 1, 2])
+        self.assertEqual(st["subaccounts"][1]["position_count"], 0)
+        self.assertTrue(st["isolated"])
+
+    def test_an_unreadable_read_still_raises_under_isolation(self):
+        dy = D.DydxExecutor(_Cfg(**ISOLATED))
+        D.requests.get = lambda *a, **kw: _Resp({"errors": ["rate limited"]}, 429)
+        with self.assertRaises(VenueStateUnavailable):
+            dy.state()
+
+    # ---- writes --------------------------------------------------------
+
+    def test_orders_are_placed_into_the_coins_own_subaccount(self):
+        import asyncio
+        dy = self._dydx(**ISOLATED)
+        seen = {}
+
+        class _Mkt:
+            def order_id(self, addr, subaccount, client_id, flags):
+                seen["subaccount"] = subaccount
+                return "oid"
+
+            def order(self, *a, **kw):
+                return "proto"
+
+        dy._market = lambda m: _Mkt()
+        dy.oracle_price = lambda m: 100.0
+
+        class _Node:
+            async def latest_block_height(self): return 10
+            async def place_order(self, *a, **kw): return type(
+                "R", (), {"tx_response": type("T", (), {"code": 0})()})()
+
+        async def node():
+            return _Node()
+
+        dy._node = node
+
+        async def signer(n):
+            return object(), object()
+
+        dy._signer = signer
+        asyncio.run(dy.place_market_reduce("SOL-USD", False, 0.1))
+        self.assertEqual(seen["subaccount"], 2)  # SOL -> 2, not 0
+
+    def test_open_orders_can_resolve_the_subaccount_from_a_market(self):
+        dy = self._dydx(**ISOLATED)
+        seen = {}
+
+        def fake_get(url, **kw):
+            seen["url"] = url
+            return _Resp({"orders": []})
+
+        D.requests.get = fake_get
+        dy.open_orders(market="ETH-USD")
+        self.assertIn("subaccountNumber=1", seen["url"])
 
 
 class HyperliquidStateFailsLoud(unittest.TestCase):

@@ -159,6 +159,31 @@ class DydxExecutor:
             self.account_address = (
                 creds.get("address") or _address_from_mnemonic(self._mnemonic)
             )
+        # Coin -> subaccount map for POSITION ISOLATION, e.g. {BTC: 0, ETH: 1, SOL: 2}.
+        # dYdX v4 is cross-margined per SUBACCOUNT, so two positions sharing one
+        # subaccount share a liquidation: the maintenance requirement is the sum over
+        # both, one leg's losses eat the other's collateral, and the single-position
+        # liquidation formula stops being valid — which is why state() reported
+        # "liquidation unknown" and left every multi-coin dYdX leg UNMONITORED.
+        #
+        # One coin per subaccount restores both properties: the formula is exact
+        # again (so the watchdog can see the buffer), and a liquidation is contained
+        # to the coin that caused it instead of cascading across the book.
+        #
+        # It does NOT create margin. Splitting the same equity three ways leaves each
+        # position with the same buffer it had; what changes is visibility and blast
+        # radius, not headroom.
+        #
+        # Unset/empty = every coin uses subaccount 0, exactly as before. Each
+        # subaccount must be FUNDED separately before it can hold a position.
+        self.subaccount_map = {
+            str(k).upper(): int(v)
+            for k, v in (config.get("trading.dydx.subaccounts", {}) or {}).items()
+        }
+
+    def subaccount_for(self, symbol):
+        """Subaccount number for a market ('BTC-USD' or 'BTC'). 0 when unmapped."""
+        return self.subaccount_map.get((symbol or "").split("-")[0].upper(), 0)
 
     # ------------------------------------------------------------------
     def _api_pubkey(self):
@@ -270,58 +295,86 @@ class DydxExecutor:
                     "address": self.account_address, "subaccount_exists": False,
                     "positions": [], "open_positions": [],
                     "note": "no subaccount yet (fund it before trading)"}
-        s = next((x for x in subs if x.get("subaccountNumber") == subaccount), subs[0])
-        equity = float(s.get("equity", 0))
-        open_perps = s.get("openPerpetualPositions") or {}
-        # dYdX v4 is cross-margined per SUBACCOUNT: with several open positions the
-        # maintenance-margin requirement is the SUM across them, and each leg's
-        # liquidation price depends on the others. liquidation_price() models a
-        # single-position subaccount, so with more than one position it reads
-        # OPTIMISTICALLY safe. Rather than publish a number the watchdog would
-        # trust, fall back to "liquidation unknown" — the watchdog raises a
-        # liq_unknown alert on that, the same fail-loud-not-silent posture the
-        # rest of this stack uses. (Proper fix later: isolate each coin in its own
-        # subaccount, which makes the single-position formula exact again.)
-        multi = len(open_perps) > 1
-        positions = []
-        for mkt, p in open_perps.items():
-            sz = abs(float(p.get("size", 0)))
-            signed = sz if p.get("side") == "LONG" else -sz  # sign like HL's szi
-            mark, mmf = self._market_risk(mkt)
-            liq = liq_dist = None
-            if mark is None:
-                note = "liquidation unknown: market risk params unavailable"
-            elif multi:
-                note = ("liquidation unknown: multiple positions share this"
-                        " cross-margin subaccount — single-position formula is"
-                        " not valid, this leg is unmonitored")
-            else:
-                liq = liquidation_price(equity, signed, mark, mmf)
-                if liq is None:
-                    note = ("not liquidatable by price alone (equity exceeds"
-                            " notional)")
+        # BOOK-WIDE across every subaccount, not just one. The indexer already
+        # returns them all, and with position isolation the legs live in DIFFERENT
+        # subaccounts — reading only #0 would report a funded ETH position as flat,
+        # which is the "unreadable looks empty" failure all over again.
+        #
+        # Liquidation is computed against the position's OWN subaccount equity,
+        # because that is the pool that actually backs it. A subaccount holding one
+        # position makes liquidation_price() exact; one holding several still degrades
+        # to "unknown" (the maintenance requirement is the sum across them and each
+        # leg's liquidation couples to the others). So isolation is what earns the
+        # number back — this code just stops assuming one subaccount either way.
+        positions, per_sub = [], {}
+        for s in subs:
+            num = s.get("subaccountNumber")
+            equity = float(s.get("equity", 0) or 0)
+            open_perps = s.get("openPerpetualPositions") or {}
+            per_sub[num] = {
+                "subaccount": num,
+                "equity": equity,
+                "free_collateral": float(s.get("freeCollateral", 0) or 0),
+                "position_count": len(open_perps),
+            }
+            multi = len(open_perps) > 1
+            for mkt, p in open_perps.items():
+                sz = abs(float(p.get("size", 0)))
+                signed = sz if p.get("side") == "LONG" else -sz  # sign like HL's szi
+                mark, mmf = self._market_risk(mkt)
+                liq = liq_dist = None
+                if mark is None:
+                    note = "liquidation unknown: market risk params unavailable"
+                elif multi:
+                    note = (f"liquidation unknown: {len(open_perps)} positions share"
+                            f" cross-margin subaccount {num} — single-position"
+                            " formula is not valid, this leg is unmonitored."
+                            " Isolate coins via trading.dydx.subaccounts")
                 else:
-                    liq_dist = abs(mark - liq) / mark * 100
-                    note = None
-            positions.append({
-                "coin": mkt, "size": signed, "side": p.get("side"),
-                "entry_px": p.get("entryPrice"),
-                "mark_px": mark,
-                "liquidation_px": liq,
-                "liq_distance_pct": liq_dist,
-                "liq_note": note,
-                "maintenance_margin_fraction": mmf,
-            })
+                    liq = liquidation_price(equity, signed, mark, mmf)
+                    if liq is None:
+                        note = ("not liquidatable by price alone (equity exceeds"
+                                " notional)")
+                    else:
+                        liq_dist = abs(mark - liq) / mark * 100
+                        note = None
+                positions.append({
+                    "coin": mkt, "size": signed, "side": p.get("side"),
+                    "entry_px": p.get("entryPrice"),
+                    "mark_px": mark,
+                    "liquidation_px": liq,
+                    "liq_distance_pct": liq_dist,
+                    "liq_note": note,
+                    "maintenance_margin_fraction": mmf,
+                    "subaccount": num,
+                    "subaccount_equity": equity,
+                })
+        # `subaccount` / `equity` / `free_collateral` stay at the top level for the
+        # callers that predate isolation, reporting the PRIMARY subaccount (the one
+        # asked for). Book-wide totals and the per-subaccount breakdown are additive,
+        # so nothing that reads the old shape changes meaning.
+        primary = next((x for x in subs
+                        if x.get("subaccountNumber") == subaccount), subs[0])
         return {
             "venue": "dydx", "network": self.network,
-            "address": self.account_address, "subaccount": s.get("subaccountNumber"),
-            "equity": float(s.get("equity", 0)),
-            "free_collateral": float(s.get("freeCollateral", 0)),
+            "address": self.account_address,
+            "subaccount": primary.get("subaccountNumber"),
+            "equity": float(primary.get("equity", 0) or 0),
+            "free_collateral": float(primary.get("freeCollateral", 0) or 0),
+            "equity_total": round(sum(v["equity"] for v in per_sub.values()), 6),
+            "free_collateral_total": round(
+                sum(v["free_collateral"] for v in per_sub.values()), 6),
+            "subaccounts": per_sub,
+            "isolated": bool(self.subaccount_map),
             "positions": positions,
             "open_positions": [p["coin"] for p in positions],
         }
 
-    def open_orders(self, subaccount=0):
+    def open_orders(self, subaccount=0, market=None):
+        """Open orders for a subaccount. Pass `market` to resolve the subaccount
+        from the isolation map instead of assuming 0."""
+        if market is not None:
+            subaccount = self.subaccount_for(market)
         r = requests.get(
             f"{self.indexer}/v4/orders?address={self.account_address}"
             f"&subaccountNumber={subaccount}&status=OPEN", timeout=20)
@@ -379,7 +432,8 @@ class DydxExecutor:
         wallet, tx_options = await self._signer(node)
         client_id = random.randint(0, MAX_CLIENT_ID)
         gtbt = int(time.time()) + int(good_til_seconds)
-        order_id = mkt.order_id(self.account_address, 0, client_id,
+        sub = self.subaccount_for(market)
+        order_id = mkt.order_id(self.account_address, sub, client_id,
                                 OrderFlags.LONG_TERM)
         side = Order.Side.SIDE_BUY if is_buy else Order.Side.SIDE_SELL
         proto = mkt.order(order_id, OrderType.LIMIT, side, float(size), float(price),
@@ -404,7 +458,8 @@ class DydxExecutor:
         oracle = self.oracle_price(market)
         px = round(oracle * (1 + slippage) if is_buy else oracle * (1 - slippage))
         client_id = random.randint(0, MAX_CLIENT_ID)
-        order_id = mkt.order_id(self.account_address, 0, client_id,
+        sub = self.subaccount_for(market)
+        order_id = mkt.order_id(self.account_address, sub, client_id,
                                 OrderFlags.SHORT_TERM)
         side = Order.Side.SIDE_BUY if is_buy else Order.Side.SIDE_SELL
         proto = mkt.order(order_id, OrderType.LIMIT, side, float(size), float(px),
@@ -420,7 +475,8 @@ class DydxExecutor:
         node = await self._node()
         mkt = self._market(market)
         wallet, tx_options = await self._signer(node)
-        order_id = mkt.order_id(self.account_address, 0, int(client_id),
+        order_id = mkt.order_id(self.account_address,
+                                self.subaccount_for(market), int(client_id),
                                 OrderFlags.LONG_TERM)
         resp = await node.cancel_order(
             wallet, order_id, good_til_block_time=int(good_til_block_time),

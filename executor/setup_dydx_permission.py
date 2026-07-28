@@ -45,7 +45,23 @@ from executor.venues.dydx_permissioned import (
 
 # Majors on dYdX: clobPairId BTC-USD=0, ETH-USD=1, SOL-USD=5 (testnet-verified).
 MAJORS_CLOB_IDS = [0, 1, 5]
-SUBACCOUNTS = [0]
+
+
+def authorized_subaccounts(cfg):
+    """Subaccounts the bot key may trade in: 0 plus every isolation target.
+
+    The authenticator is composed AllOf, so `subaccount_filter` is a HARD on-chain
+    allowlist — an order aimed at a subaccount outside it is REJECTED by the chain,
+    not merely discouraged. Position isolation routes ETH to subaccount 1 and SOL to
+    2 (trading.dydx.subaccounts), so a key scoped to [0] silently makes every
+    isolated coin unopenable, and finds out mid-hedge with the short leg already on.
+
+    Derived from the same config map the adapter reads, so the on-chain scope and the
+    routing cannot drift apart. 0 is always included: it is the default for unmapped
+    coins and the account the collateral arrives in.
+    """
+    mapped = (cfg.get("trading.dydx.subaccounts", {}) or {}).values()
+    return sorted({0, *(int(v) for v in mapped)})
 
 
 def _bot_pubkey_bytes(bot_mnemonic):
@@ -87,11 +103,12 @@ async def main(broadcast: bool):
     bot_mnemonic = str(Bip39MnemonicGenerator().FromWordsNumber(Bip39WordsNum.WORDS_NUM_24))
     bot_pub = _bot_pubkey_bytes(bot_mnemonic)
 
-    auth = build_trading_authenticator(bot_pub, SUBACCOUNTS, MAJORS_CLOB_IDS)
+    subaccounts = authorized_subaccounts(cfg)
+    auth = build_trading_authenticator(bot_pub, subaccounts, MAJORS_CLOB_IDS)
 
     print(f"network        : {network}")
     print(f"main account   : {main_address}")
-    print(f"scope          : place/cancel only, subaccounts {SUBACCOUNTS}, "
+    print(f"scope          : place/cancel only, subaccounts {subaccounts}, "
           f"markets(clobPairId) {MAJORS_CLOB_IDS}")
     print(f"authenticator  : {auth.todict().get('type')} (trade-only, no withdraw/transfer)")
 

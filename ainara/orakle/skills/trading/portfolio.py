@@ -74,6 +74,17 @@ _DYDX_INDEXER = {
 }
 
 
+def _dydx_subaccount_for(coin):
+    """Subaccount holding `coin` on dYdX, per trading.dydx.subaccounts.
+
+    Mirrors DydxExecutor.subaccount_for and the carry engine's copy. Unmapped coins
+    use 0, so an unset map behaves exactly as it did before isolation.
+    """
+    m = config.get("trading.dydx.subaccounts", {}) or {}
+    return int({str(k).upper(): v for k, v in m.items()}.get(
+        (coin or "").split("-")[0].upper(), 0))
+
+
 def _dydx_liquidation_price(equity, size_signed, mark_px, mmf):
     """Cross-margin liquidation price for a SINGLE-position dYdX subaccount.
 
@@ -198,13 +209,25 @@ class TradingPortfolio(Skill):
         if not subs:
             leg["note"] = "no subaccount yet (unfunded)"
             return leg
-        s = subs[0]
+        # Search EVERY subaccount: under position isolation
+        # (trading.dydx.subaccounts) the coin lives in its own, so reading subs[0]
+        # would report a funded ETH or SOL leg as flat.
+        s = next((x for x in subs
+                  if market in (x.get("openPerpetualPositions") or {})), None)
+        if s is None:
+            # Not held anywhere. Report the mapped subaccount's equity if it exists,
+            # else the primary, so the caller still sees the account it would use.
+            s = next((x for x in subs
+                      if x.get("subaccountNumber") == _dydx_subaccount_for(coin)),
+                     subs[0])
+            leg["account_value"] = float(s.get("equity", 0) or 0)
+            leg["subaccount"] = s.get("subaccountNumber")
+            return leg
         equity = float(s.get("equity", 0) or 0)
         leg["account_value"] = equity
+        leg["subaccount"] = s.get("subaccountNumber")
         open_perps = s.get("openPerpetualPositions") or {}
         pos = open_perps.get(market)
-        if not pos:
-            return leg
         sz = abs(float(pos.get("size", 0) or 0))
         signed = sz if pos.get("side") == "LONG" else -sz
         mark, mmf = self._dydx_market_risk(indexer, market)
@@ -219,9 +242,10 @@ class TradingPortfolio(Skill):
         if mark is None:
             note = "liquidation unknown: market risk params unavailable"
         elif multi:
-            note = ("liquidation unknown: multiple positions share this"
-                    " cross-margin subaccount — single-position formula is not"
-                    " valid, this leg is unmonitored")
+            note = ("liquidation unknown: multiple positions share cross-margin"
+                    f" subaccount {s.get('subaccountNumber')} — single-position"
+                    " formula is not valid, this leg is unmonitored. Isolate coins"
+                    " via trading.dydx.subaccounts")
         else:
             liq = _dydx_liquidation_price(equity, signed, mark, mmf)
             if liq is None:
@@ -541,7 +565,8 @@ class TradingPortfolio(Skill):
         indexer = _DYDX_INDEXER[network]
         market = f"{coin}-USD"
         fills = requests.get(
-            f"{indexer}/v4/fills?address={addr}&subaccountNumber=0&limit=100",
+            f"{indexer}/v4/fills?address={addr}"
+            f"&subaccountNumber={_dydx_subaccount_for(coin)}&limit=100",
             timeout=20).json().get("fills", [])
         rows = []
         for f in fills:
@@ -612,7 +637,8 @@ class TradingPortfolio(Skill):
 
     def _funding_dydx(self, coin, since_ms, addr, indexer):
         rows = requests.get(
-            f"{indexer}/v4/fundingPayments?address={addr}&subaccountNumber=0&limit=100",
+            f"{indexer}/v4/fundingPayments?address={addr}"
+            f"&subaccountNumber={_dydx_subaccount_for(coin)}&limit=100",
             timeout=20).json().get("fundingPayments", [])
         out = []
         for r in rows:
@@ -689,9 +715,8 @@ class TradingPortfolio(Skill):
         if addr:
             r = requests.get(f"{_DYDX_INDEXER[net]}/v4/addresses/{addr}",
                              timeout=20).json()
-            subs = r.get("subaccounts") or []
-            if subs:
-                for mkt, pos in (subs[0].get("openPerpetualPositions") or {}).items():
+            for sub in (r.get("subaccounts") or []):
+                for mkt, pos in (sub.get("openPerpetualPositions") or {}).items():
                     if abs(float(pos.get("size", 0) or 0)) > 0:
                         coins.add(mkt.split("-")[0])
         return sorted(c for c in coins if c)

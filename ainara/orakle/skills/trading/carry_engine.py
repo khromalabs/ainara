@@ -367,6 +367,17 @@ class TradingCarryEngine(Skill):
             before = (t - datetime.timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
         return out
 
+    @staticmethod
+    def _dydx_subaccount_for(coin):
+        """Subaccount holding `coin` on dYdX, per trading.dydx.subaccounts.
+
+        Mirrors DydxExecutor.subaccount_for. Unmapped coins use 0, so an unset map
+        behaves exactly as before isolation.
+        """
+        m = config.get("trading.dydx.subaccounts", {}) or {}
+        return int({str(k).upper(): v for k, v in m.items()}.get(
+            (coin or "").split("-")[0].upper(), 0))
+
     def _current_side(self, coin):
         """Which way we are positioned RIGHT NOW, read-only from public APIs.
 
@@ -398,12 +409,18 @@ class TradingCarryEngine(Skill):
                 f"{_DYDX_INDEXER[dy_net]}/v4/addresses/{dy_addr}", timeout=20).json()
             subs = d.get("subaccounts") or []
             dy_size = 0.0
-            if subs:
-                for mkt, p in (subs[0].get("openPerpetualPositions") or {}).items():
+            # EVERY subaccount, not subs[0]: under position isolation the coin lives
+            # in its own subaccount, and reading only the first reports a funded ETH
+            # or SOL position as FLAT — decide_exit would then answer "no open
+            # position to close" and strand it open forever.
+            for sub in subs:
+                for mkt, p in (sub.get("openPerpetualPositions") or {}).items():
                     if mkt.split("-")[0] == coin:
                         sz = abs(float(p.get("size", 0) or 0))
                         dy_size = sz if p.get("side") == "LONG" else -sz
                         break
+                if dy_size:
+                    break
         except Exception as e:
             self.logger.warning(f"position read failed: {e}")
             return None, {"error": f"position read failed: {e}"}
@@ -447,10 +464,15 @@ class TradingCarryEngine(Skill):
                              timeout=20).json()
         return float(mids[coin])
 
-    def _free_collateral(self):
+    def _free_collateral(self, coin=None):
         """Live free collateral (USD) from BOTH trading accounts, on the network
         each venue is configured to trade on. Read-only (public, needs only the
         account address). Returns (hl_free, dydx_free), or (None, None) on failure.
+
+        `coin` selects the dYdX SUBACCOUNT. Under position isolation each coin has
+        its own, separately funded — so sizing an ETH leg against subaccount 0's
+        collateral would size against money the ETH order cannot touch, and the
+        venue would reject the leg (or fill a smaller one than the hedge needs).
         """
         try:
             hl_net = config.get("apis.hyperliquid.network", "testnet")
@@ -466,7 +488,20 @@ class TradingCarryEngine(Skill):
             d = requests.get(
                 f"{_DYDX_INDEXER[dy_net]}/v4/addresses/{dy_addr}", timeout=20).json()
             subs = d.get("subaccounts") or []
-            dydx_free = float(subs[0].get("freeCollateral", 0)) if subs else 0.0
+            want = self._dydx_subaccount_for(coin) if coin is not None else None
+            if want is not None:
+                target = next((s for s in subs
+                               if s.get("subaccountNumber") == want), None)
+                if target is None:
+                    # Mapped but not funded yet: report 0 rather than another
+                    # subaccount's money, so sizing refuses instead of over-sizing.
+                    self.logger.warning(
+                        f"dydx subaccount {want} for {coin} has no collateral yet"
+                        " — fund it before opening this coin")
+                    return hl_free, 0.0
+            else:
+                target = subs[0] if subs else None
+            dydx_free = float(target.get("freeCollateral", 0)) if target else 0.0
             return hl_free, dydx_free
         except Exception as e:
             self.logger.warning(f"free-collateral read failed: {e}")
@@ -548,7 +583,7 @@ class TradingCarryEngine(Skill):
                 "reason": "smoothed spread flipped sign — close now; the entry plan"
                           " re-opens on the other side"}
 
-    def _size_position(self, price, leverage, capital_usd):
+    def _size_position(self, price, leverage, capital_usd, coin=None):
         """Return (size, sizing_detail). Primary rule: each leg's margin is capped
         at max_account_margin_pct% of the SMALLER account's free collateral, so
         both matched legs stay within that budget with a liquidation buffer. Also
@@ -556,7 +591,7 @@ class TradingCarryEngine(Skill):
         can't be read (so nothing silently mis-sizes)."""
         hard_cap = config.get("trading.executor.max_order_notional_usd")
         hard_cap = float(hard_cap) if hard_cap is not None else None
-        hl_free, dydx_free = self._free_collateral()
+        hl_free, dydx_free = self._free_collateral(coin)
 
         if hl_free is not None and dydx_free is not None:
             pct = float(config.get("trading.max_account_margin_pct", 50))
@@ -728,7 +763,8 @@ class TradingCarryEngine(Skill):
             # must come from a book that can actually fill us.
             trade_net = self._venue_network("hyperliquid")
             price = self._current_price(coin, trade_net)
-            size, sizing = self._size_position(price, ev["leverage"], capital_usd)
+            size, sizing = self._size_position(price, ev["leverage"],
+                                               capital_usd, coin=coin)
             notional = size * price
 
             # Dilution guard: does the edge survive fees AND slippage at THIS size?
