@@ -106,6 +106,22 @@ def _legs_by_coin(hl_state, dydx_state):
     return out
 
 
+def _venue_readable(state):
+    """Does this state actually carry a position list we are entitled to trust?
+
+    A venue that could not be READ must never be mistaken for a venue holding
+    NOTHING. dydx.state() used to return a dict with no "positions" key for any
+    unexpected indexer reply (a 429, a 5xx, a degraded body), and
+    `state.get("positions") or []` silently turned that into "flat" — so on
+    2026-07-27 three fully-hedged coins were assessed as three BROKEN HEDGES and
+    every Hyperliquid leg was flattened, stranding the dYdX longs unhedged for eight
+    hours. Both adapters now raise instead (executor/errors.py), and this is the
+    second line of defence: readable-and-empty is a list, unreadable is not.
+    """
+    return (isinstance(state, dict) and not state.get("unreadable")
+            and isinstance(state.get("positions"), list))
+
+
 _SEVERITY = {"none": 0, "ok": 1, "warn": 2, "critical": 3}
 
 
@@ -185,7 +201,32 @@ def assess(hl, dydx, *, liq_critical_pct=5.0, size_tolerance_pct=15.0):
     independently, then aggregates: overall risk is the worst across assets and
     findings/actions from all of them are concatenated (each tagged with its
     coin). With a single hedged pair this returns exactly what the old
-    single-position assess did (bar the coin prefix on strings)."""
+    single-position assess did (bar the coin prefix on strings).
+
+    FAILS CLOSED on a blind read: if EITHER venue's positions cannot be trusted,
+    this returns a critical alert and NO destructive action. Every conclusion here
+    is comparative — "a leg is naked" means "the other venue does not have it" — so
+    half the book supports no conclusion at all. Acting on half is precisely the
+    2026-07-27 failure. A genuinely naked leg during an outage therefore gets
+    alarmed rather than auto-closed; that is the deliberate trade, because the
+    alarm is loud and off-box while a wrong close costs real money."""
+    blind = [name for name, st in (("hyperliquid", hl), ("dydx", dydx))
+             if not _venue_readable(st)]
+    if blind:
+        why = "; ".join(
+            f"{name}: {(st.get('unreadable') if isinstance(st, dict) else None) or 'response carried no position list'}"
+            for name, st in (("hyperliquid", hl), ("dydx", dydx))
+            if name in blind)
+        return {
+            "risk": "critical",
+            "findings": [
+                f"POSITION STATE UNREADABLE on {', '.join(blind)} — the book is"
+                f" UNGUARDED and no protective action can be trusted ({why})"],
+            "actions": [{"type": "alert", "reason": "venue_unreadable",
+                         "venue": name, "coin": None} for name in blind],
+            "coins": [],
+            "unreadable": blind,
+        }
     by_coin = _legs_by_coin(hl, dydx)
     if not by_coin:
         return {"risk": "none", "findings": ["flat — both legs closed"],
@@ -355,6 +396,11 @@ class Watchdog:
         while a genuinely naked leg on another asset still gets closed after
         confirm_polls * interval seconds.
         """
+        if report.get("unreadable"):
+            # Blind. A blind poll proves nothing about any streak, and standing down
+            # here would clear a real close-retry alarm on the strength of a failed
+            # read. Freeze all debounce/alarm state until we can see again.
+            return report
         broken = [a for a in report["actions"]
                   if a["type"] == "close_leg" and a.get("reason") == "broken_hedge"]
         broken_coins = {a.get("coin") for a in broken}
@@ -483,11 +529,22 @@ class Watchdog:
             elif t == "alert" and reason == "same_direction":
                 spec = (f"not_delta_neutral:{coin}", "not_delta_neutral", "critical",
                         f"{coin}: both legs point the SAME WAY — this is not a hedge")
+            elif t == "alert" and reason == "venue_unreadable":
+                spec = (f"venue_unreadable:{venue}", "venue_unreadable", "critical",
+                        f"{venue}: position state UNREADABLE — the watchdog is BLIND"
+                        f" and will take NO protective action until it clears. If a"
+                        f" hedge breaks now, nothing will fix it automatically.")
             if spec:
                 key, kind, severity, detail = spec
                 seen.add(key)
                 self._add_alarm(key, kind, severity, detail, origin="assessment",
                                 coin=coin, venue=venue)
+        if report.get("unreadable"):
+            # Blind: `seen` holds only the venue_unreadable keys, so clearing here
+            # would retire every REAL alarm — a leg near liquidation would be
+            # "resolved" by the very outage that stopped us watching it. Add the
+            # blindness alarm and change nothing else.
+            return
         for key, a in list(self._risk_alarms.items()):
             if a.get("origin") == "assessment" and key not in seen:
                 logger.info("watchdog: alarm cleared — %s", key)
@@ -655,10 +712,32 @@ class Watchdog:
             self._escalated.add(venue)
         self._schedule_next_attempt(venue)
 
+    def _read_state(self, adapter, venue):
+        """Read one venue's state, turning ANY failure into an explicit UNREADABLE
+        marker rather than an empty book.
+
+        Catches broadly on purpose. To a safety guard a rate limit, a 5xx, a DNS
+        failure and a bug in the adapter all mean the same single thing — I do not
+        know what this venue holds — and the one unacceptable response to not
+        knowing is to proceed as though the answer were "nothing".
+        """
+        try:
+            st = adapter.state()
+        except Exception as e:
+            logger.error("watchdog: %s state read FAILED (%s: %s) — treating as"
+                         " UNREADABLE, not flat", venue, type(e).__name__, e)
+            return {"venue": venue, "unreadable": f"{type(e).__name__}: {e}"}
+        if not _venue_readable(st):
+            logger.error("watchdog: %s state carries no position list — treating as"
+                         " UNREADABLE, not flat", venue)
+            return {**(st if isinstance(st, dict) else {}), "venue": venue,
+                    "unreadable": "response carried no position list"}
+        return st
+
     def guard_once(self):
         """Read both legs, assess, and (in active mode) act. Returns the report."""
-        hl_state = self.hl.state()
-        dydx_state = self.dydx.state()
+        hl_state = self._read_state(self.hl, "hyperliquid")
+        dydx_state = self._read_state(self.dydx, "dydx")
         report = assess(hl_state, dydx_state,
                         liq_critical_pct=self.liq_critical_pct,
                         size_tolerance_pct=self.size_tolerance_pct)
@@ -974,9 +1053,9 @@ class Watchdog:
             f" reduce={self.reduce_fraction:.0%} per shave.", severity="info")
         self.notifier.heartbeat(force=True)
         while True:
-            ok = True
+            ok, report = True, None
             try:
-                self.guard_once()
+                report = self.guard_once()
             except Exception as e:  # never let the guard die silently
                 ok = False
                 logger.error("watchdog loop error: %s", e)
@@ -989,11 +1068,13 @@ class Watchdog:
                     f"guard_once raised {type(e).__name__}: {e}. The position is"
                     f" UNGUARDED until this clears.")
             self._write_heartbeat()  # after guard, so it reflects a live loop
-            # Only ping the dead-man switch after a SUCCESSFUL assessment. Pinging
-            # unconditionally would tell the external monitor "all good" while the
-            # loop spins blind against a dead venue API — turning the one check that
-            # survives this machine into a rubber stamp. Silence is the alarm.
-            if ok:
+            # Only ping the dead-man switch after an assessment that actually SAW
+            # both venues. Pinging unconditionally would tell the external monitor
+            # "all good" while the loop spins blind against a dead venue API —
+            # turning the one check that survives this machine into a rubber stamp.
+            # A blind loop is a loop that is not guarding, so it withholds the ping
+            # exactly like a crashed one: silence is the alarm.
+            if ok and not (report or {}).get("unreadable"):
                 self.notifier.heartbeat()
             time.sleep(self.interval)
 

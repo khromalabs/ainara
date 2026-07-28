@@ -47,6 +47,7 @@ from dydx_v4_client.wallet import Wallet
 from v4_proto.dydxprotocol.clob.order_pb2 import Order
 
 from executor.compliance import check_order_cap, check_submission
+from executor.errors import VenueStateUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -232,14 +233,42 @@ class DydxExecutor:
             return None, None
 
     def state(self, subaccount=0):
-        """Subaccount equity / free collateral from the public indexer."""
-        r = requests.get(
-            f"{self.indexer}/v4/addresses/{self.account_address}", timeout=20
-        )
-        subs = r.json().get("subaccounts")
+        """Subaccount equity / free collateral from the public indexer.
+
+        Raises VenueStateUnavailable when the state cannot be READ, rather than
+        returning something a caller could mistake for an empty account. This
+        method used to do neither: no raise_for_status, and `if not subs` treated a
+        MISSING "subaccounts" key exactly like an empty one — so a 429 or a 5xx
+        with a JSON body returned a dict with no "positions", and every caller read
+        that as "flat". See executor/errors.py for what that cost on 2026-07-27.
+
+        The two cases are now distinct:
+          - read failed / unparseable / no "subaccounts" field -> RAISE
+          - read succeeded and there is genuinely no subaccount -> positions: []
+        """
+        try:
+            r = requests.get(
+                f"{self.indexer}/v4/addresses/{self.account_address}", timeout=20
+            )
+            r.raise_for_status()
+            payload = r.json()
+        except Exception as e:
+            raise VenueStateUnavailable(
+                f"dydx indexer read failed for {self.account_address}"
+                f" ({type(e).__name__}: {e})") from e
+        if not isinstance(payload, dict) or "subaccounts" not in payload:
+            got = (sorted(payload)[:6] if isinstance(payload, dict)
+                   else type(payload).__name__)
+            raise VenueStateUnavailable(
+                "dydx indexer response carried no 'subaccounts' field — the read"
+                f" did not succeed (got: {got})")
+        subs = payload["subaccounts"]
         if not subs:
+            # Genuinely nothing there — a real, readable answer. Carries an explicit
+            # empty positions list so callers can tell it apart from a failed read.
             return {"venue": "dydx", "network": self.network,
                     "address": self.account_address, "subaccount_exists": False,
+                    "positions": [], "open_positions": [],
                     "note": "no subaccount yet (fund it before trading)"}
         s = next((x for x in subs if x.get("subaccountNumber") == subaccount), subs[0])
         equity = float(s.get("equity", 0))

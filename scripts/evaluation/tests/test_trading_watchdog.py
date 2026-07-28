@@ -359,6 +359,109 @@ class AlarmsAreNeverSilent(unittest.TestCase):
         self.assertEqual(alarm["severity"], "critical")
 
 
+class UnreadableVenueFailsClosed(unittest.TestCase):
+    """Regression for the 2026-07-27 incident.
+
+    dydx.state() returned a dict with NO "positions" key for any unexpected indexer
+    reply (a 429, a 5xx, a degraded body), and `state.get("positions") or []` read
+    that as "flat". Three fully-hedged coins were assessed as three BROKEN HEDGES,
+    every Hyperliquid leg was flattened at 18:34 UTC, and because the dYdX read
+    stayed broken the watchdog could not see the three long legs it had stranded.
+    They ran unhedged for eight hours: -$4.64 on a hedge that was +$0.08 while intact.
+
+    An unreadable venue must be UNKNOWN, never empty.
+    """
+
+    # Exactly what the old dydx.state() returned on a failed read.
+    STALE_DYDX = {"venue": "dydx", "network": "mainnet", "address": "dydx1...",
+                  "subaccount_exists": False,
+                  "note": "no subaccount yet (fund it before trading)"}
+
+    HEDGED_HL = hl(hl_pos("BTC", -0.0008), hl_pos("ETH", -0.03),
+                   hl_pos("SOL", -0.7))
+
+    def test_the_incident_no_longer_produces_close_actions(self):
+        r = W.assess(self.HEDGED_HL, self.STALE_DYDX)
+        self.assertEqual(r["risk"], "critical")
+        self.assertEqual(r["unreadable"], ["dydx"])
+        self.assertEqual([a["type"] for a in r["actions"]], ["alert"])
+        self.assertEqual(r["actions"][0]["reason"], "venue_unreadable")
+        # The whole point: not one order.
+        self.assertFalse([a for a in r["actions"] if a["type"] != "alert"])
+        self.assertIn("UNREADABLE", r["findings"][0])
+
+    def test_unreadable_hyperliquid_is_equally_fatal(self):
+        # The mirror case: a 200 with an unexpected body would have made HL look
+        # flat and every dYdX leg look naked.
+        r = W.assess({"venue": "hyperliquid", "unreadable": "HTTPError: 502"},
+                     dydx(dy_pos("BTC-USD", 0.0008)))
+        self.assertEqual(r["unreadable"], ["hyperliquid"])
+        self.assertEqual([a["type"] for a in r["actions"]], ["alert"])
+
+    def test_a_genuinely_empty_but_READABLE_venue_still_works(self):
+        # The legitimate "no subaccount yet" answer now carries positions: [] — a
+        # real reading of an empty account, so a naked HL leg is still caught.
+        empty = {"venue": "dydx", "subaccount_exists": False, "positions": [],
+                 "note": "no subaccount yet (fund it before trading)"}
+        r = W.assess(hl(hl_pos("BTC", -0.0008)), empty)
+        self.assertNotIn("unreadable", r)
+        self.assertEqual([a["type"] for a in r["actions"]], ["close_leg"])
+
+    def test_read_state_converts_a_raise_into_unreadable(self):
+        class Boom:
+            def state(self):
+                raise RuntimeError("indexer 429")
+
+        wd = W.Watchdog(Boom(), _FakeDydx(), _Cfg())
+        st = wd._read_state(wd.hl, "hyperliquid")
+        self.assertIn("429", st["unreadable"])
+        self.assertFalse(W._venue_readable(st))
+
+    def test_read_state_rejects_a_payload_with_no_position_list(self):
+        class NoPositions:
+            def state(self):
+                return {"venue": "dydx", "subaccount_exists": False}
+
+        wd = W.Watchdog(_FakeHL(), NoPositions(), _Cfg())
+        st = wd._read_state(wd.dydx, "dydx")
+        self.assertEqual(st["unreadable"], "response carried no position list")
+
+    def test_a_blind_poll_acts_on_nothing_and_alarms(self):
+        class Boom:
+            def state(self):
+                raise RuntimeError("indexer 429")
+
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008)), Boom(), _Cfg())
+        wd.mode = "active"
+        wd.alarm_file = os.path.join(tempfile.mkdtemp(), "alarm.json")
+        rep = wd.guard_once()
+        self.assertEqual(rep["unreadable"], ["dydx"])
+        self.assertEqual(wd.hl.reduced, [])  # nothing sent, in ACTIVE mode
+        with open(wd.alarm_file, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["alarm"], "venue_unreadable")
+
+    def test_a_blind_poll_never_clears_a_real_alarm(self):
+        # A leg near liquidation must not be "resolved" by the outage that stopped
+        # us watching it.
+        class Flaky:
+            def __init__(self): self.blind = False
+            def state(self):
+                if self.blind:
+                    raise RuntimeError("indexer 429")
+                return dydx(dy_pos("BTC-USD", 0.0008))
+            def size_increment(self, m): return 1e-4
+
+        dy = Flaky()
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008, liq_dist=3.0)), dy, _Cfg())
+        wd.alarm_file = os.path.join(tempfile.mkdtemp(), "alarm.json")
+        wd.guard_once()
+        self.assertIn("near_liquidation:BTC", wd._risk_alarms)
+        dy.blind = True
+        wd.guard_once()
+        self.assertIn("near_liquidation:BTC", wd._risk_alarms)  # still there
+        self.assertIn("venue_unreadable:dydx", wd._risk_alarms)
+
+
 class DebounceIsolation(unittest.TestCase):
     def setUp(self):
         self.wd = W.Watchdog(hl_adapter=None, dydx_adapter=None, config=_Cfg())

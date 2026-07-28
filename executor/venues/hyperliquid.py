@@ -30,6 +30,7 @@ from eth_account import Account
 from hyperliquid.exchange import Exchange
 
 from executor.compliance import check_order_cap, check_submission
+from executor.errors import VenueStateUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,22 @@ class HyperliquidExecutor:
         }
 
     def state(self):
-        """Perp account value and open positions."""
+        """Perp account value and open positions.
+
+        Raises VenueStateUnavailable if the response is not a usable
+        clearinghouseState. _info already raises on an HTTP error, but a 200 with an
+        unexpected body would have fallen through to `st.get("assetPositions", [])`
+        -> [] -> "no positions", which is the mirror image of the dYdX misread that
+        flattened a healthy book on 2026-07-27 (see executor/errors.py). An
+        unreadable venue must never look like an empty one.
+        """
         st = self._info({"type": "clearinghouseState", "user": self.master})
+        if not isinstance(st, dict) or "assetPositions" not in st \
+                or "marginSummary" not in st:
+            got = (sorted(st)[:6] if isinstance(st, dict) else type(st).__name__)
+            raise VenueStateUnavailable(
+                "hyperliquid clearinghouseState response is not usable — the read"
+                f" did not succeed (got: {got})")
         ms = st.get("marginSummary", {})
         positions = []
         for p in st.get("assetPositions", []):
@@ -99,12 +114,19 @@ class HyperliquidExecutor:
                 "liq_distance_pct": liq_dist,
                 "unrealized_pnl": pos.get("unrealizedPnl"),
             })
-        spot = self._info({"type": "spotClearinghouseState", "user": self.master})
-        usdc_spot = next(
-            (float(b["total"]) for b in spot.get("balances", [])
-             if b.get("coin") == "USDC"),
-            0.0,
-        )
+        # Spot balance is informational, never risk data — so a failure here must
+        # not make the PERP position read (which is risk data, and succeeded above)
+        # look unavailable. Degrade this field alone.
+        try:
+            spot = self._info({"type": "spotClearinghouseState", "user": self.master})
+            usdc_spot = next(
+                (float(b["total"]) for b in spot.get("balances", [])
+                 if b.get("coin") == "USDC"),
+                0.0,
+            )
+        except Exception as e:
+            logger.warning("hyperliquid spot balance unavailable: %s", e)
+            usdc_spot = None
         free = float(ms.get("accountValue", 0)) - float(ms.get("totalMarginUsed", 0))
         return {
             "venue": "hyperliquid",

@@ -167,11 +167,23 @@ warning, stop and fix the config — you'd be running without the safety net.
 | **Near liquidation** (`< liq_critical_pct`) | Shave `reduce_fraction` off **both** legs, threatened venue first, quantized to the coarser venue step so the legs stay equal. Cooldown-gated; after `reduce_max_attempts` it closes the hedge instead. |
 | **Size imbalance** (`> size_tolerance_pct`) | Trim the **larger** leg down to the smaller. Reduce-only, so it can only ever shrink exposure. |
 | **Liquidation distance unknown** | No order exists that fixes this — raises an alarm. That leg is *unmonitored*, which is the thing you need to know. |
+| **A venue's positions unreadable** | **Nothing.** Fails closed: critical alarm, no orders, and the dead-man ping is withheld. Every other conclusion here is comparative ("naked" means *the other venue doesn't have it*), so half a book supports no conclusion at all. |
 | **Both legs same direction** | Alarm. Not a hedge; needs a human. |
 
 Every one of these raises an alarm too, **including in `monitor` mode and including
 the ones it cannot act on**. The alarm file is refreshed on every poll while the
 condition holds, so `/health` never reports a live emergency as stale.
+
+### If you see `venue_unreadable`
+
+The watchdog is blind on that venue and is deliberately doing nothing. Read the
+adapter's error, because the causes need completely different responses:
+
+| Error | Meaning |
+|---|---|
+| Timeout / 5xx / connection refused | Transient venue or network problem. It will clear; the alarm resolves itself. |
+| `429` | You are over the indexer's rate limit (`ratelimit-limit: 100` per ~2min). The watchdog alone costs ~4 requests per poll with 3 open coins — roughly 96 per window. Lengthen `interval_seconds` or trade fewer coins. |
+| `403` + `"code":"GEOBLOCKED"` | **The venue is refusing you access.** Not a bug and not something to route around — it is a compliance decision by dYdX about your jurisdiction. Resolve it with the venue. Do not trade there until it is resolved: your positions have no automated protection while state reads fail, whatever the code does. |
 
 ## Alerting (off-box)
 

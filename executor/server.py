@@ -550,14 +550,42 @@ def hedge_open():
                        detail="short leg was refused; nothing opened, account flat",
                        legs={"short": short_res, "long": None},
                        positions={short_venue: 0.0, long_venue: 0.0})
-    short_pos = _await_position(short_venue, short_symbol, False, fill_timeout)
+    # A state read can now RAISE when the venue is unreadable (executor/errors.py)
+    # instead of quietly reporting flat. That is correct — but it must not escape
+    # here: the short may be LIVE, and an uncaught raise would skip the unwind below
+    # and return a 500 with a naked leg on. Treat "cannot confirm" as "did not
+    # confirm" and fall into the cancel/flatten path.
+    try:
+        short_pos = _await_position(short_venue, short_symbol, False, fill_timeout)
+    except Exception as e:
+        logger.error("HEDGE: could not confirm the short leg (%s) — unwinding", e)
+        short_pos = 0.0
     if not short_pos:
         # Mirror the long path: if the short was a dYdX LONG_TERM order it may be
         # RESTING, not gone — cancel it, then confirm flat (a fill can race the
         # cancel). "aborted_flat" must mean the account is ACTUALLY flat, or the
         # resting order fills later into a naked short.
         cancel_short = _cancel_resting(short_venue, short_symbol, short_res)
-        leftover = _signed_position(short_venue, short_symbol)
+        try:
+            leftover = _signed_position(short_venue, short_symbol)
+        except Exception as e:
+            # Cannot read whether anything is left. "aborted_flat" would be a claim
+            # we have no basis for, and claiming flat while a leg is on is the exact
+            # shape of the 2026-07-27 loss. Send the reduce-only close anyway (it is
+            # a no-op against a flat account) and report the truth: indeterminate.
+            logger.error("HEDGE abort: could not read %s for leftovers (%s) —"
+                         " sending a blind reduce-only close", short_venue, e)
+            try:
+                blind_close = _close_leg(short_venue, short_symbol)
+            except Exception as ce:
+                blind_close = {"error": f"{type(ce).__name__}: {ce}"}
+            return jsonify(
+                opened=False, status="INDETERMINATE_UNREADABLE",
+                detail=(f"the short leg did not confirm AND {short_venue} state is"
+                        f" unreadable ({e}). A reduce-only close was sent blind."
+                        " VERIFY THE ACCOUNT MANUALLY — this may be a naked leg."),
+                legs={"short": short_res, "long": None},
+                cancel_short=cancel_short, blind_close=blind_close), 500
         if leftover:
             _close_leg(short_venue, short_symbol)
             leftover = _await_flat(short_venue, short_symbol, fill_timeout)
