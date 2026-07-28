@@ -521,7 +521,13 @@ def start_service(service_name, cmd, log_file, python_exe=None, cwd=None):
         return True, f"{service_name} is already running"
 
     try:
-        with open(log_file, "w") as log:
+        # APPEND, never truncate. A supervisor that restarts a crashed service and
+        # erases the log explaining why it crashed is worse than no supervisor: the
+        # 2026-07-27 watchdog incident was diagnosed from venue fills precisely
+        # because its own output was gone, and auto-restart would have destroyed it
+        # a second time. Growth is bounded in practice — these services log only on
+        # risk, not per poll.
+        with open(log_file, "a") as log:
             module = cmd.split(" -m ")[1]
             full_cmd = f'"{python_exe or sys.executable}" -m {module}'
 
