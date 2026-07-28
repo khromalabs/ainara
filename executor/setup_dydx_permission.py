@@ -148,6 +148,29 @@ async def main(broadcast: bool, rotate: bool = False):
     main_address = _address_from_mnemonic(main_mnemonic)
     print(f"main key source: {source}")
 
+    # Refuse unless the seed derives the account we are configured to trade. Without
+    # this the script authenticates whatever the seed happens to own: supplying the
+    # BOT's mnemonic derived the bot's own address and got "account not found" from
+    # the chain (it has never transacted — it signs on behalf of the main account),
+    # and a seed that HAD transacted would have registered an authenticator on the
+    # wrong account, spending gas to grant access to something the bot does not use.
+    # fund_subaccounts has had this guard from the start; this script did not.
+    configured = creds.get("account_address")
+    if configured and main_address != configured:
+        hint = ""
+        if creds.get("bot_mnemonic") and \
+                _address_from_mnemonic(creds["bot_mnemonic"]) == main_address:
+            hint = ("\n  That is your BOT mnemonic (apis.dydx.%s.bot_mnemonic). The"
+                    " bot key cannot\n  grant its own permissions — this step needs"
+                    " the wallet that OWNS the account." % network)
+        sys.exit(
+            f"WRONG SEED — refusing before signing anything.\n"
+            f"  it derives      : {main_address}\n"
+            f"  config expects  : {configured}"
+            f"{hint}\n"
+            f"  Set DYDX_MAIN_MNEMONIC to the secret phrase for {configured}."
+        )
+
     # Reuse the trade-only credential already in config; --rotate-key forces a new
     # one (first-time setup, or a key believed compromised). Widening the subaccount
     # scope is not a reason to change keys.
