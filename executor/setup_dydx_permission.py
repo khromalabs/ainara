@@ -64,14 +64,39 @@ def authorized_subaccounts(cfg):
     return sorted({0, *(int(v) for v in mapped)})
 
 
-def _bot_pubkey_bytes(bot_mnemonic):
-    pub = KeyPair.from_mnemonic(bot_mnemonic).public_key_bytes
+def _compress(pub):
     if len(pub) == 65:
-        pub = (b"\x02" if pub[64] % 2 == 0 else b"\x03") + pub[1:33]
+        return (b"\x02" if pub[64] % 2 == 0 else b"\x03") + pub[1:33]
     return pub
 
 
-async def main(broadcast: bool):
+def _bot_pubkey_bytes(bot_mnemonic):
+    return _compress(KeyPair.from_mnemonic(bot_mnemonic).public_key_bytes)
+
+
+def existing_bot_pubkey(creds):
+    """Public key of the bot credential already in config, or (None, None).
+
+    Re-registration should widen the SCOPE, not rotate the key. This script used to
+    mint a fresh mnemonic on every run, so adding subaccounts 1 and 2 to the
+    on-chain allowlist would also swap agent_private_key and bot_mnemonic — three
+    config fields to update instead of one, and a stretch where it is unclear which
+    credential the running bot is actually presenting.
+
+    Derives from agent_private_key, because that is the key that actually signs
+    orders; bot_mnemonic is the backup form of the same key.
+    """
+    k = creds.get("agent_private_key")
+    if k:
+        k = k[2:] if k.startswith("0x") else k
+        return _compress(KeyPair.from_hex(k).public_key_bytes), "agent_private_key"
+    m = creds.get("bot_mnemonic")
+    if m:
+        return _bot_pubkey_bytes(m), "bot_mnemonic"
+    return None, None
+
+
+async def main(broadcast: bool, rotate: bool = False):
     cfg = ExecutorConfig()
     network, creds = cfg.venue("dydx")
 
@@ -98,10 +123,18 @@ async def main(broadcast: bool):
     main_address = _address_from_mnemonic(main_mnemonic)
     print(f"main key source: {source}")
 
-    # A fresh, dedicated bot key — the trade-only credential.
-    from bip_utils import Bip39MnemonicGenerator, Bip39WordsNum
-    bot_mnemonic = str(Bip39MnemonicGenerator().FromWordsNumber(Bip39WordsNum.WORDS_NUM_24))
-    bot_pub = _bot_pubkey_bytes(bot_mnemonic)
+    # Reuse the trade-only credential already in config; --rotate-key forces a new
+    # one (first-time setup, or a key believed compromised). Widening the subaccount
+    # scope is not a reason to change keys.
+    bot_mnemonic = None
+    bot_pub, key_source = (None, None) if rotate else existing_bot_pubkey(creds)
+    if bot_pub is None:
+        from bip_utils import Bip39MnemonicGenerator, Bip39WordsNum
+        bot_mnemonic = str(
+            Bip39MnemonicGenerator().FromWordsNumber(Bip39WordsNum.WORDS_NUM_24))
+        bot_pub = _bot_pubkey_bytes(bot_mnemonic)
+        key_source = "NEWLY GENERATED — save the words printed at the end"
+    print(f"bot key        : {key_source}")
 
     subaccounts = authorized_subaccounts(cfg)
     auth = build_trading_authenticator(bot_pub, subaccounts, MAJORS_CLOB_IDS)
@@ -135,13 +168,21 @@ async def main(broadcast: bool):
     ids_after = await find_authenticator_ids(node, main_address)
     new_ids = [i for i in ids_after if i not in existing]
     print(f"  authenticator ids now: {ids_after}  (new: {new_ids})")
-    print(f"\nSAVE THESE TO ainara.yaml under apis.dydx.{network}:")
-    print("  bot_mnemonic:     <the 24 words below — trade-only key>")
+    print(f"\nSAVE THIS TO ainara.yaml under apis.dydx.{network}:")
     print(f"  authenticator_id: {new_ids[0] if new_ids else '<see ids above>'}")
-    print(f"\n  {bot_mnemonic}\n")
-    print("After saving, the MAIN mnemonic can be removed from config — the running"
-          " bot only needs bot_mnemonic + authenticator_id + the main address.")
+    if bot_mnemonic:
+        print("  bot_mnemonic:     <the 24 words below — trade-only key>")
+        print(f"\n  {bot_mnemonic}\n")
+        print("After saving, the MAIN mnemonic can be removed from config — the"
+              " running bot only needs bot_mnemonic + authenticator_id + the main"
+              " address.")
+    else:
+        print("  (bot key UNCHANGED — same agent_private_key. Only the scope and"
+              " the authenticator id are new.)")
+    print("\nThe OLD authenticator still exists and still works, so nothing breaks"
+          " until you switch the id. Restart the executor daemon and watchdog after"
+          " saving, so they present the new one.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main("--broadcast" in sys.argv))
+    asyncio.run(main("--broadcast" in sys.argv, "--rotate-key" in sys.argv))
