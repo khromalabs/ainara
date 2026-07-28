@@ -121,6 +121,89 @@ def existing_bot_pubkey(creds):
     return None, None
 
 
+async def verify():
+    """Read-only: does the CONFIGURED authenticator actually cover the coin map?
+
+    No mnemonic, no gas, no signature. This is the check that closes the loop after
+    a --broadcast: the routing lives in ainara.yaml while the permission lives
+    on-chain, and nothing else compares the two. Get it wrong and the failure
+    arrives mid-hedge, as an on-chain rejection with the other leg already open.
+    """
+    import base64
+    import re
+
+    def subaccount_scope(blob):
+        """Subaccounts a composed authenticator permits, or None if unreadable.
+
+        MUST key on the field TYPE. A composed authenticator carries both a
+        SubaccountFilter and a ClobPairIdFilter, and both encode as a
+        comma-separated digit list — so "take the last digit list" silently reports
+        the MARKET filter (0,1,5 for BTC/ETH/SOL) as if it were the subaccount
+        scope, and the two happen to look equally plausible.
+        """
+        m = re.search(
+            r'"type"\s*:\s*"[^"]*SubaccountFilter[^"]*"\s*,\s*'
+            r'"config"\s*:\s*"([A-Za-z0-9+/=]*)"', blob)
+        if not m:
+            return None
+        try:
+            decoded = base64.b64decode(m.group(1)).decode("utf-8", "replace")
+        except Exception:
+            return None
+        if not re.fullmatch(r"[0-9]+(,[0-9]+)*", decoded or ""):
+            return None
+        return sorted(int(x) for x in decoded.split(","))
+
+    cfg = ExecutorConfig()
+    network, creds = cfg.venue("dydx")
+    address = creds.get("account_address")
+    configured_id = creds.get("authenticator_id")
+    want = authorized_subaccounts(cfg)
+    mapped = cfg.get("trading.dydx.subaccounts", {}) or {}
+
+    node = await NodeClient.connect(
+        dydx_network(network, creds.get("node_url")).node)
+    resp = await node.get_authenticators(address)
+
+    print(f"account          : {address}")
+    print(f"config id        : {configured_id}")
+    print(f"coin map         : {mapped or '(unset — everything uses subaccount 0)'}")
+    print(f"needs subaccounts: {want}\n")
+
+    found, covers = None, []
+    for a in resp.account_authenticators:
+        subs = subaccount_scope(bytes(a.config).decode("utf-8", "replace"))
+        marker = " <- config points here" if str(a.id) == str(configured_id) else ""
+        ok = subs is not None and all(s in subs for s in want)
+        if ok and str(a.id) != str(configured_id):
+            covers.append(a.id)
+        print(f"  id {a.id}: subaccounts {subs if subs is not None else '?'}"
+              f"{'  (covers the map)' if ok else ''}{marker}")
+        if str(a.id) == str(configured_id):
+            found = subs
+
+    print()
+    if found is None:
+        print("RESULT: could not read the configured authenticator's scope."
+              " Is authenticator_id correct?")
+        return
+    missing = [s for s in want if s not in found]
+    if missing:
+        print(f"RESULT: NOT READY — subaccounts {missing} are routed to but NOT"
+              f" authorized by authenticator {configured_id}. Orders for those coins"
+              f" would be REJECTED on-chain.")
+        if covers:
+            print(f"        But authenticator {covers[0]} DOES cover them. Set"
+                  f" apis.dydx.{network}.authenticator_id: {covers[0]} and restart"
+                  f" the executor daemon + watchdog. No broadcast needed.")
+        else:
+            print("        Re-run with --broadcast, then set authenticator_id to"
+                  " the new id.")
+    else:
+        print("RESULT: OK — every subaccount the config routes to is authorized."
+              " Restart the executor daemon and watchdog if you just changed the id.")
+
+
 async def main(broadcast: bool, rotate: bool = False):
     cfg = ExecutorConfig()
     network, creds = cfg.venue("dydx")
@@ -233,4 +316,7 @@ async def main(broadcast: bool, rotate: bool = False):
 
 
 if __name__ == "__main__":
-    asyncio.run(main("--broadcast" in sys.argv, "--rotate-key" in sys.argv))
+    if "--verify" in sys.argv:
+        asyncio.run(verify())
+    else:
+        asyncio.run(main("--broadcast" in sys.argv, "--rotate-key" in sys.argv))
