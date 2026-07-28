@@ -138,8 +138,8 @@ BUREAU_CMD = "python -m ainara.bureau.server"
 # are deliberately separate switches.
 EXECUTOR_CMD = "python -m executor.server"
 WATCHDOG_CMD = "python -m executor.watchdog"
-EXECUTOR_LOG = os.path.join(LOG_DIR, "executor.log")
-WATCHDOG_LOG = os.path.join(LOG_DIR, "executor_watchdog.log")
+EXECUTOR_LOG_NAME = "executor.log"
+WATCHDOG_LOG_NAME = "executor_watchdog.log"
 DEFAULT_EXECUTOR_HEALTH_URL = "http://127.0.0.1:8130/health"
 # The position watchdog has no HTTP surface; it freshens a heartbeat file each
 # loop. Must match executor/watchdog.py's default (trading.watchdog.heartbeat_file).
@@ -205,6 +205,9 @@ DEFAULT_SCHEDULER_YAML = """\
 #    #health_url: "http://127.0.0.1:8130/health"
 #    #heartbeat_file: "..."       # must match trading.watchdog.heartbeat_file
 #    #heartbeat_max_age: 30       # seconds; watchdog considered dead past this
+#    #log_dir: "..."              # defaults to ainara.yaml logging.directory, so the
+#                                 # executor + watchdog logs sit with every other
+#                                 # Ainara log rather than in /tmp
 
 # Plan schedules
 plans:
@@ -295,15 +298,44 @@ def load_scheduler_config(raw):
     }
 
 
+def default_executor_log_dir():
+    """Where the executor services' logs go: the same Logs/ directory as every other
+    Ainara log, falling back to LOG_DIR if that cannot be resolved.
+
+    LOG_DIR is "/tmp", which on Windows resolves to C:\\tmp — not the real temp dir,
+    and not anywhere anyone thinks to look. These two files are the forensic record
+    of the component that moves money: after the 2026-07-27 incident had to be
+    reconstructed from venue fill history, "somewhere nobody looks" is not good
+    enough. `logging.directory` in ainara.yaml is where the rest already live.
+
+    Deliberately NOT applied to ORAKLE_LOG / BUREAU_LOG: those are the scheduler's
+    captured stdout, while the framework writes its OWN rotating orakle.log and
+    bureau.log into that same directory. Pointing both at one path would give one
+    file two writers.
+    """
+    try:
+        d = ConfigManager().get("logging.directory")
+        if d:
+            os.makedirs(d, exist_ok=True)
+            return d
+    except Exception as e:
+        log_error(f"could not resolve logging.directory ({e}); "
+                  f"executor logs fall back to {LOG_DIR}")
+    return LOG_DIR
+
+
 def _load_executor_config(raw):
     """Executor managed-services settings from scheduler.yaml `services.executor`.
 
     Default OFF: users who don't run the trading strategy never spawn its daemon.
     """
     svc = ((raw.get("services") or {}).get("executor") or {})
+    log_dir = svc.get("log_dir") or default_executor_log_dir()
     return {
         "executor_enabled": bool(svc.get("enabled", False)),
         "executor_python": svc.get("venv_python") or default_executor_python(),
+        "executor_log": os.path.join(log_dir, EXECUTOR_LOG_NAME),
+        "watchdog_log": os.path.join(log_dir, WATCHDOG_LOG_NAME),
         "executor_health_url": svc.get(
             "health_url", DEFAULT_EXECUTOR_HEALTH_URL),
         "watchdog_heartbeat_file": svc.get(
@@ -322,10 +354,12 @@ def executor_services(sched_config):
     py = sched_config["executor_python"]
     cwd = str(PROJECT_ROOT)
     return [
-        {"name": "executor", "cmd": EXECUTOR_CMD, "log": EXECUTOR_LOG,
+        {"name": "executor", "cmd": EXECUTOR_CMD,
+         "log": sched_config["executor_log"],
          "python_exe": py, "cwd": cwd,
          "health": {"type": "http", "url": sched_config["executor_health_url"]}},
-        {"name": "watchdog", "cmd": WATCHDOG_CMD, "log": WATCHDOG_LOG,
+        {"name": "watchdog", "cmd": WATCHDOG_CMD,
+         "log": sched_config["watchdog_log"],
          "python_exe": py, "cwd": cwd,
          "health": {"type": "heartbeat",
                     "path": sched_config["watchdog_heartbeat_file"],
@@ -567,7 +601,9 @@ def stop_services(sched_config=None):
         # spurious alarms during the brief teardown window.
         stop_process("executor.watchdog")
         stop_process("executor.server")
-        logs += [EXECUTOR_LOG, WATCHDOG_LOG]
+        # The executor logs are deliberately NOT added to `logs` below: they are the
+        # trading stack's forensic record and a clean stop is no reason to destroy
+        # it. "Why did it stop?" is a question you ask AFTER stopping.
 
     for log_file in logs:
         if os.path.exists(log_file):
