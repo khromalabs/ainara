@@ -47,21 +47,46 @@ from executor.venues.dydx_permissioned import (
 MAJORS_CLOB_IDS = [0, 1, 5]
 
 
+# How many subaccounts to authorize by default. An authenticator is IMMUTABLE — the
+# protocol has add/remove and no edit — so every change of scope means registering a
+# new one, signed by the account owner, which means handling the main mnemonic again.
+# Authorizing a small range up front makes that a one-time event: adding a fourth coin
+# later becomes a config edit instead of another on-chain grant with your seed out.
+#
+# The wider grant costs approximately nothing. The scope still only permits
+# place/cancel, still only in subaccounts of an account you own, and still cannot
+# transfer or withdraw — so the worst a leaked bot key gains from the extra range is
+# the ability to place orders in an empty subaccount it could already place in one.
+DEFAULT_AUTHORIZED_SUBACCOUNTS = 6  # 0..5
+
+
 def authorized_subaccounts(cfg):
-    """Subaccounts the bot key may trade in: 0 plus every isolation target.
+    """Subaccounts the bot key may trade in.
 
     The authenticator is composed AllOf, so `subaccount_filter` is a HARD on-chain
     allowlist — an order aimed at a subaccount outside it is REJECTED by the chain,
     not merely discouraged. Position isolation routes ETH to subaccount 1 and SOL to
     2 (trading.dydx.subaccounts), so a key scoped to [0] silently makes every
-    isolated coin unopenable, and finds out mid-hedge with the short leg already on.
+    isolated coin unopenable, and finds that out mid-hedge with the short leg on.
 
-    Derived from the same config map the adapter reads, so the on-chain scope and the
-    routing cannot drift apart. 0 is always included: it is the default for unmapped
-    coins and the account the collateral arrives in.
+    Resolution order:
+      1. `trading.dydx.authorized_subaccounts` — an explicit list, if you want to
+         pin the grant exactly.
+      2. `trading.dydx.authorize_count` (default 6) — authorize 0..n-1, covering
+         today's coins and headroom for the next few.
+
+    Always a superset of the isolation map, so the on-chain scope and the routing
+    cannot drift apart, and always includes 0 (the default for unmapped coins and
+    where collateral arrives).
     """
-    mapped = (cfg.get("trading.dydx.subaccounts", {}) or {}).values()
-    return sorted({0, *(int(v) for v in mapped)})
+    mapped = {int(v) for v in
+              (cfg.get("trading.dydx.subaccounts", {}) or {}).values()}
+    explicit = cfg.get("trading.dydx.authorized_subaccounts")
+    if explicit:
+        return sorted({0, *mapped, *(int(v) for v in explicit)})
+    count = int(cfg.get("trading.dydx.authorize_count",
+                        DEFAULT_AUTHORIZED_SUBACCOUNTS))
+    return sorted({0, *mapped, *range(max(count, 1))})
 
 
 def _compress(pub):
