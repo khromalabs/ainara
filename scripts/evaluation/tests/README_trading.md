@@ -11,6 +11,8 @@ Orakle deps — see `executor/README.md`), so the tests do too:
 |---|---|---|
 | `test_trading_watchdog.py` | any | stdlib only (imports `executor.watchdog`) |
 | `test_trading_notify.py` | any | stdlib only; HTTP transport is stubbed |
+| `test_trading_venue_state.py` | **executor** (`executor/.venv`) | venue adapters; `requests` / `_info` stubbed |
+| `test_trading_ledger.py` | ainara (main) | `ainara` package; writes to a temp DB |
 | `test_trading_plan_hedge_legs.py` | **executor** (`executor/.venv`) | Flask + venue SDKs to import `executor.server` |
 | `test_trading_carry_engine.py` | ainara (main) | `ainara` package; HL fetch is mocked |
 | `test_trading_plan_vars.py` | ainara (main) | reads the real `plans/*.yaml` |
@@ -27,13 +29,15 @@ venv/Scripts/python.exe -m unittest \
   scripts.evaluation.tests.test_trading_plan_vars \
   scripts.evaluation.tests.test_trading_portfolio \
   scripts.evaluation.tests.test_trading_watchdog \
-  scripts.evaluation.tests.test_trading_notify
+  scripts.evaluation.tests.test_trading_notify \
+  scripts.evaluation.tests.test_trading_ledger
 
 # executor venv (for the daemon's order-planner) — run the FILE directly, not
 # via `-m unittest`: the executor venv lacks ainara's deps, and the unittest
 # module path would import scripts/evaluation/__init__.py (which pulls in
 # ainara.framework.config). Running the file bypasses that package import.
 executor/.venv/Scripts/python.exe scripts/evaluation/tests/test_trading_plan_hedge_legs.py
+executor/.venv/Scripts/python.exe scripts/evaluation/tests/test_trading_venue_state.py
 ```
 
 `test_trading_watchdog.py` and `test_trading_notify.py` are stdlib-only and run

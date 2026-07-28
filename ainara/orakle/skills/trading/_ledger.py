@@ -122,18 +122,60 @@ def _open_prices(result):
     return short_px, long_px
 
 
+def _filled_size(result):
+    """Per-leg size ACTUALLY filled, from a /hedge/open result. None if unknown.
+
+    The ledger used to store `decision["size"]` — the size the engine PLANNED. The
+    daemon then quantizes down to the coarser of the two venues' size steps (see
+    server._hedge_size_step), so every row overstated the position it recorded: BTC
+    went in as 0.000898 against 0.0008 actually filled. Since the analytics divide
+    realized funding BY notional_usd, a 12% overstatement silently suppressed every
+    realized rate by 12% — the metric the ledger exists to produce.
+
+    The daemon reports both confirmed legs in `positions` (server.py's hedged
+    return), so the truth is already in hand. Takes the SMALLER leg when they
+    differ: that is the quantity genuinely hedged, and any excess on one side is
+    residual delta rather than carry. Returns None unless BOTH legs are non-zero —
+    a half-open hedge has no single honest size, and the planned value is a more
+    useful fallback than a confident wrong number.
+    """
+    try:
+        positions = (result or {}).get("positions") or {}
+        sizes = [abs(float(v)) for v in positions.values() if v]
+    except (TypeError, ValueError):
+        return None
+    return min(sizes) if len(sizes) >= 2 else None
+
+
 def record_open(decision, result):
     """Insert an 'open' row from the decide verdict + the /hedge/open result.
 
     `decision` is the unwrapped decide verdict (the dict with the prediction).
     Returns the new row id, or None on any failure (logged, never raised).
+
+    Size and notional come from what the venues FILLED, falling back to what the
+    engine planned only when the result does not report both legs.
     """
     try:
         d = decision or {}
+        planned = _num(d.get("size"))
+        ref_price = _num(d.get("ref_price"))
+        filled = _filled_size(result)
+        size = filled if filled is not None else planned
+        if filled is not None and planned and abs(filled - planned) > 1e-12:
+            logger.info(
+                "carry ledger: recording FILLED size %s (engine planned %s —"
+                " quantized down to the venue step)", filled, planned)
+        # Derive notional from the size we actually got. The planned
+        # sizing.effective_notional_per_leg is computed from the planned size and
+        # inherits exactly the same overstatement, so it is only a fallback.
         notional = None
-        sizing = d.get("sizing")
-        if isinstance(sizing, dict):
-            notional = _num(sizing.get("effective_notional_per_leg"))
+        if filled is not None and ref_price:
+            notional = round(filled * ref_price, 2)
+        if notional is None:
+            sizing = d.get("sizing")
+            if isinstance(sizing, dict):
+                notional = _num(sizing.get("effective_notional_per_leg"))
         short_px, long_px = _open_prices(result)
         opened_at = (result or {}).get("as_of") or _now_iso()
         with _conn() as conn:
@@ -146,7 +188,7 @@ def record_open(decision, result):
                     open_short_px, open_long_px, open_decision_json)
                    VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (d.get("coin"), opened_at, d.get("short_venue"), d.get("long_venue"),
-                 _num(d.get("size")), _num(d.get("ref_price")), notional,
+                 size, ref_price, notional,
                  _num(d.get("leverage")),
                  _num(d.get("smoothed_spread_annual_pct")),
                  _num(d.get("net_annual_pct_on_capital_if_spread_holds")),
