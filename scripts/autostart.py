@@ -46,6 +46,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TASK_NAME = "Ainara Sentinel Scheduler"
+# ISO-8601 duration. Long enough for DHCP/Wi-Fi to settle before the watchdog's first
+# venue read, short enough that an open hedge is not left unguarded for long.
+LOGON_DELAY = "PT1M"
 
 
 def _config_dir():
@@ -142,8 +145,19 @@ def _register_via_powershell(launcher):
 $act = New-ScheduledTaskAction -Execute 'powershell.exe' `
   -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{launcher}"'
 $trg = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"
+# Wait for the network before starting. Without this the watchdog's first venue reads
+# fail, it correctly raises venue_unreadable, pushes an alarm, then pushes an all-clear
+# once connectivity arrives — two spurious alerts at EVERY logon, which is how an
+# alerting channel becomes something you learn to ignore.
+$trg.Delay = '{LOGON_DELAY}'
+# ExecutionTimeLimit 0 = unlimited. The default is 72 hours, after which Windows
+# TERMINATES the task: the supervisor would be killed on day three, silently, leaving
+# the daemon and watchdog running but unsupervised. This process is meant to run
+# forever.
 $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries -StartWhenAvailable
+  -DontStopIfGoingOnBatteries -StartWhenAvailable `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 `
+  -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $act -Trigger $trg `
   -Settings $set -Force -ErrorAction Stop | Out-Null
 """
@@ -157,6 +171,27 @@ def status():
         installed = r.returncode == 0
         print(f"logon task '{TASK_NAME}': "
               f"{'INSTALLED' if installed else 'not installed'}")
+        if installed:
+            # Surface the two settings that decide whether it actually works:
+            # a delay so the network is up, and no execution time limit.
+            d = _powershell(
+                f"$t = Get-ScheduledTask -TaskName '{TASK_NAME}';"
+                " $d = ($t.Triggers | Select-Object -First 1).Delay;"
+                " $l = $t.Settings.ExecutionTimeLimit;"
+                " \"delay=$d limit=$l\"")
+            if d.returncode == 0:
+                info = d.stdout.strip()
+                notes = []
+                if "delay=" in info and "delay=P" not in info:
+                    notes.append("no startup delay — expect spurious "
+                                 "venue_unreadable alerts before the network is up")
+                # PT0S is Task Scheduler's encoding of "no limit" — do not flag it.
+                if "limit=PT" in info and "limit=PT0S" not in info:
+                    notes.append("execution time limit set — Windows will KILL the "
+                                 "scheduler when it expires")
+                print(f"  {info}")
+                for n in notes:
+                    print(f"  WARNING: {n}  (re-run --install to fix)")
     else:
         print("logon autostart: not managed on this platform (see --install output)")
     launcher = _launcher_path()

@@ -184,8 +184,18 @@ async def main(args):
     address = creds.get("account_address")
     indexer = INDEXER[network]
 
+    # The seed is needed only to SIGN. Reading balances and planning transfers are
+    # public-indexer operations, so with no flags this doubles as the subaccount
+    # viewer — which matters because the dYdX web app is built around subaccount 0 and
+    # will not show you an isolated coin sitting in #1 or #2. Demanding a wallet seed
+    # to answer "where is my money" would be a bad trade.
     mnemonic = os.environ.get("DYDX_MAIN_MNEMONIC")
-    if not mnemonic:
+    if mnemonic:
+        derived = _address_from_mnemonic(mnemonic)
+        if derived != address:
+            sys.exit(f"WRONG SEED: it derives {derived}, but config expects"
+                     f" {address}. Refusing before signing anything.")
+    elif args.broadcast:
         sys.exit(
             "No DYDX_MAIN_MNEMONIC in the environment.\n"
             "  This needs the OWNER key — the bot's trade-only credential cannot\n"
@@ -193,10 +203,6 @@ async def main(args):
             "    $env:DYDX_MAIN_MNEMONIC = 'word word ...'\n"
             "  It disappears when that terminal closes. Do NOT put it in ainara.yaml."
         )
-    derived = _address_from_mnemonic(mnemonic)
-    if derived != address:
-        sys.exit(f"WRONG SEED: it derives {derived}, but config expects {address}."
-                 " Refusing before signing anything.")
 
     current = read_subaccounts(indexer, address)
     mapped = {str(k).upper(): int(v)
@@ -212,6 +218,16 @@ async def main(args):
         print(f"  #{num}: equity {s['equity']:>8.2f}  free {s['free']:>8.2f}  [{held}]")
     for num in sorted(set(mapped.values()) - set(current)):
         print(f"  #{num}: does not exist yet (it will, the moment it is funded)")
+    if mapped:
+        print("\nrouting:")
+        for coin, num in sorted(mapped.items(), key=lambda kv: kv[1]):
+            sub = current.get(num)
+            where = (f"free {sub['free']:.2f},"
+                     f" {', '.join(sub['positions']) or 'flat'}"
+                     if sub else "UNFUNDED — this coin cannot open")
+            print(f"  {coin:<5} -> #{num}  ({where})")
+    if not mnemonic:
+        print("\n(read-only: no DYDX_MAIN_MNEMONIC set, so nothing can be sent)")
 
     if args.even:
         targets = sorted(set(mapped.values()) | {0})
