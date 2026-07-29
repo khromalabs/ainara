@@ -4,32 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Ainara** is a modular, local-first AI companion framework. It follows a client-server architecture with three main components:
+**Ainara** is a modular, local-first AI companion framework. It follows a client-server architecture with four main components:
 
+### UPDATED:
 - **Polaris** – Electron desktop frontend (system tray app, rich chat UI)
 - **Orakle** – Flask REST API backend that hosts the skills/tools system and manages LLM routing
-- **PyBridge** – Flask REST API backend that exposes the Python backend functionality (Chat Manager, GREEN Memories=long term dynamic context memory system, meaning: Generatively Reinforced Evolving Embeddings Network, Faster Whisper STT and Kokoro TTS interfaces, Orakle Middleware for client side execution of skills, etc) 
+- **PyBridge** – Flask REST API backend that exposes the Python backend functionality (Chat Manager, GREEN Memories=long term dynamic context memory system, meaning: Generatively Reinforced Evolving Embeddings Network, Faster Whisper STT and Kokoro TTS interfaces, Orakle Middleware for client side execution of skills, etc)
+**Bureau** – Agents and Agents orchestration plan server.
+
+### OUTDATED:
 - **Kommander** – Alternative CLI interface (legacy/WIP/very outdated)
 
-## Running the Backend Services
-
-A basic way to run the backend during development is via a services manager script:
+## Installing Python+Node Dependencies
 
 ```bash
-# Start all backend services (Orakle on :8100, PyBridge on :8101)
-python scripts/services.py start
-
-# Stop all services
-python scripts/services.py stop
-
-# Restart
-python scripts/services.py restart
+pip install -r requirements.txt
+pip install -e .   # Install ainara package in editable mode
+npm install
 ```
-
-The services script handles virtualenv activation, health-check polling, and log tailing (logs go to `/tmp`).
-
-
-
 
 ## Running the Frontend (Polaris)
 
@@ -55,12 +47,19 @@ export AINARA_USE_SOURCE=1 && npm run start
 
 Otherwise the application attempts to use the packaged service executables with PyInstaller (see below).
 
-## Installing Python Dependencies
+## Running the Sentinel scheduler script
+
+An alternative way to run the backend services with no UI frontend for scheduled agentic jobs
 
 ```bash
-pip install -r requirements.txt
-pip install -e .   # Install ainara package in editable mode
+# Start Buraeau+Orakle
+scripts/scheduler.py
+
+# stop all services
+(press Control+C to quit)
 ```
+
+The services script handles virtualenv activation, health-check polling, and log tailing (same log directories as Polaris).
 
 ## Running Tests
 

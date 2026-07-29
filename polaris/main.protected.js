@@ -178,7 +178,7 @@ function showSetupWizard(validationErrors = []) {
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        width: screenHeight,
+        width: screenHeight*1.2,
         height: Math.floor(screenHeight * 0.9),
         webPreferences: {
             nodeIntegration: true,
