@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Delta-neutral positions</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:      #0d1117;
+    --panel:   #161b22;
+    --panel-2: #1c232c;
+    --line:    #30363d;
+    --line-soft:#242c35;
+    --text:    #c9d1d9;
+    --dim:     #8b949e;
+    --bright:  #e6edf3;
+    --pos:     #3fb950;
+    --neg:     #f85149;
+    --warn:    #d29922;
+    --long:    #2ea043;
+    --short:   #bc4c56;
+    --accent:  #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 12px 14px 20px;
+  }
+  .num { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+         font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .muted { color: var(--dim); }
+
+  /* ---------- top bar ---------- */
+  .topbar { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+            margin-bottom: 10px; }
+  .topbar h1 { font-size: 14px; font-weight: 600; color: var(--bright); margin: 0;
+               letter-spacing: .01em; }
+  .spacer { flex: 1 1 auto; }
+  .ctl { display: flex; align-items: center; gap: 8px; font-size: 11px;
+         color: var(--dim); }
+  .ctl button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 4px; padding: 3px 9px;
+    cursor: pointer;
+  }
+  .ctl button:hover { border-color: var(--accent); color: var(--bright); }
+  .ctl button[aria-pressed="true"] { border-color: var(--pos); color: var(--pos); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim);
+         display: inline-block; }
+  .dot.live { background: var(--pos); }
+  .dot.busy { background: var(--accent); animation: pulse .9s ease-in-out infinite; }
+  .dot.stale { background: var(--warn); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  .banner { border-left: 3px solid var(--warn); background: var(--panel);
+            padding: 7px 10px; border-radius: 4px; margin-bottom: 10px;
+            font-size: 12px; color: var(--warn); }
+  .banner.err { border-left-color: var(--neg); color: var(--neg); }
+  .banner[hidden] { display: none; }
+
+  /* ---------- book summary ---------- */
+  .book { display: flex; gap: 0; flex-wrap: wrap;
+          background: var(--panel); border: 1px solid var(--line);
+          border-radius: 6px; padding: 2px 0; margin-bottom: 12px; }
+  .stat { flex: 1 1 140px; padding: 8px 14px; border-right: 1px solid var(--line-soft); }
+  .stat:last-child { border-right: 0; }
+  .stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+             color: var(--dim); margin-bottom: 3px; }
+  .stat .v { font-size: 16px; color: var(--bright); }
+  .stat .sub { font-size: 10.5px; color: var(--dim); margin-top: 2px; }
+
+  /* ---------- coin grid ---------- */
+  .grid { display: grid; gap: 12px;
+          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 6px; overflow: hidden; }
+  .card.attn { border-color: var(--warn); }
+  .card > header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: var(--panel-2);
+    border-bottom: 1px solid var(--line);
+  }
+  .coin { font-size: 15px; font-weight: 700; color: var(--bright);
+          letter-spacing: .03em; }
+  .pill { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+          padding: 2px 7px; border-radius: 10px; border: 1px solid var(--line);
+          color: var(--dim); }
+  .pill.ok   { color: var(--pos);  border-color: #1e4b28; background: #10261700; }
+  .pill.warn { color: var(--warn); border-color: #5c4610; }
+  .pill.bad  { color: var(--neg);  border-color: #6e2a2a; }
+
+  /* legs */
+  .leg { padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+  .leg-top { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+  .venue { font-size: 11px; font-weight: 600; color: var(--bright);
+           text-transform: uppercase; letter-spacing: .05em; }
+  .side { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+          letter-spacing: .05em; }
+  .side.long  { background: #10331a; color: #56d364; }
+  .side.short { background: #3d1d20; color: #ff7b72; }
+  .leg-top .sz { margin-left: auto; font-size: 12px; color: var(--bright); }
+
+  .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 8px;
+        font-size: 11px; margin-bottom: 7px; }
+  .kv div span { display: block; color: var(--dim); font-size: 10px; }
+  .kv div b { font-weight: 500; color: var(--text); font-size: 11.5px; }
+
+  /* liquidation buffer */
+  .liq { font-size: 10.5px; }
+  .liq-head { display: flex; justify-content: space-between; margin-bottom: 3px;
+              color: var(--dim); }
+  .liq-head b { font-weight: 600; }
+  .bar { height: 5px; border-radius: 3px; background: #232a33; overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 3px; }
+  .bar > i.safe { background: linear-gradient(90deg,#238636,#3fb950); }
+  .bar > i.mid  { background: linear-gradient(90deg,#9e6a06,#d29922); }
+  .bar > i.risk { background: linear-gradient(90deg,#a13c36,#f85149); }
+  .liq-note { color: var(--warn); margin-top: 3px; }
+
+  /* funding footer */
+  .fund { padding: 9px 12px; background: #12171e; }
+  .fund-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+  .fund-top .lbl { font-size: 10px; text-transform: uppercase;
+                   letter-spacing: .06em; color: var(--dim); }
+  .fund-top .amt { font-size: 15px; margin-left: auto; }
+  .fund-legs { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px;
+               font-size: 10.5px; color: var(--dim); }
+  .fund-legs b { font-weight: 500; }
+
+  .empty { padding: 26px 14px; text-align: center; color: var(--dim);
+           border: 1px dashed var(--line); border-radius: 6px; }
+  footer.foot { margin-top: 12px; font-size: 10.5px; color: var(--dim);
+                display: flex; gap: 10px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Delta-neutral book</h1>
+  <span class="pill" id="scope-pill" hidden></span>
+  <span class="spacer"></span>
+  <div class="ctl">
+    <span class="dot" id="dot"></span>
+    <span id="age">waiting for data</span>
+    <button id="refresh" type="button">Refresh</button>
+    <button id="auto" type="button" aria-pressed="true">Auto 60s</button>
+  </div>
+</div>
+
+<div class="banner" id="banner" hidden></div>
+
+<div class="book" id="book" hidden></div>
+<div class="grid" id="grid"></div>
+<div class="empty" id="empty" hidden>No open positions.</div>
+
+<footer class="foot">
+  <span>Liquidation buffer = distance from mark to liquidation price.</span>
+  <span>Funding: <span class="pos">green = you receive</span>,
+        <span class="neg">red = you pay</span>.</span>
+  <span id="src"></span>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------- state
+  var POLL_MS   = 60000;   // full-book status touches both venues per coin and
+                           // takes ~7s; do not tighten this without measuring.
+  var STALE_MS  = 150000;  // past this the age readout turns amber
+  var lastAt    = 0;       // epoch ms of last successful load
+  var auto      = true;
+  var inFlight  = false;
+  var timer     = null;
+  var gotPush   = false;   // did a postMessage payload ever arrive?
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------------------------------------------------------- formatting
+  function num(v) { return (typeof v === "number" && isFinite(v)); }
+
+  function money(v, force) {
+    if (!num(v)) return "—";
+    // Sub-dollar amounts are the norm here (funding per day on a ~$180 book),
+    // and 2dp rounds them into meaninglessness — a real -$0.0249/day should
+    // never read as "-$0.02". Only notional-scale numbers get 2dp.
+    var d = (v !== 0 && Math.abs(v) < 1) ? 4 : 2;
+    var s = Math.abs(v).toLocaleString(undefined,
+              { minimumFractionDigits: d, maximumFractionDigits: d });
+    var sign = v < 0 ? "-" : (force ? "+" : "");
+    return sign + "$" + s;
+  }
+
+  function px(v) {
+    if (!num(v)) return "—";
+    var d = Math.abs(v) >= 1000 ? 2 : (Math.abs(v) >= 1 ? 3 : 6);
+    return v.toLocaleString(undefined,
+             { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
+  function size(v) {
+    if (!num(v)) return "—";
+    return Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 6 });
+  }
+
+  function pct(v, d) {
+    if (!num(v)) return "—";
+    return v.toFixed(d === undefined ? 1 : d) + "%";
+  }
+
+  function signClass(v) {
+    if (!num(v) || v === 0) return "";
+    return v > 0 ? "pos" : "neg";
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  }
+
+  // ------------------------------------------------------------- render
+  function healthPill(h) {
+    var cls = "pill";
+    if (h === "ok") cls += " ok";
+    else if (h === "warning" || h === "warn") cls += " warn";
+    else if (h) cls += " bad";
+    return el("span", cls, h || "unknown");
+  }
+
+  function bufferClass(p) {
+    if (!num(p)) return "mid";
+    if (p < 10) return "risk";
+    if (p < 25) return "mid";
+    return "safe";
+  }
+
+  function renderLeg(venueKey, leg, econLeg) {
+    var wrap = el("div", "leg");
+    if (!leg || leg.error) {
+      wrap.appendChild(el("div", "venue", venueKey));
+      wrap.appendChild(el("div", "liq-note",
+        leg && leg.error ? String(leg.error) : "no data for this leg"));
+      return wrap;
+    }
+
+    var top = el("div", "leg-top");
+    top.appendChild(el("span", "venue", venueKey));
+    var side = leg.side || (num(leg.size) && leg.size < 0 ? "short" : "long");
+    top.appendChild(el("span", "side " + side, side));
+    if (num(leg.subaccount)) {
+      top.appendChild(el("span", "pill", "sub " + leg.subaccount));
+    }
+    var szTxt = size(leg.size);
+    if (num(leg.size) && num(leg.mark_px)) {
+      szTxt += "  ·  " + money(Math.abs(leg.size) * leg.mark_px);
+    }
+    top.appendChild(el("span", "sz num", szTxt));
+    wrap.appendChild(top);
+
+    var kv = el("div", "kv");
+    [["entry", px(leg.entry_px)],
+     ["mark",  px(leg.mark_px)]].forEach(function (p) {
+      var c = el("div");
+      c.appendChild(el("span", null, p[0]));
+      c.appendChild(el("b", "num", p[1]));
+      kv.appendChild(c);
+    });
+    var pnl = el("div");
+    pnl.appendChild(el("span", null, "unrealized"));
+    pnl.appendChild(el("b", "num " + signClass(leg.unrealized_pnl),
+                       money(leg.unrealized_pnl, true)));
+    kv.appendChild(pnl);
+    wrap.appendChild(kv);
+
+    // liquidation buffer — the number position isolation bought
+    var liq = el("div", "liq");
+    var head = el("div", "liq-head");
+    head.appendChild(el("span", null, "liq buffer"));
+    var right = el("span", "num");
+    right.textContent = num(leg.liq_distance_pct)
+      ? pct(leg.liq_distance_pct) + "  ·  " + px(leg.liquidation_px)
+      : "not computed";
+    head.appendChild(right);
+    liq.appendChild(head);
+
+    var bar = el("div", "bar");
+    var fill = el("i", bufferClass(leg.liq_distance_pct));
+    // Buffers run past 100% (a short's liquidation sits above mark with no
+    // ceiling), so cap the visual at 100% and let the number carry the rest.
+    var w = num(leg.liq_distance_pct)
+      ? Math.max(0, Math.min(100, leg.liq_distance_pct)) : 0;
+    fill.style.width = w + "%";
+    bar.appendChild(fill);
+    liq.appendChild(bar);
+
+    if (leg.liq_note) {
+      liq.appendChild(el("div", "liq-note", "⚠ " + leg.liq_note));
+    }
+    wrap.appendChild(liq);
+    return wrap;
+  }
+
+  function renderCard(p) {
+    var card = el("div", "card");
+    if (p.health && p.health !== "ok") card.className += " attn";
+
+    var head = el("header");
+    head.appendChild(el("span", "coin", p.coin || "?"));
+    head.appendChild(healthPill(p.health));
+    if (p.verdict) head.appendChild(el("span", "muted", p.verdict));
+    card.appendChild(head);
+
+    var legs = p.legs || {};
+    var econ = (p.economics && p.economics.per_leg) || {};
+    card.appendChild(renderLeg("hyperliquid", legs.hyperliquid, econ.hyperliquid));
+    card.appendChild(renderLeg("dydx", legs.dydx, econ.dydx));
+
+    // combined PnL + funding
+    var e = p.economics || {};
+    var fund = el("div", "fund");
+
+    var row1 = el("div", "fund-top");
+    row1.appendChild(el("span", "lbl", "combined unrealized"));
+    row1.appendChild(el("span", "amt num " + signClass(p.combined_unrealized_pnl_usd),
+                        money(p.combined_unrealized_pnl_usd, true)));
+    fund.appendChild(row1);
+
+    var perDay = e.net_funding_per_day_usd;
+    var row2 = el("div", "fund-top");
+    row2.appendChild(el("span", "lbl",
+      num(perDay) && perDay < 0 ? "net funding — paying" : "net funding — earning"));
+    var amt = el("span", "amt num " + signClass(perDay),
+                 money(perDay, true) + " /day");
+    row2.appendChild(amt);
+    fund.appendChild(row2);
+
+    var fl = el("div", "fund-legs");
+    ["hyperliquid", "dydx"].forEach(function (k) {
+      var d = econ[k];
+      var c = el("div");
+      if (!d) { c.textContent = k + " —"; fl.appendChild(c); return; }
+      c.appendChild(document.createTextNode(k + " "));
+      var r = el("b", "num", pct(d.funding_rate_annual_pct, 2) + " APR");
+      c.appendChild(r);
+      c.appendChild(document.createTextNode(" · "));
+      var h = el("b", "num " + signClass(d.you_receive_per_hour_usd),
+                 money(d.you_receive_per_hour_usd, true) + "/h");
+      c.appendChild(h);
+      fl.appendChild(c);
+    });
+    fund.appendChild(fl);
+
+    if (e.note) fund.appendChild(el("div", "liq-note", e.note));
+    card.appendChild(fund);
+    return card;
+  }
+
+  function renderBook(d) {
+    var book = $("book");
+    book.innerHTML = "";
+    var positions = d.positions || [];
+    var s = d.summary || {};
+
+    // Notional = one side of the hedge (both legs are the same size), summed.
+    var notional = 0, upnl = 0;
+    positions.forEach(function (p) {
+      var lg = p.legs || {};
+      // Prefer the HL leg, but fall back to dYdX so a missing or errored leg
+      // undercounts the book's exposure instead of silently dropping it.
+      var ref = [lg.hyperliquid, lg.dydx].filter(function (l) {
+        return l && num(l.size) && num(l.mark_px) && Math.abs(l.size) > 0;
+      })[0];
+      if (ref) notional += Math.abs(ref.size) * ref.mark_px;
+      if (num(p.combined_unrealized_pnl_usd)) upnl += p.combined_unrealized_pnl_usd;
+    });
+    if (num(s.combined_unrealized_pnl_usd)) upnl = s.combined_unrealized_pnl_usd;
+
+    var perDay = num(s.net_funding_per_day_usd) ? s.net_funding_per_day_usd : null;
+    if (perDay === null) {
+      perDay = 0;
+      positions.forEach(function (p) {
+        var v = (p.economics || {}).net_funding_per_day_usd;
+        if (num(v)) perDay += v;
+      });
+    }
+    var apr = (notional > 0) ? (perDay * 365 / notional) * 100 : null;
+
+    // Worst liquidation buffer across every leg — the book's real risk edge.
+    var worst = null, worstWhere = "";
+    positions.forEach(function (p) {
+      ["hyperliquid", "dydx"].forEach(function (k) {
+        var v = ((p.legs || {})[k] || {}).liq_distance_pct;
+        if (num(v) && (worst === null || v < worst)) {
+          worst = v; worstWhere = p.coin + " " + k;
+        }
+      });
+    });
+
+    function stat(k, v, cls, sub) {
+      var n = el("div", "stat");
+      n.appendChild(el("div", "k", k));
+      n.appendChild(el("div", "v num " + (cls || ""), v));
+      if (sub) n.appendChild(el("div", "sub", sub));
+      book.appendChild(n);
+    }
+
+    stat("positions", String(positions.length),
+         "", (d.open_coins || []).join(" · ") || "—");
+    stat("notional (per side)", money(notional), "",
+         "both legs matched · net delta 0");
+    stat("unrealized", money(upnl, true), signClass(upnl), "both legs combined");
+    stat("net funding", money(perDay, true) + " /day", signClass(perDay),
+         (perDay < 0 ? "paying" : "earning") +
+         (apr !== null ? "  ·  " + pct(apr, 1) + " APR on notional" : ""));
+    stat("worst liq buffer", worst === null ? "—" : pct(worst),
+         worst === null ? "" : (worst < 10 ? "neg" : (worst < 25 ? "" : "pos")),
+         worstWhere || "—");
+    book.hidden = false;
+  }
+
+  function render(d) {
+    if (!d || typeof d !== "object") return;
+
+    var banner = $("banner");
+    if (d.error) {
+      banner.hidden = false;
+      banner.className = "banner err";
+      banner.textContent = "⚠ " + d.error;
+    } else if (d.summary && d.summary.attention_needed) {
+      banner.hidden = false;
+      banner.className = "banner";
+      banner.textContent = "⚠ Attention needed — worst health: " +
+        (d.summary.worst_health || "?") +
+        (d.summary.note ? " — " + d.summary.note : "");
+    } else {
+      banner.hidden = true;
+    }
+
+    var positions = (d.positions || []).slice();
+    var grid = $("grid");
+    grid.innerHTML = "";
+    positions.forEach(function (p) { grid.appendChild(renderCard(p)); });
+    $("empty").hidden = positions.length > 0;
+    if (positions.length) renderBook(d); else $("book").hidden = true;
+
+    var scope = $("scope-pill");
+    if (d.scope) { scope.hidden = false; scope.textContent = d.scope; }
+
+    $("src").textContent = d.as_of ? "venue timestamp " + d.as_of : "";
+    lastAt = Date.now();
+    tickAge();
+  }
+
+  // ------------------------------------------------------------ refresh
+  // The component is served from Orakle's own origin, so it can re-read the
+  // skill itself instead of waiting for another postMessage. Opened straight
+  // off disk (file://) a relative URL would resolve to file:///C:/run/... and
+  // fail, so fall back to the default Orakle address in that case.
+  var BASE = (location.protocol === "http:" || location.protocol === "https:")
+    ? "" : "http://127.0.0.1:8100";
+
+  function fetchNow() {
+    if (inFlight) return;
+    inFlight = true;
+    setDot("busy");
+
+    var ctl = new AbortController();
+    var to = setTimeout(function () { ctl.abort(); }, 30000);
+
+    fetch(BASE + "/run/trading_portfolio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "status", coin: "ALL" }),
+      signal: ctl.signal
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (j) { render(j && j.result ? j.result : j); })
+      .catch(function (e) {
+        // Keep the last good picture on screen — a blank risk view is worse
+        // than a stale one, as long as the staleness is visible.
+        var b = $("banner");
+        b.hidden = false;
+        b.className = "banner";
+        b.textContent = "Refresh failed (" + (e && e.message ? e.message : e) +
+          ") — showing last good data.";
+      })
+      .then(function () {
+        clearTimeout(to);
+        inFlight = false;
+        tickAge();
+        schedule();
+      });
+  }
+
+  function schedule() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    if (auto && !document.hidden) timer = setTimeout(fetchNow, POLL_MS);
+  }
+
+  function setDot(state) {
+    $("dot").className = "dot" + (state ? " " + state : "");
+  }
+
+  function tickAge() {
+    var a = $("age");
+    if (!lastAt) { a.textContent = "waiting for data"; return; }
+    var s = Math.round((Date.now() - lastAt) / 1000);
+    a.textContent = s < 2 ? "just now" :
+      (s < 90 ? s + "s ago" : Math.round(s / 60) + "m ago");
+    if (inFlight) { setDot("busy"); return; }
+    setDot(Date.now() - lastAt > STALE_MS ? "stale" : (auto ? "live" : ""));
+  }
+  setInterval(tickAge, 1000);
+
+  // ------------------------------------------------------------- inputs
+  $("refresh").addEventListener("click", fetchNow);
+  $("auto").addEventListener("click", function () {
+    auto = !auto;
+    this.setAttribute("aria-pressed", String(auto));
+    this.textContent = auto ? "Auto 60s" : "Auto off";
+    schedule();
+    tickAge();
+  });
+  document.addEventListener("visibilitychange", function () {
+    // Do not poll venue endpoints while the panel is not being looked at.
+    if (document.hidden) { if (timer) clearTimeout(timer); timer = null; }
+    else schedule();
+  });
+
+  // The payload is delivered by document-view.js with target '*' and an origin
+  // of file://, so origin checks are not meaningful here. The iframe is
+  // sandboxed and the data is rendered as text only — never as HTML.
+  window.addEventListener("message", function (event) {
+    var d = event.data;
+    if (typeof d === "string") { try { d = JSON.parse(d); } catch (e) { return; } }
+    if (!d || typeof d !== "object") return;
+    gotPush = true;
+    render(d.result ? d.result : d);
+    schedule();
+  });
+
+  // Standalone open (or a lost push): pull the data ourselves.
+  setTimeout(function () { if (!gotPush && !lastAt) fetchNow(); }, 1500);
+})();
+</script>
+</body>
+</html>
