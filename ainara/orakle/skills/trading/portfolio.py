@@ -184,6 +184,11 @@ class TradingPortfolio(Skill):
             mark = pos_val / abs(szi) if szi else None
             liq = pos.get("liquidationPx")
             liq = float(liq) if liq is not None else None
+            # Committed margin (exchange-reported) and leverage on it. HL gives
+            # marginUsed directly; leverage = notional / margin (matches its
+            # configured cross leverage). Guard the divide for a flat/zero leg.
+            margin_used = float(pos.get("marginUsed", 0) or 0)
+            leverage = (pos_val / margin_used) if margin_used > 0 else None
             leg.update({
                 "open": abs(szi) > 0, "size": szi, "side": "long" if szi > 0 else "short",
                 "entry_px": _f(pos.get("entryPx")), "mark_px": mark,
@@ -191,6 +196,8 @@ class TradingPortfolio(Skill):
                 "liq_distance_pct": (abs(mark - liq) / mark * 100)
                 if (liq and mark) else None,
                 "unrealized_pnl": _f(pos.get("unrealizedPnl")),
+                "margin_used_usd": margin_used if margin_used > 0 else None,
+                "leverage": leverage,
             })
         return leg
 
@@ -224,6 +231,7 @@ class TradingPortfolio(Skill):
             leg["subaccount"] = s.get("subaccountNumber")
             return leg
         equity = float(s.get("equity", 0) or 0)
+        free_coll = float(s.get("freeCollateral", 0) or 0)
         leg["account_value"] = equity
         leg["subaccount"] = s.get("subaccountNumber")
         open_perps = s.get("openPerpetualPositions") or {}
@@ -252,12 +260,23 @@ class TradingPortfolio(Skill):
                 note = "not liquidatable by price alone (equity exceeds notional)"
             else:
                 liq_dist = abs(mark - liq) / mark * 100
+        # Committed margin on dYdX = initial margin requirement = equity minus
+        # freeCollateral (dYdX reports no per-position marginUsed). Leverage =
+        # notional / that committed margin, same formula as the HL leg. Under
+        # position isolation the subaccount holds spare collateral beyond this
+        # requirement, so this leverage reads high while the liq buffer stays
+        # safe — both are true; see the dashboard's margin/leverage labels.
+        margin_used = equity - free_coll
+        notional = (sz * mark) if (mark is not None) else None
+        leverage = (notional / margin_used) if (notional and margin_used > 0) else None
         leg.update({
             "open": sz > 0, "size": signed,
             "side": "long" if signed > 0 else "short",
             "entry_px": _f(pos.get("entryPrice")), "mark_px": mark,
             "liquidation_px": liq, "liq_distance_pct": liq_dist,
             "unrealized_pnl": _f(pos.get("unrealizedPnl")), "liq_note": note,
+            "margin_used_usd": margin_used if margin_used > 0 else None,
+            "leverage": leverage,
         })
         return leg
 

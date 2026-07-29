@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <title>Delta-neutral positions</title>
 <style>
-  :root {
+  /* Dark is the default; [data-theme="light"] overrides below. Every color
+     routes through these vars so the toggle only has to swap the palette. */
+  :root, :root[data-theme="dark"] {
     color-scheme: dark;
     --bg:      #0d1117;
     --panel:   #161b22;
@@ -20,6 +22,31 @@
     --long:    #2ea043;
     --short:   #bc4c56;
     --accent:  #58a6ff;
+    --track:   #232a33;
+    --fund-bg: #12171e;
+    --long-bg: #10331a; --long-fg: #56d364;
+    --short-bg:#3d1d20; --short-fg: #ff7b72;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg:      #f6f8fa;
+    --panel:   #ffffff;
+    --panel-2: #eef1f4;
+    --line:    #d0d7de;
+    --line-soft:#e4e8ec;
+    --text:    #1f2328;
+    --dim:     #656d76;
+    --bright:  #0b0f14;
+    --pos:     #1a7f37;
+    --neg:     #cf222e;
+    --warn:    #9a6700;
+    --long:    #1a7f37;
+    --short:   #cf222e;
+    --accent:  #0969da;
+    --track:   #e4e8ec;
+    --fund-bg: #f0f3f6;
+    --long-bg: #dafbe1; --long-fg: #116329;
+    --short-bg:#ffebe9; --short-fg: #a40e26;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -100,8 +127,8 @@
            text-transform: uppercase; letter-spacing: .05em; }
   .side { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
           letter-spacing: .05em; }
-  .side.long  { background: #10331a; color: #56d364; }
-  .side.short { background: #3d1d20; color: #ff7b72; }
+  .side.long  { background: var(--long-bg); color: var(--long-fg); }
+  .side.short { background: var(--short-bg); color: var(--short-fg); }
   .leg-top .sz { margin-left: auto; font-size: 12px; color: var(--bright); }
 
   .kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 8px;
@@ -114,7 +141,7 @@
   .liq-head { display: flex; justify-content: space-between; margin-bottom: 3px;
               color: var(--dim); }
   .liq-head b { font-weight: 600; }
-  .bar { height: 5px; border-radius: 3px; background: #232a33; overflow: hidden; }
+  .bar { height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
   .bar > i { display: block; height: 100%; border-radius: 3px; }
   .bar > i.safe { background: linear-gradient(90deg,#238636,#3fb950); }
   .bar > i.mid  { background: linear-gradient(90deg,#9e6a06,#d29922); }
@@ -122,7 +149,7 @@
   .liq-note { color: var(--warn); margin-top: 3px; }
 
   /* funding footer */
-  .fund { padding: 9px 12px; background: #12171e; }
+  .fund { padding: 9px 12px; background: var(--fund-bg); }
   .fund-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
   .fund-top .lbl { font-size: 10px; text-transform: uppercase;
                    letter-spacing: .06em; color: var(--dim); }
@@ -148,6 +175,7 @@
     <span id="age">waiting for data</span>
     <button id="refresh" type="button">Refresh</button>
     <button id="auto" type="button" aria-pressed="true">Auto 60s</button>
+    <button id="theme" type="button" title="Toggle light / dark">Dark</button>
   </div>
 </div>
 
@@ -276,6 +304,20 @@
     pnl.appendChild(el("b", "num " + signClass(leg.unrealized_pnl),
                        money(leg.unrealized_pnl, true)));
     kv.appendChild(pnl);
+
+    // Committed margin and leverage on it (notional / margin). dYdX reads high
+    // here vs HL because its isolated subaccounts hold spare collateral beyond
+    // the margin requirement — true, and it does not change the liq buffer.
+    var mgn = el("div");
+    mgn.appendChild(el("span", null, "margin"));
+    mgn.appendChild(el("b", "num", money(leg.margin_used_usd)));
+    kv.appendChild(mgn);
+
+    var lev = el("div");
+    lev.appendChild(el("span", null, "leverage"));
+    lev.appendChild(el("b", "num",
+      num(leg.leverage) ? leg.leverage.toFixed(1) + "×" : "—"));
+    kv.appendChild(lev);
     wrap.appendChild(kv);
 
     // liquidation buffer — the number position isolation bought
@@ -521,6 +563,33 @@
     setDot(Date.now() - lastAt > STALE_MS ? "stale" : (auto ? "live" : ""));
   }
   setInterval(tickAge, 1000);
+
+  // ------------------------------------------------------------- theme
+  // Persist across opens where storage is available (served from Orakle's
+  // origin it is; opened off disk it may throw, so guard). Default follows the
+  // viewer's OS preference the first time.
+  function readStoredTheme() {
+    try { return localStorage.getItem("nexusDashboardTheme"); } catch (e) { return null; }
+  }
+  function storeTheme(t) {
+    try { localStorage.setItem("nexusDashboardTheme", t); } catch (e) {}
+  }
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    var btn = $("theme");
+    // Label names the theme you'd switch TO, matching the OS-toggle convention.
+    btn.textContent = (t === "light") ? "Dark" : "Light";
+  }
+  var prefersLight = window.matchMedia
+    && window.matchMedia("(prefers-color-scheme: light)").matches;
+  applyTheme(readStoredTheme() || (prefersLight ? "light" : "dark"));
+
+  $("theme").addEventListener("click", function () {
+    var next = (document.documentElement.getAttribute("data-theme") === "light")
+      ? "dark" : "light";
+    applyTheme(next);
+    storeTheme(next);
+  });
 
   // ------------------------------------------------------------- inputs
   $("refresh").addEventListener("click", fetchNow);
