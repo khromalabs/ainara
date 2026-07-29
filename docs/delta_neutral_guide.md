@@ -107,6 +107,12 @@ All settings live in your `ainara.yaml`. Point Ainara at it with the `AINARA_CON
 environment variable (and keep it, its data, and its logs on **local disk** — not a
 cloud-synced folder like OneDrive).
 
+> **Start from [`ainara.trading.example.yaml`](ainara.trading.example.yaml)** — a
+> complete, commented, placeholder-only template. Every key below appears there with
+> a safe default (testnet, `jurisdiction_acknowledged: false`, `watchdog: monitor`),
+> and the block is purely additive: merge it into an existing `ainara.yaml` without
+> disturbing your `llm`/`stt`/`tts`/`memory` settings.
+
 ### Venue credentials (`apis.*`)
 
 ```yaml
@@ -151,6 +157,8 @@ The `network` key per venue selects which credential block and which chain is us
 | `trading.watchdog.mode` | `monitor` | `monitor` = report risks only. `active` = **auto-flatten** a broken hedge and **auto-shave** a near-liquidation one. Run `active` for any unattended operation. |
 | `trading.notify.webhook_url` | *(unset)* | Where alarms are pushed (ntfy / Discord / Slack / any HTTP endpoint). Unset = alarms never leave this machine. |
 | `trading.notify.heartbeat_url` | *(unset)* | Dead-man's switch: pinged after every successful check, so an external monitor alerts when the watchdog goes quiet. **Set this for any unattended run.** |
+| `trading.dydx.subaccounts` | *(unset)* | Coin → dYdX subaccount map for position isolation, e.g. `{BTC: 0, ETH: 1, SOL: 2}`. Unset = every coin shares subaccount 0. **Required for holding more than one coin at a time** — see below. |
+| `bureau.plan_runner.allowed_plans` | *(unset)* | Plans Ainara may trigger conversationally. Deny-by-default — see below. |
 
 > **Set the two size caps explicitly** — they have no protective built-in default.
 > If `max_order_notional_usd` is unset there is **no hard notional ceiling**, and if
@@ -162,13 +170,136 @@ Advanced/optional knobs exist too (`executor.fill_timeout_s`, `executor.cross_pc
 `carry_engine.fee_hyperliquid` / `fee_dydx`, and several `watchdog.*` timings); the
 defaults are sensible — leave them unless you know why you're changing one.
 
+### Position isolation on dYdX (`trading.dydx.subaccounts`)
+
+**Skip this if you only ever hold one coin at a time.** A single position needs no
+isolation — the maths below is already exact.
+
+dYdX v4 is cross-margined **per subaccount**. Three positions sharing subaccount 0
+share one liquidation: the maintenance requirement is their sum, one leg's losses eat
+the others' collateral, and the single-position liquidation formula stops being valid.
+Ainara refuses to publish a number it cannot compute, so every dYdX leg reports
+`liquidation unknown` and is **unmonitored** — the watchdog cannot see the buffer it
+exists to protect.
+
+Mapping one coin per subaccount fixes three things at once:
+
+- **Visibility.** One position per subaccount makes the formula exact, so
+  `liq_distance_pct` is real and the watchdog can act on it.
+- **Containment.** A liquidation is confined to the coin that caused it instead of
+  draining collateral shared with the others.
+- **A structural book cap.** Each coin can only borrow against *its own* subaccount,
+  so total book notional can never exceed
+  `max_account_margin_pct × leverage × total equity`. At 20% × 10 that is a hard 2.0×
+  ceiling however many coins you add. Sharing one subaccount, three coins each sized
+  off the *same* balance reached 6.0× — the same equity, three times the exposure.
+
+It does **not** create margin. The same equity split three ways gives each position
+the same buffer; what changes is that you can see it, and that one blow-up cannot take
+the others with it.
+
+```yaml
+trading:
+  dydx:
+    subaccounts:
+      BTC: 0
+      ETH: 1
+      SOL: 2
+```
+
+**Sizing follows the map.** Each coin is sized off `min(HL free collateral, its own
+subaccount's free collateral)`, so an under-funded subaccount produces a
+proportionally *smaller position at the same leverage* — not a thinner buffer. An
+unfunded one reports zero collateral and the engine refuses the leg rather than
+mis-sizing it.
+
+#### One-time setup
+
+Two on-chain steps, both needing the **owner** wallet. The bot's credential cannot do
+either: its authenticator permits place/cancel only, which is exactly why a leaked bot
+key cannot move funds.
+
+```bash
+$env:DYDX_MAIN_MNEMONIC = 'word word ...'
+```
+
+**1. Widen the authenticator.** Its `subaccount_filter` is a hard on-chain allowlist —
+an order aimed at a subaccount outside it is *rejected by the chain*, mid-hedge, with
+the other leg already open. The scope is derived from your config, and authorizes
+`0..5` by default so adding a fourth coin later never needs your seed again.
+
+```bash
+executor/.venv/Scripts/python.exe -m executor.setup_dydx_permission
+executor/.venv/Scripts/python.exe -m executor.setup_dydx_permission --broadcast
+```
+
+Dry run first. It reuses your existing bot key — only `authenticator_id` changes, and
+the old authenticator keeps working until you switch, so there is no broken window.
+Save the printed id to `apis.dydx.<network>.authenticator_id`, then restart the
+executor daemon and watchdog.
+
+**2. Fund each subaccount.** A subaccount is not a thing you create — it exists the
+moment collateral lands in it. Funding is a transfer between subaccounts you own.
+
+```bash
+executor/.venv/Scripts/python.exe -m executor.fund_subaccounts --even
+executor/.venv/Scripts/python.exe -m executor.fund_subaccounts --even --broadcast
+```
+
+`--even` levels every mapped subaccount; `--to N --amount X` moves one explicit
+amount. Dry run by default. It refuses a seed that doesn't derive your configured
+account, refuses to move collateral *out* of a subaccount holding a position, and
+never withdraws off dYdX.
+
+**3. Verify.** Read-only, no seed:
+
+```bash
+executor/.venv/Scripts/python.exe -m executor.setup_dydx_permission --verify
+```
+
+This compares where config **routes** orders against what the chain **permits** —
+nothing else does, and a mismatch otherwise surfaces as a rejected order mid-hedge.
+Then ask for portfolio status and confirm each dYdX leg shows a real
+`liq_distance_pct` instead of `liquidation unknown`. That is the finish line.
+
+> Once done, remove the old narrow authenticator with `remove_authenticator` next time
+> you have the seed out, and close the terminal holding `DYDX_MAIN_MNEMONIC`.
+
+### Letting Ainara run the plans (`bureau.plan_runner`)
+
+By default the plans are CLI- and cron-only. Allowlisting them lets you say *"run the
+funding carry for BTC"* in conversation:
+
+```yaml
+bureau:
+  plan_runner:
+    allowed_plans:
+      - delta_neutral_farm
+      - delta_neutral_exit
+```
+
+Deny-by-default: anything not named is refused, and removing a name revokes it.
+
+This triggers a **plan**, which is the point — it preserves the deterministic step
+order, `avoid_step_if` (skip execution when the engine says sit out), `avoid_if` (no
+exit racing a mid-open entry), and the ledger write. Asking Ainara to call the skills
+individually would lose all four.
+
+The model chooses *which plan* and *which coin*. It cannot compose a plan, reorder
+steps, or place an order — the engine's `sit_out`, the daemon's
+dry_run/network/jurisdiction gate, the notional cap and the refuse-unless-flat
+preflight all still sit underneath and are unreachable from the skill. "No LLM on the
+order path" still holds.
+
+One run handles **one coin**; run it once per coin.
+
 ### Environment variables
 
 | Variable | Purpose |
 |---|---|
 | `AINARA_CONFIG` | Path to your `ainara.yaml`. |
 | `AINARA_LOGS` | Where logs/reports are written. Set it to a **local** path. |
-| `DYDX_MAIN_MNEMONIC` | Used **only** by the one-time dYdX permission setup, never at runtime. |
+| `DYDX_MAIN_MNEMONIC` | The **owner** wallet seed. Used only by the one-time helpers (`setup_dydx_permission`, `fund_subaccounts`), never at runtime. Keep it in the environment — never in `ainara.yaml`, because `ConfigManager.save()` copies that file to `.bak` and Orakle exposes `PUT /config`, so a seed there outlives its deletion. |
 
 ---
 
