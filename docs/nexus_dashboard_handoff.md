@@ -112,13 +112,39 @@ requests.
 > An earlier assessment claimed skills could not emit `renderNexus` and that new
 > plumbing was required. **That was wrong** — both files above were read to confirm.
 
-**Decision (2026-07-29): `hiddenCapability` STAYS `True` for now.** The dashboard is
-reachable via `/testnexus` and a direct `/run` call, but the LLM cannot select it, so
-`trading_portfolio` keeps answering "how are my positions" in prose exactly as before
-— zero behaviour change on the live system. Flip the flag once the UI has been watched
-for a while. Note that removing it puts the dashboard in direct routing competition
-with `trading_portfolio` for the same questions; if you flip it, consider also
-narrowing `matcher_info` to visual verbs ("show/open/watch") to limit the overlap.
+**Decision (2026-07-29): `hiddenCapability` is now `False` — the dashboard is
+LLM-selectable.** It was hidden while a probe; keeping it hidden after it was real is
+what made "show me the position dashboard" *unroutable* — the matcher never registers a
+hidden capability, so Ainara couldn't see the skill and fell back to nonsense (she said
+no skill could "save HTML and open a browser"). Since the dashboard only RENDERS
+read-only data, exposing it moves no money. This reverses the earlier "keep hidden"
+call, at the user's explicit request after hitting exactly that failure.
+
+**A framework bug surfaced while doing this and was fixed** in
+`ainara/framework/capabilities/manager.py`: `get_capabilities()` was dropping
+`matcher_info` for **every** `type == "nexus"` capability (the `skill` branch copied it,
+the `nexus` branch did not). Nexus skills are registered into the *same* semantic
+matcher as native skills (`orakle_middleware.py:227`), so without this a nexus skill
+could only ever be matched on its id + docstring — its whole `matcher_info` was silently
+inert. The fix carries `matcher_info` (and `embeddings_boost_factor`) through the nexus
+branch too; it benefits any nexus skill, not just this one.
+
+**Routing separation, measured** (offline against the live matcher, all coins open):
+
+| query | dashboard | portfolio | winner |
+|---|---|---|---|
+| "show me the position dashboard … visually" | **0.63** | not in top-5 | dashboard |
+| "pull up the positions dashboard" | **0.52** | — | dashboard |
+| "open my positions on screen" | **0.47** | — | dashboard |
+| "how are my positions doing" | 0.38 | 0.23 | ambiguous* |
+| "am I still hedged and what funding am I earning" | 0.18 | (recedes) | portfolio |
+
+\* Both are candidates; `matcher_info` explicitly tells the LLM to prefer the text
+portfolio skill when the user wants to be *told* numbers rather than *shown* a panel.
+The matcher only supplies the candidate set — the LLM makes the final pick. If the
+dashboard ever steals too many prose questions in practice, lean its `matcher_info`
+harder onto the visual medium (screen/panel/render) and away from the shared
+positions/funding/PnL vocabulary; do **not** re-hide it.
 
 ---
 
@@ -224,8 +250,9 @@ installable nexus app.
 
 1. ~~**Refresh model**~~ — **settled**: `postMessage` for the instant first paint, then
    the component self-polls Orakle same-origin every 60s, paused while not visible.
-2. ~~**Expose to routing?**~~ — **settled for now**: `hiddenCapability` stays `True`.
-   Revisit after living with the UI; see §3 for the overlap caveat.
+2. ~~**Expose to routing?**~~ — **settled: exposed** (`hiddenCapability = False`), at
+   the user's request after "show me the dashboard" failed. Fixing a framework gap that
+   dropped `matcher_info` for nexus skills was required to make it route well. See §3.
 3. **Where does the bundle finally live** for distribution — in-repo under
    `ainara/nexus/`, or shipped as an installable nexus app? (Phase 4, still open.)
 4. **New:** should the dashboard also surface `review` / `analytics` (closed round

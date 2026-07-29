@@ -31,19 +31,27 @@ logger = logging.getLogger(__name__)
 class JzbTradingPositionsDashboard(Skill):
     """Live dashboard of the delta-neutral hedge book. Read-only."""
 
-    # Keep this out of the LLM's skill roster. The system trades live money,
-    # and `trading_portfolio` already serves conversational position questions
-    # in text. Removing this flag makes the dashboard selectable by routing —
-    # a deliberate choice, not a default.
-    hiddenCapability = True
+    # Selectable by the LLM. It was hidden while it was only a probe, but the
+    # whole point of the dashboard is that "show me my positions" opens it —
+    # keeping it hidden made that request unroutable (the matcher never sees a
+    # hidden capability), which is exactly the failure it was meant to prevent.
+    # It only RENDERS read-only data, so exposing it moves no money. Its
+    # matcher_info leans on visual verbs so plain status questions still fall to
+    # `trading_portfolio` (text), while "show/open/pull up/display" reach here.
+    hiddenCapability = False
 
     matcher_info = (
-        "Show a VISUAL DASHBOARD of the delta-neutral funding-carry positions"
-        " (Hyperliquid + dYdX) side by side: both legs per coin, sizes,"
-        " liquidation buffers, unrealized PnL and net funding. Use when the user"
-        " wants to SEE or WATCH the book rather than be told about it. Keywords:"
-        " show me my positions, open the dashboard, position view, watch my"
-        " hedges. Read-only; renders data, never trades."
+        "OPEN THE ON-SCREEN DASHBOARD — a rendered visual PANEL / UI page shown"
+        " in the interface. Use ONLY when the user asks to SEE, VIEW, DISPLAY,"
+        " PULL UP, OPEN, RENDER or WATCH something on screen / visually / as a"
+        " dashboard or panel. Trigger phrases: show me the dashboard, open the"
+        " dashboard, pull up the dashboard, display it visually, show it on"
+        " screen, open the panel, visual aid, positions panel, dashboard view."
+        " This skill draws a graphical view; it does NOT describe or summarize"
+        " numbers in words — if the user just wants to be TOLD their status,"
+        " funding, PnL or hedge health in text/speech, this is the WRONG skill"
+        " and the text portfolio skill should be used instead. Read-only;"
+        " renders data, never trades."
     )
 
     def run(
