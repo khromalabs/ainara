@@ -360,9 +360,6 @@ refuses to submit. It places **no** orders.
 
 ### The processes
 
-Three background processes run the strategy. Today you start them yourself (a
-managed-services layer that supervises them from Ainara is planned); the commands:
-
 | Process | Command | Role |
 |---|---|---|
 | Executor daemon | `python -m executor.server` | Places/closes orders (own venv) |
@@ -372,6 +369,47 @@ managed-services layer that supervises them from Ainara is planned); the command
 The daemon and watchdog run from the **executor** virtualenv; the scheduler from
 Ainara's main one. The watchdog is your safety net — keep it running whenever a
 position is open.
+
+**Let the scheduler supervise the other two** rather than starting them by hand. It
+health-checks the daemon over HTTP and the watchdog via its heartbeat file, and
+restarts either if it dies:
+
+```yaml
+# scheduler.yaml
+services:
+  executor:
+    enabled: true
+```
+
+This is process lifecycle only. It never opens or closes a position, and it never
+arms a cron you have not enabled yourself.
+
+#### Surviving a reboot
+
+The scheduler supervises everything else — but nothing supervises *it*. Started by
+hand it works perfectly until the machine restarts, at which point every process is
+gone and an open hedge sits unguarded with nothing indicating anything is missing.
+**If you hold positions overnight, close that gap:**
+
+```bash
+venv/Scripts/python.exe scripts/autostart.py --status
+venv/Scripts/python.exe scripts/autostart.py --install
+venv/Scripts/python.exe scripts/autostart.py --remove
+```
+
+Opt-in and reversible. It registers a **per-user** logon task — runs as you, limited
+privileges, no admin, no SYSTEM account, no service install — pointing at a small
+launcher script written beside your `ainara.yaml` that you can read or edit. On Linux
+it prints the equivalent systemd user unit.
+
+`--install` does *not* arm the strategy: it brings services up and runs whatever crons
+you had already enabled. Logging in while a scheduler is already running is safe — it
+holds a PID-file lock and the duplicate aborts.
+
+> Note for Windows: `schtasks /sc onlogon` needs elevation because that trigger is
+> machine-scoped. The installer uses `Register-ScheduledTask` with the trigger bound
+> to your user, which does not — requiring admin to protect your own positions is a
+> good way to ensure nobody turns it on.
 
 ### Entering a position — manual (default)
 
