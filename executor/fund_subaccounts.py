@@ -60,6 +60,7 @@ SAFETY
 import argparse
 import asyncio
 import os
+import re
 import sys
 
 import requests
@@ -126,14 +127,55 @@ def plan_even(targets, current):
     return moves, f"even split at {want:.2f} USDC each"
 
 
-async def send(node, wallet, owner, src, dst, amount):
-    return await node.transfer(
-        wallet,
-        SubaccountId(owner=owner, number=src),
-        SubaccountId(owner=owner, number=dst),
-        USDC_ASSET_ID,
-        int(round(amount * USDC_QUANTUMS)),
-    )
+def _is_sequence_mismatch(err):
+    return "account sequence mismatch" in str(err)
+
+
+def _expected_sequence(err):
+    """The sequence the chain says it wants, from its error text. None if absent."""
+    m = re.search(r"expected (\d+)", str(err))
+    return int(m.group(1)) if m else None
+
+
+async def send(node, wallet, owner, src, dst, amount, address=None):
+    """One subaccount transfer, keeping the local sequence in step with the chain.
+
+    Wallet.from_mnemonic reads the account sequence ONCE. Every broadcast increments
+    it on-chain, so a second transfer signed from the same wallet object reuses a
+    spent number and is rejected: "account sequence mismatch, expected 14, got 13".
+    A multi-transfer run therefore always landed exactly its first transfer and then
+    died — which is how --even left the book half-balanced.
+
+    Increment after a successful send, and on a mismatch resync to the number the
+    chain asked for and retry once. The retry is safe: a rejected transaction was
+    never committed, so this cannot double-send. Only a genuine mismatch is retried;
+    anything else propagates.
+    """
+    def _msg():
+        return node.transfer(
+            wallet,
+            SubaccountId(owner=owner, number=src),
+            SubaccountId(owner=owner, number=dst),
+            USDC_ASSET_ID,
+            int(round(amount * USDC_QUANTUMS)),
+        )
+
+    try:
+        resp = await _msg()
+    except Exception as e:
+        if not _is_sequence_mismatch(e):
+            raise
+        want = _expected_sequence(e)
+        if want is None and address is not None:
+            account = await node.get_account(address)
+            want = account.sequence
+        if want is None:
+            raise
+        print(f"    (sequence was {wallet.sequence}, chain wants {want} — resyncing)")
+        wallet.sequence = want
+        resp = await _msg()
+    wallet.sequence += 1
+    return resp
 
 
 async def main(args):
@@ -211,11 +253,33 @@ async def main(args):
     node = await NodeClient.connect(dydx_network(network, creds.get("node_url")).node)
     wallet = await Wallet.from_mnemonic(node, mnemonic, address)
     print("\nBROADCASTING (signed by the owner key)...")
+    # Report per transfer and stop at the first real failure, but never let a
+    # traceback be the summary: a half-applied run is exactly when you need to read
+    # what landed. Re-running is safe — the plan is recomputed from live balances,
+    # so completed transfers are simply not planned again.
+    sent, failed = [], None
     for src, dst, amount in moves:
-        resp = await send(node, wallet, address, src, dst, amount)
+        try:
+            resp = await send(node, wallet, address, src, dst, amount,
+                              address=address)
+        except Exception as e:
+            failed = (src, dst, amount, f"{type(e).__name__}: {e}")
+            break
         code = getattr(getattr(resp, "tx_response", resp), "code", resp)
+        ok = code == 0
         print(f"  #{src} -> #{dst} {amount:.2f}: tx code {code}"
-              f"{'  OK' if code == 0 else '  FAILED'}")
+              f"{'  OK' if ok else '  FAILED'}")
+        if not ok:
+            failed = (src, dst, amount, f"tx code {code}")
+            break
+        sent.append((src, dst, amount))
+
+    print(f"\n{len(sent)} of {len(moves)} transfer(s) landed.")
+    if failed:
+        src, dst, amount, why = failed
+        print(f"  STOPPED on #{src} -> #{dst} {amount:.2f}: {why}")
+        print("  Nothing was lost — a rejected transfer is not committed. Re-run the"
+              " same command; the plan is rebuilt from live balances.")
     print("\nRe-read balances in a few seconds (the indexer lags the chain):")
     print(f"  {sys.argv[0]}  (no flags)")
 
