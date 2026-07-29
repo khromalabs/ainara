@@ -351,9 +351,19 @@ class ConfigManager:
             self.load_config()
             return True
 
-        # Recursively update the configuration
+        # Recursively deep-MERGE new values into the existing config.
+        #
+        # This deliberately does NOT delete keys that are absent from `source`.
+        # An earlier version mirrored `target` onto `source` (deleting anything
+        # not in the payload), which turned every partial PUT /config into a
+        # destructive overwrite: a caller that sent only the sections it manages
+        # would silently wipe the rest (e.g. the setup wizard dropping the
+        # `trading` and `apis.hyperliquid`/`apis.dydx` keys and emptying
+        # `llm.providers`). Merge semantics make partial updates safe — a caller
+        # only ever changes what it sends. Replacing a value (including whole
+        # lists like `llm.providers`) still works, since non-dict values are
+        # overwritten wholesale below.
         def update_dict(target, source):
-            # Update existing keys and add new ones from source
             for key, value in source.items():
                 if (
                     isinstance(value, dict)
@@ -362,12 +372,7 @@ class ConfigManager:
                 ):
                     update_dict(target[key], value)  # Recurse for nested dicts
                 else:
-                    target[key] = value  # Add new key or update existing one
-
-            # Remove keys from target that are not in source
-            keys_to_remove = [key for key in target if key not in source]
-            for key in keys_to_remove:
-                del target[key]
+                    target[key] = value  # Add new key or replace existing value
 
         update_dict(self.config, new_config)
         if save:

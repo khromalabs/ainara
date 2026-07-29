@@ -81,6 +81,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Function to load the backend config via API
 async function loadBackendConfig() {
+    // Must FAIL LOUD. The backend PUT /config deep-merges the payload, but this
+    // is still the base every save step reads-modifies-writes, so a save must
+    // never proceed on a config we could not actually read. Returning undefined
+    // here (the previous behaviour) let callers build a payload from defaults
+    // and PUT it — which, under the old delete-on-absence merge, wiped the
+    // user's trading + LLM config. Re-throw so save steps abort instead.
     try {
         const response = await fetch(
             config.get('pybridge.api_url') +
@@ -89,15 +95,31 @@ async function loadBackendConfig() {
         if (!response.ok) {
             throw new Error('Failed to load configuration');
         }
-        return await response.json();
+        const loaded = await response.json();
+        if (!loaded || typeof loaded !== 'object' || Array.isArray(loaded)) {
+            throw new Error('Backend returned an invalid configuration object');
+        }
+        return loaded;
     } catch (error) {
         console.error('Error loading backend config:', error);
+        throw error;
     }
 }
 
 // Function to save the backend config via API
 async function saveBackendConfig(config, server) {
     try {
+        // Backstop: never PUT an empty or non-object payload. Even with the
+        // backend now deep-merging (so a partial PUT no longer deletes keys),
+        // pushing {} or undefined is never intended and only signals that the
+        // caller built its payload without a real config to modify.
+        if (!config || typeof config !== 'object' || Array.isArray(config)
+            || Object.keys(config).length === 0) {
+            throw new Error(
+                'Refusing to save: configuration payload is empty or invalid'
+                + ' (the current config could not be read).'
+            );
+        }
         const stringConfig = JSON.stringify(config);
         console.log(`Saving config to server: ${server}`);
         const response = await fetch(
