@@ -1,8 +1,9 @@
 # Funding-Arb Runbook — how to run it on testnet
 
 Operational guide for the delta-neutral funding-carry system. See
-[`funding_arb.md`](funding_arb.md) for what it is and why. This document is how to
-stand it up and fire it.
+[`funding_arb.md`](funding_arb.md) for what it is and why, and
+[`troubleshooting.md`](troubleshooting.md) for symptoms and their causes. This
+document is how to stand it up and fire it.
 
 > **This places real orders.** On testnet the compliance gate permits live
 > submission, and the plans set `dry_run: false` — so a run *will* place real testnet

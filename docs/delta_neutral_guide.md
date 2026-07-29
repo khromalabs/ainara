@@ -3,7 +3,8 @@
 A practical guide to **configuring and running** Ainara's delta-neutral funding-carry
 strategy on your own accounts. For the *architecture*, see
 [`funding_arb.md`](funding_arb.md); for a blow-by-blow *testnet* walkthrough, see
-[`funding_arb_runbook.md`](funding_arb_runbook.md). This guide is the end-to-end
+[`funding_arb_runbook.md`](funding_arb_runbook.md); when something breaks, see
+[`troubleshooting.md`](troubleshooting.md). This guide is the end-to-end
 operator reference: what to set up, what every setting controls, and how to run it
 safely.
 
