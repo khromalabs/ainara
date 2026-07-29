@@ -41,6 +41,7 @@ import time
 from flask import Flask, jsonify, request
 
 from executor.config import ExecutorConfig
+from executor.notify import Notifier
 from executor.venues.dydx import DydxExecutor
 from executor.venues.hyperliquid import HyperliquidExecutor
 
@@ -90,6 +91,18 @@ def _resolve(value):
 def _venue(name):
     cls = VENUES.get(name)
     return cls(config) if cls else None
+
+
+_NOTIFIER = None
+
+
+def _notifier():
+    """Lazily-built shared Notifier. Reads the same trading.notify config as the
+    watchdog, so both channels are configured in one place."""
+    global _NOTIFIER
+    if _NOTIFIER is None:
+        _NOTIFIER = Notifier(config)
+    return _NOTIFIER
 
 
 def _margin_cap_notional():
@@ -712,6 +725,72 @@ def hedge_open():
                    positions={short_venue: 0.0, long_venue: 0.0})
 
 
+def _fill_price(res):
+    """Average fill price out of a close result, or None. Best-effort by design.
+
+    Each venue reports fills in its own shape and neither is guaranteed to be present
+    (an IOC that filled in pieces, a dYdX tx that confirms without an echo), so every
+    lookup here is allowed to come back empty. A close notification with a missing
+    price is still worth sending; one that raises while extracting a price is not.
+    """
+    if not isinstance(res, dict):
+        return None
+    try:
+        statuses = (res.get("response", {}).get("response", {})
+                    .get("data", {}).get("statuses") or [])
+        for s in statuses:
+            px = (s.get("filled") or {}).get("avgPx")
+            if px:
+                return float(px)
+    except Exception:
+        pass
+    for key in ("price", "avg_px", "avgPx"):
+        try:
+            if res.get(key):
+                return float(res[key])
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _notify_closed(legs, pre, results):
+    """Push a round-trip-complete alert. Best-effort, and never in the close path.
+
+    Closes are the event worth an unprompted push: a completed round trip with a
+    realized number attached, and the one that can happen while you are asleep — the
+    exit crons run hourly. Opens are usually something you initiated yourself.
+
+    Deliberately here in the daemon rather than in the calling skill, so it fires for
+    EVERY close route: a Conductor plan, an Ainara request, or a hand-rolled curl. The
+    watchdog's own protective closes notify separately, from the watchdog.
+
+    Wrapped whole: the position is already flat by the time this runs, and no
+    notification failure may turn a successful close into an error response.
+    """
+    try:
+        notifier = _notifier()
+        if not notifier.push_enabled:
+            return
+        coin = next((str(s).split("-")[0].upper() for s in legs.values() if s), "?")
+        lines = []
+        for venue, symbol in legs.items():
+            size = pre.get(venue)
+            if not size:
+                continue
+            px = _fill_price(results.get(venue))
+            side = "short" if size < 0 else "long"
+            lines.append(f"{venue}: closed {side} {abs(size)}"
+                         + (f" @ {px}" if px else ""))
+        notifier.send(
+            f"[CLOSED] {coin} hedge flat",
+            "\n".join(lines) + "\n\nBoth legs confirmed flat. Ask for the portfolio"
+            " review to see realized funding and fees for the round trip.",
+            severity="info",
+            data={"coin": coin, "closed_from": pre})
+    except Exception as e:
+        logger.warning("close notification failed (position IS closed): %s", e)
+
+
 def _await_flat(venue_name, symbol, timeout_s, poll_s=1.0):
     """Poll until `symbol` is flat on `venue_name`. Returns the leftover size."""
     deadline = time.monotonic() + float(timeout_s)
@@ -787,6 +866,7 @@ def hedge_close():
                        legs=results, positions=post), 500
 
     logger.info("HEDGE CLOSED: account flat")
+    _notify_closed(legs, pre, results)
     return jsonify(closed=True, status="closed", detail="all legs closed; flat",
                    legs=results, positions=post, was=pre)
 
