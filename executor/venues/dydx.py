@@ -220,23 +220,32 @@ class DydxExecutor:
             return {"venue": "dydx", "mode": "mnemonic", "network": self.network,
                     "address": derived, "ok": ok}
 
-        # permissioned: find the authenticator whose SignatureVerification is our key
+        # permissioned: is the CONFIGURED authenticator registered and bound to our
+        # key? Collect EVERY match, do not stop at the first.
+        #
+        # One key can back several authenticators — re-registering to widen the
+        # subaccount scope deliberately reuses the key, so the old narrow one and the
+        # new wide one both carry this pubkey. Breaking on the first match then
+        # reported whichever the chain happened to list first as "the" authorized id,
+        # so a correctly-configured account came back ok=False and pointed at the
+        # authenticator it had just been migrated away FROM.
         our_b64 = base64.b64encode(self._api_pubkey()).decode()
         node = await self._node()
         resp = await node.get_authenticators(self.account_address)
-        matched = None
-        for a in resp.account_authenticators:
-            if our_b64 in bytes(a.config).decode("utf-8", "replace"):
-                matched = a
-                break
+        matches = [a.id for a in resp.account_authenticators
+                   if our_b64 in bytes(a.config).decode("utf-8", "replace")]
         cfg_id = str(self.authenticator_id) if self.authenticator_id is not None else None
+        configured_is_ours = cfg_id is not None and cfg_id in [str(i) for i in matches]
         return {
             "venue": "dydx", "mode": "permissioned", "network": self.network,
             "account": self.account_address,
-            "authorized_authenticator_id": matched.id if matched else None,
+            "authenticator_ids_for_this_key": matches,
             "config_authenticator_id": cfg_id,
-            "config_id_matches": bool(matched) and str(matched.id) == cfg_id,
-            "ok": bool(matched) and str(matched.id) == cfg_id,
+            "config_id_matches": configured_is_ours,
+            "ok": configured_is_ours,
+            **({} if configured_is_ours or not matches else {
+                "hint": f"config points at {cfg_id}, which is not bound to this bot"
+                        f" key. Registered for it: {matches}."}),
         }
 
     def _market_risk(self, ticker):
