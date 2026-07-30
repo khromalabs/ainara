@@ -35,6 +35,11 @@ class Service extends EventEmitter {
         this.isStopping = false;
         this.isStarting = false;
         this.crashed = false;
+        // True when this service was already running (e.g. started by the
+        // headless scheduler) and we adopted it rather than spawning our own.
+        // An attached service holds no child process here, so we must never
+        // start, restart, or stop it — its lifecycle belongs to its owner.
+        this.attached = false;
     }
 
     start(timeout) {
@@ -139,6 +144,14 @@ class Service extends EventEmitter {
     }
 
     stop({ force = false } = {}) {
+        // Never stop a service we only attached to — killing it here would take
+        // down, e.g., the scheduler's Orakle and with it the 24/7 trading loop.
+        // (We also hold no child handle for it, so the guard below would return
+        // anyway; this makes the intent explicit.)
+        if (this.attached) {
+            Logger.log(`${this.name} is attached (externally owned) — not stopping it.`);
+            return Promise.resolve();
+        }
         if (!this.process || this.process.killed) {
             return Promise.resolve();
         }

@@ -160,7 +160,16 @@ class ServiceManager {
                 Logger.info(`Checking port ${port} for ${service.name}...`);
                 const isUsed = await this._checkPortInUse(port);
                 if (isUsed) {
-                    Logger.error(`Port ${port} for ${service.name} is already in use.`);
+                    // A port in use is only a real conflict if it is NOT a
+                    // healthy instance of this very service. If our own service
+                    // is already answering there (e.g. the scheduler started
+                    // it), that is not an error — startServices() will attach to
+                    // it. Only a foreign occupant is a genuine conflict.
+                    if (await service.checkHealth()) {
+                        Logger.info(`Port ${port} holds a healthy ${service.name}; will attach to it.`);
+                        continue;
+                    }
+                    Logger.error(`Port ${port} for ${service.name} is in use by something else.`);
                     return { available: false, port: port, serviceName: service.name };
                 }
                 Logger.info(`Port ${port} for ${service.name} is available.`);
@@ -240,8 +249,25 @@ class ServiceManager {
             });
         }
 
-        // Start both services in parallel
-        const startPromises = Object.values(this.services).map(service => service.start(600000));
+        // Start each service, or ATTACH to one that is already running (e.g.
+        // started by the headless scheduler). Health-checking first makes the
+        // launch idempotent: whatever is already up we adopt (never spawning a
+        // duplicate, and — since we hold no child handle for it — never able to
+        // stop it either), and whatever is missing we start ourselves. A
+        // desktop-only user with no scheduler finds every port free, so every
+        // service is started here exactly as before.
+        const startPromises = Object.values(this.services).map(async (service) => {
+            if (await service.checkHealth()) {
+                service.attached = true;
+                this.serviceRestartCounters[service.id] = 0;
+                Logger.info(
+                    `${service.name} is already running — attaching instead of spawning a duplicate.`
+                );
+                return;
+            }
+            service.attached = false;
+            return service.start(600000);
+        });
 
         this.startProgress = 10;
 
@@ -318,6 +344,16 @@ class ServiceManager {
                 // is healthy
                 // Logger.info(`Service ${service.id} is healthy`);
                 this.serviceRestartCounters[service.id] = 0;
+            } else if (service.attached) {
+                // Externally owned (e.g. by the scheduler). We must NOT spawn
+                // our own — that is exactly how duplicates arise — and we hold
+                // no handle to restart it. Its owner (the scheduler's own
+                // health loop) is responsible for bringing it back; we just
+                // wait and re-attach when it returns.
+                Logger.warn(
+                    `${service.name} is attached (externally managed) and currently unhealthy;`
+                    + ` leaving its lifecycle to its owner.`
+                );
             } else {
                 // is NOT healthy
                 if (!service.isStarting) {
