@@ -19,8 +19,10 @@
 import copy
 import logging
 import os
+import platform
 import shutil
 import sys
+import time
 from pathlib import Path
 # import traceback
 import yaml
@@ -336,12 +338,75 @@ class ConfigManager:
         # backup previous config if exists
         if os.path.isfile(self.config_file_path):
             shutil.copy(self.config_file_path, f"{self.config_file_path}.bak")
+            # Versioned off-sync snapshot of the OUTGOING content, taken BEFORE
+            # the overwrite. The single `.bak` above sits next to the config and
+            # is clobbered every save, so it is useless when a bad save (e.g. a
+            # setup-wizard overwrite) is exactly what you need to recover from —
+            # both got wiped together on 2026-07-29. Snapshotting the outgoing
+            # file keeps the last good state safe even if the new write is bad.
+            # Best-effort: never let it break a save.
+            self._backup_config_file()
 
         with open(self.config_file_path, "w") as f:
             # backup original file
             yaml.dump(self.config, f, default_flow_style=False)
             logger.info(f"Configuration saved to: {self.config_file_path}")
         self.last_modified_time = os.path.getmtime(self.config_file_path)
+
+    def _local_config_backup_dir(self) -> Path:
+        """A guaranteed-LOCAL, non-synced directory for config snapshots.
+
+        Deliberately NOT derived from data/cache config (a bad wizard can point
+        those at OneDrive) nor from platform_utils' Documents-based default
+        (also OneDrive-prone on Windows). The config holds live private keys, so
+        snapshots stay on local disk, out of any cloud-sync folder and out of
+        git.
+        """
+        system = platform.system()
+        if system == "Windows":
+            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser(
+                "~\\AppData\\Local"
+            )
+            return Path(base) / "Ainara" / "config-backups"
+        elif system == "Darwin":
+            return Path(
+                os.path.expanduser(
+                    "~/Library/Application Support/Ainara/config-backups"
+                )
+            )
+        base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+            "~/.local/state"
+        )
+        return Path(base) / "ainara" / "config-backups"
+
+    def _backup_config_file(self, keep: int = 15):
+        """Snapshot the just-saved config to a local, versioned backup, pruning
+        to the most recent `keep`. Best-effort — a backup failure must never
+        propagate out of save()."""
+        try:
+            src = self.config_file_path
+            if not src or not os.path.isfile(src):
+                return
+            bdir = self._local_config_backup_dir()
+            bdir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%d_%H%M%S")
+            dest = bdir / f"ainara.yaml.{stamp}.bak"
+            shutil.copy2(src, dest)
+            # Contains live keys: lock it down where the OS honours it.
+            try:
+                if os.name == "posix":
+                    os.chmod(dest, 0o600)
+            except OSError:
+                pass
+            # Prune oldest — the timestamp format sorts lexicographically.
+            snaps = sorted(bdir.glob("ainara.yaml.*.bak"))
+            for old in snaps[:-keep]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning(f"Config backup skipped (non-fatal): {e}")
 
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""

@@ -42,6 +42,23 @@ nothing until something is wrong. Do not read silence as broken.
 
 ---
 
+## Config, startup, and the one rule that matters most
+
+> **During any config or startup problem, do NOT restart the executor or the
+> watchdog.** They load your keys and position state into memory at start and go
+> on guarding the hedge even while `ainara.yaml`, Orakle, or PyBridge are broken
+> on disk — they are often your last intact copy of both. Orakle, PyBridge and
+> Bureau are safe to restart (they re-read config at startup); the executor and
+> watchdog are not, until the config on disk is known-good again.
+
+| Symptom | Cause | What to do |
+|---|---|---|
+| Startup error `PyBridge … exited with code 1`, `ECONNREFUSED 127.0.0.1:8101`, then an offer to open the setup wizard | PyBridge crashed before binding its port, so the auth portal it serves is unreachable — which is *also* why the wizard's browser login never completes. A crashed dependency, not an auth or wallet problem. | Read the tail of `pybridge.log` for the real exception and fix that. Relaunch. **Do not complete the wizard** — see the config-wipe row. |
+| PyBridge crashes with `Kokoro TTS setup failed … model files not found` | The selected TTS backend's model files are missing under `<data.directory>/tts/kokoro/models/`. (The message says `voices.json`; the code actually wants `voices-v1.0.bin`.) | Put `kokoro-v1.0.onnx` and `voices-v1.0.bin` there, from the `thewh1teagle/kokoro-onnx` release `model-files-v1.0`. Restart. |
+| `ainara.yaml` lost its `trading` / `apis.hyperliquid` / `apis.dydx` / `llm.providers` sections after a relaunch | The setup wizard PUT a partial config built from defaults (it could not read the live one because PyBridge was down), and an older `update_config` *deleted* every key absent from the payload. | Fixed: `update_config` now deep-merges, and the wizard fails loud rather than saving a default-derived payload. Recover the previous file from the versioned snapshots in `%LOCALAPPDATA%\Ainara\config-backups\` (macOS `~/Library/Application Support/Ainara/config-backups`, Linux `~/.local/state/ainara/config-backups`). Then reload Orakle and restart PyBridge — **not** the executor/watchdog. |
+| Paths point into OneDrive (`…\OneDrive\Documents\Ainara\…`) | The platform default data/cache dir is Documents-based, and Windows redirects Documents into OneDrive. OneDrive can then dehydrate a model file to cloud-only, so it "vanishes" and re-crashes PyBridge. | Set `data.directory` and `cache.directory` to local paths (`…\AppData\Roaming\ainara\Data`, `…\AppData\Local\Ainara\Cache`) and keep the model files there. Local-first, always. |
+| A config edit "did nothing" | Running services hold config in memory. Orakle/PyBridge/Bureau re-read at startup; the executor/watchdog re-read only when *they* restart. | Reload the service that needs it — but re-read the rule above before restarting the executor or watchdog. |
+
 ## Venue access
 
 | Symptom | Cause | What to do |
@@ -127,3 +144,39 @@ Two fixes, both worth keeping in mind when extending this:
 The generalisable lesson is that *unreadable* and *empty* must never share a
 representation. A guard that cannot tell "I see nothing there" from "I cannot see"
 will eventually act on the wrong one, and it will do so confidently.
+
+---
+
+## The 2026-07-29 incident — a wizard, a wipe, and a safety net
+
+A routine relaunch left `ainara.yaml` stripped to defaults: gone were the dYdX and
+Hyperliquid keys and the LLM providers. Nothing was misconfigured — a chain of three
+things lined up.
+
+PyBridge crashed on startup because its Kokoro TTS model files were missing, so the
+"services failed — open the setup wizard?" path fired. The wizard seeds its edits by
+reading the current config *from PyBridge* — which was down — so that read failed and
+returned nothing, and the wizard proceeded from defaults. On save it PUT that default
+config, and `update_config` — which then mirrored the stored config onto the payload,
+deleting every key the payload omitted — wrote the stripped result to disk. The single
+`.bak` beside the file was overwritten in the same save, and the database backups never
+included the config at all.
+
+What saved it: the executor had been running since before the wipe, holding the keys in
+memory and keeping all three hedges intact the entire time. The file was recoverable
+only because that process was never restarted.
+
+Fixes, all worth keeping in mind when extending this:
+
+1. **Update means merge, not mirror.** `update_config` no longer deletes keys that are
+   absent from a payload; a partial PUT can only add or change, never erase.
+2. **A degraded service must not seed a destructive write from defaults.** The wizard's
+   config loader now fails loud, and a save refuses an empty/invalid payload, rather
+   than quietly writing defaults over a config it could not read.
+3. **Back up the thing that has no other copy.** Every `save()` now snapshots the
+   outgoing `ainara.yaml` to a local, off-sync, versioned folder (`config-backups`) —
+   the database backups never covered it, so the config had no recovery path at all.
+4. **The least-recently-restarted process can be your only intact copy of state.**
+   Here the executor held the only live copy of the keys; restarting it to "start
+   fresh" would have destroyed exactly what needed recovering. That is why the
+   safe-restart rule at the top of this document exists.
