@@ -180,6 +180,18 @@ class DydxExecutor:
             str(k).upper(): int(v)
             for k, v in (config.get("trading.dydx.subaccounts", {}) or {}).items()
         }
+        # Short-TTL snapshot of ALL perpetual markets. state() reads risk params
+        # for every open coin each poll; the dYdX indexer rate-limit is per
+        # REQUEST, so one all-markets fetch indexed locally beats one request per
+        # ticker (which, at a 5s watchdog poll across several coins, is what
+        # tips the venue into 429s and blinds the guard). TTL keeps price fresh
+        # enough for liquidation distance while collapsing the per-poll burst
+        # into a single request. See _all_markets / _market_risk.
+        self._markets_cache = None
+        self._markets_cache_at = 0.0
+        self._markets_cache_ttl = float(
+            config.get("trading.dydx.markets_cache_ttl_s", 3.0)
+        )
 
     def subaccount_for(self, symbol):
         """Subaccount number for a market ('BTC-USD' or 'BTC'). 0 when unmapped."""
@@ -248,21 +260,52 @@ class DydxExecutor:
                         f" key. Registered for it: {matches}."}),
         }
 
+    def _all_markets(self):
+        """Cached snapshot of ALL perpetual markets, or None on a failed read.
+
+        One request per refresh instead of one per ticker — the point is to
+        spend fewer indexer requests so a fast watchdog poll across several coins
+        does not exhaust the rate-limit and blind the guard. Fail-soft: on any
+        read problem return None (never serve stale, so behaviour matches the
+        old per-ticker fetch exactly: the caller degrades to 'risk params
+        unavailable' / liq_unknown, which is an alert, never a wrong action).
+        """
+        now = time.time()
+        if (self._markets_cache is not None
+                and (now - self._markets_cache_at) < self._markets_cache_ttl):
+            return self._markets_cache
+        try:
+            r = requests.get(f"{self.indexer}/v4/perpetualMarkets", timeout=20)
+            r.raise_for_status()
+            markets = r.json().get("markets")
+        except Exception as e:
+            logger.warning("dydx perpetualMarkets read failed: %s", e)
+            return None
+        if not isinstance(markets, dict):
+            logger.warning("dydx perpetualMarkets response had no 'markets' map")
+            return None
+        self._markets_cache = markets
+        self._markets_cache_at = now
+        return markets
+
     def _market_risk(self, ticker):
         """(oracle_price, maintenance_margin_fraction) for a market, or (None, None).
 
         MMF is a market parameter, not an account setting — dYdX BTC-USD ships
-        imf=0.02 (the '50x') / mmf=0.012.
+        imf=0.02 (the '50x') / mmf=0.012. Reads from the shared all-markets
+        snapshot so N coins in one poll cost one request, not N.
         """
-        try:
-            md = requests.get(
-                f"{self.indexer}/v4/perpetualMarkets?ticker={ticker}", timeout=20
-            ).json()["markets"][ticker]
-            return float(md["oraclePrice"]), float(md["maintenanceMarginFraction"])
-        except Exception as e:
+        markets = self._all_markets()
+        md = markets.get(ticker) if markets else None
+        if not md:
             # Say it out loud: without these the leg is invisible to the
             # watchdog's liquidation check, which is the whole point of wiring it.
-            logger.warning("dydx market risk params unavailable for %s: %s",
+            logger.warning("dydx market risk params unavailable for %s", ticker)
+            return None, None
+        try:
+            return float(md["oraclePrice"]), float(md["maintenanceMarginFraction"])
+        except (KeyError, TypeError, ValueError) as e:
+            logger.warning("dydx market risk params unparseable for %s: %s",
                            ticker, e)
             return None, None
 
