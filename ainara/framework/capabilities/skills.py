@@ -20,11 +20,15 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 import re
+import subprocess
 import sys
+import venv
 from pathlib import Path
 from typing import (Annotated, Any, Dict, Optional, Union, get_args,
                     get_origin, get_type_hints, is_typeddict)
+from flask import send_from_directory
 
 # from ainara.framework.connectors.manager import ConnectorManager
 from ainara.framework.connectors.router import ConnectorRouter
@@ -44,12 +48,15 @@ class BasePythonSkillProvider(CapabilityProvider):
         mcp_client_manager: Optional[MCPClientManager],
         # connector_manager: Optional[ConnectorManager] = None,
         connector_router: Optional[ConnectorRouter] = None,
+        startup_time: Optional[float] = None,
     ):
         self.config = config
         self.mcp_client_manager = mcp_client_manager
         # self.connector_manager = connector_manager
         self.connector_router = connector_router
+        self.startup_time = startup_time
         self.capabilities: Dict[str, Dict[str, Any]] = {}
+        self.load_errors: list = []
 
     def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
         """Execute a skill."""
@@ -59,6 +66,19 @@ class BasePythonSkillProvider(CapabilityProvider):
         capability_data = self.capabilities.get(name)
         if not capability_data:
             raise ValueError(f"Skill '{name}' not found by provider.")
+
+        # Mid-session modification guard
+        file_path = capability_data.get("file_path")
+        if file_path and self.startup_time:
+            try:
+                file_mtime = os.path.getmtime(file_path)
+                if file_mtime > self.startup_time:
+                    raise RuntimeError(
+                        f"Skill '{name}' was modified after server startup. "
+                        "Please restart the application to use it."
+                    )
+            except OSError:
+                pass  # File might not exist anymore, let normal execution fail
 
         instance = capability_data["instance"]
         run_method = getattr(instance, "run", None)
@@ -398,6 +418,7 @@ class BasePythonSkillProvider(CapabilityProvider):
                                 "instance": instance,
                                 "type": capability_type,
                                 "origin": "local",
+                                "file_path": str(skill_file),
                                 "description": meta.get(
                                     "description",
                                     getattr(instance.__class__, "__doc__", "")
@@ -451,12 +472,22 @@ class BasePythonSkillProvider(CapabilityProvider):
                     f"Failed to load skill from {skill_file}: {str(e)}",
                     exc_info=True,
                 )
+                snake_name = self.camel_to_snake(class_name) if 'class_name' in locals() else skill_file.stem
+                self.load_errors.append({
+                    "skill_id": snake_name,
+                    "error": f"{type(e).__name__}: {str(e)}"
+                })
             except Exception as e:
                 logger.error(
                     f"Unexpected error loading skill from {skill_file}:"
                     f" {str(e)}",
                     exc_info=True,
                 )
+                snake_name = self.camel_to_snake(class_name) if 'class_name' in locals() else skill_file.stem
+                self.load_errors.append({
+                    "skill_id": snake_name,
+                    "error": f"{type(e).__name__}: {str(e)}"
+                })
         return self.capabilities
 
 
@@ -469,3 +500,129 @@ class NativeSkillProvider(BasePythonSkillProvider):
         capabilities = super().discover(skills_dir, prefix_module)
         logger.info(f"Loaded {len(capabilities)} native skills.")
         return capabilities
+
+
+class UserSkillProvider(BasePythonSkillProvider):
+    """Provider for discovering and executing user-defined Python skills."""
+
+    def __init__(self, config, mcp_client_manager, connector_router=None, startup_time=None):
+        super().__init__(config, mcp_client_manager, connector_router, startup_time)
+
+        dir_path = config.get("user_skills.directory")
+        if dir_path:
+            self.user_skills_dir = Path(dir_path).expanduser()
+            self.user_venv_dir = self.user_skills_dir / ".venv"
+            self._setup_user_venv()
+        else:
+            self.user_skills_dir = None
+            self.user_venv_dir = None
+            logger.warning(
+                "User skills are enabled, but no 'directory' is configured. "
+                "Skipping user skill venv setup."
+            )
+
+    def _setup_user_venv(self):
+        """Set up the user virtual environment and prepend to sys.path."""
+        req_file = self.user_skills_dir / "requirements.txt"
+        if not req_file.exists():
+            return
+
+        if not self.user_venv_dir.exists():
+            logger.info(f"Creating user venv at {self.user_venv_dir}")
+            venv.create(self.user_venv_dir, with_pip=True)
+
+        # Install/update dependencies
+        pip_executable = str(self.user_venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
+        logger.info(f"Installing user skill dependencies from {req_file}")
+        try:
+            subprocess.run(
+                [pip_executable, "install", "-r", str(req_file)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(f"Venv setup timed out after 120 seconds for {req_file}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to install user skill dependencies: {e.stderr}")
+
+        # Prepend venv site-packages to sys.path
+        if os.name == "nt":
+            site_packages = self.user_venv_dir / "Lib" / "site-packages"
+        else:
+            py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+            site_packages = self.user_venv_dir / "lib" / py_version / "site-packages"
+
+        if site_packages.exists():
+            sys.path.insert(0, str(site_packages))
+
+    def discover(self) -> Dict[str, Dict[str, Any]]:
+        """Discover user skills, prefixing with 'user_' and scanning for UI components."""
+        self.capabilities = {}
+
+        if not self.user_skills_dir:
+            logger.warning(
+                "User skills are enabled, but no 'directory' is configured. "
+                "Skipping user skill discovery."
+            )
+            return {}
+
+        if not self.user_skills_dir.is_dir():
+            logger.info(f"User skills directory not found: {self.user_skills_dir}")
+            return {}
+
+        # Add user skills dir to sys.path so importlib can find namespaces
+        sys.path.insert(0, str(self.user_skills_dir))
+
+        for namespace_dir in self.user_skills_dir.iterdir():
+            if not namespace_dir.is_dir() or namespace_dir.name.startswith(("_", ".")):
+                continue
+
+            # prefix_module is just the namespace directory name
+            caps = super().discover(namespace_dir, namespace_dir.name)
+
+            for cap_id, cap_data in caps.items():
+                new_cap_id = f"user_{cap_id}"
+                cap_data["origin"] = "user"
+
+                # Check for UI components
+                ui_components_path = namespace_dir / "_components"
+                if ui_components_path.is_dir():
+                    # Strip namespace prefix to get component base name
+                    skill_prefix = f"{namespace_dir.name}_"
+                    if cap_id.startswith(skill_prefix):
+                        component_base_name = cap_id[len(skill_prefix):]
+                        component_name = "".join(w.capitalize() for w in component_base_name.split("_"))
+                        component_dir = (ui_components_path / component_name).resolve()
+
+                        if component_dir.is_dir():
+                            cap_data["ui"] = {"component": component_name}
+                            cap_data["ui_path"] = str(ui_components_path)
+                            logger.info(f"Associated user skill '{new_cap_id}' with component '{component_name}'")
+
+                self.capabilities[new_cap_id] = cap_data
+
+        logger.info(f"Loaded {len(self.capabilities)} user skills.")
+        return self.capabilities
+
+    def serve_component(self, component_path: str) -> Any:
+        """Serve a UI component file from a user skill namespace."""
+        path_parts = Path(component_path).parts
+        if len(path_parts) < 3:
+            raise FileNotFoundError("Invalid component path format.")
+
+        namespace, component_name, *rest = path_parts
+
+        ui_dir = (self.user_skills_dir / namespace / "_components").resolve()
+        if not ui_dir.is_dir():
+            raise FileNotFoundError(f"No UI components found for namespace '{namespace}'.")
+
+        file_path = Path(*rest).as_posix()
+        full_path = (ui_dir / file_path).resolve()
+
+        if not str(full_path).startswith(str(ui_dir)):
+            raise PermissionError("Access denied: path traversal attempt.")
+
+        logger.info(f"Serving user component: {file_path} from {ui_dir}")
+        return send_from_directory(ui_dir, file_path)

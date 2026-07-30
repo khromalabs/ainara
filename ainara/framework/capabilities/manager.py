@@ -33,20 +33,22 @@ from ainara.framework.connectors.router import ConnectorRouter
 # Import providers
 from .mcp import MCPToolProvider
 from .nexus import NexusSkillProvider
-from .skills import NativeSkillProvider
+from .skills import NativeSkillProvider, UserSkillProvider
 
 logger = logging.getLogger(__name__)  # Use module-level logger
 
 
 class CapabilitiesManager:
-    def __init__(self, flask_app, config, internet_available: bool):
+    def __init__(self, flask_app, config, internet_available: bool, startup_time: float = None):
         self.app = flask_app
         self.config = config
         self.internet_available = internet_available
+        self.startup_time = startup_time
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         self.mcp_client_manager = None
         # self.connector_manager = None
         self.nexus_provider = None
+        self.user_provider = None
         self.providers = []
         self.provider_map: Dict[str, Any] = {}
         resource_base_dir = self._get_resource_base_dir()
@@ -159,15 +161,31 @@ class CapabilitiesManager:
             self.provider_map["mcp"] = mcp_provider
             logger.info("Initialized MCPToolProvider.")
 
+        # User Skill Provider
+        if self.config.get("user_skills.enabled", False):
+            try:
+                self.user_provider = UserSkillProvider(
+                    self.config, self.mcp_client_manager, self.router, self.startup_time
+                )
+                self.providers.append(self.user_provider)
+                self.provider_map["user_skill"] = self.user_provider
+                logger.info("Initialized UserSkillProvider.")
+            except Exception as e:
+                logger.error(f"Failed to initialize UserSkillProvider: {e}", exc_info=True)
+                self.user_provider = None
+
     def load_capabilities(self):
         """Load all capabilities by delegating to registered providers."""
         logger.info("Loading capabilities from all providers...")
         self.capabilities = {}  # Clear existing capabilities
+        self.load_errors = []   # Clear previous errors
 
         for provider in self.providers:
             try:
                 discovered_caps = provider.discover()
                 self.capabilities.update(discovered_caps)
+                if hasattr(provider, 'load_errors'):
+                    self.load_errors.extend(provider.load_errors)
             except Exception as e:
                 logger.error(
                     "Failed to discover capabilities from provider"
@@ -338,6 +356,7 @@ class CapabilitiesManager:
         self.register_list_capabilities_endpoint()
         self.register_execute_capability_endpoint()
         self.register_nexus_component_endpoint()
+        self.register_user_component_endpoint()
 
     def register_list_capabilities_endpoint(self):
         """Register the /capabilities endpoint to list all capabilities."""
@@ -409,6 +428,30 @@ class CapabilitiesManager:
             "Registered Nexus component endpoint: GET"
             f" {route_path_base}/<path:component_path>"
         )
+
+    def register_user_component_endpoint(self):
+        """Register the /user_skills/components/<path:component_path> endpoint."""
+        if not self.user_provider:
+            logger.debug("User provider not available, skipping component endpoint registration.")
+            return
+
+        route_path_base = "/user_skills/components"
+
+        @self.app.route(f"{route_path_base}/<path:component_path>", methods=["GET"])
+        def serve_user_component(component_path):
+            try:
+                return self.user_provider.serve_component(component_path)
+            except FileNotFoundError as e:
+                logger.warning(f"User component file not found for path '{component_path}': {e}")
+                return jsonify({"error": "Component file not found"}), 404
+            except PermissionError as e:
+                logger.error(f"Security violation: access denied for user component path '{component_path}': {e}")
+                return jsonify({"error": "Access denied"}), 403
+            except Exception as e:
+                logger.error(f"Error serving user component for path '{component_path}': {e}", exc_info=True)
+                return jsonify({"error": "Internal server error"}), 500
+
+        logger.info(f"Registered User component endpoint: GET {route_path_base}/<path:component_path>")
 
     def register_execute_capability_endpoint(self):
         """Register the /run/{capability_name} endpoint."""

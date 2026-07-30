@@ -116,6 +116,7 @@ def health_check():
         "version": __version__,
         "uptime_seconds": (datetime.utcnow() - startup_time).total_seconds(),
         "internet_available": getattr(app, "internet_available", False),
+        "load_errors": getattr(app.capabilities_manager, 'load_errors', []),
         "services": {
             "capabilities_manager": app.capabilities_manager is not None,
             "config": config is not None,
@@ -156,7 +157,9 @@ def create_app(internet_available: bool):
     app.internet_available = internet_available
 
     # Store reference to capabilities manager, passing the global config
-    app.capabilities_manager = CapabilitiesManager(app, config, internet_available)
+    app.capabilities_manager = CapabilitiesManager(
+        app, config, internet_available, startup_time=startup_time.timestamp()
+    )
 
     # --- Scheduler ---
     # Initialize and start the background scheduler

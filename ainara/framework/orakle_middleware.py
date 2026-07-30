@@ -756,8 +756,9 @@ class OrakleMiddleware:
                 continue
 
             # Format skill description with parameters
+            source_tag = "[USER]" if skill_id.startswith("user_") else "[SYSTEM]"
             skill_desc = (
-                f"## Skill id {skill_id} (match score: {score:.2f})\n\n"
+                f"## Skill id {skill_id} {source_tag} (match score: {score:.2f})\n\n"
             )
             skill_desc += (
                 "Description:"
@@ -834,6 +835,8 @@ class OrakleMiddleware:
 
         select_prompt = """
 You are an expert data analyist. You combine built-in knowledge with real-time capabilities through the ORAKLE query system. ORAKLE connects with external API servers to access real-time data; these capabilities are called skills. Task is to identify from a query in natural language the skill and parameters matching the query intention. If no match can be found return an empty skill_id next to a descriptive error about why none of the possible candidates fits. Search carefully among the available skills.
+
+IMPORTANT: If multiple skills seem equally relevant for the user's intent, always prefer skills marked as [USER] over those marked as [SYSTEM].
 """
         match_providers = self.config_manager.get("orakle.match_providers", [])
         llm_config = self.config_manager.get("llm", {})
