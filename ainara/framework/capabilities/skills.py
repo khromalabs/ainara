@@ -69,9 +69,12 @@ class BasePythonSkillProvider(CapabilityProvider):
 
         # Mid-session modification guard
         file_path = capability_data.get("file_path")
+        logger.info(f"file_path: {file_path}")
         if file_path and self.startup_time:
+            logger.info(f"self.startup_time: {self.startup_time}")
             try:
                 file_mtime = os.path.getmtime(file_path)
+                logger.info(f"file_mtime: {file_mtime}")
                 if file_mtime > self.startup_time:
                     raise RuntimeError(
                         f"Skill '{name}' was modified after server startup. "
@@ -324,6 +327,7 @@ class BasePythonSkillProvider(CapabilityProvider):
         prefix_module: str,
         class_name_prefix: str = "",
         capability_type: str = "skill",
+        flat: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         """Load native skills and add them to the capabilities dictionary."""
         import importlib
@@ -332,9 +336,12 @@ class BasePythonSkillProvider(CapabilityProvider):
         metadata = self._load_metadata_registry(skills_dir)
         is_frozen = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
 
-        # In frozen mode, look for .pyc and .py files; in dev mode, look for .py files
-        glob_patterns = ["*/*.pyc", "*/*.py"] if is_frozen else ["*/*.py"]
-        skill_files = set()
+        # In flat mode (user skills) scan top-level *.py; otherwise use subdirectories
+        if flat:
+            glob_patterns = ["*.pyc", "*.py"] if is_frozen else ["*.py"]
+        else:
+            glob_patterns = ["*/*.pyc", "*/*.py"] if is_frozen else ["*/*.py"]
+
         skill_files = set()
         for pattern in glob_patterns:
             skill_files.update(skills_dir.glob(pattern))
@@ -344,7 +351,6 @@ class BasePythonSkillProvider(CapabilityProvider):
         )
 
         for skill_file in skill_files:
-            # For .pyc files, stem is like "analysis" from "analysis.pyc"
             if skill_file.stem.startswith("__") or skill_file.stem == "base":
                 continue
 
@@ -352,19 +358,32 @@ class BasePythonSkillProvider(CapabilityProvider):
                 rel_path = skill_file.relative_to(skills_dir)
                 module_path = ".".join(rel_path.with_suffix("").parts)
                 parts = rel_path.with_suffix("").parts
-                if len(parts) == 2:
-                    dir_name, file_name = parts
-                    class_name = (
-                        class_name_prefix
-                        + dir_name.capitalize()
-                        + file_name.capitalize()
-                    )
+
+                if flat:
+                    # Flat structure: e.g., "hello.py" → parts = ("hello",)
+                    if len(parts) == 1:
+                        file_name = parts[0]
+                        class_name = class_name_prefix + file_name.capitalize()
+                    else:
+                        logger.warning(
+                            f"Skipping nested file in flat mode: {skill_file}"
+                        )
+                        continue
                 else:
-                    logger.warning(
-                        "Skipping skill file with unexpected path structure:"
-                        f" {skill_file}"
-                    )
-                    continue
+                    # Subdirectory structure: e.g., "dir/sub.py" → parts = ("dir", "sub")
+                    if len(parts) == 2:
+                        dir_name, file_name = parts
+                        class_name = (
+                            class_name_prefix
+                            + dir_name.capitalize()
+                            + file_name.capitalize()
+                        )
+                    else:
+                        logger.warning(
+                            "Skipping skill file with unexpected path structure:"
+                            f" {skill_file}"
+                        )
+                        continue
 
                 full_module_path = f"{prefix_module}.{module_path}"
                 logger.info(f"Importing module: {full_module_path}")
@@ -580,43 +599,47 @@ class UserSkillProvider(BasePythonSkillProvider):
                 continue
 
             # prefix_module is just the namespace directory name
-            caps = super().discover(namespace_dir, namespace_dir.name)
+            caps = super().discover(
+                namespace_dir,
+                namespace_dir.name,
+                flat=True,
+                class_name_prefix=namespace_dir.name.capitalize(),
+                capability_type="user_skill",
+            )
 
-            for cap_id, cap_data in caps.items():
+            for cap_id, cap_data in list(caps.items()):
                 new_cap_id = f"user_{cap_id}"
                 cap_data["origin"] = "user"
 
-                # Check for UI components
-                ui_components_path = namespace_dir / "_components"
+                # Check for UI components in the top-level _components directory
+                ui_components_path = self.user_skills_dir / "_components"
                 if ui_components_path.is_dir():
-                    # Strip namespace prefix to get component base name
-                    skill_prefix = f"{namespace_dir.name}_"
-                    if cap_id.startswith(skill_prefix):
-                        component_base_name = cap_id[len(skill_prefix):]
-                        component_name = "".join(w.capitalize() for w in component_base_name.split("_"))
-                        component_dir = (ui_components_path / component_name).resolve()
+                    component_name = "".join(w.capitalize() for w in cap_id.split("_"))
+                    component_dir = (ui_components_path / component_name).resolve()
 
-                        if component_dir.is_dir():
-                            cap_data["ui"] = {"component": component_name}
-                            cap_data["ui_path"] = str(ui_components_path)
-                            logger.info(f"Associated user skill '{new_cap_id}' with component '{component_name}'")
+                    if component_dir.is_dir():
+                        cap_data["ui"] = {"component": component_name}
+                        cap_data["ui_path"] = str(ui_components_path)
+                        logger.info(f"Associated user skill '{new_cap_id}' with component '{component_name}'")
 
                 self.capabilities[new_cap_id] = cap_data
+                if cap_id in self.capabilities:
+                    del self.capabilities[cap_id]
 
         logger.info(f"Loaded {len(self.capabilities)} user skills.")
         return self.capabilities
 
     def serve_component(self, component_path: str) -> Any:
-        """Serve a UI component file from a user skill namespace."""
+        """Serve a UI component file from the top-level user skills _components directory."""
         path_parts = Path(component_path).parts
-        if len(path_parts) < 3:
+        if len(path_parts) < 2:
             raise FileNotFoundError("Invalid component path format.")
 
-        namespace, component_name, *rest = path_parts
+        component_name, *rest = path_parts
 
-        ui_dir = (self.user_skills_dir / namespace / "_components").resolve()
+        ui_dir = (self.user_skills_dir / "_components" / component_name).resolve()
         if not ui_dir.is_dir():
-            raise FileNotFoundError(f"No UI components found for namespace '{namespace}'.")
+            raise FileNotFoundError(f"No UI components found for component '{component_name}'.")
 
         file_path = Path(*rest).as_posix()
         full_path = (ui_dir / file_path).resolve()

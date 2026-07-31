@@ -263,13 +263,15 @@ class CapabilitiesManager:
                 del params[p]
 
             # Add type-specific fields
-            if cap_data["type"] == "skill":
+            if cap_data["type"] in ("skill", "user_skill"):
                 info["matcher_info"] = cap_data.get("matcher_info", "")
                 embeddings_boost_factor = cap_data.get(
                     "embeddings_boost_factor", 1.0
                 )
                 if embeddings_boost_factor != 1.0:
                     info["embeddings_boost_factor"] = embeddings_boost_factor
+                if "ui" in cap_data:
+                    info["ui"] = cap_data["ui"]
             elif cap_data["type"] == "mcp":
                 info["server"] = cap_data.get("server", "unknown")
             elif cap_data["type"] == "nexus":
@@ -293,11 +295,12 @@ class CapabilitiesManager:
         description = "You have access to the following capabilities:\n"
         sections = {
             "skill": "\n=== Native Skills ===\n",
+            "user_skill": "\n=== User Skills ===\n",
             "nexus": "\n=== Nexus Skills ===\n",
             "mcp": "\n=== MCP Tools ===\n",
         }
-        content = {"skill": "", "nexus": "", "mcp": ""}
-        found = {"skill": False, "nexus": False, "mcp": False}
+        content = {"skill": "", "user_skill": "", "nexus": "", "mcp": ""}
+        found = {"skill": False, "user_skill": False, "nexus": False, "mcp": False}
 
         for name, cap_data in self.capabilities.items():
             if cap_data.get("hidden", False):
@@ -311,6 +314,8 @@ class CapabilitiesManager:
 
         if not found["skill"]:
             content["skill"] = "(No native skills available)\n"
+        if not found["user_skill"]:
+            content["user_skill"] = "(No user skills available)\n"
         if not found["nexus"]:
             content["nexus"] = "(No Nexus skills available)\n"
         if not found["mcp"]:
@@ -320,6 +325,8 @@ class CapabilitiesManager:
             description
             + sections["skill"]
             + content["skill"]
+            + sections["user_skill"]
+            + content["user_skill"]
             + sections["nexus"]
             + content["nexus"]
             + sections["mcp"]

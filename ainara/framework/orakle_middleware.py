@@ -1112,7 +1112,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             # If the skill is a nexus skill with a UI, yield the component data directly
             if (
                 skill_info
-                and skill_info.get("type") == "nexus"
+                and (skill_info.get("type") == "nexus" or skill_info.get("type") == "user_skill")
                 and skill_info.get("ui")
             ):
                 component_name = skill_info.get("ui", {}).get("component")
@@ -1129,7 +1129,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     }
                 except json.JSONDecodeError:
                     error_msg = (
-                        f"Nexus skill '{selected_skill_id}' did not return"
+                        f"Nexus or user skill '{selected_skill_id}' did not return"
                         " valid JSON data."
                     )
                     logger.error(f"ORAKLE: {error_msg} Data: {result}")
