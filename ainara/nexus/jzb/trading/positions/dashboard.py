@@ -41,17 +41,21 @@ class JzbTradingPositionsDashboard(Skill):
     hiddenCapability = False
 
     matcher_info = (
-        "OPEN THE ON-SCREEN DASHBOARD — a rendered visual PANEL / UI page shown"
-        " in the interface. Use ONLY when the user asks to SEE, VIEW, DISPLAY,"
-        " PULL UP, OPEN, RENDER or WATCH something on screen / visually / as a"
-        " dashboard or panel. Trigger phrases: show me the dashboard, open the"
-        " dashboard, pull up the dashboard, display it visually, show it on"
-        " screen, open the panel, visual aid, positions panel, dashboard view."
-        " This skill draws a graphical view; it does NOT describe or summarize"
-        " numbers in words — if the user just wants to be TOLD their status,"
-        " funding, PnL or hedge health in text/speech, this is the WRONG skill"
-        " and the text portfolio skill should be used instead. Read-only;"
-        " renders data, never trades."
+        "OPEN THE VISUAL POSITIONS DASHBOARD — render the delta-neutral positions"
+        " as an on-screen graphical PANEL/UI: both legs, sizes, liquidation bars,"
+        " PnL and funding side by side. This is the SEE-IT-ON-SCREEN skill. Route"
+        " here for ANY request to SHOW, SEE, VIEW, DISPLAY, PULL UP, OPEN, RENDER,"
+        " WATCH or LOOK AT the positions, delta-neutral positions, hedges, book,"
+        " dashboard or panel — e.g. 'show me the dashboard', 'show me my"
+        " positions', 'show me my delta-neutral positions', 'let me see the"
+        " positions', 'can I see my positions', 'pull up the positions', 'view my"
+        " hedges', 'display the book'. The VISUAL VERB is the trigger even when"
+        " the user names the positions or the delta-neutral strategy. It draws a"
+        " graphical view and does NOT speak or summarize numbers; if the user"
+        " wants to be TOLD status, funding, PnL or hedge health in words ('how are"
+        " my positions doing', 'am I hedged', 'what funding am I earning'), that"
+        " is the text portfolio skill, not this. Read-only; renders data, never"
+        " trades."
     )
 
     def run(
