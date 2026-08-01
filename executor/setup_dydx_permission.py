@@ -43,8 +43,10 @@ from executor.venues.dydx_permissioned import (
     register,
 )
 
-# Majors on dYdX: clobPairId BTC-USD=0, ETH-USD=1, SOL-USD=5 (testnet-verified).
-MAJORS_CLOB_IDS = [0, 1, 5]
+# dYdX clobPairId per market: BTC-USD=0, ETH-USD=1, SOL-USD=5, HYPE-USD=319.
+# NOTE: hardcoded for now — the "add any token" work will derive these from the
+# configured coin map via the indexer so a new market needs no code edit.
+MAJORS_CLOB_IDS = [0, 1, 5, 319]
 
 
 # How many subaccounts to authorize by default. An authenticator is IMMUTABLE — the
