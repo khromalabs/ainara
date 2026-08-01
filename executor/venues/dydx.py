@@ -223,6 +223,21 @@ class DydxExecutor:
             logger.warning("dydx stepSize unavailable for %s: %s", market, e)
             return None
 
+    def price_tick(self, market, ref_price=None):
+        """Minimum price increment (`tickSize`) for `market`, or None.
+
+        `ref_price` is accepted for signature parity with the HL adapter (whose
+        tick depends on price); dYdX's tickSize is a flat market parameter, so it
+        is ignored here. Reads the shared all-markets snapshot (one request)."""
+        markets = self._all_markets()
+        md = markets.get(market) if markets else None
+        if not md:
+            return None
+        try:
+            return float(md["tickSize"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
     # ------------------------------------------------------------------
     async def validate(self):
         """Confirm the signing credential is authorized for the account."""

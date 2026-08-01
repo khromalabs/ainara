@@ -190,6 +190,30 @@ class HyperliquidExecutor:
             logger.warning("hyperliquid szDecimals unavailable for %s: %s", coin, e)
         return None
 
+    def price_tick(self, coin, ref_price):
+        """Minimum price increment for `coin` at `ref_price`, or None.
+
+        HL perp prices must be at most 5 significant figures AND at most
+        MAX_DECIMALS(6) - szDecimals decimal places. The finest allowed increment
+        is the COARSER (larger) of those two constraints — a whole-dollar tick is
+        just the special case for a >= ~$10k asset. Returned so plan_hedge_legs
+        can round a crossing limit to a price the venue will accept at any price
+        level, which a hardcoded $1 tick cannot do below ~$1.
+        """
+        try:
+            meta = self._info({"type": "meta"})
+            szd = next((int(a["szDecimals"]) for a in meta.get("universe", [])
+                        if a.get("name") == coin), None)
+            if szd is None or float(ref_price) <= 0:
+                return None
+            import math as _m
+            sig_fig_tick = 10 ** (_m.floor(_m.log10(float(ref_price))) - 4)
+            decimal_cap_tick = 10 ** -(6 - szd)
+            return max(sig_fig_tick, decimal_cap_tick)
+        except Exception as e:
+            logger.warning("hyperliquid price_tick unavailable for %s: %s", coin, e)
+            return None
+
     def mid_price(self, coin):
         """Live mid for `coin`. None if unavailable.
 

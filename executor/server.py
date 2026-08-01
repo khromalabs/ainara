@@ -296,8 +296,40 @@ def _hedge_size_step(short_venue, short_symbol, long_venue, long_symbol):
     return max(steps) if steps else None
 
 
+def _hedge_price_tick(short_venue, short_symbol, long_venue, long_symbol,
+                      ref_price):
+    """Coarsest PRICE tick across both venues, or None if unreadable.
+
+    Same idea as _hedge_size_step but for price: the sell goes to one venue and
+    the buy to the other, so a single crossing price must be valid on both. Venue
+    ticks are decimal-nested, so a multiple of the COARSER tick is also a valid
+    multiple of the finer — round both legs to the coarser and both venues accept
+    them. None -> plan_hedge_legs falls back to its $1 default (fine for majors,
+    refuses sub-$1). HL's tick depends on the price, hence ref_price."""
+    ticks = []
+    for venue, symbol in ((short_venue, short_symbol), (long_venue, long_symbol)):
+        try:
+            t = _venue(venue).price_tick(symbol, ref_price)
+        except Exception as e:
+            logger.warning("price_tick failed for %s/%s: %s", venue, symbol, e)
+            t = None
+        if t:
+            ticks.append(float(t))
+    return max(ticks) if ticks else None
+
+
+def _tick_decimals(tick):
+    """Decimal places implied by a price tick (0.001 -> 3, 1 -> 0).
+
+    Used only to strip the float-division fuzz that math.floor(x/tick)*tick
+    leaves behind. Assumes decimal ticks (powers of ten), which is what both
+    venues use for these markets (dYdX tickSize, HL's sig-fig grid)."""
+    s = ("%.12f" % float(tick)).rstrip("0")
+    return len(s.split(".")[1]) if ("." in s and not s.endswith(".")) else 0
+
+
 def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
-                    cap_notional=None, size_step=None):
+                    cap_notional=None, size_step=None, price_tick=1.0):
     """Pure: build the two crossing limit orders for a delta-neutral open.
 
     A taker fill needs the limit to cross the book — sell BELOW ref, buy ABOVE.
@@ -314,15 +346,23 @@ def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
     within the cap at ref but over it once the buy leg crossed up, so the venue
     refused the long AFTER the short had already filled.
 
-    Prices are rounded to whole dollars, but DIRECTIONALLY — floor the sell, ceil
+    Prices are rounded to `price_tick`, but DIRECTIONALLY — floor the sell, ceil
     the buy — so rounding always keeps each leg on its crossing side. Nearest
     round() breaks on lower-priced majors: SOL at ref ~74.25 rounds BOTH legs to
     74, and a buy limit of 74 sits BELOW the market, so the long rests and never
     fills (that half-built the SOL hedge on run f160529d, then unwound). The
-    0.05% cross is only ~$0.04 at SOL's price — smaller than the $1 tick — so the
+    0.05% cross is only ~$0.04 at SOL's price — smaller than a $1 tick — so the
     tick, not the cross, must decide the side. floor/ceil guarantee sell <= ref <
-    buy. This still assumes a $1 tick (fine for BTC/ETH/SOL, all >= ~$74); an
-    asset below ~$1 would need a finer per-venue tick threaded in here.
+    buy.
+
+    `price_tick` defaults to 1.0 (whole dollars — the original behaviour, correct
+    for BTC/ETH/SOL). Pass the actual venue price tick to support any asset: a
+    $1 tick floors a sub-$1 sell to zero and cannot express a crossing limit,
+    which is why cheap tokens were refused. Use the COARSER of the two venues'
+    ticks so a single rounded price is valid on both legs (venue ticks are
+    decimal-nested, so a multiple of the coarser tick is also a multiple of the
+    finer). The crossing price is a worst-case CAP that fills at the book, so a
+    coarser tick costs nothing.
     """
     size = float(size)
     ref_price = float(ref_price)
@@ -332,14 +372,28 @@ def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
     if ref_price <= 0:
         raise ValueError("ref_price must be > 0")
 
-    sell_px = math.floor(ref_price * (1 - cross))
-    buy_px = math.ceil(ref_price * (1 + cross))
-    # A whole-dollar tick cannot express a crossing sell below ~$1 (floor -> 0);
-    # refuse rather than send a zero or non-crossing price.
+    tick = float(price_tick)
+    if tick <= 0:
+        raise ValueError(f"price_tick must be > 0 (got {price_tick})")
+    dec = _tick_decimals(tick)
+    # Round each leg to the venue price tick, DIRECTIONALLY: floor the sell, ceil
+    # the buy, so rounding can only keep a leg on its crossing side.
+    sell_px = round(math.floor(ref_price * (1 - cross) / tick) * tick, dec)
+    buy_px = round(math.ceil(ref_price * (1 + cross) / tick) * tick, dec)
+    # Defensive: a zero cross, or a ref sitting exactly on the grid, could leave a
+    # leg on the wrong side of ref. Nudge it one tick so the cross is guaranteed.
+    if sell_px >= ref_price:
+        sell_px = round(sell_px - tick, dec)
+    if buy_px <= ref_price:
+        buy_px = round(buy_px + tick, dec)
+    # If the tick is too coarse to express a crossing sell above zero (e.g. a $1
+    # tick on a sub-$1 asset), refuse rather than send a zero or non-crossing
+    # price — the caller must supply the real, finer venue tick.
     if sell_px <= 0 or sell_px >= buy_px:
         raise ValueError(
-            f"cannot build crossing whole-dollar limits at ref ${ref_price:,.4f}"
-            f" (sell={sell_px}, buy={buy_px}); asset too low-priced for a $1 tick")
+            f"cannot build crossing limits at ref ${ref_price:,.6f} with price"
+            f" tick {tick} (sell={sell_px}, buy={buy_px}); tick too coarse for"
+            " this asset — pass the real venue price tick")
 
     shaved = None
     if cap_notional is not None:
@@ -547,8 +601,15 @@ def hedge_open():
     try:
         cap = _effective_cap_notional()
         step = _hedge_size_step(short_venue, short_symbol, long_venue, long_symbol)
+        tick = _hedge_price_tick(short_venue, short_symbol, long_venue,
+                                 long_symbol, ref_price)
+        # None -> plan_hedge_legs keeps its $1 default (majors unchanged; sub-$1
+        # would refuse). A real tick lets any-priced asset build crossing limits.
+        kw = {"cap_notional": cap, "size_step": step}
+        if tick:
+            kw["price_tick"] = tick
         legs = plan_hedge_legs(short_symbol, long_symbol, size, ref_price,
-                               cross_pct, cap_notional=cap, size_step=step)
+                               cross_pct, **kw)
     except ValueError as e:
         return jsonify(error=str(e)), 400
     if legs["shaved"]:

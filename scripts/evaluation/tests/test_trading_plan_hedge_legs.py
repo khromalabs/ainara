@@ -59,6 +59,48 @@ class Crossing(unittest.TestCase):
             self._legs(0.85)
 
 
+class TickAware(unittest.TestCase):
+    """The sub-$1 fix: pass the real venue tick and any-priced asset crosses."""
+
+    def _legs(self, ref, tick, cross_pct=0.05, **kw):
+        return plan_hedge_legs("X", "X-USD", 1.0, ref, cross_pct,
+                               price_tick=tick, **kw)
+
+    def _assert_crosses_on_grid(self, ref, tick):
+        legs = self._legs(ref, tick)
+        sell, buy = legs["short"]["price"], legs["long"]["price"]
+        self.assertLess(sell, ref, f"sell {sell} !< ref {ref}")
+        self.assertGreater(buy, ref, f"buy {buy} !> ref {ref}")
+        # Prices must land on the venue grid (a multiple of the tick).
+        self.assertAlmostEqual(round(sell / tick) * tick, sell, places=9)
+        self.assertAlmostEqual(round(buy / tick) * tick, buy, places=9)
+
+    def test_hype_crosses(self):
+        self._assert_crosses_on_grid(55.18, 0.001)
+
+    def test_xrp_crosses(self):
+        self._assert_crosses_on_grid(1.0744, 0.0001)
+
+    def test_doge_sub_dollar_crosses(self):
+        # The whole point: a $0.07 asset that a $1 tick would floor to zero.
+        self._assert_crosses_on_grid(0.0702, 0.00001)
+
+    def test_default_tick_reproduces_whole_dollar(self):
+        # price_tick defaults to 1.0 -> identical to the old behaviour.
+        legs = plan_hedge_legs("X", "X-USD", 1.0, 74.2455, 0.05)
+        self.assertEqual(legs["short"]["price"], 74)
+        self.assertEqual(legs["long"]["price"], 75)
+
+    def test_coarse_tick_still_refuses_sub_dollar(self):
+        # A $1 tick genuinely cannot express a crossing sell below $1 — refuse.
+        with self.assertRaises(ValueError):
+            self._legs(0.85, 1.0)
+
+    def test_nonpositive_tick_rejected(self):
+        with self.assertRaises(ValueError):
+            self._legs(100.0, 0.0)
+
+
 class SizingGuards(unittest.TestCase):
     def test_size_floored_to_fit_cap_at_the_worse_price(self):
         # buy (ceil, =75) is the worse price; size must fit the cap THERE, not at
