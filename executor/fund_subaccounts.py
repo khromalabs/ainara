@@ -50,8 +50,10 @@ SAFETY
   - Dry run by default; --broadcast is required to send anything.
   - Refuses unless the mnemonic derives the configured account address, so a wrong
     seed is caught before a signature rather than after.
-  - Refuses to move collateral OUT of a subaccount holding an open position: that
-    is its margin, and thinning it moves the liquidation price the wrong way.
+  - By default refuses to move collateral OUT of a subaccount holding an open
+    position. --allow-funded-source overrides this to move only FREE collateral
+    (the excess above the position's margin), which cannot drop it below initial
+    margin — needed to fund a new coin's subaccount while the others are open.
   - Refuses transfers that would leave the source below --min-source (default 5
     USDC), so a fat-fingered amount cannot strip subaccount 0 bare.
   - Never withdraws off dYdX. Transfers only, between subaccounts you own.
@@ -246,10 +248,20 @@ async def main(args):
     # Refuse anything that would thin an open position's margin, or strip a source.
     for src, dst, amount in moves:
         s = current.get(src, {"free": 0.0, "positions": []})
-        if s["positions"]:
-            sys.exit(f"REFUSING: subaccount #{src} holds {', '.join(s['positions'])}."
-                     " Moving its collateral out thins that position's margin and"
-                     " pushes its liquidation price closer. Close it first.")
+        if s["positions"] and not args.allow_funded_source:
+            sys.exit(
+                f"REFUSING: subaccount #{src} holds {', '.join(s['positions'])}."
+                " Moving collateral out shrinks that position's liquidation"
+                " buffer. Pass --allow-funded-source to move FREE collateral (the"
+                f" excess above margin — #{src} has {s['free']:.2f} free) anyway;"
+                " it can never drop the position below its initial margin, only"
+                " reduce the buffer above it. Needed to fund a new coin's"
+                " subaccount while others are open.")
+        if s["positions"] and args.allow_funded_source:
+            print(f"  note: sourcing from funded #{src} — moving {amount:.2f} of"
+                  f" {s['free']:.2f} FREE collateral leaves"
+                  f" {s['free'] - amount:.2f} free (its position's margin is"
+                  " untouched).")
         if amount > s["free"] + 1e-9:
             sys.exit(f"REFUSING: #{src} has {s['free']:.2f} free, cannot send"
                      f" {amount:.2f}.")
@@ -310,6 +322,11 @@ if __name__ == "__main__":
                    help="source subaccount (default 0)")
     p.add_argument("--min-source", type=float, default=5.0,
                    help="refuse if the source would drop below this (default 5)")
+    p.add_argument("--allow-funded-source", action="store_true",
+                   help="allow sourcing FREE collateral from a subaccount that "
+                        "holds an open position (moves only the excess above its "
+                        "margin; --min-source still applies). Needed to fund a "
+                        "new coin's subaccount while the others are open.")
     p.add_argument("--broadcast", action="store_true",
                    help="actually send; without it this is a dry run")
     asyncio.run(main(p.parse_args()))
