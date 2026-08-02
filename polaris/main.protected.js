@@ -174,12 +174,12 @@ function showSetupWizard(validationErrors = []) {
     shortcutRegistered = false;
 
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    Logger.info("Screen X " + screenWidth)
+    Logger.info("Screen X:" + screenWidth + " Screen Y:" + screenWidth)
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        width: screenHeight*1.2,
-        height: Math.floor(screenHeight * 0.9),
+        width: Math.floor(screenWidth * 0.7),
+        height: Math.floor(screenHeight * 0.95),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
