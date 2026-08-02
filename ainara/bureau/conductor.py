@@ -561,7 +561,14 @@ class Conductor:
             end_time = datetime.now(timezone.utc)
             duration = end_time - start_time
 
-            reports_dir = Path(get_default_log_dir()) / "bureau" / "reports"
+            # Honour the configured (local-first) logging.directory like every
+            # other log. get_default_log_dir() is Documents-based on Windows,
+            # which OneDrive then syncs — forensic reports must stay on local
+            # disk, so only fall back to it when logging.directory is unset.
+            log_base = (self.config_manager.get("logging.directory")
+                        if self.config_manager else None)
+            reports_dir = (Path(log_base) if log_base
+                           else Path(get_default_log_dir())) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
             report_path = reports_dir / f"plan_{plan_name}_{run_id}.md"
 
