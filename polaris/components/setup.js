@@ -421,6 +421,22 @@ async function generateSkillsUI() {
         // Generate Schedule UI
         const scheduleHtml = generateScheduleUI(capabilities, backendConfig);
 
+        // Generate User Skills UI (no validation yet)
+        const userSkillsHtml = `
+            <div class="skill-category UserSkills">
+                <h3>User Skills</h3>
+                <p>Select a directory containing your own Python skills.</p>
+                <div class="form-group">
+                    <label for="user-skills-directory">User Skills Directory:</label>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <input type="text" id="user-skills-directory" placeholder="e.g., ~/my_skills" style="flex:1;">
+                        <button id="browse-user-skills-btn" class="btn btn-secondary">Browse…</button>
+                    </div>
+                    <p class="field-description">Leave empty to disable user skills.</p>
+                </div>
+            </div>
+        `;
+
         // Construct the Layout with Top Menu
         const layoutHtml = `
             <div class="skills-layout">
@@ -428,6 +444,7 @@ async function generateSkillsUI() {
                     <div class="skills-nav-item active" data-target="section-api-keys">API Keys</div>
                     <div class="skills-nav-item" data-target="section-messaging">Messaging</div>
                     <div class="skills-nav-item" data-target="section-scheduler">Scheduled Skills</div>
+                    <div class="skills-nav-item" data-target="section-user-skills">User Skills</div>
                 </div>
                 <div class="skills-content-area">
                     <div id="section-api-keys" class="skills-section-anchor">
@@ -438,6 +455,9 @@ async function generateSkillsUI() {
                     </div>
                     <div id="section-scheduler" class="skills-section-anchor">
                         ${scheduleHtml}
+                    </div>
+                    <div id="section-user-skills" class="skills-section-anchor">
+                        ${userSkillsHtml}
                     </div>
 
                     <div class="validate-all-container" style="text-align: center; margin-top: 40px; margin-bottom: 10px; display: flex; justify-content: center; gap: 10px;">
@@ -473,6 +493,28 @@ async function generateSkillsUI() {
 
         // SETUP SCHEDULE LISTENERS
         setupScheduleListeners();
+
+        // SETUP USER SKILLS DIRECTORY LISTENERS
+        const userSkillsInput = document.getElementById('user-skills-directory');
+        const browseUserSkillsBtn = document.getElementById('browse-user-skills-btn');
+
+        if (userSkillsInput) {
+            // Load existing value from backend config
+            if (backendConfig?.user_skills?.directory) {
+                userSkillsInput.value = backendConfig.user_skills.directory;
+            }
+
+            userSkillsInput.addEventListener('input', (event) => {
+                modifiedFields.skills.add('user_skills');
+                updateSkillsNextButtonState();
+            });
+
+            if (browseUserSkillsBtn) {
+                browseUserSkillsBtn.addEventListener('click', () => {
+                    ipcRenderer.send('select-user-skills-directory');
+                });
+            }
+        }
 
         // Load existing values from config
         await loadExistingApiKeys();
@@ -897,6 +939,16 @@ function setupEventListeners() {
                     backupDirectoryInput.value = directoryPath;
                     // Trigger change event to mark as modified
                     backupDirectoryInput.dispatchEvent(new Event('input'));
+                }
+            });
+
+            // Listen for user skills directory selection response
+            ipcRenderer.on('user-skills-directory-selected', (event, directoryPath) => {
+                const userSkillsInput = document.getElementById('user-skills-directory');
+                if (userSkillsInput) {
+                    userSkillsInput.value = directoryPath;
+                    // Trigger change event to mark as modified
+                    userSkillsInput.dispatchEvent(new Event('input'));
                 }
             });
 
@@ -2710,6 +2762,15 @@ async function saveSTTConfig() {
             default_voice: selectedVoiceId
         };
 
+        // SAVE USER SKILLS DIRECTORY (always save if field exists)
+        if (userSkillsInput) {
+            const userSkillsPath = userSkillsInput.value.trim();
+            backendConfig.user_skills = {
+                enabled: !!userSkillsPath,
+                directory: userSkillsPath
+            };
+        }
+
         // Save the updated backend config
         await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
 
@@ -2842,8 +2903,9 @@ function setupEmailTableListeners() {
 }
 
 async function saveSkillsConfig() {
-    // If no skill fields were modified, skip saving
-    if (modifiedFields.skills.size === 0) {
+    const userSkillsInput = document.getElementById('user-skills-directory');
+    // If no skill fields were modified and there's no user skills field, skip saving
+    if (modifiedFields.skills.size === 0 && !userSkillsInput) {
         return;
     }
 
