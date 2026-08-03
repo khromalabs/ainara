@@ -1389,3 +1389,31 @@ input.capturing {
     border-top: 1px solid #eee;
     text-align: right;
 }
+
+/* Capability Grouping Styles */
+.capability-group {
+    margin-bottom: 20px;
+}
+
+.capability-group h3 {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+    color: #17a2b8;
+}
+
+.capability-group ul {
+    padding-left: 20px;
+    margin: 8px 0;
+}
+
+.capability-group li {
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+.capability-group code {
+    background: #f1f1f1;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.95em;
+}

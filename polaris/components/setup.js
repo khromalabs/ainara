@@ -1632,31 +1632,95 @@ async function loadAndDisplayCapabilities() {
     const listElement = document.getElementById('capabilities-list');
     if (!listElement) return;
 
-    listElement.innerHTML = '<li class="loading">Loading capabilities...</li>'; // Show loading state
+    listElement.innerHTML = '<li class="loading">Loading capabilities...</li>';
 
     try {
-        // Use pybridge URL as the base for capabilities endpoint
         const response = await fetch(config.get('orakle.api_url') + '/capabilities');
         if (!response.ok) {
             throw new Error(`Failed to fetch capabilities: ${response.status} ${response.statusText}`);
         }
+
         const data = await response.json();
-        if (data && data instanceof Object && Object.keys(data).length > 0) {
-            listElement.innerHTML = ''; // Clear loading state
-            Object.keys(data).forEach(skillId => {
-                let skill = data[skillId];
-                const li = document.createElement('li');
-                li.textContent = skill.description;
-                if (skill.type == "mcp") {
-                    li.textContent += " (" + skill.type + ":" + skill.server + ")"
-                } else {
-                    li.textContent += " (native skill)"
-                }
-                listElement.appendChild(li);
-            });
-        } else {
+        if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
             listElement.innerHTML = '<li class="info">No specific capabilities listed by the backend.</li>';
+            return;
         }
+
+        const groups = {
+            native: [],
+            nexus: [],
+            mcp: [],
+            user: [],
+            other: []
+        };
+
+        Object.entries(data).forEach(([skillId, skill]) => {
+            const entry = {
+                id: skillId,
+                description: (skill.description || '').trim().split('\n')[0],
+                bundle: skill.bundle || '',
+                server: skill.server || ''
+            };
+
+            switch (skill.type) {
+                case 'skill':
+                    groups.native.push(entry);
+                    break;
+                case 'nexus':
+                    groups.nexus.push(entry);
+                    break;
+                case 'mcp':
+                    groups.mcp.push(entry);
+                    break;
+                case 'user_skill':
+                    groups.user.push(entry);
+                    break;
+                default:
+                    groups.other.push(entry);
+            }
+        });
+
+        const renderEntries = (entries) => entries
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map(entry => {
+                const suffix = entry.server ? ` <em>(server: ${entry.server})</em>` : '';
+                return `<li><code>${entry.id}</code> — ${entry.description}${suffix}</li>`;
+            })
+            .join('');
+
+        const renderGroup = (title, entries) => {
+            if (entries.length === 0) return '';
+            return `
+                <div class="capability-group">
+                    <h3>${title}</h3>
+                    <ul>${renderEntries(entries)}</ul>
+                </div>
+            `;
+        };
+
+        const sections = [];
+
+        sections.push(renderGroup('Native Skills', groups.native));
+
+        const nexusByBundle = {};
+        groups.nexus.forEach(entry => {
+            const bundle = entry.bundle || 'General';
+            if (!nexusByBundle[bundle]) nexusByBundle[bundle] = [];
+            nexusByBundle[bundle].push(entry);
+        });
+
+        Object.keys(nexusByBundle)
+            .sort((a, b) => a.localeCompare(b))
+            .forEach(bundle => {
+                const title = `Nexus Skills — ${bundle.charAt(0).toUpperCase() + bundle.slice(1)}`;
+                sections.push(renderGroup(title, nexusByBundle[bundle]));
+            });
+
+        sections.push(renderGroup('MCP Servers', groups.mcp));
+        sections.push(renderGroup('User Skills', groups.user));
+        sections.push(renderGroup('Other Capabilities', groups.other));
+
+        listElement.innerHTML = sections.filter(Boolean).join('') || '<li class="info">No capabilities available.</li>';
     } catch (error) {
         console.error('Error loading capabilities:', error);
         listElement.innerHTML = `<li class="error">Failed to load capabilities: ${error.message}</li>`;
