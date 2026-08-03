@@ -84,8 +84,7 @@ module.exports = {
     },
     startup: {
         autoStart: false,
-        startMinimized: false,
-        backupDirectory: ""
+        startMinimized: false
     },
     ollama: {
         serverIp: "127.0.0.1",

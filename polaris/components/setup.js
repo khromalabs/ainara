@@ -866,7 +866,16 @@ function setupEventListeners() {
 
             if (backupDirectoryInput) {
                 backupDirectoryInput.addEventListener('input', (event) => handleInputChange(event));
-                backupDirectoryInput.value = config.get('startup.backupDirectory', '');
+
+                // Load from backend config, not frontend config
+                (async () => {
+                    try {
+                        const backendConfig = await loadBackendConfig();
+                        backupDirectoryInput.value = backendConfig?.backup?.directory || '';
+                    } catch (error) {
+                        console.error('Error loading backup directory from backend:', error);
+                    }
+                })();
 
                 // Make the input clickable to trigger browse
                 backupDirectoryInput.addEventListener('click', () => {
@@ -3013,9 +3022,8 @@ async function saveFinishStepConfig() {
 
         if (modifiedFields.finish.has('backup-directory-input')) {
             const backupDirectory = document.getElementById('backup-directory-input').value.trim();
-            config.set('startup.backupDirectory', backupDirectory);
 
-            // Save to backend config
+            // Save only to backend config
             const backendConfig = await loadBackendConfig();
             if (!backendConfig.backup) {
                 backendConfig.backup = {};
