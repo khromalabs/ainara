@@ -457,7 +457,7 @@ class ComRing extends BaseComponent {
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
             if (this.isProcessingUserMessage) {
-                console.log("process-typed-message: Avoiding concurrent entry");
+                console.log("process-typed-message: isProcessingUserMessage=true, avoiding concurrent entry");
                 return;
             }
             this.isProcessingUserMessage = true;
@@ -794,6 +794,7 @@ class ComRing extends BaseComponent {
 
     async processUserMessage(message, typed = false) {
         console.log('processUserMessage:', message);
+        this.ignoreIncomingEvents = false;
         if (!typed) {
             // Show user message in display window
             ipcRenderer.send('transcription-received', message);
@@ -840,6 +841,11 @@ class ComRing extends BaseComponent {
 
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (result) => {
+            if (this.isProcessingUserMessage) {
+                console.log("setupTranscriptionHandler: isProcessingUserMessage=true, avoiding concurrent entry");
+                return;
+            }
+
             // [MODIFIED] Handle both object (new) and string (legacy) formats
             let text = '';
             let confidence = undefined;
@@ -1125,7 +1131,6 @@ class ComRing extends BaseComponent {
     }
 
     async enterTypingMode() {
-        this.ignoreIncomingEvents = false;
         this.text = "";
         // Set state in window
         await ipcRenderer.invoke('set-typing-mode-state', true);
