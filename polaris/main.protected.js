@@ -295,6 +295,7 @@ async function appFirstInitializationTasks() {
     Logger.setDebugMode(debugMode);
     app.isQuitting = false;
     app.isRefreshing = false;
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
     await app.whenReady();
 
     // // Apply auto-start setting on launch
@@ -767,6 +768,14 @@ async function appCreateTray() {
             image = image.resize({ width: 16, height: 16 });
             Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
         }
+    } else if (process.platform === 'linux') {
+        const size = image.getSize();
+        // Linux tray implementations typically expect 22-24px icons
+        if (size.width > 24 || size.height > 24) {
+            Logger.info(`appCreateTray: Resizing image for Linux (${size.width}x${size.height} → 24x24)`);
+            image = image.resize({ width: 24, height: 24 });
+            Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
+        }
     }
 
     try {
@@ -808,6 +817,7 @@ async function appCreateTray() {
 }
 
 function updateTrayIcon(state, listening=null, notifications=null) {
+    const { nativeImage } = require('electron');
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     if (tray && !tray.isDestroyed()) {
         let iconFileName, listeningTail, notificationsTail;
@@ -830,7 +840,26 @@ function updateTrayIcon(state, listening=null, notifications=null) {
         }
         const iconPath = path.join(__dirname, 'assets', iconFileName);
         try {
-            tray.setImage(iconPath);
+            let image = nativeImage.createFromPath(iconPath);
+            if (image.isEmpty()) {
+                Logger.error(`updateTrayIcon: Failed to load image at ${iconPath}`);
+                return;
+            }
+
+            // Resize for platforms that expect small tray icons
+            if (process.platform === 'linux') {
+                const size = image.getSize();
+                if (size.width > 24 || size.height > 24) {
+                    image = image.resize({ width: 24, height: 24 });
+                }
+            } else if (process.platform === 'win32') {
+                const size = image.getSize();
+                if (size.width > 32 || size.height > 32) {
+                    image = image.resize({ width: 16, height: 16 });
+                }
+            }
+
+            tray.setImage(image);
         } catch (e) {
             Logger.error(`Failed to set tray icon for state ${state}:`, e);
         }
@@ -888,6 +917,10 @@ async function startOllamaKeepAlive() {
 // Add function to update provider submenu
 async function updateProviderSubmenu() {
     try {
+        if (!tray) {
+            Logger.warn('updateProviderSubmenu: tray not available yet, skipping.');
+            return;
+        }
 
         const updateItems = isRunningAsAppX() ? [] : [
             { type: 'separator' },

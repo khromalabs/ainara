@@ -18,7 +18,6 @@
 
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
-const fetch = require('node-fetch');
 const Logger = require('./logger');
 
 class Service extends EventEmitter {
