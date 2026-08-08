@@ -1417,3 +1417,219 @@ input.capturing {
     border-radius: 4px;
     font-size: 0.95em;
 }
+
+/* ===== Ollama setup status cards ===== */
+.status-card {
+    position: relative;
+    background: #fff;
+    border: 1px solid #e3e6ea;
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.status-card h4 {
+    margin: 0 0 10px;
+    font-size: 1em;
+    color: #1a2530;
+}
+
+.status-card p {
+    margin: 6px 0;
+    color: #555;
+    line-height: 1.5;
+}
+
+.status-card ul {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.status-card .requirement-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #6c757d;
+}
+
+.status-card .requirement-option.met {
+    border-left-color: #28a745;
+}
+
+.status-card .requirement-option.unmet {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 36px;
+}
+
+/* CSS-drawn red cross for unmet requirement rows */
+.status-card .requirement-option.unmet::before,
+.status-card .requirement-option.unmet::after {
+    content: '';
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    width: 4px;
+    height: 18px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card .requirement-option.unmet::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card .requirement-option.unmet::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.status-card .requirement-result {
+    font-weight: bold;
+    white-space: nowrap;
+    color: #333;
+}
+
+.status-card .or-divider {
+    background: transparent;
+    text-align: center;
+    font-weight: bold;
+    color: #6c757d;
+    padding: 6px 0;
+    border-left: none;
+}
+
+.status-card .card-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.status-card.hardware-details {
+    padding-left: 60px; /* make room for the icon */
+}
+
+.hardware-icon::before {
+    content: '🔧';
+    background-color: #f8f9fa;
+}
+
+.status-badge {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.85em;
+}
+
+.status-badge.good {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-badge.warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-badge.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.hardware-details details {
+    margin-top: 8px;
+}
+
+.hardware-details summary {
+    cursor: pointer;
+    color: #007bff;
+    font-size: 0.9em;
+    user-select: none;
+}
+
+.hardware-details ul {
+    margin: 8px 0 0;
+    padding-left: 20px;
+    list-style: disc;
+}
+
+.status-card.ollama-availability.unavailable {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 60px;
+}
+
+/* CSS-drawn red cross for the "Ollama is not running" card */
+.status-card.ollama-availability.unavailable::before,
+.status-card.ollama-availability.unavailable::after {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card.ollama-availability.unavailable::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card.ollama-availability.unavailable::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.status-card.ollama-availability a {
+    color: #007bff;
+    font-weight: bold;
+}
+
+.status-card.error {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 60px;
+}
+
+/* CSS-drawn red cross for full-width error cards */
+.status-card.error::before,
+.status-card.error::after {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card.error::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card.error::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
