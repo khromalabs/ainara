@@ -1277,6 +1277,15 @@ function appSetupEventHandlers() {
         }
     });
 
+    // Handle user skills directory selection from setup wizard
+    ipcMain.handle('select-user-skills-directory', async (event) => {
+        const result = await dialog.showOpenDialog({
+            title: 'Select User Skills Directory',
+            properties: ['openDirectory']
+        });
+        return result;
+    });
+
     // Correction: Modified 'window-all-closed' handler for tray application behavior.
     // Improvement: A tray application should not quit when all its windows are closed.
     // This handler is changed to do nothing, aligning with the app's design to run

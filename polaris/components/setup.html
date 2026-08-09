@@ -19,7 +19,8 @@
                 <div class="step" data-step="ollama">Ollama Setup</div>
                 <div class="step" data-step="llm">LLM Providers</div>
                 <div class="step" data-step="stt">Voice Setup</div>
-                <div class="step" data-step="skills">APIs</div>
+                <div class="step" data-step="api">API Setup</div>
+                <div class="step" data-step="skills">Skills</div>
                 <div class="step" data-step="mcp">MCP Servers</div>
                 <div class="step" data-step="shortcuts">Shortcuts</div>
                 <div class="step" data-step="finish">Finish</div>
@@ -122,18 +123,23 @@
                     <div id="stt-test-result" class="hidden"></div>
                 </div>
 
+                <!-- API Setup step -->
+                <div class="step-panel" id="api-panel">
+                    <h2>API Setup</h2>
+                    <p>Configure optional API keys and email accounts.</p>
+                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b><br><br>
+                    <div id="api-list" class="api-list">
+                        <p>Loading API configuration...</p>
+                    </div>
+                </div>
+
                 <!-- Skills setup step -->
                 <div class="step-panel" id="skills-panel">
-                    <h2>APIs & Capabilities</h2>
-                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b><br><br>
-                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities at any moment, simply ask her.</b><br><br>
-                    <p>The following skills require API keys. All are optional, but especially the search services are highly recommended.</p>
-
+                    <h2>Skills</h2>
+                    <p>Configure scheduled skills and user skills directory.</p>
                     <div class="skills-list">
-                        <!-- This will be populated dynamically -->
                         <p>Loading available skills...</p>
                     </div>
-
                 </div>
 
                 <!-- MCP Servers setup step -->

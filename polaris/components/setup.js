@@ -29,6 +29,7 @@ const stepModules = {
     ollama: require('./setup/steps/ollama'),
     llm: require('./setup/steps/llm'),
     stt: require('./setup/steps/stt'),
+    api: require('./setup/steps/api'),
     skills: require('./setup/steps/skills'),
     mcp: require('./setup/steps/mcp'),
     shortcuts: require('./setup/steps/shortcuts'),
@@ -39,13 +40,14 @@ const stepModules = {
 const config = new ConfigManager();
 
 // Step navigation
-const steps = ['welcome', 'ollama', 'llm', 'stt', 'skills', 'mcp', 'shortcuts', 'finish'];
+const steps = ['welcome', 'ollama', 'llm', 'stt', 'api', 'skills', 'mcp', 'shortcuts', 'finish'];
 let currentStepIndex = 0;
 
 // Track modified fields
 const modifiedFields = {
     llm: new Set(),
     stt: new Set(),
+    api: new Set(),
     mcp: new Set(),
     skills: new Set(),
     shortcuts: new Set(),
@@ -92,8 +94,11 @@ function updateButtonVisibility() {
         refreshLLMStepButtonState();
     } else if (currentStep === 'stt') {
         nextBtn.disabled = false;
+    } else if (currentStep === 'api') {
+        nextBtn.disabled = true;
+        stepModules.api.updateNextButtonState(ctx);
     } else if (currentStep === 'skills') {
-        stepModules.skills.updateNextButtonState(ctx);
+        nextBtn.disabled = false;
     } else {
         nextBtn.disabled = false;
     }
@@ -118,9 +123,9 @@ function handleInputChange(event, disableNext = true) {
         if (fieldId.includes('shortcut')) {
             modifiedFields.shortcuts.add(fieldId);
         } else if (fieldId.includes('api-key-')) {
-            modifiedFields.skills.add(field.dataset.path);
+            modifiedFields.api.add(field.dataset.path);
 
-            const groupItem = field.closest('.skill-item');
+            const groupItem = field.closest('.api-group');
             if (!groupItem) return;
 
             const groupPath = groupItem.dataset.groupPath;
@@ -128,28 +133,28 @@ function handleInputChange(event, disableNext = true) {
             let isGroupModified = false;
             groupItem.querySelectorAll('input[data-path]').forEach(input => {
                 const path = input.dataset.path;
-                if (input.value && input.value !== ctx.state.initialSkillValues[path]) {
+                if (input.value && input.value !== ctx.state.initialApiValues[path]) {
                     isGroupModified = true;
                 }
             });
 
-            const statusElement = document.getElementById(`status-${groupPath.replace(/\./g, '-')}`);
-            const messageElement = document.getElementById(`message-${groupPath.replace(/\./g, '-')}`);
+            const statusElement = document.getElementById(`api-status-${groupPath.replace(/\./g, '-')}`);
+            const messageElement = document.getElementById(`api-message-${groupPath.replace(/\./g, '-')}`);
 
             if (isGroupModified) {
-                ctx.state.skillValidationStatus[groupPath] = 'unvalidated';
+                ctx.state.apiValidationStatus[groupPath] = 'unvalidated';
             } else {
                 // All fields in the group are back to their initial state
-                ctx.state.skillValidationStatus[groupPath] = 'success';
+                ctx.state.apiValidationStatus[groupPath] = 'success';
             }
 
             // Always clear validation UI on change, forcing a re-validation for modified groups
-            if (statusElement) statusElement.className = 'skill-validation-status';
+            if (statusElement) statusElement.className = 'api-validation-status';
             if (messageElement) {
                 messageElement.textContent = '';
-                messageElement.className = 'skill-validation-message';
+                messageElement.className = 'api-validation-message';
             }
-            stepModules.skills.updateNextButtonState(ctx);
+            stepModules.api.updateNextButtonState(ctx);
         } else if (fieldId.includes('custom-api')) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
@@ -446,4 +451,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateLLMStepTitle();
     await stepModules.welcome.init(ctx);
     updateButtonVisibility();
+
+    const finishPanel = document.getElementById('finish-panel');
+    if (finishPanel) {
+        const observer = new MutationObserver(() => {
+            if (finishPanel.classList.contains('active')) {
+                ctx.loadAndDisplayCapabilities().catch(err => {
+                    console.error('Error loading capabilities:', err);
+                });
+            }
+        });
+        observer.observe(finishPanel, { attributes: true, attributeFilter: ['class'] });
+    }
 });

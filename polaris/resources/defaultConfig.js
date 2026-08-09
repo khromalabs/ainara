@@ -18,7 +18,7 @@
 
 module.exports = {
     stt: {
-        review: 'auto',
+        review: 'on',
         smart_send_threshold: 0.75,
         lowerVolume: true,
         modules: {
