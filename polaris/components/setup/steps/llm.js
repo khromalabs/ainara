@@ -345,7 +345,7 @@ async function loadExistingProviders(ctx) {
 
                 const index = parseInt(button.dataset.index);
                 const provider = existingProviders[index];
-                const providerName = provider.name || `Provider ${index + 1}`;
+                const providerName = provider.model || `Provider ${index + 1}`;
 
                 if (confirm(`Are you sure you want to delete the provider "${providerName}"?`)) {
                     await deleteProvider(ctx, index);
@@ -696,7 +696,7 @@ async function saveLLMConfig(ctx) {
 }
 
 async function updateUIAfterSave(ctx, newProvider) {
-    await ctx.loadExistingProviders();
+    await ctx.loadExistingProviders(ctx);
 
     const providerRadios = document.querySelectorAll('input[name="existing-provider"]');
     const newProviderRadio = Array.from(providerRadios).find(radio => {
@@ -746,7 +746,7 @@ async function deleteProvider(ctx, index) {
             existingContainer.innerHTML = '';
         }
 
-        ctx.loadExistingProviders();
+        await ctx.loadExistingProviders(ctx);
 
         const testResult = document.getElementById('test-result');
         testResult.textContent = 'Provider deleted successfully';

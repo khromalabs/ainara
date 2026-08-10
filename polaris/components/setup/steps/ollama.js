@@ -401,7 +401,7 @@ async function downloadOllamaModel(ctx, client, modelId, buttonElement) {
             progressDiv.innerHTML += `<p>Updating providers list...</p>`;
             await updateOllamaProviders(ctx);
             if (typeof ctx.loadExistingProviders === 'function') {
-                await ctx.loadExistingProviders();
+                await ctx.loadExistingProviders(ctx);
             }
             setTimeout(() => {
                 displayOllamaModels(ctx);
@@ -423,7 +423,7 @@ async function deleteOllamaModel(ctx, client, modelName) {
 
         await updateOllamaProviders(ctx);
         if (typeof ctx.loadExistingProviders === 'function') {
-            await ctx.loadExistingProviders();
+            await ctx.loadExistingProviders(ctx);
         }
         await displayOllamaModels(ctx);
     } catch (error) {
