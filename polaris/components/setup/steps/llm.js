@@ -136,9 +136,9 @@ async function displayFeaturedModels(ctx, existingProviders = []) {
     };
 
     const featured = [
-        { id: 'deepseek-v4-flash', name: 'DeepSeek 4 Flash', providerId: 'deepseek', modelId: 'deepseek/deepseek-v4-flash', description: 'DeepSeek\'s open, fast, highly smart, very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model','high_speed', 'high_intelligence', 'low_price'  ] },
+        { id: 'deepseek-v4-flash', name: 'DeepSeek 4 Flash', providerId: 'deepseek', modelId: 'deepseek/deepseek-v4-flash', description: 'State of Art DeepSeek\'s 128GB model: open, fast, highly smart, very affordable.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model','high_speed', 'high_intelligence', 'low_price'  ] },
         // { id: 'kimi-k2.7-code-highspeed', name: 'Kimi 2.7 Code Highspeed', providerId: 'moonshot', modelId: 'moonshot/kimi-k2.7-code-highspeed', description: 'A fast, highly smart, open model from Moonshot.', imageUrl: '../assets/providers/kimi-k2-turbo.png', tags: [ "open_model", "high_intelligence", "high_speed" ] },
-        { id: 'xai-grok-4-1-fast-non-reasoning', name: 'SpaceXAI Grok 4.1 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-1-fast-non-reasoning', description: 'A very fast, smart, affordable model from SpaceXAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
+        { id: 'xai-grok-4-1-fast-reasoning', name: 'SpaceXAI Grok 4.1 Fast (Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-1-fast-reasoning', description: 'A very fast, smart, affordable model from SpaceXAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
     ];
 
     const existingModelIds = new Set(existingProviders.map(p => p.model));
@@ -262,8 +262,16 @@ async function loadExistingProviders(ctx) {
             return;
         }
 
-        existingProviders.forEach((provider, index) => {
-            const providerId = `existing-${index}`;
+        const sortedProviders = existingProviders
+            .map((provider, originalIndex) => ({ provider, originalIndex }))
+            .sort((a, b) => {
+                const nameA = a.provider.model.toLowerCase();
+                const nameB = b.provider.model.toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+
+        sortedProviders.forEach(({ provider, originalIndex }) => {
+            const providerId = `existing-${originalIndex}`;
             const isOllamaModel = provider.model.startsWith('ollama/');
             const providerModel = isOllamaModel ?
                 `Ollama: ${provider.model.split('/')[1]}` :
@@ -273,13 +281,13 @@ async function loadExistingProviders(ctx) {
             existingContainer.innerHTML += `
                 <div class="existing-provider ${isSelected ? 'selected' : ''} ${isOllamaModel ? 'ollama-provider' : ''}">
                     <input type="radio" name="existing-provider" id="${providerId}"
-                        value="${index}" ${isSelected ? 'checked' : ''}>
+                        value="${originalIndex}" ${isSelected ? 'checked' : ''}>
                     <label for="${providerId}">
                         <strong>${providerModel}</strong><br>
                         ${provider.api_base ? `API: ${provider.api_base}` : ''}
                         ${provider.context_window ? `Context: ${(provider.context_window / 1024).toFixed(2)}K` : ''}
                     </label>
-                    <button class="delete-provider-btn" data-index="${index}" title="Delete this provider">
+                    <button class="delete-provider-btn" data-index="${originalIndex}" title="Delete this provider">
                         &times;
                     </button>
                 </div>

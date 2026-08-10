@@ -687,6 +687,21 @@ input:disabled, button:disabled {
     background-color: #f9f9f9;
 }
 
+.existing-providers-section #existing-providers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.existing-providers-section #existing-providers > p {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.existing-providers-section .existing-provider {
+    margin-bottom: 0;
+}
+
 .existing-provider {
     background-color: #e9f7fe;
     border: 1px solid #c5e8f7;
