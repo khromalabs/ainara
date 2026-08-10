@@ -91,12 +91,21 @@ apis:
 trading:
   jurisdiction_acknowledged: false   # testnet doesn't need it; leave false
   max_account_margin_pct: 20         # per-leg margin ≤ this % of the SMALLER account
+  # max_concurrent_positions: 5      # book-wide: refuse a new coin once this many are
+                                     # already open (default 5)
+  # max_book_notional_usd: 1000      # book-wide: refuse a new coin once total open
+                                     # notional would exceed this (unset = uncapped)
   carry_engine:
     leverage: 3.0
     enter_threshold_annual_pct: 4.0  # smoothed edge must clear this to open
     # exit_threshold_annual_pct: 4.0 # defaults to the ENTER threshold, which is what
-                                     # the backtest models. Lowering it adds hysteresis
-                                     # (fewer round trips) but is NOT backtested.
+                                     # the backtest models by default. Lowering it adds
+                                     # hysteresis (fewer round trips) — pass it to
+                                     # carry_engine's `backtest` action to test the
+                                     # effect before changing this live.
+    # min_hold_hours: 0              # NOT a live decide_exit setting (yet) — a
+                                     # backtest-only knob for testing whether a hold
+                                     # floor would cut fee churn.
   executor:
     max_order_notional_usd: 200      # absolute hard ceiling per opening order
     # cross_pct: 0.05                # how far each leg crosses the book to guarantee a
@@ -120,6 +129,10 @@ trading:
                                      # unwinds the book by accident.
     # reduce_max_attempts: 3         # still in the band after this many shaves -> close
                                      # the hedge outright instead of slicing again
+    # hl_book_margin_warn_pct: 70.0  # book-wide (not per-coin): % of the shared HL
+    # hl_book_margin_critical_pct: 85.0 # account's equity currently used as margin
+                                     # across EVERY open coin. Alert-only — no order
+                                     # is sent; see below.
   notify:                            # OFF-BOX alerting — see "Alerting" below.
     webhook_url: "https://ntfy.sh/your-private-topic"
     heartbeat_url: "https://hc-ping.com/<uuid>"
@@ -170,6 +183,7 @@ warning, stop and fix the config — you'd be running without the safety net.
 | **Liquidation distance unknown** | No order exists that fixes this — raises an alarm. That leg is *unmonitored*, which is the thing you need to know. |
 | **A venue's positions unreadable** | **Nothing.** Fails closed: critical alarm, no orders, and the dead-man ping is withheld. Every other conclusion here is comparative ("naked" means *the other venue doesn't have it*), so half a book supports no conclusion at all. |
 | **Both legs same direction** | Alarm. Not a hedge; needs a human. |
+| **HL book margin high** (`> hl_book_margin_warn/critical_pct`) | **Nothing yet — alert only.** Every coin shares ONE Hyperliquid cross-margin account, so this is a book-wide leading indicator each coin's own liquidation distance can't see: several positions can each look individually safe while the account's total margin usage leaves little cushion for a move that hits more than one at once. Deliberately no auto action — a book-wide de-risk would touch every open hedge simultaneously, which is a bigger decision than anything else this watchdog does on its own. |
 
 Every one of these raises an alarm too, **including in `monitor` mode and including
 the ones it cannot act on**. The alarm file is refreshed on every poll while the
@@ -275,7 +289,7 @@ silent and this is what tells you.
 
 ## Risk controls
 
-Four independent guards. A trade must clear all of them, and **none of the size
+Six independent guards. A trade must clear all of them, and **none of the size
 caps can ever block a position *close*** — a limit can never trap you in a naked
 leg. All are config-driven; no code changes to tune.
 
@@ -283,6 +297,7 @@ leg. All are config-driven; no code changes to tune.
 |-------|-----------|--------------|
 | **Dynamic margin cap** | `trading.max_account_margin_pct` | Each leg's margin ≤ this % of the **smaller** account's free collateral (× leverage). Scales with the account; keeps a liquidation buffer. Both legs matched off the binding account. |
 | **Hard notional cap** | `trading.executor.max_order_notional_usd` | Absolute per-opening-order ceiling. "Never bigger than this, period." |
+| **Book-wide exposure cap** | `trading.max_concurrent_positions` (default 5) / `trading.max_book_notional_usd` (unset = uncapped) | The other caps bound ONE order; this bounds the WHOLE book. Refuses to open another coin once either the number of concurrently open positions or the total notional across all of them (summed from Hyperliquid's position list — always one leg of every hedge, so it's the whole book's view) would exceed the configured ceiling. The gap that matters once you're running more than one or two coins at once. |
 | **Dilution guard** | *(automatic)* | The engine subtracts estimated order-book slippage at the sized notional from the net edge; if net goes ≤ 0, or **either side** of **either** book can't absorb the size, it **sits out**. It walks all four legs — entry *and* exit — because being unable to get out is the real risk, and it reads each venue's book from the network that venue actually trades on. If it cannot measure a book at all, it sits out rather than assuming trading is free. |
 | **Position watchdog** | `trading.watchdog.mode: active` | Auto-flattens a leg that goes naked (broken hedge), shaves both legs when one nears liquidation, and trims a leg-size imbalance — on **both** venues. Debounces before acting, verifies by re-reading the position, escalates when it can't fix things, and backs off instead of retrying forever. |
 | **Off-box alerting** | `trading.notify.webhook_url` / `heartbeat_url` | Pushes every alarm to your phone, and pings an external dead-man monitor that alerts when the watchdog stops reporting. Not a size control — the control that tells you the others are working. |
@@ -308,6 +323,11 @@ and scales with the account on its own.
   legs equally so delta-neutrality can't be broken by the shave. Sizing to a cap
   exactly is not safe: the buy leg breaches it the moment it crosses up, and the venue
   then refuses the long *after* the short has already filled.
+- The book-wide cap follows the same split: the carry engine checks it before sizing
+  (reads the book, sits out if opening THIS coin would breach it) and the executor
+  daemon **independently re-checks it right after the "only open from flat"
+  preflight**, so a stale or bypassed engine decision can't push the book over the
+  limit either.
 - **Nothing caps a close.** A size limit must never be able to trap you in a naked leg.
 
 Every decision the engine makes carries a `sizing` and `slippage` breakdown in its

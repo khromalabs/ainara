@@ -372,10 +372,18 @@ the scheduler's captured stdout while the framework writes its *own* rotating
 writers. Worth a look at some point; two logs with the same name and different contents
 is its own trap.
 
-**Remaining gap:** these logs now append and are never deleted, with no rotation. The
-daemon wrote a werkzeug line per health probe (~700 KB/day at a 10s interval), which I
-quieted at the source, but a rotating handler in the managed-services layer is the
-general fix.
+**Gap closed:** `watchdog_loop` now checks every scheduler-captured log's size every 60s
+(`LOG_ROTATE_CHECK_INTERVAL`) and rotates it past `logging.rotation.max_size_mb`
+(default 10 MB, 5 backups). It can't use `RotatingFileHandler` — that intercepts
+individual `logger.emit()` calls, but these are raw subprocess stdout/stderr, which
+bypasses Python's logging entirely — so a naive rename would leave the subprocess
+writing into a renamed-away inode forever, since nothing here can tell a plain
+subprocess to reopen stdout the way SIGHUP tells nginx/syslog to. `rotate_log_if_large`
+instead copies the content to a numbered backup and truncates the *original file in
+place* (logrotate's own "copytruncate"), so the subprocess's existing file descriptor
+stays valid. Deliberately separate config keys from `logging.max_size_mb` (used by
+the framework's real `RotatingFileHandler`): that key's default is a raw byte count
+despite the "_mb" name, so inheriting it would carry the ambiguity into new code.
 
 ### 6.2 Nothing supervises the supervisor — `scripts/autostart.py` (new)
 
