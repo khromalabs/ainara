@@ -194,7 +194,7 @@ function showSetupWizard(validationErrors = []) {
         iconPath: iconPath,
         hasShadow: false
     });
-    setupWindow.webContents.openDevTools();
+    // setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
     // updateTrayIcon();
