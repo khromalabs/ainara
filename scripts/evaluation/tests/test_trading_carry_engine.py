@@ -63,6 +63,114 @@ class PureMaths(unittest.TestCase):
                             span_hours=336)
         self.assertIn("error", r)
 
+    def test_backtest_defaults_mirror_old_single_threshold_behavior(self):
+        a = [0.0002] * 400
+        b = [0.0] * 400
+        r = self.e.backtest("hyperliquid", "dydx", a, b, span_hours=5,
+                            threshold_annual_pct=4.0)
+        # Unset exit_threshold/min_hold must report as "same as entry" / "no
+        # floor" — the exact values that reproduce the pre-hysteresis behavior.
+        self.assertEqual(r["exit_threshold_annual_pct"], 4.0)
+        self.assertEqual(r["min_hold_hours"], 0.0)
+
+
+class BacktestHysteresisAndMinHold(unittest.TestCase):
+    """A separate (lower) exit threshold and a minimum-hold floor are new knobs
+    on top of the walk-forward backtest — this tests they actually cut fee
+    churn on a spread that oscillates near the entry line, which is exactly
+    what real dYdX funding does (single-hour outliers that bounce back)."""
+
+    def setUp(self):
+        self.e = TradingCarryEngine()
+
+    def test_lower_exit_threshold_reduces_churn(self):
+        # span_hours=1 makes the EMA track the raw spread exactly each hour
+        # (alpha = 2/(1+1) = 1), so the smoothed signal is fully controllable.
+        # Alternate HIGH (clears both thresholds) / MIDDLE (clears the exit
+        # threshold but not the entry threshold) blocks: a single-threshold
+        # run must exit-then-reenter every block; hysteresis should stay
+        # positioned through the MIDDLE blocks instead.
+        high, middle = 0.0002, 0.000005
+        block = [high] * 5 + [middle] * 5
+        a = block * 20  # 200 hours
+        b = [0.0] * len(a)
+
+        baseline = self.e.backtest("hyperliquid", "dydx", a, b, span_hours=1,
+                                   threshold_annual_pct=10.0)
+        hysteresis = self.e.backtest("hyperliquid", "dydx", a, b, span_hours=1,
+                                     threshold_annual_pct=10.0,
+                                     exit_threshold_annual_pct=2.0)
+
+        self.assertLess(hysteresis["entries_per_year"], baseline["entries_per_year"])
+        self.assertLess(hysteresis["fees_annual_pct_notional"],
+                        baseline["fees_annual_pct_notional"])
+        # Confirms it actually stayed positioned through the MIDDLE blocks
+        # rather than merely entering less often for some other reason.
+        self.assertGreater(hysteresis["uptime_pct"], baseline["uptime_pct"])
+
+    def test_min_hold_suppresses_a_premature_exit(self):
+        # Enter on an initial HIGH hour, dip LOW for 2 hours (shorter than the
+        # min_hold floor), then HIGH again. Without a floor this exits at the
+        # first LOW hour and re-enters at the next HIGH hour (2 entries);
+        # with a floor spanning the dip it never leaves position (1 entry).
+        high, low = 0.0002, 0.0
+        a = [high] * 3 + [low] * 2 + [high] * 15
+        b = [0.0] * len(a)
+
+        baseline = self.e.backtest("hyperliquid", "dydx", a, b, span_hours=1,
+                                   threshold_annual_pct=4.0)
+        held = self.e.backtest("hyperliquid", "dydx", a, b, span_hours=1,
+                               threshold_annual_pct=4.0, min_hold_hours=6.0)
+
+        self.assertGreater(baseline["entries_per_year"], held["entries_per_year"])
+        self.assertEqual(held["min_hold_hours"], 6.0)
+
+
+class BookState(unittest.TestCase):
+    """_book_state's public clearinghouseState read (mocked, no network) — the
+    book-wide exposure gate's data source. HL is always one of the two legs of
+    every hedge, so its position list is the whole book's aggregate view."""
+
+    @staticmethod
+    def _fake_post(asset_positions):
+        class _Resp:
+            def __init__(self, data):
+                self._d = data
+
+            def json(self):
+                return self._d
+
+        def post(url, json=None, timeout=None):
+            if json and json.get("type") == "clearinghouseState":
+                return _Resp({"assetPositions": asset_positions})
+            return _Resp({})
+        return post
+
+    def test_counts_and_sums_excluding_given_coin(self):
+        positions = [
+            {"position": {"coin": "BTC", "szi": "-0.001",
+                          "positionValue": "65.0"}},
+            {"position": {"coin": "ETH", "szi": "0.03", "positionValue": "90.0"}},
+        ]
+        with patch.object(CE.requests, "post", self._fake_post(positions)):
+            count, notional = TradingCarryEngine()._book_state(exclude_coin="ETH")
+        self.assertEqual(count, 1)
+        self.assertAlmostEqual(notional, 65.0)
+
+    def test_flat_positions_excluded(self):
+        positions = [{"position": {"coin": "BTC", "szi": "0.0",
+                                   "positionValue": "0.0"}}]
+        with patch.object(CE.requests, "post", self._fake_post(positions)):
+            count, notional = TradingCarryEngine()._book_state()
+        self.assertEqual((count, notional), (0, 0.0))
+
+    def test_unreadable_returns_none_none(self):
+        def raising_post(*a, **k):
+            raise RuntimeError("boom")
+        with patch.object(CE.requests, "post", raising_post):
+            count, notional = TradingCarryEngine()._book_state()
+        self.assertEqual((count, notional), (None, None))
+
 
 class HLFundingPagination(unittest.TestCase):
     """The fix: forward-paginate past HL's 500-row cap so the window reaches now."""

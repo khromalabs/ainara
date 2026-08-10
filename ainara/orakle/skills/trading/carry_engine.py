@@ -244,18 +244,39 @@ class TradingCarryEngine(Skill):
         funding_b_hourly: List[float],
         span_hours: Optional[int] = None,
         threshold_annual_pct: Optional[float] = None,
+        exit_threshold_annual_pct: Optional[float] = None,
+        min_hold_hours: float = 0.0,
         leverage: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Walk the full aligned history hour by hour: gate on the smoothed spread,
         accrue the REALIZED spread while positioned, and charge fees on every
         entry and exit. This is the honest expected-return estimate — unlike
         evaluate(), it does not assume the current spread persists.
+
+        `exit_threshold_annual_pct` and `min_hold_hours` let this walk-forward
+        model the two knobs `decide_exit` already exposes live but that this
+        function never tested: a SEPARATE (typically lower) exit threshold for
+        hysteresis, and a floor on how long a position must be held before an
+        exit signal is honored. Both default to reproducing the OLD single-
+        threshold, no-floor behavior exactly (exit_threshold defaults to the
+        entry threshold; min_hold_hours defaults to 0), so every existing caller
+        gets byte-identical results unless it opts in.
+
+        The economic case for testing this: across 5 real round trips, fees
+        ($0.38) nearly wiped out funding collected ($0.14), and none of them
+        held past the ~5.6-day fee-breakeven point. Whether hysteresis or a
+        hold floor would have cut that churn is exactly what this answers.
         """
         span = span_hours or self.default_span_hours
         thresh_pct = (
             threshold_annual_pct
             if threshold_annual_pct is not None
             else self.default_threshold_pct
+        )
+        exit_thresh_pct = (
+            exit_threshold_annual_pct
+            if exit_threshold_annual_pct is not None
+            else thresh_pct
         )
         lev = leverage if leverage is not None else self.default_leverage
 
@@ -266,15 +287,37 @@ class TradingCarryEngine(Skill):
         b = funding_b_hourly[-n:]
         spread = [a[i] - b[i] for i in range(n)]
         sig = self._ema_series(spread, span)
-        thresh_hourly = thresh_pct / 100.0 / HOURS_PER_YEAR
+        enter_thresh_hourly = thresh_pct / 100.0 / HOURS_PER_YEAR
+        exit_thresh_hourly = exit_thresh_pct / 100.0 / HOURS_PER_YEAR
         # per-leg-pair cost of one entry OR one exit across both legs
         leg_event_cost = self.fee_per_leg.get(venue_a, 0.0005) + self.fee_per_leg.get(
             venue_b, 0.0005
         )
 
         pos, gross, fees, entries, held = 0, 0.0, 0.0, 0, 0
+        hours_in_position = 0
         for i in range(n):
-            want = 1 if sig[i] > thresh_hourly else (-1 if sig[i] < -thresh_hourly else 0)
+            # Which threshold gates this hour's decision depends on whether a
+            # position is already open — mirrors decide() (flat, gates on the
+            # ENTER threshold) and decide_exit() (positioned, gates on the EXIT
+            # threshold) as the two separate deterministic checks they are live.
+            # With exit_thresh == enter_thresh (the default) this is the same
+            # single threshold either way, so nothing changes for old callers.
+            gate_hourly = exit_thresh_hourly if pos != 0 else enter_thresh_hourly
+            want = 1 if sig[i] > gate_hourly else (-1 if sig[i] < -gate_hourly else 0)
+
+            # Minimum hold suppresses an EXIT only (decay to flat OR a sign
+            # flip) until the position has been held long enough — it never
+            # blocks a fresh entry. This models a floor decide_exit does not
+            # have today, to test whether adding one would help: a position
+            # can currently close inside hours of opening on a single noisy
+            # sample (dYdX funding hits ~2.3-sigma single-hour outliers), which
+            # is pure fee churn if the spread was only ever going to bounce
+            # back. The tradeoff is real and deliberate: this also holds
+            # through a genuine adverse reversal for the same window.
+            if pos != 0 and want != pos and hours_in_position < min_hold_hours:
+                want = pos
+
             if want != pos:
                 if pos != 0:
                     fees += leg_event_cost  # exit
@@ -282,9 +325,11 @@ class TradingCarryEngine(Skill):
                     fees += leg_event_cost  # entry
                     entries += 1
                 pos = want
+                hours_in_position = 0
             if pos != 0:
                 gross += spread[i] * pos  # realized spread, signed by our side
                 held += 1
+                hours_in_position += 1
 
         scale = HOURS_PER_YEAR / n  # annualize the per-window totals
         gross_ann = gross * scale
@@ -296,6 +341,7 @@ class TradingCarryEngine(Skill):
             "samples_used": n,
             "uptime_pct": round(held / n * 100, 1),
             "entries_per_year": round(entries * scale, 1),
+            "avg_hold_hours": round(held / entries, 1) if entries else 0.0,
             "gross_annual_pct_notional": round(gross_ann * 100, 3),
             "fees_annual_pct_notional": round(fees_ann * 100, 3),
             "net_annual_pct_notional": round(net_ann * 100, 3),
@@ -303,6 +349,8 @@ class TradingCarryEngine(Skill):
             "leverage": lev,
             "smoothing_span_hours": span,
             "enter_threshold_annual_pct": thresh_pct,
+            "exit_threshold_annual_pct": exit_thresh_pct,
+            "min_hold_hours": min_hold_hours,
         }
 
     # ------------------------------------------------------------------
@@ -440,6 +488,39 @@ class TradingCarryEngine(Skill):
             return -1, {**detail, "state": "short_dydx_long_hyperliquid"}
         return None, {**detail, "state": "not_delta_neutral",
                       "note": "both legs same direction — not a hedge"}
+
+    def _book_state(self, exclude_coin=None):
+        """(open_position_count, total_notional_usd) across all OTHER currently
+        open HL positions — the book-wide exposure gate's read.
+
+        HL is always one of the two legs of every hedge (only two venues exist:
+        hyperliquid, dydx), so its position list IS the whole book's aggregate
+        view; dYdX's per-coin subaccounts are already isolated and don't need
+        summing. Public endpoint, same one _current_side/_free_collateral use —
+        no keys, key-free like the rest of the engine.
+
+        Returns (None, None) on a failed read — the caller must treat that as
+        "cannot verify the book is within budget", never as "book is empty".
+        """
+        try:
+            hl_net = config.get("apis.hyperliquid.network", "testnet")
+            hl_addr = config.get(f"apis.hyperliquid.{hl_net}.account_address")
+            st = requests.post(_HL_INFO[hl_net], json={
+                "type": "clearinghouseState", "user": hl_addr}, timeout=20).json()
+            count, notional = 0, 0.0
+            for p in st.get("assetPositions", []):
+                pos = p.get("position", {})
+                if exclude_coin and pos.get("coin") == exclude_coin:
+                    continue
+                szi = float(pos.get("szi", 0) or 0)
+                if not abs(szi) > 0:
+                    continue
+                count += 1
+                notional += abs(float(pos.get("positionValue", 0) or 0))
+            return count, notional
+        except Exception as e:
+            self.logger.warning(f"book state read failed: {e}")
+            return None, None
 
     @staticmethod
     def _venue_network(venue):
@@ -767,6 +848,50 @@ class TradingCarryEngine(Skill):
                                                capital_usd, coin=coin)
             notional = size * price
 
+            # Book-wide exposure gate: bounds the WHOLE book (every other coin
+            # currently open), which nothing else here does — the margin rule
+            # and hard cap above only ever bound THIS one position. Checked
+            # before the dilution guard since it's the cheaper, more decisive
+            # question: no point pricing slippage for a coin the book has no
+            # room left for. The executor daemon independently re-checks this
+            # at open time (server._book_cap_check) — same "engine sizes, daemon
+            # backstops" split as every other cap.
+            max_positions = config.get("trading.max_concurrent_positions", 5)
+            max_book_notional = config.get("trading.max_book_notional_usd")
+            if max_positions is not None or max_book_notional is not None:
+                book_count, book_notional = self._book_state(exclude_coin=coin)
+                if book_count is None:
+                    verdict["action"] = "sit_out"
+                    verdict["sit_out"] = True
+                    verdict["reason"] = (
+                        "could not read the book-wide position count — sitting"
+                        " out rather than risking an uncapped book (book-wide"
+                        " exposure gate)")
+                    return verdict
+                verdict["book"] = {"open_positions": book_count,
+                                   "book_notional_usd": round(book_notional, 2)}
+                if max_positions is not None and book_count + 1 > int(max_positions):
+                    verdict["action"] = "sit_out"
+                    verdict["sit_out"] = True
+                    verdict["reason"] = (
+                        f"opening {coin} would bring concurrent positions to"
+                        f" {book_count + 1}, exceeding"
+                        f" trading.max_concurrent_positions"
+                        f" ({int(max_positions)}) — sitting out (book-wide"
+                        f" exposure gate)")
+                    return verdict
+                if (max_book_notional is not None
+                        and (book_notional + notional) > float(max_book_notional)):
+                    verdict["action"] = "sit_out"
+                    verdict["sit_out"] = True
+                    verdict["reason"] = (
+                        f"opening {coin} would bring total book notional to"
+                        f" ${book_notional + notional:,.2f}, exceeding"
+                        f" trading.max_book_notional_usd"
+                        f" (${float(max_book_notional):,.2f}) — sitting out"
+                        f" (book-wide exposure gate)")
+                    return verdict
+
             # Dilution guard: does the edge survive fees AND slippage at THIS size?
             hold_days = 14.0
             slip_frac, slip_detail = self._round_trip_slippage(
@@ -849,6 +974,17 @@ class TradingCarryEngine(Skill):
         expected_hold_days: Annotated[
             float, "Expected holding period in days, to amortize entry/exit fees"
         ] = 14.0,
+        exit_threshold_annual_pct: Annotated[
+            Optional[float],
+            "For 'backtest': separate (typically LOWER) exit threshold to test"
+            " hysteresis. None = same as the entry threshold (old behavior).",
+        ] = None,
+        min_hold_hours: Annotated[
+            float,
+            "For 'backtest': hold a position at least this many hours before an"
+            " exit signal is honored, to test whether a floor cuts fee churn"
+            " from short noisy round trips. 0 = no floor (old behavior).",
+        ] = 0.0,
     ) -> Dict[str, Any]:
         """Decide a delta-neutral carry action (self-contained), or evaluate/backtest
         supplied funding arrays."""
@@ -860,7 +996,9 @@ class TradingCarryEngine(Skill):
             return {"error": f"action '{action}' requires funding_a_hourly and "
                     "funding_b_hourly arrays"}
         if action == "backtest":
-            return self.backtest(venue_a, venue_b, funding_a_hourly, funding_b_hourly)
+            return self.backtest(venue_a, venue_b, funding_a_hourly, funding_b_hourly,
+                                 exit_threshold_annual_pct=exit_threshold_annual_pct,
+                                 min_hold_hours=min_hold_hours)
         return self.evaluate(venue_a, venue_b, funding_a_hourly, funding_b_hourly,
                              capital_usd=capital_usd,
                              expected_hold_days=expected_hold_days)

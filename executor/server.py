@@ -473,6 +473,72 @@ def _leg_refused(res):
         or bool(res.get("error"))
 
 
+def _book_totals(hl_positions):
+    """Pure: (open_position_count, total_notional_usd) across HL positions.
+
+    HL is always one of the two legs of every hedge (only two venues exist:
+    hyperliquid, dydx), so its position list IS the book-wide aggregate view —
+    dYdX's per-coin subaccounts are already isolated and don't need summing.
+    A position missing a mark price still counts toward the concurrent-position
+    count (best-effort notional only; never let an unpriceable leg hide from
+    the position-count gate).
+    """
+    count, notional = 0, 0.0
+    for p in hl_positions or []:
+        szi = p.get("szi") or 0
+        if not abs(szi) > 0:
+            continue
+        count += 1
+        mark = p.get("mark_px")
+        if mark:
+            notional += abs(float(szi)) * float(mark)
+    return count, notional
+
+
+def _book_cap_check(size, ref_price):
+    """Book-wide gate: refuse a new open if it would push concurrent positions
+    or total notional over the configured ceiling. Independent of, and in
+    addition to, _effective_cap_notional() above — that bounds ONE order;
+    nothing else bounds the WHOLE book, which is exactly the gap a growing
+    coin list (BTC/ETH/SOL/HYPE and counting) needs closed before autopilot
+    is ever armed.
+
+    Returns None if the open may proceed, or a dict of extra jsonify() kwargs
+    describing the refusal. Called AFTER the "only open from flat" preflight,
+    so every position this reads belongs to some OTHER coin.
+    """
+    max_positions = config.get("trading.max_concurrent_positions", 5)
+    max_notional = config.get("trading.max_book_notional_usd")
+    if max_positions is None and max_notional is None:
+        return None
+    try:
+        hl_state = _venue("hyperliquid").state()
+    except Exception as e:
+        # Cannot verify the book is within budget -> cannot safely proceed.
+        # Same posture as every other guard here: unmeasurable risk refuses,
+        # it does not wave the order through.
+        return {"detail": "could not read hyperliquid state to check the"
+                          f" book-wide exposure cap: {e}",
+                "book": {"error": str(e)}}
+    count, notional = _book_totals(hl_state.get("positions"))
+    book = {"open_positions": count, "book_notional_usd": round(notional, 2)}
+    if max_positions is not None and count + 1 > int(max_positions):
+        return {"detail": (f"opening this coin would bring concurrent"
+                           f" positions to {count + 1}, exceeding"
+                           f" trading.max_concurrent_positions"
+                           f" ({int(max_positions)})"),
+                "book": book}
+    new_notional = notional + float(size) * float(ref_price)
+    if max_notional is not None and new_notional > float(max_notional):
+        return {"detail": (f"opening this coin would bring total book"
+                           f" notional to ${new_notional:,.2f}, exceeding"
+                           f" trading.max_book_notional_usd"
+                           f" (${float(max_notional):,.2f})"),
+                "book": {**book, "projected_book_notional_usd":
+                         round(new_notional, 2)}}
+    return None
+
+
 def _signed_position(venue_name, symbol):
     """Signed position size for `symbol` on `venue_name`; 0.0 when flat.
 
@@ -631,6 +697,14 @@ def hedge_open():
         return jsonify(opened=False, status="refused",
                        detail="account is not flat; close existing positions first",
                        positions=pre)
+
+    # 1b. Book-wide exposure gate — bounds the WHOLE book (every other coin
+    # currently open), which nothing above does: the caps in _effective_cap_
+    # notional() only ever bound THIS one order.
+    book_refusal = _book_cap_check(size, ref_price)
+    if book_refusal:
+        logger.info("HEDGE REFUSED (book-wide cap): %s", book_refusal)
+        return jsonify(opened=False, status="refused", **book_refusal)
 
     if dry_run:
         return jsonify(opened=False, dry_run=True, status="planned",
