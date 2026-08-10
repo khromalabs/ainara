@@ -67,13 +67,25 @@ class _Cfg:
 class _FakeHL:
     """Records the reduce-only orders the watchdog sends."""
 
-    def __init__(self, *positions, step=1e-5):
+    def __init__(self, *positions, step=1e-5, perp_account_value=None,
+                free_collateral=None):
         self._positions = list(positions)
         self._step = step
+        # None = omit the key entirely, matching every pre-existing caller that
+        # never set these — _assess_book_margin treats a missing key as
+        # "nothing to report", so omitting them changes nothing for any test
+        # that doesn't ask for book-margin behavior.
+        self._perp_account_value = perp_account_value
+        self._free_collateral = free_collateral
         self.reduced = []
 
     def state(self):
-        return hl(*self._positions)
+        st = hl(*self._positions)
+        if self._perp_account_value is not None:
+            st["perp_account_value"] = self._perp_account_value
+        if self._free_collateral is not None:
+            st["free_collateral"] = self._free_collateral
+        return st
 
     def size_increment(self, coin):
         return self._step
@@ -146,6 +158,101 @@ class AssessMultiPosition(unittest.TestCase):
         self.assertEqual(r["risk"], "critical")
         self.assertTrue(any(a["type"] == "reduce_both" and a["coin"] == "BTC"
                             for a in r["actions"]))
+
+
+class BookMarginPure(unittest.TestCase):
+    """_assess_book_margin: the book-wide HL margin-utilization check, pure."""
+
+    def test_none_when_account_value_missing(self):
+        self.assertIsNone(W._assess_book_margin({}))
+
+    def test_none_when_account_value_zero(self):
+        self.assertIsNone(W._assess_book_margin(
+            {"perp_account_value": 0.0, "free_collateral": 0.0}))
+
+    def test_none_below_warn_threshold(self):
+        # 50% used, default warn=70
+        st = {"perp_account_value": 1000.0, "free_collateral": 500.0}
+        self.assertIsNone(W._assess_book_margin(st))
+
+    def test_warn_at_threshold(self):
+        # 70% used, default warn=70/critical=85
+        st = {"perp_account_value": 1000.0, "free_collateral": 300.0}
+        r = W._assess_book_margin(st)
+        self.assertEqual(r["risk"], "warn")
+        self.assertEqual(r["action"]["reason"], "hl_book_margin_high")
+        self.assertEqual(r["action"]["margin_used_pct"], 70.0)
+
+    def test_critical_above_critical_threshold(self):
+        # 90% used
+        st = {"perp_account_value": 1000.0, "free_collateral": 100.0}
+        r = W._assess_book_margin(st)
+        self.assertEqual(r["risk"], "critical")
+        self.assertEqual(r["action"]["severity"], "critical")
+
+    def test_custom_thresholds_respected(self):
+        st = {"perp_account_value": 1000.0, "free_collateral": 400.0}  # 60%
+        self.assertIsNone(W._assess_book_margin(st, warn_pct=70.0))
+        r = W._assess_book_margin(st, warn_pct=50.0, critical_pct=90.0)
+        self.assertEqual(r["risk"], "warn")
+
+
+class BookMarginGuardOnce(unittest.TestCase):
+    """Wired through guard_once(): merged into the SAME report, findings and
+    alarm channel as every other risk — alert-only, so it never adds an
+    action to _act's known types (it lands in the generic 'alert' branch)."""
+
+    def _wd(self, perp_account_value=None, free_collateral=None, **cfg):
+        hl_adapter = _FakeHL(hl_pos("BTC", -0.0008),
+                             perp_account_value=perp_account_value,
+                             free_collateral=free_collateral)
+        return W.Watchdog(hl_adapter, _FakeDydx(dy_pos("BTC-USD", 0.0008)),
+                          _Cfg(**cfg))
+
+    def test_below_warn_adds_nothing(self):
+        wd = self._wd(perp_account_value=1000.0, free_collateral=500.0)
+        rep = wd.guard_once()
+        self.assertFalse(any(a.get("reason") == "hl_book_margin_high"
+                             for a in rep["actions"]))
+
+    def test_warn_raises_alert_and_bumps_risk_from_ok(self):
+        # BTC hedge alone is "ok"; book margin at 75% (>= default warn 70)
+        # must still surface even though nothing else is wrong.
+        wd = self._wd(perp_account_value=1000.0, free_collateral=250.0)
+        rep = wd.guard_once()
+        self.assertEqual(rep["risk"], "warn")
+        self.assertTrue(any(a.get("reason") == "hl_book_margin_high"
+                            for a in rep["actions"]))
+
+    def test_alert_only_no_order_sent(self):
+        wd = self._wd(perp_account_value=1000.0, free_collateral=50.0)  # 95%
+        wd.mode = "active"
+        rep = wd.guard_once()
+        self.assertEqual(rep["risk"], "critical")
+        self.assertEqual(wd.hl.reduced, [])  # no order — monitor only
+
+    def test_alarm_file_written_and_clears_when_utilization_drops(self):
+        with tempfile.TemporaryDirectory() as d:
+            alarm_file = os.path.join(d, "alarm.json")
+            wd = self._wd(perp_account_value=1000.0, free_collateral=100.0)  # 90%
+            wd.alarm_file = alarm_file
+            wd.guard_once()
+            with open(alarm_file) as f:
+                payload = json.load(f)
+            self.assertTrue(any(a["kind"] == "hl_book_margin_high"
+                                for a in payload["alarms"]))
+
+            wd.hl = _FakeHL(hl_pos("BTC", -0.0008),
+                            perp_account_value=1000.0, free_collateral=900.0)  # 10%
+            wd.guard_once()
+            self.assertFalse(os.path.exists(alarm_file))
+
+    def test_custom_thresholds_via_config(self):
+        wd = self._wd(perp_account_value=1000.0, free_collateral=550.0,  # 45%
+                      hl_book_margin_warn_pct=40.0)
+        rep = wd.guard_once()
+        self.assertTrue(any(a.get("reason") == "hl_book_margin_high"
+                            for a in rep["actions"]))
 
 
 class SizePlans(unittest.TestCase):

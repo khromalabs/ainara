@@ -247,6 +247,46 @@ def assess(hl, dydx, *, liq_critical_pct=5.0, size_tolerance_pct=15.0):
             "coins": sorted(by_coin)}
 
 
+def _assess_book_margin(hl, *, warn_pct=70.0, critical_pct=85.0):
+    """Pure: book-wide Hyperliquid margin-utilization check, or None.
+
+    A DIFFERENT question from _assess_pair's per-coin liquidation distance:
+    HL already computes each position's own liquidationPx correctly under
+    cross-margin (unlike dYdX, whose hand-derived single-position formula
+    needed subaccount isolation — see the liquidation-math notes), so this is
+    not fixing a correctness bug. It is a leading indicator assess() has no
+    other way to surface: several coins can each look individually safe on
+    their own liq distance while the ONE shared account's total margin usage
+    climbs toward having no cushion left for a move that hits more than one
+    of them at once — exactly the risk of running more coins on one account.
+
+    Uses ONLY fields state() already returns (perp_account_value,
+    free_collateral) — no adapter change needed. None whenever the account
+    value can't be read or isn't positive: nothing meaningful to divide by,
+    and an unreadable HL state is already assess()'s own critical alarm.
+    """
+    value = hl.get("perp_account_value")
+    free = hl.get("free_collateral")
+    if not value or value <= 0 or free is None:
+        return None
+    used_pct = (float(value) - float(free)) / float(value) * 100
+    if used_pct >= critical_pct:
+        risk, threshold = "critical", critical_pct
+    elif used_pct >= warn_pct:
+        risk, threshold = "warn", warn_pct
+    else:
+        return None
+    return {
+        "risk": risk,
+        "finding": (f"hyperliquid book margin utilization is {used_pct:.1f}%"
+                    f" (>= {threshold}%) — the shared cross-margin account has"
+                    f" little headroom left across every open coin"),
+        "action": {"type": "alert", "reason": "hl_book_margin_high",
+                  "coin": None, "severity": risk,
+                  "margin_used_pct": round(used_pct, 1)},
+    }
+
+
 # --------------------------------------------------------------------------
 # Size planning for the protective actions. Pure, for the same reason assess() is:
 # these decide how much of a live position to sell, and that arithmetic must be
@@ -315,6 +355,16 @@ class Watchdog:
         self.interval = float(w.get("interval_seconds", 5))
         self.liq_critical_pct = float(w.get("liq_critical_pct", 5.0))
         self.size_tolerance_pct = float(w.get("size_tolerance_pct", 15.0))
+        # Book-wide HL margin utilization (_assess_book_margin) — a leading
+        # indicator distinct from any one coin's own liquidation distance, for
+        # the shared cross-margin account every open coin draws down together.
+        # Alert-only by design: no action is wired for this yet, deliberately —
+        # an automated book-wide de-risk is a materially bigger, more
+        # disruptive action than anything else here (it would touch every open
+        # hedge at once) and deserves its own explicit decision later.
+        self.hl_book_margin_warn_pct = float(w.get("hl_book_margin_warn_pct", 70.0))
+        self.hl_book_margin_critical_pct = float(
+            w.get("hl_book_margin_critical_pct", 85.0))
         # A hedge is TRANSIENTLY broken every time one is opened: leg 1 is on and
         # leg 2 is not, for as long as the second fill takes. dYdX state also comes
         # from the indexer, which lags, so a filled long can read as missing for a
@@ -534,6 +584,15 @@ class Watchdog:
                         f"{venue}: position state UNREADABLE — the watchdog is BLIND"
                         f" and will take NO protective action until it clears. If a"
                         f" hedge breaks now, nothing will fix it automatically.")
+            elif t == "alert" and reason == "hl_book_margin_high":
+                # Account-level, not per-coin — a single fixed key so it stays
+                # ONE alarm entry with a stable `since` as long as it holds.
+                sev = "critical" if act.get("severity") == "critical" else "warning"
+                pct = act.get("margin_used_pct")
+                spec = ("hl_book_margin_high", "hl_book_margin_high", sev,
+                        f"hyperliquid book margin utilization is {pct}% — the"
+                        f" shared cross-margin account has little headroom left"
+                        f" across every open coin")
             if spec:
                 key, kind, severity, detail = spec
                 seen.add(key)
@@ -741,6 +800,21 @@ class Watchdog:
         report = assess(hl_state, dydx_state,
                         liq_critical_pct=self.liq_critical_pct,
                         size_tolerance_pct=self.size_tolerance_pct)
+        # Book-wide HL margin utilization — a separate, account-level check
+        # from assess()'s per-coin ones, merged in here rather than folded
+        # into assess() itself so assess() stays exactly as tested: this only
+        # ADDS a finding/action, never changes anything assess() produced.
+        # Safe to call unconditionally: hl_state lacks perp_account_value
+        # whenever HL was unreadable, and _assess_book_margin returns None in
+        # that case rather than raising.
+        book_margin = _assess_book_margin(
+            hl_state, warn_pct=self.hl_book_margin_warn_pct,
+            critical_pct=self.hl_book_margin_critical_pct)
+        if book_margin:
+            report["findings"] = report["findings"] + [book_margin["finding"]]
+            report["actions"] = report["actions"] + [book_margin["action"]]
+            if _SEVERITY[book_margin["risk"]] > _SEVERITY[report["risk"]]:
+                report["risk"] = book_margin["risk"]
         if report["risk"] in ("warn", "critical"):
             logger.warning("watchdog risk=%s: %s", report["risk"],
                            "; ".join(report["findings"]))
@@ -1050,7 +1124,10 @@ class Watchdog:
             "Ainara watchdog: started",
             f"mode={self.mode}, poll={self.interval}s,"
             f" liq_critical={self.liq_critical_pct}%,"
-            f" reduce={self.reduce_fraction:.0%} per shave.", severity="info")
+            f" reduce={self.reduce_fraction:.0%} per shave,"
+            f" hl_book_margin warn/critical="
+            f"{self.hl_book_margin_warn_pct}%/{self.hl_book_margin_critical_pct}%.",
+            severity="info")
         self.notifier.heartbeat(force=True)
         while True:
             ok, report = True, None
