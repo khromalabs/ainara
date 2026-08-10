@@ -227,7 +227,7 @@ function setupLLMFilterUI() {
     const filterHtml = `
         <div class="filter-container">
             <div class="default-filter-option">
-                <input type="checkbox" id="default-filter" name="default-filter" checked>
+                <input type="checkbox" id="default-filter" name="default-filter">
                 <label for="default-filter">Show only recommended models</label>
             </div>
             <label for="model-filter">Filter models:</label>
@@ -262,7 +262,7 @@ function setupLLMFilterUI() {
         const applyButton = document.getElementById('apply-filter-btn');
         const filterInputContainer = document.querySelector('.filter-container label[for="model-filter"]');
 
-        filterInput.value = 'qwen-3,qwen3,moonshot,deepseek,-3b,xai,zai,minimax';
+        filterInput.value = 'qwen,moonshot,deepseek,-3b,xai,zai,minimax';
         filterInput.style.display = 'none';
         filterInputContainer.style.display = 'none';
         applyButton.style.display = 'none';

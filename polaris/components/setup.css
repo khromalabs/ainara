@@ -542,6 +542,7 @@ button {
     margin-bottom: 10px;
     display: flex;
     align-items: center;
+    display: none;
 }
 
 .default-filter-option input[type="checkbox"] {
@@ -696,8 +697,9 @@ input:disabled, button:disabled {
 }
 
 .existing-provider.selected {
-    background-color: #d4edda;
-    border-color: #c3e6cb;
+    border: 3px solid #007bff;
+    border-radius: 5px;
+    /* background-color: #e9f7fe; */
 }
 
 .existing-provider label {

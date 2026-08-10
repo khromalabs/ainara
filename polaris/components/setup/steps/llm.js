@@ -136,9 +136,9 @@ async function displayFeaturedModels(ctx, existingProviders = []) {
     };
 
     const featured = [
-        { id: 'kimi-k2-turbo', name: 'Kimi K2 Turbo', providerId: 'moonshot', modelId: 'moonshot/kimi-k2-turbo-preview', description: 'A fast, highly smart, open model from Moonshot.', imageUrl: '../assets/providers/kimi-k2-turbo.png', tags: [ "open_model", "high_intelligence", "high_speed" ] },
-        { id: 'deepseek-deepseek-chat', name: 'DeepSeek v3 (Chat)', providerId: 'deepseek', modelId: 'deepseek/deepseek-chat', description: 'DeepSeek\'s open, highly smart, very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model', 'high_intelligence', 'low_price'  ] },
-        { id: 'xai-grok-4-1-fast-non-reasoning', name: 'xAI Grok 4.1 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-1-fast-non-reasoning', description: 'A very fast, smart, affordable model from xAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
+        { id: 'deepseek-v4-flash', name: 'DeepSeek 4 Flash', providerId: 'deepseek', modelId: 'deepseek/deepseek-v4-flash', description: 'DeepSeek\'s open, fast, highly smart, very affordable model.', imageUrl: '../assets/providers/deepseek-deepseek-chat.png', contextWindow: 130072, tags: [ 'open_model','high_speed', 'high_intelligence', 'low_price'  ] },
+        // { id: 'kimi-k2.7-code-highspeed', name: 'Kimi 2.7 Code Highspeed', providerId: 'moonshot', modelId: 'moonshot/kimi-k2.7-code-highspeed', description: 'A fast, highly smart, open model from Moonshot.', imageUrl: '../assets/providers/kimi-k2-turbo.png', tags: [ "open_model", "high_intelligence", "high_speed" ] },
+        { id: 'xai-grok-4-1-fast-non-reasoning', name: 'SpaceXAI Grok 4.1 Fast (Non Reasoning)', providerId: 'xai', modelId: 'xai/grok-4-1-fast-non-reasoning', description: 'A very fast, smart, affordable model from SpaceXAI.', imageUrl: '../assets/providers/grok-4-fast.png', tags: [ "high_speed", "high_intelligence", "low_price"  ] },
     ];
 
     const existingModelIds = new Set(existingProviders.map(p => p.model));
