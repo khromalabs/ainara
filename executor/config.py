@@ -30,9 +30,14 @@ import yaml
 
 def _default_config_path():
     # Mirror framework/platform_utils.get_default_config_paths (Windows/posix).
+    # Windows default is %APPDATA% (Roaming), NOT Documents: Documents is what
+    # OneDrive's "Known Folder Move" silently redirects into cloud sync on a
+    # default Windows 11 setup, which is never acceptable for a file that can
+    # hold venue signing keys. %APPDATA% is always local disk.
     if os.name == "nt":
-        docs = os.path.join(os.path.expanduser("~"), "Documents")
-        return os.path.join(docs, "Ainara", "Config", "ainara.yaml")
+        appdata = os.environ.get("APPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Roaming")
+        return os.path.join(appdata, "ainara", "ainara.yaml")
     xdg = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
     return os.path.join(xdg, "ainara", "ainara.yaml")
 

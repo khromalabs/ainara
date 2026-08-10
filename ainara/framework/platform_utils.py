@@ -27,15 +27,45 @@ logger = logging.getLogger(__name__)
 MIGRATION_CHECKED = False
 
 def _get_windows_documents_path():
-    """Get the real Documents path on Windows using Windows API"""
+    """Get the real Documents path on Windows using Windows API.
+
+    Kept only for get_default_config_paths' backward-compat fallback search entry
+    below (an existing install may already have its config here) — no NEW default
+    should ever resolve through this. On a default Windows 11 setup this is the
+    OneDrive-redirected Documents folder (OneDrive's "Known Folder Move" silently
+    retargets CSIDL_PERSONAL), so anything defaulting here syncs config, API keys,
+    SQLite WAL files, and logs to the cloud without the app ever choosing to. See
+    docs/progress_report.md 1.7 and the local-first-storage principle.
+    """
     import ctypes.wintypes
     buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
     ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf)  # CSIDL_PERSONAL = 5
     return Path(buf.value)
 
 
+def _windows_roaming_appdata():
+    """%APPDATA% — never redirected by OneDrive's Known Folder Move (unlike
+    Documents/Desktop/Pictures), so this is always local disk. Matches Polaris's
+    own default (ConfigManager._getConfigDirectory in polaris/framework/config.js)."""
+    return Path(os.environ.get("APPDATA")
+                or (Path.home() / "AppData" / "Roaming"))
+
+
+def _windows_local_appdata():
+    """%LOCALAPPDATA% — also never OneDrive-redirected. Used for cache: unlike
+    config/logs/data, cache is machine-local and disposable, so it belongs in
+    Local rather than Roaming AppData."""
+    return Path(os.environ.get("LOCALAPPDATA")
+                or (Path.home() / "AppData" / "Local"))
+
+
 def get_default_config_paths():
-    """Get list of default platform-specific configuration file paths"""
+    """Get list of default platform-specific configuration file paths.
+
+    List order matters: index 0 is where a brand-new config gets CREATED
+    (ConfigManager.load_config uses _get_config_paths()[0] when nothing exists
+    yet), and the full list is searched in order for the first EXISTING file.
+    """
     system = platform.system()
     config_paths = []
 
@@ -49,7 +79,13 @@ def get_default_config_paths():
             Path("/etc/ainara/ainara.yaml"),
         ])
     elif system == "Windows":
-        # Always use Documents/Ainara/Config on Windows
+        # Roaming AppData: local disk, never OneDrive-synced. New configs are
+        # created here. The old Documents/Ainara/Config path (this function's
+        # default before it was found to sync into OneDrive) is kept as a SECOND
+        # search candidate so an install that already has a config there keeps
+        # loading it rather than being silently orphaned — it is never used to
+        # create a new file.
+        config_paths.append(_windows_roaming_appdata() / "ainara" / "ainara.yaml")
         docs_path = _get_windows_documents_path()
         config_paths.append(docs_path / "Ainara" / "Config" / "ainara.yaml")
     else:
@@ -66,8 +102,8 @@ def get_default_log_dir():
     system = platform.system()
 
     if system == "Windows":
-        docs_path = _get_windows_documents_path()
-        return docs_path / "Ainara" / "Logs"
+        # Roaming AppData, not Documents — see get_default_config_paths.
+        return _windows_roaming_appdata() / "ainara" / "Logs"
     elif system == "Linux":
         data_home = os.environ.get(
             "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
@@ -84,8 +120,9 @@ def get_default_cache_dir():
     system = platform.system()
 
     if system == "Windows":
-        docs_path = _get_windows_documents_path()
-        return docs_path / "Ainara" / "Cache"
+        # Local AppData — cache is machine-local/disposable; see
+        # _windows_local_appdata. Not Documents (see get_default_config_paths).
+        return _windows_local_appdata() / "ainara" / "Cache"
     elif system == "Linux":
         cache_home = os.environ.get(
             "XDG_CACHE_HOME", os.path.expanduser("~/.cache")
@@ -102,8 +139,8 @@ def get_default_data_dir(app_name="ainara"):
     system = platform.system()
 
     if system == "Windows":
-        docs_path = _get_windows_documents_path()
-        return docs_path / "Ainara" / "Data"
+        # Roaming AppData, not Documents — see get_default_config_paths.
+        return _windows_roaming_appdata() / "ainara" / "Data"
     elif system == "Darwin":  # macOS
         return os.path.join(
             os.path.expanduser("~/Library/Application Support"), str(app_name)
