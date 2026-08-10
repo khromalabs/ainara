@@ -806,5 +806,4 @@ yarl==1.23.0
     #   ccxt
 zipp==3.23.0
     # via importlib-metadata
-# The following packages are considered to be unsafe in a requirements file:
-# setuptools<82
+setuptools<82
