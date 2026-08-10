@@ -97,6 +97,7 @@ if not _running_in_venv():
 # ---------------------------------------------------------------------------
 import argparse  # noqa: E402
 import json  # noqa: E402
+import shutil  # noqa: E402
 import signal  # noqa: E402
 import subprocess  # noqa: E402
 import tempfile  # noqa: E402
@@ -163,6 +164,12 @@ DEFAULT_RESTART_GRACE_POLL_INTERVAL = 5
 DEFAULT_MAX_RESTART_ATTEMPTS = 3
 HEARTBEAT_LOG_INTERVAL = 60
 HEALTH_CHECK_TIMEOUT = 3
+
+# Log rotation for the scheduler's OWN captured logs (ORAKLE_LOG/BUREAU_LOG and,
+# when managed, executor.log/executor_watchdog.log) — see rotate_log_if_large.
+DEFAULT_LOG_ROTATE_MAX_MB = 10
+DEFAULT_LOG_ROTATE_BACKUP_COUNT = 5
+LOG_ROTATE_CHECK_INTERVAL = 60  # seconds; mirrors HEARTBEAT_LOG_INTERVAL
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +329,68 @@ def default_executor_log_dir():
         log_error(f"could not resolve logging.directory ({e}); "
                   f"executor logs fall back to {LOG_DIR}")
     return LOG_DIR
+
+
+def _load_log_rotation_config():
+    """(max_bytes, backup_count) for rotating the scheduler's OWN captured
+    logs — read fresh on every check (see LOG_ROTATE_CHECK_INTERVAL) so a
+    config change takes effect without a scheduler restart, same as every
+    other trading risk-control knob.
+
+    Deliberately SEPARATE keys from the framework's own logging.max_size_mb /
+    logging.backup_count (ainara/framework/logging_setup.py, which already
+    rotates orakle.log/bureau.log/pybridge.log via RotatingFileHandler): that
+    key's default is a raw BYTE count despite its "_mb" name, so a value
+    someone actually sets there meaning megabytes would be read as bytes and
+    rotate on almost every line. New code gets its own, correctly-named keys
+    rather than inheriting that ambiguity.
+    """
+    try:
+        mgr = ConfigManager()
+        max_mb = float(mgr.get("logging.rotation.max_size_mb",
+                               DEFAULT_LOG_ROTATE_MAX_MB))
+        backups = int(mgr.get("logging.rotation.backup_count",
+                             DEFAULT_LOG_ROTATE_BACKUP_COUNT))
+        return max_mb * 1024 * 1024, backups
+    except Exception as e:
+        log_error(f"could not read log-rotation config, using defaults: {e}")
+        return (DEFAULT_LOG_ROTATE_MAX_MB * 1024 * 1024,
+                DEFAULT_LOG_ROTATE_BACKUP_COUNT)
+
+
+def rotate_log_if_large(log_file, max_bytes, backup_count):
+    """Copytruncate rotation for a log a subprocess holds open as its stdout/
+    stderr for its entire lifetime (every log start_service() manages).
+
+    Renaming the live file would leave that subprocess writing into the now-
+    invisible, renamed-away inode forever — nothing here can tell a plain
+    subprocess to reopen stdout the way SIGHUP tells nginx or syslog to.
+    Copying the content out to a numbered backup and then truncating the
+    ORIGINAL file IN PLACE keeps the subprocess's existing file descriptor
+    valid; it simply starts writing into an empty file again. This is
+    logrotate's own 'copytruncate' strategy, built for exactly this situation.
+
+    backup_count <= 0 truncates without keeping history (matches stdlib
+    RotatingFileHandler's own backupCount=0 semantics).
+    """
+    try:
+        if not os.path.exists(log_file) or os.path.getsize(log_file) < max_bytes:
+            return
+        oldest = f"{log_file}.{backup_count}"
+        if backup_count > 0 and os.path.exists(oldest):
+            os.remove(oldest)
+        for i in range(backup_count - 1, 0, -1):
+            src, dst = f"{log_file}.{i}", f"{log_file}.{i + 1}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+        if backup_count > 0:
+            shutil.copy2(log_file, f"{log_file}.1")
+        with open(log_file, "r+") as f:
+            f.truncate(0)
+        log_info(f"rotated {log_file} (reached {max_bytes} bytes)")
+    except Exception as e:
+        # Never let log-hygiene housekeeping take down the supervisor loop.
+        log_error(f"log rotation failed for {log_file}: {e}")
 
 
 def _load_executor_config(raw):
@@ -836,6 +905,7 @@ def watchdog_loop(sched_config):
     all_counted = list(services) + [s["name"] for s in managed]
     restart_counters = {name: 0 for name in all_counted}
     last_heartbeat = time.time()
+    last_log_rotation_check = time.time()
     interval = sched_config["health_check_interval"]
     max_attempts = sched_config["max_restart_attempts"]
 
@@ -850,6 +920,19 @@ def watchdog_loop(sched_config):
                 f"{len(services) + len(managed)} service(s)"
             )
             last_heartbeat = now
+
+        # Log rotation for every log this scheduler captures directly (raw
+        # subprocess stdout/stderr, never rotated on its own — see
+        # rotate_log_if_large). Checked far less often than health, since the
+        # common case is just a cheap size stat; `managed` is empty when the
+        # executor services aren't enabled, so this naturally covers exactly
+        # the logs that exist.
+        if now - last_log_rotation_check >= LOG_ROTATE_CHECK_INTERVAL:
+            max_bytes, backup_count = _load_log_rotation_config()
+            for log_file in ([s["log"] for s in services.values()]
+                            + [s["log"] for s in managed]):
+                rotate_log_if_large(log_file, max_bytes, backup_count)
+            last_log_rotation_check = now
 
         for name, svc in services.items():
             if not check_service_health(svc["health_url"]):
