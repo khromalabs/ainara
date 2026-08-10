@@ -328,11 +328,21 @@ def _load_executor_config(raw):
     """Executor managed-services settings from scheduler.yaml `services.executor`.
 
     Default OFF: users who don't run the trading strategy never spawn its daemon.
+
+    `enabled` also honours `trading.executor.autostart` in ainara.yaml (OR'd with
+    scheduler.yaml's own key), because that file — not this one — is what Polaris's
+    setup wizard already reads and writes via the pybridge /config API. Routing the
+    toggle through ainara.yaml means the GUI never has to locate or parse
+    scheduler.yaml itself: doing that in Node would mean re-deriving the
+    AINARA_CONFIG-aware config-directory resolution ConfigManager already owns, which
+    is exactly the split-brain that made Bureau load zero plans (see docs/
+    progress_report.md 1.1) — one bug from duplicating this logic is enough.
     """
     svc = ((raw.get("services") or {}).get("executor") or {})
     log_dir = svc.get("log_dir") or default_executor_log_dir()
+    autostart_flag = bool(ConfigManager().get("trading.executor.autostart", False))
     return {
-        "executor_enabled": bool(svc.get("enabled", False)),
+        "executor_enabled": bool(svc.get("enabled", False)) or autostart_flag,
         "executor_python": svc.get("venv_python") or default_executor_python(),
         "executor_log": os.path.join(log_dir, EXECUTOR_LOG_NAME),
         "watchdog_log": os.path.join(log_dir, WATCHDOG_LOG_NAME),

@@ -336,6 +336,9 @@ async function generateSkillsUI() {
                         loadAndDisplayCapabilities().catch(err => {
                             console.error('Error loading capabilities:', err);
                         });
+                        initializeTradingAutomationSection().catch(err => {
+                            console.error('Error initializing trading automation section:', err);
+                        });
                     }
                 }
             });
@@ -849,13 +852,12 @@ function setupEventListeners() {
                 reviewSttSelect.value = config.get('stt.review');
             }
 
-            // // Add event listener for the auto start checkbox
-            // TODO delayed for v0.10
-            // const autoStartCheckbox = document.getElementById('auto-start-checkbox');
-            // if (autoStartCheckbox) {
-            //     autoStartCheckbox.addEventListener('change', (event) => handleInputChange(event));
-            //     autoStartCheckbox.checked = config.get('startup.autoStart', false);
-            // }
+            // Add event listener for the auto start checkbox
+            const autoStartCheckbox = document.getElementById('auto-start-checkbox');
+            if (autoStartCheckbox) {
+                autoStartCheckbox.addEventListener('change', (event) => handleInputChange(event));
+                autoStartCheckbox.checked = config.get('startup.autoStart', false);
+            }
 
             // Add event listener for the background notifications checkbox
             const backgroundNotificationsCheckbox = document.getElementById('background-notifications-checkbox');
@@ -880,6 +882,21 @@ function setupEventListeners() {
             if (comringNotificationsCheckbox) {
                 comringNotificationsCheckbox.addEventListener('change', (event) => handleInputChange(event));
                 comringNotificationsCheckbox.checked = config.get('ui.comringNotifications');
+            }
+
+            // Trading automation checkboxes: listeners only, here. Unlike the
+            // checkboxes above these read/write the BACKEND config (ainara.yaml,
+            // shared with Orakle/the executor/watchdog), not the local polaris.json,
+            // so their `.checked` state can't be set synchronously at page load —
+            // initializeTradingAutomationSection() populates it once backendConfig
+            // is fetched, whenever the finish panel becomes active.
+            const executorAutostartCheckbox = document.getElementById('executor-autostart-checkbox');
+            if (executorAutostartCheckbox) {
+                executorAutostartCheckbox.addEventListener('change', (event) => handleInputChange(event));
+            }
+            const watchdogActiveCheckbox = document.getElementById('watchdog-active-checkbox');
+            if (watchdogActiveCheckbox) {
+                watchdogActiveCheckbox.addEventListener('change', (event) => handleInputChange(event));
             }
 
             // Add event listener for the backup directory input and browse button
@@ -1637,7 +1654,7 @@ function handleInputChange(event, disableNext = true) {
             modifiedFields.stt.add(fieldId);
         } else if (fieldId.startsWith('mcp-')) {
             modifiedFields.mcp.add(field.closest('.mcp-server-form')?.dataset.serverId || 'mcp_general');
-        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-select' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input' || fieldId === 'auto-start-checkbox' || fieldId == 'lower-volume-checkbox' || fieldId === 'wakeword-checkbox' || fieldId == 'comring-notifications-checkbox') {
+        } else if (fieldId === 'start-minimized-checkbox' || fieldId === 'review-stt-select' || fieldId === 'background-notifications-checkbox' || fieldId === 'backup-directory-input' || fieldId === 'auto-start-checkbox' || fieldId === 'executor-autostart-checkbox' || fieldId === 'watchdog-active-checkbox' || fieldId == 'lower-volume-checkbox' || fieldId === 'wakeword-checkbox' || fieldId == 'comring-notifications-checkbox') {
             modifiedFields.finish.add(fieldId);
         } else {
             // LLM fields
@@ -1682,6 +1699,46 @@ async function loadAndDisplayCapabilities() {
     } catch (error) {
         console.error('Error loading capabilities:', error);
         listElement.innerHTML = `<li class="error">Failed to load capabilities: ${error.message}</li>`;
+    }
+}
+
+// Shows the Trading Automation section only once real Hyperliquid + dYdX
+// credentials are present (both venues are required for a delta-neutral hedge),
+// and populates the two checkboxes from the backend config (ainara.yaml) — unlike
+// their sibling checkboxes on this step, these read/write trading.executor.autostart
+// and trading.watchdog.mode, not the local polaris.json.
+async function initializeTradingAutomationSection() {
+    const section = document.getElementById('trading-automation-section');
+    if (!section) return;
+
+    try {
+        const backendConfig = await loadBackendConfig();
+        const hlAddr = backendConfig?.apis?.hyperliquid?.mainnet?.account_address
+            || backendConfig?.apis?.hyperliquid?.testnet?.account_address;
+        const dydxAddr = backendConfig?.apis?.dydx?.mainnet?.account_address
+            || backendConfig?.apis?.dydx?.testnet?.account_address;
+        // extractApiKeysFromConfig treats an unset key as the literal placeholder
+        // "<key>", not an empty string — an unconfigured field is NOT truthy-but-set.
+        const isSet = (v) => !!v && v !== '<key>';
+        const tradingConfigured = isSet(hlAddr) && isSet(dydxAddr);
+
+        section.classList.toggle('hidden', !tradingConfigured);
+        if (!tradingConfigured) return;
+
+        // Skip re-setting a checkbox the user already toggled this session — the
+        // finish panel can be re-activated by navigating back and forward before
+        // clicking Finish, and re-fetching the SAVED backend value would silently
+        // discard an in-progress, unsaved change.
+        const executorCheckbox = document.getElementById('executor-autostart-checkbox');
+        if (executorCheckbox && !modifiedFields.finish.has('executor-autostart-checkbox')) {
+            executorCheckbox.checked = !!backendConfig?.trading?.executor?.autostart;
+        }
+        const watchdogCheckbox = document.getElementById('watchdog-active-checkbox');
+        if (watchdogCheckbox && !modifiedFields.finish.has('watchdog-active-checkbox')) {
+            watchdogCheckbox.checked = backendConfig?.trading?.watchdog?.mode === 'active';
+        }
+    } catch (error) {
+        console.error('Error initializing trading automation section:', error);
     }
 }
 
@@ -2952,13 +3009,12 @@ async function saveFinishStepConfig() {
             config.set('startup.startMinimized', isChecked);
         }
 
-        // TODO delayed for v0.10
-        // if (modifiedFields.finish.has('auto-start-checkbox')) {
-        //     const isChecked = document.getElementById('auto-start-checkbox').checked;
-        //     config.set('startup.autoStart', isChecked);
-        //     // Notify the main process to apply the setting immediately
-        //     ipcRenderer.send('set-auto-start');
-        // }
+        if (modifiedFields.finish.has('auto-start-checkbox')) {
+            const isChecked = document.getElementById('auto-start-checkbox').checked;
+            config.set('startup.autoStart', isChecked);
+            // Notify the main process to apply the setting immediately
+            ipcRenderer.send('set-auto-start');
+        }
 
         if (modifiedFields.finish.has('review-stt-select')) {
             config.set('stt.review', document.getElementById('review-stt-select').value);
@@ -2980,6 +3036,37 @@ async function saveFinishStepConfig() {
             }
             backendConfig.backup.directory = backupDirectory;
             backendConfig.backup.enabled = !!backupDirectory; // Enable if directory is not empty
+
+            await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+        }
+
+        if (modifiedFields.finish.has('executor-autostart-checkbox')
+            || modifiedFields.finish.has('watchdog-active-checkbox')) {
+            // Backend keys (ainara.yaml), not local polaris.json — read by
+            // scripts/scheduler.py (executor.autostart) and the standalone
+            // watchdog process (watchdog.mode), neither of which orakle/pybridge
+            // hot-reload for: both take effect the next time those processes
+            // (re)start, which the wizard copy says explicitly.
+            const backendConfig = await loadBackendConfig();
+            if (!backendConfig.trading) {
+                backendConfig.trading = {};
+            }
+
+            if (modifiedFields.finish.has('executor-autostart-checkbox')) {
+                const isChecked = document.getElementById('executor-autostart-checkbox').checked;
+                if (!backendConfig.trading.executor) {
+                    backendConfig.trading.executor = {};
+                }
+                backendConfig.trading.executor.autostart = isChecked;
+            }
+
+            if (modifiedFields.finish.has('watchdog-active-checkbox')) {
+                const isChecked = document.getElementById('watchdog-active-checkbox').checked;
+                if (!backendConfig.trading.watchdog) {
+                    backendConfig.trading.watchdog = {};
+                }
+                backendConfig.trading.watchdog.mode = isChecked ? 'active' : 'monitor';
+            }
 
             await saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         }

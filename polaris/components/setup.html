@@ -221,10 +221,9 @@
                             <option value="on" selected>Always</option>
                         </select>
                         <br>
-                        <!-- TODO delayed for v0.10 -->
-                        <!-- <br> -->
-                        <!-- <input type="checkbox" id="auto-start-checkbox" style="width: auto; margin-right: 8px;"> -->
-                        <!-- <label for="auto-start-checkbox" style="display: inline; font-weight: normal;">Launch Ainara automatically on systelm startup</label> -->
+                        <br>
+                        <input type="checkbox" id="auto-start-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="auto-start-checkbox" style="display: inline; font-weight: normal;">Launch Ainara automatically on system startup</label>
                     </div>
                     <div class="form-group">
                         <label for="backup-directory-input">Backup Directory:</label>
@@ -233,6 +232,18 @@
                             <button type="button" id="browse-backup-directory-btn">Browse...</button>
                         </div>
                         <p class="field-description">Choose where Ainara will store configuration backups. Required to enable backups.</p>
+                    </div>
+                    <div class="form-group hidden" id="trading-automation-section">
+                        <h3>Trading Automation</h3>
+                        <p class="field-description">Detected trading credentials (Hyperliquid / dYdX). These control the safety net around your delta-neutral position.</p>
+                        <input type="checkbox" id="executor-autostart-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="executor-autostart-checkbox" style="display: inline; font-weight: normal;">Keep the trading executor and position watchdog running</label>
+                        <p class="field-description">Supervises the order daemon and safety watchdog whenever the Ainara Sentinel Scheduler is running, restarting either if it crashes. Does NOT open or close any position by itself.</p>
+                        <br>
+                        <input type="checkbox" id="watchdog-active-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="watchdog-active-checkbox" style="display: inline; font-weight: normal;">Automatically close a broken hedge (recommended)</label>
+                        <p class="field-description">If one leg of a hedge disappears, the watchdog flattens the other automatically instead of only alerting you. Off means report-only.</p>
+                        <p class="field-description"><strong>Both settings take effect the next time the trading executor and watchdog (re)start</strong> — not instantly. "Keep the executor running" also requires the Ainara Sentinel Scheduler itself to be running (<code>scripts/autostart.py --install</code>, or started by hand).</p>
                     </div>
                     <div id="capabilities-section" class="capabilities-section">
                         <h3>Available Ainara Local Capabilities</h3>
