@@ -262,6 +262,12 @@ class CapabilitiesManager:
             for p in params_to_remove:
                 del params[p]
 
+            # Expose config_params only in full view
+            if view_mode == "full" and "config_params" in cap_data:
+                info["config_params"] = copy.deepcopy(
+                    cap_data["config_params"]
+                )
+
             # Add type-specific fields
             if cap_data["type"] in ("skill", "user_skill"):
                 info["matcher_info"] = cap_data.get("matcher_info", "")

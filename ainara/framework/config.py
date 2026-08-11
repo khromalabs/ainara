@@ -28,6 +28,7 @@ import yaml
 import json
 import platform
 from jsonschema import Draft7Validator
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -434,8 +435,22 @@ class ConfigManager:
                 self.get_default_log_dir()
             )
 
-    def get(self, key_path: str, default=None):
-        """Get a config value using dot notation"""
+    def get(
+        self,
+        key_path: str,
+        default=None,
+        *,
+        description: Optional[str] = None,
+    ):
+        """Get a config value using dot notation.
+
+        Args:
+            key_path: Dot-separated config key path.
+            default: Value returned when the key is missing.
+            description: Optional human-readable description of this parameter.
+                This is metadata for tooling (e.g. Wizard config UI) and does
+                not affect the returned value.
+        """
         # Check if the config file has been modified and reload if necessary
         if self.needs_load():
             logger.info("INFO: Configuration file has changed, reloading.")
