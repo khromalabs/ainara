@@ -45,61 +45,64 @@ async function generateSkillsUI(ctx) {
         const backendConfig = await ctx.api.loadBackendConfig();
 
         const scheduleHtml = generateScheduleUI(capabilities, backendConfig);
+        const userSkillsHtml = generateUserSkillsUI();
+        const nexusHtml = generateNexusUI(capabilities, backendConfig);
 
-        const userSkillsHtml = `
-            <div class="skill-category UserSkills">
-                <h3>User Skills</h3>
-                <p>Select a directory containing your own Python skills.</p>
-                <div class="form-group">
-                    <label for="user-skills-directory">User Skills Directory:</label>
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <input type="text" id="user-skills-directory" placeholder="e.g., ~/my_skills" style="flex:1;">
-                        <button id="browse-user-skills-btn" class="btn btn-secondary">Browse…</button>
-                    </div>
-                    <p class="field-description">Leave empty to disable user skills.</p>
-                </div>
+        const tabStyles = `
+            <style>
+                .skills-tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 15px; gap: 0; }
+                .skills-tab { padding: 10px 20px; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 14px; font-weight: 500; color: #666; }
+                .skills-tab:hover { color: #333; }
+                .skills-tab.active { color: #007bff; border-bottom-color: #007bff; }
+                .skills-tab-content { display: none; padding: 15px 0; }
+                .skills-tab-content.active { display: block; }
+                .nexus-app { border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 20px; background: #fff; }
+                .nexus-app h4 { margin: 0 0 5px 0; font-size: 16px; }
+                .nexus-app-description { margin: 0 0 15px 0; font-size: 0.9em; color: #666; }
+                .nexus-skill { border: 1px solid #eee; border-radius: 6px; margin-bottom: 10px; padding: 0; background: #fafafa; }
+                .nexus-skill summary { padding: 12px 15px; cursor: pointer; font-size: 14px; }
+                .nexus-skill-desc { display: block; font-size: 0.8em; color: #888; margin-top: 2px; }
+                .nexus-skill-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; padding: 15px; border-top: 1px solid #eee; }
+                .nexus-param-item { display: flex; flex-direction: column; }
+                .nexus-param-item label { font-size: 0.85em; font-weight: bold; margin-bottom: 4px; }
+                .nexus-param-item .param-desc { font-size: 0.8em; color: #666; margin-bottom: 6px; }
+                .nexus-param-item input, .nexus-param-item select, .nexus-param-item textarea { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9em; width: 100%; box-sizing: border-box; }
+                .nexus-param-item textarea { min-height: 80px; font-family: monospace; }
+                .nexus-param-control { display: flex; align-items: center; gap: 6px; }
+                .nexus-reset-btn { background: none; border: none; color: #007bff; cursor: pointer; font-size: 0.8em; padding: 2px 4px; white-space: nowrap; }
+                .nexus-reset-btn:hover { text-decoration: underline; }
+                .nexus-reset-all-btn { margin-top: 10px; font-size: 0.85em; color: #666; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+                .nexus-reset-all-btn:hover { background: #f0f0f0; }
+            </style>
+        `;
+
+        const tabsHtml = `
+            ${tabStyles}
+            <div class="skills-tabs">
+                <button type="button" class="skills-tab active" data-tab="scheduled">Scheduled Skills</button>
+                <button type="button" class="skills-tab" data-tab="nexus">Nexus Apps</button>
+                <button type="button" class="skills-tab" data-tab="user">User Skills</button>
+            </div>
+            <div class="skills-tab-content active" data-tab-content="scheduled">
+                ${scheduleHtml || '<p>No scheduled skills available.</p>'}
+            </div>
+            <div class="skills-tab-content" data-tab-content="nexus">
+                ${nexusHtml || '<p>No Nexus Apps available.</p>'}
+            </div>
+            <div class="skills-tab-content" data-tab-content="user">
+                ${userSkillsHtml}
             </div>
         `;
 
-        const layoutHtml = `<div class="skills-layout">${scheduleHtml}${userSkillsHtml}</div>`;
-
         const skillsListContainer = document.querySelector('.skills-list');
         if (skillsListContainer) {
-            skillsListContainer.innerHTML = layoutHtml;
+            skillsListContainer.innerHTML = tabsHtml;
         }
 
-        // Schedule listeners
+        setupTabListeners();
         setupScheduleListeners(ctx);
-
-        // User skills directory listeners
-        const userSkillsInput = document.getElementById('user-skills-directory');
-        const browseUserSkillsBtn = document.getElementById('browse-user-skills-btn');
-
-        if (userSkillsInput) {
-            if (backendConfig?.user_skills?.directory) {
-                userSkillsInput.value = backendConfig.user_skills.directory;
-            }
-
-            userSkillsInput.addEventListener('input', () => {
-                ctx.modifiedFields.skills.add('user_skills');
-                updateSkillsNextButtonState(ctx);
-            });
-
-            if (browseUserSkillsBtn) {
-                browseUserSkillsBtn.addEventListener('click', async () => {
-                    try {
-                        const result = await ctx.ipcRenderer.invoke('select-user-skills-directory');
-                        if (result && !result.canceled && result.filePaths && result.filePaths[0]) {
-                            userSkillsInput.value = result.filePaths[0];
-                            ctx.modifiedFields.skills.add('user_skills');
-                            updateSkillsNextButtonState(ctx);
-                        }
-                    } catch (error) {
-                        console.error('Error selecting user skills directory:', error);
-                    }
-                });
-            }
-        }
+        setupUserSkillsListeners(ctx, backendConfig);
+        setupNexusListeners(ctx);
 
         updateSkillsNextButtonState(ctx);
 
@@ -182,6 +185,10 @@ async function saveSkillsConfig(ctx) {
                 if (!backendConfig.user_skills) backendConfig.user_skills = {};
                 backendConfig.user_skills.directory = userSkillsInput.value.trim();
             }
+        }
+        // Save Nexus App overrides
+        if (ctx.modifiedFields.skills.has('nexus')) {
+            saveNexusConfig(ctx, backendConfig);
         }
 
         await ctx.api.saveBackendConfig(backendConfig, ctx.config.get('pybridge.api_url'));
@@ -334,4 +341,356 @@ function setupScheduleListeners(ctx) {
              });
         }
     });
+}
+
+function escapeHtml(str) {
+    return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function getNested(obj, path) {
+    return path.split('.').reduce((acc, key) => (acc && acc[key] !== undefined ? acc[key] : undefined), obj);
+}
+
+function setNested(obj, path, value) {
+    const keys = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        if (!cur[key] || typeof cur[key] !== 'object') {
+            cur[key] = {};
+        }
+        cur = cur[key];
+    }
+    cur[keys[keys.length - 1]] = value;
+}
+
+function deleteNested(obj, path) {
+    const keys = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        if (!cur || typeof cur !== 'object') return;
+        cur = cur[keys[i]];
+    }
+    if (cur && typeof cur === 'object') {
+        delete cur[keys[keys.length - 1]];
+    }
+}
+
+function deepEqual(a, b) {
+    if (a === b) return true;
+    if (typeof a !== typeof b) return false;
+    if (a === null || b === null) return a === b;
+    if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) return false;
+        return a.every((v, i) => deepEqual(v, b[i]));
+    }
+    if (typeof a === 'object' && typeof b === 'object') {
+        const keysA = Object.keys(a).sort();
+        const keysB = Object.keys(b).sort();
+        if (keysA.length !== keysB.length) return false;
+        return keysA.every((k, i) => k === keysB[i] && deepEqual(a[k], b[k]));
+    }
+    return false;
+}
+
+function cleanupNexusConfig(backendConfig) {
+    const skills = backendConfig && backendConfig.skills;
+    if (!skills || !skills.nexus || typeof skills.nexus !== 'object') return;
+    for (const vendor of Object.keys(skills.nexus)) {
+        for (const app of Object.keys(skills.nexus[vendor])) {
+            for (const skill of Object.keys(skills.nexus[vendor][app])) {
+                const skillObj = skills.nexus[vendor][app][skill];
+                if (skillObj && typeof skillObj === 'object' && Object.keys(skillObj).length === 0) {
+                    delete skills.nexus[vendor][app][skill];
+                }
+            }
+            if (Object.keys(skills.nexus[vendor][app]).length === 0) {
+                delete skills.nexus[vendor][app];
+            }
+        }
+        if (Object.keys(skills.nexus[vendor]).length === 0) {
+            delete skills.nexus[vendor];
+        }
+    }
+    if (Object.keys(skills.nexus).length === 0) {
+        delete skills.nexus;
+    }
+}
+
+function parseNexusValue(raw, type) {
+    switch (type) {
+        case 'string':
+            return raw;
+        case 'number': {
+            const trimmed = raw.trim();
+            if (trimmed === '') return null;
+            const val = Number(trimmed);
+            if (isNaN(val)) throw new Error('Expected a number.');
+            return val;
+        }
+        case 'integer': {
+            const trimmed = raw.trim();
+            if (trimmed === '') return null;
+            const val = Number(trimmed);
+            if (!Number.isInteger(val)) throw new Error('Expected an integer.');
+            return val;
+        }
+        case 'boolean':
+            return raw === 'true';
+        case 'array':
+        case 'object': {
+            const val = JSON.parse(raw);
+            if (type === 'array' && !Array.isArray(val)) throw new Error('Expected a JSON array.');
+            if (type === 'object' && (val === null || typeof val !== 'object' || Array.isArray(val))) throw new Error('Expected a JSON object.');
+            return val;
+        }
+        default:
+            return raw;
+    }
+}
+
+function setNexusInputValue(input, value, type) {
+    if (type === 'boolean') {
+        input.value = value ? 'true' : 'false';
+    } else if (type === 'array' || type === 'object') {
+        input.value = (value === undefined || value === null) ? '' : JSON.stringify(value, null, 2);
+    } else {
+        input.value = (value === undefined || value === null) ? '' : value;
+    }
+}
+
+function groupNexusApps(capabilities) {
+    const groups = [];
+    const map = new Map();
+    for (const [name, cap] of Object.entries(capabilities)) {
+        if (cap.type !== 'nexus' || !cap.vendor || !cap.bundle) continue;
+        const key = `${cap.vendor}.${cap.bundle}`;
+        if (!map.has(key)) {
+            const group = {
+                vendor: cap.vendor,
+                bundle: cap.bundle,
+                name: cap.bundle,
+                skills: []
+            };
+            map.set(key, group);
+            groups.push(group);
+        }
+        map.get(key).skills.push([name, cap]);
+    }
+    return groups;
+}
+
+function renderNexusParam(skillName, cap, paramDef, backendConfig) {
+    const { param, description, value_type, default: def, full_key } = paramDef;
+    if (value_type === 'null') return '';
+
+    const fullKey = full_key || `skills.nexus.${cap.vendor}.${cap.bundle}.${skillName}.${param}`;
+    const current = getNested(backendConfig, fullKey);
+    const currentValue = current !== undefined ? current : def;
+
+    const inputId = 'nexus-' + fullKey.replace(/\./g, '-');
+    const defJson = encodeURIComponent(JSON.stringify(def));
+    const resetBtn = `<button type="button" class="nexus-reset-btn" data-full-key="${fullKey}" data-default="${defJson}" data-value-type="${value_type}" title="Reset to default">↺ Reset</button>`;
+
+    let controlHtml = '';
+    if (value_type === 'boolean') {
+        const isTrue = currentValue === true;
+        controlHtml = `
+            <select id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="boolean" data-default="${defJson}">
+                <option value="true" ${isTrue ? 'selected' : ''}>True</option>
+                <option value="false" ${!isTrue ? 'selected' : ''}>False</option>
+            </select>
+        `;
+    } else if (value_type === 'number' || value_type === 'integer') {
+        const step = value_type === 'integer' ? '1' : 'any';
+        controlHtml = `<input type="number" step="${step}" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="${value_type}" data-default="${defJson}" value="${escapeHtml(currentValue ?? '')}">`;
+    } else if (value_type === 'array' || value_type === 'object') {
+        let textVal = '';
+        if (currentValue !== undefined && currentValue !== null) {
+            try { textVal = JSON.stringify(currentValue, null, 2); } catch (e) { textVal = ''; }
+        }
+        controlHtml = `<textarea id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="${value_type}" data-default="${defJson}">${escapeHtml(textVal)}</textarea>`;
+    } else {
+        controlHtml = `<input type="text" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="string" data-default="${defJson}" value="${escapeHtml(typeof currentValue === 'string' ? currentValue : '')}">`;
+    }
+
+    return `
+        <div class="nexus-param-item" data-full-key="${fullKey}">
+            <label for="${inputId}">${escapeHtml(param)}</label>
+            <div class="param-desc">${escapeHtml(description || '')}</div>
+            <div class="nexus-param-control">
+                ${controlHtml}
+                ${resetBtn}
+            </div>
+        </div>
+    `;
+}
+
+function generateNexusUI(capabilities, backendConfig) {
+    const groups = groupNexusApps(capabilities);
+    if (groups.length === 0) return '';
+
+    const appsHtml = groups.map(group => {
+        const skillsHtml = group.skills.map(([skillName, cap]) => {
+            const hasParams = cap.config_params && cap.config_params.length > 0;
+            const paramsHtml = hasParams
+                ? cap.config_params.map(pd => renderNexusParam(skillName, cap, pd, backendConfig)).join('')
+                : '<p style="color:#888; font-style:italic; padding:10px;">No configurable parameters.</p>';
+            return `
+                <details class="nexus-skill" ${hasParams ? '' : 'open'}>
+                    <summary>
+                        <strong>${escapeHtml(skillName)}</strong>
+                        ${cap.description ? `<span class="nexus-skill-desc">${escapeHtml(cap.description.trim().split('\n')[0])}</span>` : ''}
+                    </summary>
+                    <div class="nexus-skill-params">${paramsHtml}</div>
+                </details>
+            `;
+        }).join('');
+
+        return `
+            <div class="nexus-app" data-vendor="${group.vendor}" data-bundle="${group.bundle}">
+                <h4>${escapeHtml(group.name)} <span style="font-weight:normal;color:#888;">(${escapeHtml(group.vendor)})</span></h4>
+                <div class="nexus-app-skills">${skillsHtml}</div>
+                <button type="button" class="nexus-reset-all-btn" data-vendor="${group.vendor}" data-bundle="${group.bundle}">Reset all settings in this app</button>
+            </div>
+        `;
+    }).join('');
+
+    return `<div class="nexus-apps-list">${appsHtml}</div>`;
+}
+
+function setupTabListeners() {
+    document.querySelectorAll('.skills-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.skills-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.skills-tab-content').forEach(c => c.classList.remove('active'));
+            tab.classList.add('active');
+            const content = document.querySelector(`.skills-tab-content[data-tab-content="${tab.dataset.tab}"]`);
+            if (content) content.classList.add('active');
+        });
+    });
+}
+
+function setupNexusListeners(ctx) {
+    document.querySelectorAll('.nexus-param-input').forEach(input => {
+        const markDirty = () => {
+            ctx.modifiedFields.skills.add('nexus');
+            updateSkillsNextButtonState(ctx);
+        };
+        input.addEventListener('change', markDirty);
+        if (input.tagName === 'INPUT' && ['text', 'number'].includes(input.type)) {
+            input.addEventListener('input', markDirty);
+        }
+        if (input.tagName === 'TEXTAREA') {
+            input.addEventListener('input', markDirty);
+        }
+    });
+
+    document.querySelectorAll('.nexus-reset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const fullKey = btn.dataset.fullKey;
+            const input = document.querySelector(`.nexus-param-input[data-full-key="${fullKey}"]`);
+            if (!input) return;
+            const defaultVal = JSON.parse(decodeURIComponent(btn.dataset.default || 'null'));
+            setNexusInputValue(input, defaultVal, btn.dataset.valueType);
+            ctx.modifiedFields.skills.add('nexus');
+            updateSkillsNextButtonState(ctx);
+        });
+    });
+
+    document.querySelectorAll('.nexus-reset-all-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const appEl = btn.closest('.nexus-app');
+            if (!appEl) return;
+            appEl.querySelectorAll('.nexus-param-input').forEach(input => {
+                const defaultVal = JSON.parse(decodeURIComponent(input.dataset.default || 'null'));
+                setNexusInputValue(input, defaultVal, input.dataset.valueType);
+            });
+            ctx.modifiedFields.skills.add('nexus');
+            updateSkillsNextButtonState(ctx);
+        });
+    });
+}
+
+function generateUserSkillsUI() {
+    return `
+        <div class="skill-category UserSkills">
+            <h3>User Skills</h3>
+            <p>Select a directory containing your own Python skills.</p>
+            <div class="form-group">
+                <label for="user-skills-directory">User Skills Directory:</label>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <input type="text" id="user-skills-directory" placeholder="e.g., ~/my_skills" style="flex:1;">
+                    <button id="browse-user-skills-btn" class="btn btn-secondary">Browse…</button>
+                </div>
+                <p class="field-description">Leave empty to disable user skills.</p>
+            </div>
+        </div>
+    `;
+}
+
+function setupUserSkillsListeners(ctx, backendConfig) {
+    const userSkillsInput = document.getElementById('user-skills-directory');
+    const browseUserSkillsBtn = document.getElementById('browse-user-skills-btn');
+
+    if (userSkillsInput) {
+        if (backendConfig?.user_skills?.directory) {
+            userSkillsInput.value = backendConfig.user_skills.directory;
+        }
+
+        userSkillsInput.addEventListener('input', () => {
+            ctx.modifiedFields.skills.add('user_skills');
+            updateSkillsNextButtonState(ctx);
+        });
+
+        if (browseUserSkillsBtn) {
+            browseUserSkillsBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ctx.ipcRenderer.invoke('select-user-skills-directory');
+                    if (result && !result.canceled && result.filePaths && result.filePaths[0]) {
+                        userSkillsInput.value = result.filePaths[0];
+                        ctx.modifiedFields.skills.add('user_skills');
+                        updateSkillsNextButtonState(ctx);
+                    }
+                } catch (error) {
+                    console.error('Error selecting user skills directory:', error);
+                }
+            });
+        }
+    }
+}
+
+function saveNexusConfig(ctx, backendConfig) {
+    document.querySelectorAll('.nexus-param-input').forEach(input => {
+        const fullKey = input.dataset.fullKey;
+        const valueType = input.dataset.valueType;
+        const rawValue = input.value.trim();
+        const defaultRaw = decodeURIComponent(input.dataset.default || 'null');
+        let defaultVal;
+        try {
+            defaultVal = JSON.parse(defaultRaw);
+        } catch (e) {
+            defaultVal = undefined;
+        }
+
+        if (rawValue === '') {
+            deleteNested(backendConfig, fullKey);
+            return;
+        }
+
+        let parsedValue;
+        try {
+            parsedValue = parseNexusValue(rawValue, valueType);
+        } catch (e) {
+            throw new Error(`Invalid value for ${input.dataset.param || fullKey}: ${e.message}`);
+        }
+
+        if (deepEqual(parsedValue, defaultVal)) {
+            deleteNested(backendConfig, fullKey);
+        } else {
+            setNested(backendConfig, fullKey, parsedValue);
+        }
+    });
+
+    cleanupNexusConfig(backendConfig);
 }
