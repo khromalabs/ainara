@@ -79,18 +79,18 @@ async function generateSkillsUI(ctx) {
         const tabsHtml = `
             ${tabStyles}
             <div class="skills-tabs">
-                <button type="button" class="skills-tab active" data-tab="scheduled">Scheduled Skills</button>
-                <button type="button" class="skills-tab" data-tab="nexus">Nexus Apps Properties</button>
+                <button type="button" class="skills-tab active" data-tab="nexus">Nexus Apps Properties</button>
                 <button type="button" class="skills-tab" data-tab="user">User Skills Directory</button>
+                <button type="button" class="skills-tab" data-tab="scheduled">Scheduled Skills</button>
             </div>
-            <div class="skills-tab-content active" data-tab-content="scheduled">
-                ${scheduleHtml || '<p>No scheduled skills available.</p>'}
-            </div>
-            <div class="skills-tab-content" data-tab-content="nexus">
+            <div class="skills-tab-content active" data-tab-content="nexus">
                 ${nexusHtml || '<p>No Nexus Apps available.</p>'}
             </div>
             <div class="skills-tab-content" data-tab-content="user">
                 ${userSkillsHtml}
+            </div>
+            <div class="skills-tab-content" data-tab-content="scheduled">
+                ${scheduleHtml || '<p>No scheduled skills available.</p>'}
             </div>
         `;
 
