@@ -80,8 +80,8 @@ async function generateSkillsUI(ctx) {
             ${tabStyles}
             <div class="skills-tabs">
                 <button type="button" class="skills-tab active" data-tab="scheduled">Scheduled Skills</button>
-                <button type="button" class="skills-tab" data-tab="nexus">Nexus Apps</button>
-                <button type="button" class="skills-tab" data-tab="user">User Skills</button>
+                <button type="button" class="skills-tab" data-tab="nexus">Nexus Apps Properties</button>
+                <button type="button" class="skills-tab" data-tab="user">User Skills Directory</button>
             </div>
             <div class="skills-tab-content active" data-tab-content="scheduled">
                 ${scheduleHtml || '<p>No scheduled skills available.</p>'}
@@ -347,6 +347,11 @@ function escapeHtml(str) {
     return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function capitalize(str) {
+    if (!str) return '';
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 function getNested(obj, path) {
     return path.split('.').reduce((acc, key) => (acc && acc[key] !== undefined ? acc[key] : undefined), obj);
 }
@@ -526,37 +531,112 @@ function renderNexusParam(skillName, cap, paramDef, backendConfig) {
     `;
 }
 
+function getValidNexusParams(cap) {
+    if (!cap.config_params || !Array.isArray(cap.config_params)) return [];
+    return cap.config_params.filter(pd =>
+        pd &&
+        typeof pd.param === 'string' &&
+        pd.param.trim() !== '' &&
+        pd.value_type !== 'null' &&
+        pd.description &&
+        pd.description.trim().length > 0
+    );
+}
+
+function getParamDomain(param) {
+    if (!param) return 'General';
+    const dotIndex = param.indexOf('.');
+    if (dotIndex === -1) return 'General';
+    const domain = param.slice(0, dotIndex).trim();
+    return domain || 'General';
+}
+
+function groupNexusParamsByDomain(params) {
+    const groups = {};
+    for (const pd of params) {
+        const domain = getParamDomain(pd.param);
+        if (!groups[domain]) groups[domain] = [];
+        groups[domain].push(pd);
+    }
+    return groups;
+}
+
 function generateNexusUI(capabilities, backendConfig) {
     const groups = groupNexusApps(capabilities);
     if (groups.length === 0) return '';
 
+    const nexusStyles = `
+        <style>
+            .nexus-domain-card {
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                margin-bottom: 12px;
+                background: #fff;
+                overflow: hidden;
+                grid-column: 1 / -1;
+            }
+            .nexus-domain-title {
+                padding: 8px 12px;
+                font-size: 0.9em;
+                font-weight: bold;
+                background: #f5f5f5;
+                border-bottom: 1px solid #e0e0e0;
+                text-transform: capitalize;
+            }
+            .nexus-domain-params {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 15px;
+                padding: 15px;
+            }
+            .nexus-app-skills {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+        </style>
+    `;
+
     const appsHtml = groups.map(group => {
-        const skillsHtml = group.skills.map(([skillName, cap]) => {
-            const hasParams = cap.config_params && cap.config_params.length > 0;
-            const paramsHtml = hasParams
-                ? cap.config_params.map(pd => renderNexusParam(skillName, cap, pd, backendConfig)).join('')
-                : '<p style="color:#888; font-style:italic; padding:10px;">No configurable parameters.</p>';
-            return `
-                <details class="nexus-skill" ${hasParams ? '' : 'open'}>
-                    <summary>
-                        <strong>${escapeHtml(skillName)}</strong>
-                        ${cap.description ? `<span class="nexus-skill-desc">${escapeHtml(cap.description.trim().split('\n')[0])}</span>` : ''}
-                    </summary>
-                    <div class="nexus-skill-params">${paramsHtml}</div>
-                </details>
-            `;
-        }).join('');
+        const skillsHtml = group.skills
+            .filter(([, cap]) => getValidNexusParams(cap).length > 0)
+            .map(([skillName, cap]) => {
+                const validParams = getValidNexusParams(cap);
+                const domains = groupNexusParamsByDomain(validParams);
+
+                const paramsHtml = Object.entries(domains).map(([domain, params]) => `
+                    <div class="nexus-domain-card">
+                        <div class="nexus-domain-title">${escapeHtml(domain)}</div>
+                        <div class="nexus-domain-params">
+                            ${params.map(pd => renderNexusParam(skillName, cap, pd, backendConfig)).join('')}
+                        </div>
+                    </div>
+                `).join('');
+
+                return `
+                    <details class="nexus-skill">
+                        <summary>
+                            <strong>${escapeHtml(skillName)}</strong>
+                            ${cap.description ? `<span class="nexus-skill-desc">${escapeHtml(cap.description.trim().split('\n')[0])}</span>` : ''}
+                        </summary>
+                        <div class="nexus-skill-params">${paramsHtml}</div>
+                    </details>
+                `;
+            })
+            .join('');
+
+        if (!skillsHtml) return '';
 
         return `
             <div class="nexus-app" data-vendor="${group.vendor}" data-bundle="${group.bundle}">
-                <h4>${escapeHtml(group.name)} <span style="font-weight:normal;color:#888;">(${escapeHtml(group.vendor)})</span></h4>
+                <h4>${escapeHtml(capitalize(group.name))} <span style="font-weight:normal;color:#888;">(${escapeHtml(capitalize(group.vendor))})</span></h4>
                 <div class="nexus-app-skills">${skillsHtml}</div>
                 <button type="button" class="nexus-reset-all-btn" data-vendor="${group.vendor}" data-bundle="${group.bundle}">Reset all settings in this app</button>
             </div>
         `;
     }).join('');
 
-    return `<div class="nexus-apps-list">${appsHtml}</div>`;
+    return `${nexusStyles}<div class="nexus-apps-list">${appsHtml}</div>`;
 }
 
 function setupTabListeners() {
