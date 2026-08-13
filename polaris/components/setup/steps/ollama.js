@@ -26,7 +26,7 @@ function buildOllamaStatusCards(ctx, hwInfo, ollamaAvailable) {
         html += `
             <div class="status-card ollama-availability unavailable">
                 <h4>Ollama is not running</h4>
-                <p>Start Ollama or install it, then restart Ainara to manage local models here.</p>
+                <p>Start Ollama or install it, then restart Polaris to manage local models here.</p>
                 <a class="external-link" href="#" data-url="https://ollama.com/download">Download Ollama</a>
             </div>
         `;
@@ -83,7 +83,7 @@ function buildOllamaStatusCards(ctx, hwInfo, ollamaAvailable) {
                     </li>
                 </ul>
                 <div class="status-badge ${meetsRequirement ? (isTight ? 'warning' : 'good') : 'error'}">
-                    ${meetsRequirement ? (isTight ? 'Local system meets minimum, but tight' : 'Local system meets requirements!') : 'Local system not recommended for Ainara local LLM backend'}
+                    ${meetsRequirement ? (isTight ? 'Local system meets minimum, but tight' : 'Local system meets requirements!') : 'Local system does not meet requirements'}
                 </div>
             </div>
         `;

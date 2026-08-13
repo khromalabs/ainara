@@ -24,7 +24,7 @@ import logging
 import os
 import re
 import time
-from typing import Dict, Generator, List, Optional, Union
+from typing import Any, Dict, Generator, List, Optional, Union
 
 import requests
 
@@ -45,6 +45,7 @@ class OrakleCapabilityFetcher:
 
     def __init__(self, orakle_servers: List[str]):
         self.orakle_servers = orakle_servers
+        self._config_properties_cache = None
 
     def fetch_capabilities(self) -> List[dict]:
         """Query Orakle servers for capabilities and store them in structured format."""
@@ -98,6 +99,32 @@ class OrakleCapabilityFetcher:
                 "No Orakle capabilities found, is the Orakle server running?"
             )
         return capabilities
+
+    def fetch_config_properties(self) -> Optional[Dict[str, Any]]:
+        """Fetch the flat full_key -> property schema map from Orakle."""
+        if self._config_properties_cache is not None:
+            return self._config_properties_cache
+
+        for server in self.orakle_servers:
+            try:
+                response = requests.get(
+                    f"{server}/capabilities",
+                    params={"view": "properties"},
+                    timeout=5,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if isinstance(data, dict):
+                        self._config_properties_cache = data
+                        return self._config_properties_cache
+            except requests.RequestException as e:
+                logger.warning(
+                    "Failed to fetch config properties from %s: %s",
+                    server,
+                    e,
+                )
+
+        return None
 
     def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
         """Process raw skill capabilities into structured format."""

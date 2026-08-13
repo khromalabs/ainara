@@ -40,6 +40,28 @@ def _infer_value_type(value: Any) -> str:
     return "unknown"
 
 
+def _infer_value_type_from_schema(schema: Any) -> Optional[str]:
+    """Infer a wizard value_type from a JSON Schema declaration."""
+    if not isinstance(schema, dict):
+        return None
+    schema_type = schema.get("type")
+    if schema_type == "integer":
+        return "number"
+    if schema_type in (
+        "string",
+        "number",
+        "boolean",
+        "array",
+        "object",
+        "null",
+    ):
+        return schema_type
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum:
+        return _infer_value_type(enum[0])
+    return None
+
+
 def _parse_literal(node: ast.AST):
     """Return (value, success) for a literal AST node."""
     try:
@@ -116,8 +138,21 @@ def scan_skill_config_params(
         if not default_success:
             default_value = None
 
+        # Parse optional schema= keyword
+        schema = None
+        for kw in node.keywords:
+            if kw.arg == "schema":
+                schema_value, schema_success = _parse_literal(kw.value)
+                if schema_success:
+                    schema = _normalise_value(schema_value)
+                break
+        if not isinstance(schema, dict):
+            schema = None
+
         norm_default = _normalise_value(default_value)
-        value_type = _infer_value_type(norm_default)
+        value_type = _infer_value_type_from_schema(schema) if schema is not None else None
+        if value_type is None:
+            value_type = _infer_value_type(norm_default)
 
         param_info = {
             "param": param,
@@ -125,6 +160,8 @@ def scan_skill_config_params(
             "default": norm_default,
             "value_type": value_type,
         }
+        if schema is not None:
+            param_info["schema"] = schema
 
         if full_key_prefix:
             param_info["full_key"] = f"{full_key_prefix}.{param}"

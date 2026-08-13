@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 
 from flask import jsonify, request
+from jsonschema import Draft7Validator
 
 # Import the new manager and related types
 from ainara.framework.mcp.client_manager import MCPClientManager
@@ -221,8 +222,12 @@ class CapabilitiesManager:
 
         Args:
             view_mode: "llm" (default) for lean output (no schemas, no hidden params),
-                       or "full" for complete details (schemas, hidden params, schedules).
+                       "full" for complete details (schemas, hidden params, schedules).
+                       "properties" just listing skills properties
         """
+        if view_mode == "properties":
+            return self.get_config_properties()
+
         output_capabilities = {}
         for name, cap_data in self.capabilities.items():
             if cap_data.get("hidden", False):
@@ -295,6 +300,54 @@ class CapabilitiesManager:
             output_capabilities[name] = info
 
         return output_capabilities
+
+    def get_config_properties(self) -> Dict[str, Dict[str, Any]]:
+        """Return a flat full_key -> property schema map for the Wizard."""
+        properties = {}
+
+        for cap_name, cap_data in self.capabilities.items():
+            if cap_data.get("hidden", False):
+                continue
+
+            for param_info in cap_data.get("config_params", []) or []:
+                full_key = param_info.get("full_key")
+                if not full_key:
+                    continue
+
+                prop = copy.deepcopy(param_info)
+                prop.pop("full_key", None)
+
+                # Infer value_type from schema if metadata is stale
+                if not prop.get("value_type") and prop.get("schema"):
+                    schema = prop["schema"]
+                    st = (
+                        schema.get("type")
+                        if isinstance(schema, dict)
+                        else None
+                    )
+                    prop["value_type"] = (
+                        "number" if st == "integer" else (st or "string")
+                    )
+
+                # Omit null defaults; validate non-null defaults against schema
+                default = prop.get("default")
+                schema = prop.get("schema")
+                if default is None:
+                    prop.pop("default", None)
+                elif isinstance(schema, dict):
+                    try:
+                        Draft7Validator(schema).validate(default)
+                    except Exception:
+                        logger.warning(
+                            "Default for %s does not match its schema; "
+                            "omitting default.",
+                            full_key,
+                        )
+                        prop.pop("default", None)
+
+                properties[full_key] = prop
+
+        return properties
 
     def get_all_capabilities_description(self) -> str:
         """Generate a combined description of all capabilities for an LLM."""
