@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 import copy
+import inspect
 import logging
 import os
 import shutil
@@ -31,6 +32,39 @@ from jsonschema import Draft7Validator
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_NEXUS_MODULE_PREFIXES = [
+    ("ainara.nexus", "skills.nexus"),
+]
+
+def register_nexus_root(module_prefix: str, config_prefix: str):
+    """Register an external Nexus package root."""
+    _NEXUS_MODULE_PREFIXES.append((module_prefix, config_prefix))
+    _NEXUS_MODULE_PREFIXES.sort(key=lambda p: len(p[0]), reverse=True)
+
+def nexus_prefix_from_module_name(module_name: str) -> str:
+    """Return the config prefix for a Nexus module, or '' if not in Nexus."""
+    for module_prefix, config_prefix in _NEXUS_MODULE_PREFIXES:
+        if module_name == module_prefix or module_name.startswith(module_prefix + "."):
+            rel = module_name[len(module_prefix):]
+            return config_prefix + rel if rel else config_prefix
+    return ""
+
+def _get_caller_nexus_prefix() -> str:
+    """Walk the stack to find the first Nexus module and derive its prefix."""
+    frame = inspect.currentframe()
+    try:
+        # skip _get_caller_nexus_prefix and the calling method (get/set)
+        frame = frame.f_back.f_back
+        while frame:
+            module_name = frame.f_globals.get("__name__", "")
+            prefix = nexus_prefix_from_module_name(module_name)
+            if prefix:
+                return prefix
+            frame = frame.f_back
+        return ""
+    finally:
+        del frame
 
 
 class ConfigManager:
@@ -435,37 +469,64 @@ class ConfigManager:
                 self.get_default_log_dir()
             )
 
-    def get(
-        self,
-        key_path: str,
-        default=None,
-        *,
-        description: Optional[str] = None,
-    ):
-        """Get a config value using dot notation.
-
-        Args:
-            key_path: Dot-separated config key path.
-            default: Value returned when the key is missing.
-            description: Optional human-readable description of this parameter.
-                This is metadata for tooling (e.g. Wizard config UI) and does
-                not affect the returned value.
-        """
-        # Check if the config file has been modified and reload if necessary
-        if self.needs_load():
-            logger.info("INFO: Configuration file has changed, reloading.")
-            self.load_config()
-
+    def _get_unscoped(self, key_path, default=None):
         keys = key_path.split(".")
         value = self.config
-
         for key in keys:
             try:
                 value = value[key]
             except (KeyError, TypeError):
                 return default
-
         return value
+
+    def get(
+        self,
+        key_path: str,
+        default=None,
+        schema=None,
+        *,
+        description: Optional[str] = None,
+    ):
+        """Get a config value using dot notation."""
+        if self.needs_load():
+            logger.info("INFO: Configuration file has changed, reloading.")
+            self.load_config()
+
+        prefix = _get_caller_nexus_prefix()
+        if prefix:
+            if key_path.startswith("skills.") or key_path.startswith("ainara."):
+                raise ValueError(
+                    "Nexus modules must use relative config keys, not "
+                    f"'{key_path}'"
+                )
+            key_path = f"{prefix}.{key_path}"
+
+        return self._get_unscoped(key_path, default)
+
+    def set(self, key_path: str, value):
+        """Set a config value using dot notation."""
+        if self.needs_load():
+            self.load_config()
+
+        prefix = _get_caller_nexus_prefix()
+        if prefix:
+            if key_path.startswith("skills.") or key_path.startswith("ainara."):
+                raise ValueError(
+                    "Nexus modules must use relative config keys, not "
+                    f"'{key_path}'"
+                )
+            key_path = f"{prefix}.{key_path}"
+
+        parts = key_path.split(".")
+        current = self.config
+        for part in parts[:-1]:
+            if not isinstance(current, dict):
+                raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
+            current = current.setdefault(part, {})
+        if not isinstance(current, dict):
+            raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
+        current[parts[-1]] = value
+        self.save()
 
     def save(self):
         """Save current configuration back to file"""
@@ -489,6 +550,13 @@ class ConfigManager:
             logger.info("INFO: Configuration file has changed, reloading.")
             self.load_config()
             return True
+
+        prefix = _get_caller_nexus_prefix()
+        if prefix:
+            raise ValueError(
+                "update_config() is not available inside Nexus scopes; "
+                "use set() instead."
+            )
 
         # Recursively update the configuration
         def update_dict(target, source):
@@ -557,13 +625,13 @@ class ConfigManager:
 
     def get_subdir(self, directory, subdirectory):
         """Returns a subdirectory ensuring it exists"""
-        full_path = os.path.join(str(self.get(directory)), str(subdirectory))
+        full_path = os.path.join(str(self._get_unscoped(directory)), str(subdirectory))
         os.makedirs(full_path, exist_ok=True)
         return str(full_path)
 
     def get_nexus_base_path(self) -> Path:
         """Return the absolute path to the Nexus bundles/plugins base directory."""
-        custom = self.get("nexus.path")
+        custom = self._get_unscoped("nexus.path")
         if custom:
             return Path(custom)
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):

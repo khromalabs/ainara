@@ -24,8 +24,9 @@ from typing import Any, Dict, Optional
 
 from flask import send_from_directory
 
-from ainara.framework.config import config
+from ainara.framework.config import config, register_nexus_root, nexus_prefix_from_module_name
 from ainara.framework.mcp.client_manager import MCPClientManager
+from ainara.framework.skill_config_scanner import scan_skill_config_params
 
 from .skills import BasePythonSkillProvider
 
@@ -48,6 +49,7 @@ class NexusSkillProvider(BasePythonSkillProvider):
 
         self.nexus_path = config.get_nexus_base_path()
         self.capabilities: Dict[str, Dict[str, Any]] = {}
+        self.bundle_config_params = {}
         if not self.nexus_path.is_dir():
             logger.warning(
                 f"Nexus path '{self.nexus_path}' does not exist or is not a"
@@ -57,6 +59,53 @@ class NexusSkillProvider(BasePythonSkillProvider):
             if not getattr(sys, "frozen", False):
                 self.nexus_path.mkdir(parents=True, exist_ok=True)
 
+
+    def _collect_bundle_config_params(
+        self,
+        vendor: str,
+        bundle: str,
+        bundle_dir: Path,
+        prefix_module: str,
+        skill_files: set,
+    ):
+        if (vendor, bundle) in self.bundle_config_params:
+            return
+
+        params = []
+        for py_file in sorted(bundle_dir.rglob("*.py")):
+            if py_file.name.startswith("__") or py_file.name == "base.py":
+                continue
+            if py_file.resolve() in skill_files:
+                continue
+
+            rel_path = py_file.relative_to(bundle_dir)
+            module_path = ".".join(rel_path.with_suffix("").parts)
+            full_module_path = f"{prefix_module}.{module_path}"
+            config_prefix = nexus_prefix_from_module_name(full_module_path)
+
+            if not config_prefix:
+                continue
+
+            file_params = scan_skill_config_params(
+                py_file, full_key_prefix=config_prefix
+            )
+            for p in file_params:
+                p["scope"] = "shared"
+                p["module"] = module_path
+                p["vendor"] = vendor
+                p["bundle"] = bundle
+            params.extend(file_params)
+
+        self.bundle_config_params[(vendor, bundle)] = params
+
+    def get_extra_config_properties(self) -> Dict[str, Dict[str, Any]]:
+        properties = {}
+        for (vendor, bundle), params in self.bundle_config_params.items():
+            for p in params:
+                full_key = p.get("full_key")
+                if full_key:
+                    properties[full_key] = p
+        return properties
 
     def discover(self) -> Dict[str, Dict[str, Any]]:
         """Discover and load skills from Nexus bundles."""
@@ -155,6 +204,26 @@ class NexusSkillProvider(BasePythonSkillProvider):
                             "No '_components' directory found for bundle"
                             f" '{bundle_dir.name}'."
                         )
+
+                    # Collect skill files to exclude from shared scanning
+                    skill_files = {
+                        Path(cap_data["file_path"]).resolve()
+                        for cap_data in bundle_caps.values()
+                        if cap_data.get("file_path")
+                    }
+                    self._collect_bundle_config_params(
+                        vendor_dir.name,
+                        bundle_dir.name,
+                        bundle_dir,
+                        prefix_module,
+                        skill_files,
+                    )
+
+                    # Register external nexus roots if not ainara.nexus
+                    if not prefix_module.startswith("ainara."):
+                        root = prefix_module.split(".")[0]
+                        register_nexus_root(root, f"skills.nexus.{root}")
+
                     self.capabilities.update(bundle_caps)
 
         logger.info(f"Loaded {len(self.capabilities)} nexus skills.")

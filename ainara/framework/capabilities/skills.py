@@ -34,6 +34,7 @@ from flask import send_from_directory
 from ainara.framework.connectors.router import ConnectorRouter
 from ainara.framework.mcp.client_manager import MCPClientManager
 from ainara.framework.skill_config_scanner import scan_skill_config_params
+from ainara.framework.config import nexus_prefix_from_module_name
 
 from .base import CapabilityProvider
 
@@ -322,6 +323,10 @@ class BasePythonSkillProvider(CapabilityProvider):
                 )
         return {}
 
+    def get_extra_config_properties(self) -> Dict[str, Dict[str, Any]]:
+        """Return config properties that are not tied to a single capability."""
+        return {}
+
     def discover(
         self,
         skills_dir: Path,
@@ -502,9 +507,10 @@ class BasePythonSkillProvider(CapabilityProvider):
                                             }
                                         )
                                 if config_params:
-                                    capability_info[
-                                        "config_params"
-                                    ] = config_params
+                                    for p in config_params:
+                                        p.setdefault("scope", "skill")
+                                        p.setdefault("skill", snake_name)
+                                    capability_info["config_params"] = config_params
 
                             self.capabilities[snake_name] = capability_info
                             logger.info(

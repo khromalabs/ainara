@@ -301,6 +301,32 @@ class CapabilitiesManager:
 
         return output_capabilities
 
+    @staticmethod
+    def _clean_config_property(full_key, param_info):
+        prop = copy.deepcopy(param_info)
+        prop.pop("full_key", None)
+
+        if not prop.get("value_type") and prop.get("schema"):
+            schema = prop["schema"]
+            st = schema.get("type") if isinstance(schema, dict) else None
+            prop["value_type"] = "number" if st == "integer" else (st or "string")
+
+        default = prop.get("default")
+        schema = prop.get("schema")
+        if default is None:
+            prop.pop("default", None)
+        elif isinstance(schema, dict):
+            try:
+                Draft7Validator(schema).validate(default)
+            except Exception:
+                logger.warning(
+                    "Default for %s does not match its schema; omitting default.",
+                    full_key,
+                )
+                prop.pop("default", None)
+
+        return prop
+
     def get_config_properties(self) -> Dict[str, Dict[str, Any]]:
         """Return a flat full_key -> property schema map for the Wizard."""
         properties = {}
@@ -313,39 +339,16 @@ class CapabilitiesManager:
                 full_key = param_info.get("full_key")
                 if not full_key:
                     continue
+                properties[full_key] = self._clean_config_property(
+                    full_key, param_info
+                )
 
-                prop = copy.deepcopy(param_info)
-                prop.pop("full_key", None)
-
-                # Infer value_type from schema if metadata is stale
-                if not prop.get("value_type") and prop.get("schema"):
-                    schema = prop["schema"]
-                    st = (
-                        schema.get("type")
-                        if isinstance(schema, dict)
-                        else None
-                    )
-                    prop["value_type"] = (
-                        "number" if st == "integer" else (st or "string")
-                    )
-
-                # Omit null defaults; validate non-null defaults against schema
-                default = prop.get("default")
-                schema = prop.get("schema")
-                if default is None:
-                    prop.pop("default", None)
-                elif isinstance(schema, dict):
-                    try:
-                        Draft7Validator(schema).validate(default)
-                    except Exception:
-                        logger.warning(
-                            "Default for %s does not match its schema; "
-                            "omitting default.",
-                            full_key,
-                        )
-                        prop.pop("default", None)
-
-                properties[full_key] = prop
+        for provider in self.providers:
+            extra = getattr(provider, "get_extra_config_properties", lambda: {})()
+            for full_key, param_info in extra.items():
+                properties[full_key] = self._clean_config_property(
+                    full_key, param_info
+                )
 
         return properties
 
