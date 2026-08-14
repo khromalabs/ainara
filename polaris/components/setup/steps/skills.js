@@ -493,7 +493,15 @@ function groupNexusSharedParams(params) {
         if (!groups[moduleName]) groups[moduleName] = [];
         groups[moduleName].push(prop);
     }
-    return groups;
+
+    const sortedGroups = {};
+    const sortedKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    for (const key of sortedKeys) {
+        sortedGroups[key] = groups[key].sort((a, b) =>
+            String(a.param || a.fullKey).localeCompare(String(b.param || b.fullKey))
+        );
+    }
+    return sortedGroups;
 }
 
 function groupNexusApps(properties) {
@@ -622,7 +630,15 @@ function groupNexusParamsByDomain(params) {
         if (!groups[domain]) groups[domain] = [];
         groups[domain].push(pd);
     }
-    return groups;
+
+    const sortedGroups = {};
+    const sortedKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+    for (const key of sortedKeys) {
+        sortedGroups[key] = groups[key].sort((a, b) =>
+            String(a.param || a.fullKey).localeCompare(String(b.param || b.fullKey))
+        );
+    }
+    return sortedGroups;
 }
 
 function formatNexusSkillLabel(skillName) {
@@ -710,7 +726,9 @@ function generateNexusUI(properties, backendConfig) {
         }
 
         // Skill-specific sections
-        const skillsHtml = Array.from(app.skills.entries()).map(([skillName, params]) => {
+        const skillsHtml = Array.from(app.skills.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([skillName, params]) => {
             const validParams = params.filter(prop => prop.value_type !== 'null');
             if (validParams.length === 0) return '';
 
