@@ -625,6 +625,28 @@ function groupNexusParamsByDomain(params) {
     return groups;
 }
 
+function formatNexusSkillLabel(skillName) {
+    if (!skillName) return '';
+    const fullLabel = escapeHtml(skillName);
+    const parts = String(skillName).split('_');
+
+    // Expecting: <vendor>_<app>_<domain>_<skill>
+    if (parts.length < 4) return fullLabel;
+
+    const domain = parts.slice(2, -1).join('_');
+    const skill = parts[parts.length - 1];
+
+    const pretty = (str) => str
+        .split('_')
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+
+    const prettyDomain = domain ? pretty(domain) : '';
+    const prettySkill = skill ? pretty(skill) : '';
+
+    return `${prettyDomain}/${prettySkill} <span style="color:#888; font-weight:normal;">(${fullLabel})</span>`;
+}
+
 function generateNexusUI(properties, backendConfig) {
     const apps = groupNexusApps(properties);
     if (apps.length === 0) return '';
@@ -705,7 +727,7 @@ function generateNexusUI(properties, backendConfig) {
             return `
                 <details class="nexus-skill">
                     <summary>
-                        <strong>${escapeHtml(skillName)}</strong>
+                        <strong>${formatNexusSkillLabel(skillName)}</strong>
                         <span class="nexus-skill-desc">${validParams.length} propert${validParams.length === 1 ? 'y' : 'ies'}</span>
                     </summary>
                     <div class="nexus-skill-params">${paramsHtml}</div>
