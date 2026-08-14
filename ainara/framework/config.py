@@ -479,6 +479,17 @@ class ConfigManager:
                 return default
         return value
 
+    def _set_unscoped(self, key_path: str, value):
+        parts = key_path.split(".")
+        current = self.config
+        for part in parts[:-1]:
+            if not isinstance(current, dict):
+                raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
+            current = current.setdefault(part, {})
+        if not isinstance(current, dict):
+            raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
+        current[parts[-1]] = value
+
     def get(
         self,
         key_path: str,
@@ -491,6 +502,10 @@ class ConfigManager:
         if self.needs_load():
             logger.info("INFO: Configuration file has changed, reloading.")
             self.load_config()
+
+        # Global API namespace (legacy "API" wizard step): never auto-prefix
+        if key_path.startswith("apis."):
+            return self._get_unscoped(key_path, default)
 
         prefix = _get_caller_nexus_prefix()
         if prefix:
@@ -507,6 +522,11 @@ class ConfigManager:
         """Set a config value using dot notation."""
         if self.needs_load():
             self.load_config()
+
+        if key_path.startswith("apis."):
+            self._set_unscoped(key_path, value)
+            self.save()
+            return
 
         prefix = _get_caller_nexus_prefix()
         if prefix:

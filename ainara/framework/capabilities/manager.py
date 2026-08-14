@@ -269,9 +269,12 @@ class CapabilitiesManager:
 
             # Expose config_params only in full view
             if view_mode == "full" and "config_params" in cap_data:
-                info["config_params"] = copy.deepcopy(
-                    cap_data["config_params"]
-                )
+                filtered_config_params = [
+                    p for p in copy.deepcopy(cap_data["config_params"])
+                    if not (p.get("full_key", "") or "").startswith("apis.")
+                ]
+                if filtered_config_params:
+                    info["config_params"] = filtered_config_params
 
             # Add type-specific fields
             if cap_data["type"] in ("skill", "user_skill"):
@@ -339,6 +342,8 @@ class CapabilitiesManager:
                 full_key = param_info.get("full_key")
                 if not full_key:
                     continue
+                if full_key.startswith("apis."):
+                    continue
                 properties[full_key] = self._clean_config_property(
                     full_key, param_info
                 )
@@ -346,6 +351,8 @@ class CapabilitiesManager:
         for provider in self.providers:
             extra = getattr(provider, "get_extra_config_properties", lambda: {})()
             for full_key, param_info in extra.items():
+                if full_key.startswith("apis."):
+                    continue
                 properties[full_key] = self._clean_config_property(
                     full_key, param_info
                 )

@@ -286,7 +286,10 @@ def scan_skill_config_params(
             param_info["schema"] = schema
 
         if full_key_prefix:
-            param_info["full_key"] = f"{full_key_prefix}.{param}"
+            if param.startswith("apis."):
+                param_info["full_key"] = param
+            else:
+                param_info["full_key"] = f"{full_key_prefix}.{param}"
         else:
             param_info["full_key"] = param
 
