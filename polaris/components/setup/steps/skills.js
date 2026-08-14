@@ -40,13 +40,21 @@ module.exports = {
 
 async function generateSkillsUI(ctx) {
     try {
-        const capsResponse = await fetch(ctx.config.get('orakle.api_url') + '/capabilities?view=full');
-        const capabilities = await capsResponse.json();
+        const apiUrl = ctx.config.get('orakle.api_url');
+        const [fullResp, propsResp] = await Promise.all([
+            fetch(apiUrl + '/capabilities?view=full'),
+            fetch(apiUrl + '/capabilities?view=properties')
+        ]);
+        if (!fullResp.ok) throw new Error(`Failed to load capabilities: ${fullResp.status}`);
+        if (!propsResp.ok) throw new Error(`Failed to load capability properties: ${propsResp.status}`);
+
+        const capabilities = await fullResp.json();
+        const properties = await propsResp.json();
         const backendConfig = await ctx.api.loadBackendConfig();
 
         const scheduleHtml = generateScheduleUI(capabilities, backendConfig);
         const userSkillsHtml = generateUserSkillsUI();
-        const nexusHtml = generateNexusUI(capabilities, backendConfig);
+        const nexusHtml = generateNexusUI(properties, backendConfig);   // <-- now uses properties
 
         const tabStyles = `
             <style>
@@ -197,6 +205,7 @@ async function saveSkillsConfig(ctx) {
         ctx.modifiedFields.skills.clear();
     } catch (error) {
         console.error('Error saving skills config:', error);
+        throw error;
     }
 }
 
@@ -399,26 +408,29 @@ function deepEqual(a, b) {
 }
 
 function cleanupNexusConfig(backendConfig) {
-    const skills = backendConfig && backendConfig.skills;
-    if (!skills || !skills.nexus || typeof skills.nexus !== 'object') return;
-    for (const vendor of Object.keys(skills.nexus)) {
-        for (const app of Object.keys(skills.nexus[vendor])) {
-            for (const skill of Object.keys(skills.nexus[vendor][app])) {
-                const skillObj = skills.nexus[vendor][app][skill];
-                if (skillObj && typeof skillObj === 'object' && Object.keys(skillObj).length === 0) {
-                    delete skills.nexus[vendor][app][skill];
-                }
-            }
-            if (Object.keys(skills.nexus[vendor][app]).length === 0) {
-                delete skills.nexus[vendor][app];
-            }
-        }
-        if (Object.keys(skills.nexus[vendor]).length === 0) {
-            delete skills.nexus[vendor];
-        }
+    const root = backendConfig && backendConfig.skills && backendConfig.skills.nexus;
+    if (!root || typeof root !== 'object') return;
+
+    removeEmptyObjects(root);
+
+    if (Object.keys(root).length === 0) {
+        delete backendConfig.skills.nexus;
     }
-    if (Object.keys(skills.nexus).length === 0) {
-        delete skills.nexus;
+
+    if (backendConfig.skills && Object.keys(backendConfig.skills).length === 0) {
+        delete backendConfig.skills;
+    }
+}
+
+function removeEmptyObjects(obj) {
+    for (const key of Object.keys(obj)) {
+        const val = obj[key];
+        if (val && typeof val === 'object' && !Array.isArray(val)) {
+            removeEmptyObjects(val);
+            if (Object.keys(val).length === 0) {
+                delete obj[key];
+            }
+        }
     }
 }
 
@@ -459,88 +471,140 @@ function setNexusInputValue(input, value, type) {
         input.value = value ? 'true' : 'false';
     } else if (type === 'array' || type === 'object') {
         input.value = (value === undefined || value === null) ? '' : JSON.stringify(value, null, 2);
+    } else if (input.tagName === 'SELECT') {
+        let option = Array.from(input.options).find(o => o.value === String(value));
+        if (!option && value !== undefined && value !== null) {
+            option = document.createElement('option');
+            option.value = String(value);
+            option.textContent = String(value) + ' (custom)';
+            input.add(option);
+        }
+        if (option) input.value = String(value);
+        else input.value = '';
     } else {
         input.value = (value === undefined || value === null) ? '' : value;
     }
 }
 
-function groupNexusApps(capabilities) {
-    const groups = [];
-    const map = new Map();
-    for (const [name, cap] of Object.entries(capabilities)) {
-        if (cap.type !== 'nexus' || !cap.vendor || !cap.bundle) continue;
-        const key = `${cap.vendor}.${cap.bundle}`;
-        if (!map.has(key)) {
-            const group = {
-                vendor: cap.vendor,
-                bundle: cap.bundle,
-                name: cap.bundle,
-                skills: []
-            };
-            map.set(key, group);
-            groups.push(group);
-        }
-        map.get(key).skills.push([name, cap]);
+function groupNexusSharedParams(params) {
+    const groups = {};
+    for (const prop of params) {
+        const moduleName = prop.module || 'General';
+        if (!groups[moduleName]) groups[moduleName] = [];
+        groups[moduleName].push(prop);
     }
     return groups;
 }
 
-function renderNexusParam(skillName, cap, paramDef, backendConfig) {
-    const { param, description, value_type, default: def, full_key } = paramDef;
-    if (value_type === 'null') return '';
+function groupNexusApps(properties) {
+    const appsMap = new Map();
 
-    const fullKey = full_key || `skills.nexus.${cap.vendor}.${cap.bundle}.${skillName}.${param}`;
+    for (const [fullKey, prop] of Object.entries(properties || {})) {
+        // Skip null-type properties entirely
+        if (prop.value_type === 'null') continue;
+
+        // Only support shared and skill scopes
+        if (prop.scope !== 'shared' && prop.scope !== 'skill') continue;
+
+        // Parse vendor/bundle from full key: skills.nexus.<vendor>.<bundle>.<rest...>
+        const parts = fullKey.split('.');
+        if (parts.length < 4) continue;
+        const vendor = prop.vendor || parts[2];
+        const bundle = prop.bundle || parts[3];
+        if (!vendor || !bundle) continue;
+
+        const appKey = `${vendor}.${bundle}`;
+        if (!appsMap.has(appKey)) {
+            appsMap.set(appKey, { vendor, bundle, shared: [], skills: new Map() });
+        }
+        const app = appsMap.get(appKey);
+
+        // Normalize the property object with the full key
+        const normalizedProp = { ...prop, fullKey };
+        if (!normalizedProp.param) {
+            normalizedProp.param = parts[parts.length - 1];
+        }
+
+        if (prop.scope === 'shared') {
+            app.shared.push(normalizedProp);
+        } else if (prop.scope === 'skill') {
+            const skillName = prop.skill || (parts.length > 4 ? parts[parts.length - 2] : 'General');
+            if (!app.skills.has(skillName)) {
+                app.skills.set(skillName, []);
+            }
+            app.skills.get(skillName).push(normalizedProp);
+        }
+    }
+
+    // Sort apps by vendor/bundle for stable display
+    return Array.from(appsMap.values()).sort((a, b) => {
+        if (a.vendor !== b.vendor) return a.vendor.localeCompare(b.vendor);
+        return a.bundle.localeCompare(b.bundle);
+    });
+}
+
+function renderNexusParam(prop, backendConfig) {
+    const schema = (prop.schema && typeof prop.schema === 'object') ? prop.schema : {};
+    const effectiveType = schema.type || prop.value_type || 'string';
+    if (prop.value_type === 'null' || effectiveType === 'null') return '';
+
+    const fullKey = prop.fullKey;
     const current = getNested(backendConfig, fullKey);
-    const currentValue = current !== undefined ? current : def;
+    const currentValue = current !== undefined ? current : prop.default;
 
     const inputId = 'nexus-' + fullKey.replace(/\./g, '-');
-    const defJson = encodeURIComponent(JSON.stringify(def));
-    const resetBtn = `<button type="button" class="nexus-reset-btn" data-full-key="${fullKey}" data-default="${defJson}" data-value-type="${value_type}" title="Reset to default">↺ Reset</button>`;
+    const defJson = encodeURIComponent(JSON.stringify(prop.default !== undefined ? prop.default : null));
+    const schemaJson = encodeURIComponent(JSON.stringify(schema || {}));
+    const resetBtn = `<button type="button" class="nexus-reset-btn" data-full-key="${fullKey}" data-default="${defJson}" data-value-type="${effectiveType}" data-schema="${schemaJson}" title="Reset to default">↺ Reset</button>`;
 
     let controlHtml = '';
-    if (value_type === 'boolean') {
+
+    if (Array.isArray(schema.enum)) {
+        const currentInEnum = schema.enum.some(opt => deepEqual(opt, currentValue));
+        const customOption = (!currentInEnum && currentValue !== undefined && currentValue !== null)
+            ? `<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(currentValue)} (custom)</option>`
+            : '';
+        const options = schema.enum.map(opt => {
+            const selected = deepEqual(opt, currentValue) ? 'selected' : '';
+            return `<option value="${escapeHtml(opt)}" ${selected}>${escapeHtml(opt)}</option>`;
+        }).join('');
+
+        controlHtml = `<select id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="${effectiveType}" data-default="${defJson}" data-schema="${schemaJson}">${customOption}${options}</select>`;
+    } else if (effectiveType === 'boolean') {
         const isTrue = currentValue === true;
-        controlHtml = `
-            <select id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="boolean" data-default="${defJson}">
-                <option value="true" ${isTrue ? 'selected' : ''}>True</option>
-                <option value="false" ${!isTrue ? 'selected' : ''}>False</option>
-            </select>
-        `;
-    } else if (value_type === 'number' || value_type === 'integer') {
-        const step = value_type === 'integer' ? '1' : 'any';
-        controlHtml = `<input type="number" step="${step}" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="${value_type}" data-default="${defJson}" value="${escapeHtml(currentValue ?? '')}">`;
-    } else if (value_type === 'array' || value_type === 'object') {
+        controlHtml = `<select id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="boolean" data-default="${defJson}" data-schema="${schemaJson}">
+            <option value="true" ${isTrue ? 'selected' : ''}>True</option>
+            <option value="false" ${!isTrue ? 'selected' : ''}>False</option>
+        </select>`;
+    } else if (effectiveType === 'integer' || effectiveType === 'number') {
+        const isInteger = effectiveType === 'integer';
+        const step = isInteger ? '1' : (schema.multipleOf !== undefined ? schema.multipleOf : 'any');
+        const minAttr = schema.minimum !== undefined ? ` min="${schema.minimum}"` : '';
+        const maxAttr = schema.maximum !== undefined ? ` max="${schema.maximum}"` : '';
+        const val = (currentValue !== undefined && currentValue !== null) ? currentValue : '';
+        controlHtml = `<input type="number" step="${step}" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="${effectiveType}" data-default="${defJson}" data-schema="${schemaJson}"${minAttr}${maxAttr} value="${escapeHtml(val)}">`;
+    } else if (effectiveType === 'array' || effectiveType === 'object') {
         let textVal = '';
         if (currentValue !== undefined && currentValue !== null) {
             try { textVal = JSON.stringify(currentValue, null, 2); } catch (e) { textVal = ''; }
         }
-        controlHtml = `<textarea id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="${value_type}" data-default="${defJson}">${escapeHtml(textVal)}</textarea>`;
+        controlHtml = `<textarea id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="${effectiveType}" data-default="${defJson}" data-schema="${schemaJson}">${escapeHtml(textVal)}</textarea>`;
     } else {
-        controlHtml = `<input type="text" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${param}" data-value-type="string" data-default="${defJson}" value="${escapeHtml(typeof currentValue === 'string' ? currentValue : '')}">`;
+        const val = (typeof currentValue === 'string' || typeof currentValue === 'number') ? currentValue : '';
+        const patternAttr = schema.pattern ? ` pattern="${escapeHtml(schema.pattern)}"` : '';
+        controlHtml = `<input type="text" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="string" data-default="${defJson}" data-schema="${schemaJson}"${patternAttr} value="${escapeHtml(val)}">`;
     }
 
     return `
         <div class="nexus-param-item" data-full-key="${fullKey}">
-            <label for="${inputId}">${escapeHtml(param)}</label>
-            <div class="param-desc">${escapeHtml(description || '')}</div>
+            <label for="${inputId}">${escapeHtml(prop.param || fullKey)}</label>
+            <div class="param-desc">${escapeHtml(prop.description || '')}</div>
             <div class="nexus-param-control">
                 ${controlHtml}
                 ${resetBtn}
             </div>
         </div>
     `;
-}
-
-function getValidNexusParams(cap) {
-    if (!cap.config_params || !Array.isArray(cap.config_params)) return [];
-    return cap.config_params.filter(pd =>
-        pd &&
-        typeof pd.param === 'string' &&
-        pd.param.trim() !== '' &&
-        pd.value_type !== 'null' &&
-        pd.description &&
-        pd.description.trim().length > 0
-    );
 }
 
 function getParamDomain(param) {
@@ -561,9 +625,9 @@ function groupNexusParamsByDomain(params) {
     return groups;
 }
 
-function generateNexusUI(capabilities, backendConfig) {
-    const groups = groupNexusApps(capabilities);
-    if (groups.length === 0) return '';
+function generateNexusUI(properties, backendConfig) {
+    const apps = groupNexusApps(properties);
+    if (apps.length === 0) return '';
 
     const nexusStyles = `
         <style>
@@ -597,41 +661,66 @@ function generateNexusUI(capabilities, backendConfig) {
         </style>
     `;
 
-    const appsHtml = groups.map(group => {
-        const skillsHtml = group.skills
-            .filter(([, cap]) => getValidNexusParams(cap).length > 0)
-            .map(([skillName, cap]) => {
-                const validParams = getValidNexusParams(cap);
-                const domains = groupNexusParamsByDomain(validParams);
+    const appsHtml = apps.map(app => {
+        const parts = [];
 
-                const paramsHtml = Object.entries(domains).map(([domain, params]) => `
-                    <div class="nexus-domain-card">
-                        <div class="nexus-domain-title">${escapeHtml(domain)}</div>
-                        <div class="nexus-domain-params">
-                            ${params.map(pd => renderNexusParam(skillName, cap, pd, backendConfig)).join('')}
-                        </div>
+        // Shared properties section
+        if (app.shared.length > 0) {
+            const sharedGroups = groupNexusSharedParams(app.shared);
+            const sharedHtml = Object.entries(sharedGroups).map(([moduleName, params]) => `
+                <div class="nexus-domain-card">
+                    <div class="nexus-domain-title">${escapeHtml(moduleName)}</div>
+                    <div class="nexus-domain-params">
+                        ${params.map(prop => renderNexusParam(prop, backendConfig)).join('')}
                     </div>
-                `).join('');
+                </div>
+            `).join('');
 
-                return `
-                    <details class="nexus-skill">
-                        <summary>
-                            <strong>${escapeHtml(skillName)}</strong>
-                            ${cap.description ? `<span class="nexus-skill-desc">${escapeHtml(cap.description.trim().split('\n')[0])}</span>` : ''}
-                        </summary>
-                        <div class="nexus-skill-params">${paramsHtml}</div>
-                    </details>
-                `;
-            })
-            .join('');
+            parts.push(`
+                <details class="nexus-skill">
+                    <summary>
+                        <strong>Shared Properties</strong>
+                        <span class="nexus-skill-desc">${app.shared.length} propert${app.shared.length === 1 ? 'y' : 'ies'}</span>
+                    </summary>
+                    <div class="nexus-skill-params">${sharedHtml}</div>
+                </details>
+            `);
+        }
 
-        if (!skillsHtml) return '';
+        // Skill-specific sections
+        const skillsHtml = Array.from(app.skills.entries()).map(([skillName, params]) => {
+            const validParams = params.filter(prop => prop.value_type !== 'null');
+            if (validParams.length === 0) return '';
+
+            const domains = groupNexusParamsByDomain(validParams);
+            const paramsHtml = Object.entries(domains).map(([domain, domainParams]) => `
+                <div class="nexus-domain-card">
+                    <div class="nexus-domain-title">${escapeHtml(domain)}</div>
+                    <div class="nexus-domain-params">
+                        ${domainParams.map(prop => renderNexusParam(prop, backendConfig)).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <details class="nexus-skill">
+                    <summary>
+                        <strong>${escapeHtml(skillName)}</strong>
+                        <span class="nexus-skill-desc">${validParams.length} propert${validParams.length === 1 ? 'y' : 'ies'}</span>
+                    </summary>
+                    <div class="nexus-skill-params">${paramsHtml}</div>
+                </details>
+            `;
+        }).join('');
+
+        if (skillsHtml) parts.push(skillsHtml);
+        if (parts.length === 0) return '';
 
         return `
-            <div class="nexus-app" data-vendor="${group.vendor}" data-bundle="${group.bundle}">
-                <h4>${escapeHtml(capitalize(group.name))} <span style="font-weight:normal;color:#888;">(${escapeHtml(capitalize(group.vendor))})</span></h4>
-                <div class="nexus-app-skills">${skillsHtml}</div>
-                <button type="button" class="nexus-reset-all-btn" data-vendor="${group.vendor}" data-bundle="${group.bundle}">Reset all settings in this app</button>
+            <div class="nexus-app" data-vendor="${app.vendor}" data-bundle="${app.bundle}">
+                <h4>${escapeHtml(capitalize(app.bundle))} <span style="font-weight:normal;color:#888;">(${escapeHtml(capitalize(app.vendor))})</span></h4>
+                <div class="nexus-app-skills">${parts.join('')}</div>
+                <button type="button" class="nexus-reset-all-btn" data-vendor="${app.vendor}" data-bundle="${app.bundle}">Reset all settings in this app</button>
             </div>
         `;
     }).join('');
@@ -740,6 +829,106 @@ function setupUserSkillsListeners(ctx, backendConfig) {
     }
 }
 
+function validateNexusValue(value, schema, label) {
+    if (!schema || typeof schema !== 'object' || Object.keys(schema).length === 0) return null;
+
+    if (Array.isArray(schema.anyOf)) {
+        const anyValid = schema.anyOf.some(subSchema => !validateNexusValue(value, subSchema, label));
+        if (!anyValid) return `Invalid value for ${label}: does not match any allowed schema.`;
+    }
+
+    const type = schema.type;
+    if (type) {
+        if (type === 'integer' && !Number.isInteger(value)) {
+            return `Invalid value for ${label}: expected an integer.`;
+        }
+        if (type === 'number' && (typeof value !== 'number' || isNaN(value))) {
+            return `Invalid value for ${label}: expected a number.`;
+        }
+        if (type === 'string' && typeof value !== 'string') {
+            return `Invalid value for ${label}: expected a string.`;
+        }
+        if (type === 'boolean' && typeof value !== 'boolean') {
+            return `Invalid value for ${label}: expected a boolean.`;
+        }
+        if (type === 'array' && !Array.isArray(value)) {
+            return `Invalid value for ${label}: expected an array.`;
+        }
+        if (type === 'object' && (value === null || typeof value !== 'object' || Array.isArray(value))) {
+            return `Invalid value for ${label}: expected an object.`;
+        }
+        if (type === 'null' && value !== null) {
+            return `Invalid value for ${label}: expected null.`;
+        }
+    }
+
+    if (value === null || value === undefined) return null;
+
+    if (Array.isArray(schema.enum)) {
+        const matches = schema.enum.some(opt => deepEqual(opt, value));
+        if (!matches) {
+            return `Invalid value for ${label}: must be one of ${schema.enum.map(v => JSON.stringify(v)).join(', ')}.`;
+        }
+    }
+
+    if (typeof value === 'number') {
+        if (schema.minimum !== undefined && value < schema.minimum) {
+            return `Invalid value for ${label}: must be >= ${schema.minimum}.`;
+        }
+        if (schema.maximum !== undefined && value > schema.maximum) {
+            return `Invalid value for ${label}: must be <= ${schema.maximum}.`;
+        }
+    }
+
+    if (typeof value === 'string' && schema.pattern) {
+        const re = new RegExp(schema.pattern);
+        if (!re.test(value)) {
+            return `Invalid value for ${label}: does not match pattern ${schema.pattern}.`;
+        }
+    }
+
+    if (Array.isArray(value) && schema.items) {
+        if (schema.minItems !== undefined && value.length < schema.minItems) {
+            return `Invalid value for ${label}: must have at least ${schema.minItems} items.`;
+        }
+        if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+            return `Invalid value for ${label}: must have at most ${schema.maxItems} items.`;
+        }
+        for (let i = 0; i < value.length; i++) {
+            const err = validateNexusValue(value[i], schema.items, `${label}[${i}]`);
+            if (err) return err;
+        }
+    }
+
+    if (value && typeof value === 'object' && !Array.isArray(value) && schema.properties) {
+        if (Array.isArray(schema.required)) {
+            for (const req of schema.required) {
+                if (value[req] === undefined) {
+                    return `Invalid value for ${label}: missing required property "${req}".`;
+                }
+            }
+        }
+
+        for (const [key, propSchema] of Object.entries(schema.properties)) {
+            if (value[key] !== undefined) {
+                const err = validateNexusValue(value[key], propSchema, `${label}.${key}`);
+                if (err) return err;
+            }
+        }
+
+        if (schema.additionalProperties === false) {
+            const allowed = new Set(Object.keys(schema.properties || {}));
+            for (const key of Object.keys(value)) {
+                if (!allowed.has(key)) {
+                    return `Invalid value for ${label}: unexpected property "${key}".`;
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 function saveNexusConfig(ctx, backendConfig) {
     document.querySelectorAll('.nexus-param-input').forEach(input => {
         const fullKey = input.dataset.fullKey;
@@ -763,6 +952,19 @@ function saveNexusConfig(ctx, backendConfig) {
             parsedValue = parseNexusValue(rawValue, valueType);
         } catch (e) {
             throw new Error(`Invalid value for ${input.dataset.param || fullKey}: ${e.message}`);
+        }
+
+        const schemaRaw = decodeURIComponent(input.dataset.schema || '{}');
+        let schema = {};
+        try {
+            schema = JSON.parse(schemaRaw);
+        } catch (e) {
+            schema = {};
+        }
+
+        const validationError = validateNexusValue(parsedValue, schema, input.dataset.param || fullKey);
+        if (validationError) {
+            throw new Error(validationError);
         }
 
         if (deepEqual(parsedValue, defaultVal)) {

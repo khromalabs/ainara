@@ -9,8 +9,13 @@ declares its purpose at the call site.
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+config_manager_class = "ConfigManager"
 
 
 def _normalise_value(value: Any) -> Any:
@@ -22,6 +27,114 @@ def _normalise_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _normalise_value(v) for k, v in value.items()}
     return value
+
+
+def _dotted_name(node: ast.AST) -> Optional[str]:
+    """Return a dotted string for a Name/Attribute expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        if base is None:
+            return None
+        return f"{base}.{node.attr}"
+    return None
+
+
+def _annotation_refers_to_config_manager(annotation: ast.AST) -> bool:
+    """Return True if the annotation mentions ConfigManager by name."""
+    for child in ast.walk(annotation):
+        if isinstance(child, ast.Name) and child.id == config_manager_class:
+            return True
+        if isinstance(child, ast.Attribute) and child.attr == config_manager_class:
+            return True
+    return False
+
+
+def _collect_known_config_managers(tree: ast.AST) -> set:
+    """Collect dotted names that are known to be config_manager_class instances."""
+    known = set()
+
+    # from ainara.framework.config import config  (or ... as cfg)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "ainara.framework.config":
+                for alias in node.names:
+                    if alias.name == "config":
+                        known.add(alias.asname or alias.name)
+
+    # x = ConfigManager(...)  /  self.x = ConfigManager(...)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            if (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == config_manager_class
+            ):
+                for target in node.targets:
+                    name = _dotted_name(target)
+                    if name:
+                        known.add(name)
+        elif isinstance(node, ast.AnnAssign):
+            if _annotation_refers_to_config_manager(node.annotation):
+                name = _dotted_name(node.target)
+                if name:
+                    known.add(name)
+
+    # def f(..., config_manager: ConfigManager, ...)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = []
+            for group in (
+                node.args.posonlyargs,
+                node.args.args,
+                node.args.kwonlyargs,
+            ):
+                args.extend(group)
+            if node.args.vararg:
+                args.append(node.args.vararg)
+            if node.args.kwarg:
+                args.append(node.args.kwarg)
+            for arg in args:
+                if arg.annotation and _annotation_refers_to_config_manager(arg.annotation):
+                    known.add(arg.arg)
+
+    # Propagate through simple assignments: a = b, self.a = b
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                rhs_name = _dotted_name(node.value)
+                if rhs_name in known:
+                    for target in node.targets:
+                        target_name = _dotted_name(target)
+                        if target_name and target_name not in known:
+                            known.add(target_name)
+                            changed = True
+            elif isinstance(node, ast.AnnAssign):
+                if node.value is not None:
+                    rhs_name = _dotted_name(node.value)
+                    if rhs_name in known:
+                        target_name = _dotted_name(node.target)
+                        if target_name and target_name not in known:
+                            known.add(target_name)
+                            changed = True
+
+    return known
+
+
+def _is_known_config_get(node: ast.Call, known_configs: set) -> bool:
+    target = _dotted_name(node.func.value)
+    if not target:
+        return False
+    if target in known_configs:
+        return True
+    # A known config manager may be an ancestor of the target (e.g., self.cfg)
+    return any(
+        target.startswith(known + ".") or known.startswith(target + ".")
+        for known in known_configs
+    )
 
 
 def _infer_value_type(value: Any) -> str:
@@ -88,6 +201,8 @@ def scan_skill_config_params(
     source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
+    known_config_managers = _collect_known_config_managers(tree)
+
     params: List[Dict[str, Any]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -96,6 +211,13 @@ def scan_skill_config_params(
         func = node.func
         if not (isinstance(func, ast.Attribute) and func.attr == "get"):
             continue
+
+        # Extract the leaf key early so we can log which property is skipped
+        param = None
+        if node.args:
+            first_arg = node.args[0]
+            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                param = first_arg.value
 
         # Must have description= with non-empty string literal
         description = None
@@ -110,19 +232,19 @@ def scan_skill_config_params(
                 break
 
         if description is None:
+            if param is not None and _is_known_config_get(node, known_config_managers):
+                logger.warning(
+                    "Ignoring config property '%s' in %s:%d: missing "
+                    "non-empty 'description=' keyword, so it will not be "
+                    "exposed through the wizard.",
+                    param,
+                    source_path,
+                    node.lineno,
+                )
             continue
 
-        # First positional argument must be a string literal (the leaf key)
-        if not node.args:
+        if param is None:
             continue
-        first_arg = node.args[0]
-        if not (
-            isinstance(first_arg, ast.Constant)
-            and isinstance(first_arg.value, str)
-        ):
-            continue
-
-        param = first_arg.value
 
         # Determine default from second positional or default= keyword
         default_value = None
