@@ -71,7 +71,7 @@ async function generateSkillsUI(ctx) {
                 .nexus-skill summary { padding: 12px 15px; cursor: pointer; font-size: 14px; }
                 .nexus-skill-desc { display: block; font-size: 0.8em; color: #888; margin-top: 2px; }
                 .nexus-skill-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; padding: 15px; border-top: 1px solid #eee; }
-                .nexus-param-item { display: flex; flex-direction: column; }
+                .nexus-param-item { display: flex; flex-direction: column; padding: 8px; }
                 .nexus-param-item label { font-size: 0.85em; font-weight: bold; margin-bottom: 4px; }
                 .nexus-param-item .param-desc { font-size: 0.8em; color: #666; margin-bottom: 6px; }
                 .nexus-param-item input, .nexus-param-item select, .nexus-param-item textarea { padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9em; width: 100%; box-sizing: border-box; }
@@ -79,8 +79,20 @@ async function generateSkillsUI(ctx) {
                 .nexus-param-control { display: flex; align-items: center; gap: 6px; }
                 .nexus-reset-btn { background: none; border: none; color: #007bff; cursor: pointer; font-size: 0.8em; padding: 2px 4px; white-space: nowrap; }
                 .nexus-reset-btn:hover { text-decoration: underline; }
-                .nexus-reset-all-btn { margin-top: 10px; font-size: 0.85em; color: #666; background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
-                .nexus-reset-all-btn:hover { background: #f0f0f0; }
+                .nexus-reset-all-btn {
+                    margin-top: 10px;
+                    font-size: 0.85em;
+                    color: #721c24;
+                    background: #f8d7da;
+                    border: 1px solid #f5c6cb;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    cursor: pointer;
+                }
+                .nexus-reset-all-btn:hover {
+                    background: #f8a7aa;
+                    border-color: #f5a6ab;
+                }
             </style>
         `;
 
@@ -407,6 +419,19 @@ function deepEqual(a, b) {
     return false;
 }
 
+function isNexusParamModified(prop, backendConfig) {
+    const current = getNested(backendConfig, prop.fullKey);
+    const hasDefault = prop.default !== undefined;
+    const currentValue = current !== undefined ? current : (hasDefault ? prop.default : null);
+    const defaultVal = hasDefault ? prop.default : null;
+    if (!hasDefault && current === undefined) return false;
+    return !deepEqual(currentValue, defaultVal);
+}
+
+function countNexusModifiedParams(params, backendConfig) {
+    return params.reduce((count, prop) => count + (isNexusParamModified(prop, backendConfig) ? 1 : 0), 0);
+}
+
 function cleanupNexusConfig(backendConfig) {
     const root = backendConfig && backendConfig.skills && backendConfig.skills.nexus;
     if (!root || typeof root !== 'object') return;
@@ -486,6 +511,43 @@ function setNexusInputValue(input, value, type) {
     }
 }
 
+function updateNexusParamState(input) {
+    input.disabled = false;
+    const item = input.closest('.nexus-param-item');
+    if (!item) return;
+
+    const defaultRaw = decodeURIComponent(input.dataset.default || 'null');
+    let defaultVal;
+    try {
+        defaultVal = JSON.parse(defaultRaw);
+    } catch (e) {
+        defaultVal = null;
+    }
+
+    const valueType = input.dataset.valueType || 'string';
+    const rawValue = input.value.trim();
+
+    let currentVal;
+    if (valueType === 'string') {
+        currentVal = rawValue;
+    } else if (rawValue === '') {
+        currentVal = null;
+    } else {
+        try {
+            currentVal = parseNexusValue(rawValue, valueType);
+        } catch (e) {
+            currentVal = null;
+        }
+    }
+
+    const isModified = !deepEqual(currentVal, defaultVal);
+
+    const resetBtn = item.querySelector('.nexus-reset-btn');
+    if (resetBtn) resetBtn.disabled = !isModified;
+
+    item.classList.toggle('modified', isModified);
+}
+
 function groupNexusSharedParams(params) {
     const groups = {};
     for (const prop of params) {
@@ -563,7 +625,8 @@ function renderNexusParam(prop, backendConfig) {
     const inputId = 'nexus-' + fullKey.replace(/\./g, '-');
     const defJson = encodeURIComponent(JSON.stringify(prop.default !== undefined ? prop.default : null));
     const schemaJson = encodeURIComponent(JSON.stringify(schema || {}));
-    const resetBtn = `<button type="button" class="nexus-reset-btn" data-full-key="${fullKey}" data-default="${defJson}" data-value-type="${effectiveType}" data-schema="${schemaJson}" title="Reset to default">↺ Reset</button>`;
+    const isModified = isNexusParamModified(prop, backendConfig);
+    const resetBtn = `<button type="button" class="nexus-reset-btn" data-full-key="${fullKey}" data-default="${defJson}" data-value-type="${effectiveType}" data-schema="${schemaJson}" title="Reset to default" ${isModified ? '' : 'disabled'}>↺ Reset</button>`;
 
     let controlHtml = '';
 
@@ -603,8 +666,9 @@ function renderNexusParam(prop, backendConfig) {
         controlHtml = `<input type="text" id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="string" data-default="${defJson}" data-schema="${schemaJson}"${patternAttr} value="${escapeHtml(val)}">`;
     }
 
+    controlHtml = controlHtml.replace(/\sdisabled(?=[\s>])/g, '');
     return `
-        <div class="nexus-param-item" data-full-key="${fullKey}">
+        <div class="nexus-param-item${isModified ? ' modified' : ''}" data-full-key="${fullKey}">
             <label for="${inputId}">${escapeHtml(prop.param || fullKey)}</label>
             <div class="param-desc">${escapeHtml(prop.description || '')}</div>
             <div class="nexus-param-control">
@@ -663,6 +727,23 @@ function formatNexusSkillLabel(skillName) {
     return `${prettyDomain}/${prettySkill} <span style="color:#888; font-weight:normal;">(${fullLabel})</span>`;
 }
 
+function formatNexusPropertySummary(count, modifiedCount) {
+    const propText = `${count} propert${count === 1 ? 'y' : 'ies'}`;
+    const modText = modifiedCount > 0
+        ? ` / ${modifiedCount} modification${modifiedCount === 1 ? '' : 's'}`
+        : '';
+    return propText + modText;
+}
+
+function updateNexusSectionSummary(detailsEl) {
+    if (!detailsEl) return;
+    const desc = detailsEl.querySelector('.nexus-skill-desc');
+    if (!desc) return;
+    const total = detailsEl.querySelectorAll('.nexus-param-item').length;
+    const modified = detailsEl.querySelectorAll('.nexus-param-item.modified').length;
+    desc.textContent = formatNexusPropertySummary(total, modified);
+}
+
 function generateNexusUI(properties, backendConfig) {
     const apps = groupNexusApps(properties);
     if (apps.length === 0) return '';
@@ -696,6 +777,15 @@ function generateNexusUI(properties, backendConfig) {
                 flex-direction: column;
                 gap: 10px;
             }
+            .nexus-reset-btn:disabled {
+                color: #999;
+                cursor: default;
+                text-decoration: none;
+            }
+            .nexus-param-item.modified {
+                background-color: #fff9db;
+                border-radius: 4px;
+            }
         </style>
     `;
 
@@ -714,11 +804,12 @@ function generateNexusUI(properties, backendConfig) {
                 </div>
             `).join('');
 
+            const sharedModifiedCount = countNexusModifiedParams(app.shared, backendConfig);
             parts.push(`
                 <details class="nexus-skill">
                     <summary>
                         <strong>Shared Properties</strong>
-                        <span class="nexus-skill-desc">${app.shared.length} propert${app.shared.length === 1 ? 'y' : 'ies'}</span>
+                        <span class="nexus-skill-desc">${formatNexusPropertySummary(app.shared.length, sharedModifiedCount)}</span>
                     </summary>
                     <div class="nexus-skill-params">${sharedHtml}</div>
                 </details>
@@ -732,6 +823,7 @@ function generateNexusUI(properties, backendConfig) {
             const validParams = params.filter(prop => prop.value_type !== 'null');
             if (validParams.length === 0) return '';
 
+            const skillModifiedCount = countNexusModifiedParams(validParams, backendConfig);
             const domains = groupNexusParamsByDomain(validParams);
             const paramsHtml = Object.entries(domains).map(([domain, domainParams]) => `
                 <div class="nexus-domain-card">
@@ -746,7 +838,7 @@ function generateNexusUI(properties, backendConfig) {
                 <details class="nexus-skill">
                     <summary>
                         <strong>${formatNexusSkillLabel(skillName)}</strong>
-                        <span class="nexus-skill-desc">${validParams.length} propert${validParams.length === 1 ? 'y' : 'ies'}</span>
+                        <span class="nexus-skill-desc">${formatNexusPropertySummary(validParams.length, skillModifiedCount)}</span>
                     </summary>
                     <div class="nexus-skill-params">${paramsHtml}</div>
                 </details>
@@ -783,6 +875,9 @@ function setupTabListeners() {
 function setupNexusListeners(ctx) {
     document.querySelectorAll('.nexus-param-input').forEach(input => {
         const markDirty = () => {
+            updateNexusParamState(input);
+            const detailsEl = input.closest('details.nexus-skill');
+            if (detailsEl) updateNexusSectionSummary(detailsEl);
             ctx.modifiedFields.skills.add('nexus');
             updateSkillsNextButtonState(ctx);
         };
@@ -802,6 +897,9 @@ function setupNexusListeners(ctx) {
             if (!input) return;
             const defaultVal = JSON.parse(decodeURIComponent(btn.dataset.default || 'null'));
             setNexusInputValue(input, defaultVal, btn.dataset.valueType);
+            updateNexusParamState(input);
+            const detailsEl = input.closest('details.nexus-skill');
+            if (detailsEl) updateNexusSectionSummary(detailsEl);
             ctx.modifiedFields.skills.add('nexus');
             updateSkillsNextButtonState(ctx);
         });
@@ -811,12 +909,22 @@ function setupNexusListeners(ctx) {
         btn.addEventListener('click', () => {
             const appEl = btn.closest('.nexus-app');
             if (!appEl) return;
+            const appName = `${appEl.dataset.bundle} (${appEl.dataset.vendor})`;
+            if (!confirm(`Reset all settings in ${appName} to their default values? This cannot be undone.`)) return;
+
             appEl.querySelectorAll('.nexus-param-input').forEach(input => {
                 const defaultVal = JSON.parse(decodeURIComponent(input.dataset.default || 'null'));
                 setNexusInputValue(input, defaultVal, input.dataset.valueType);
+                updateNexusParamState(input);
             });
+
+            appEl.querySelectorAll('details.nexus-skill').forEach(detailsEl => {
+                updateNexusSectionSummary(detailsEl);
+            });
+
             ctx.modifiedFields.skills.add('nexus');
             updateSkillsNextButtonState(ctx);
+            alert(`All settings in ${appName} have been reset to defaults.`);
         });
     });
 }
