@@ -852,7 +852,7 @@ function generateNexusUI(properties, backendConfig) {
             <div class="nexus-app" data-vendor="${app.vendor}" data-bundle="${app.bundle}">
                 <h4>${escapeHtml(capitalize(app.bundle))} <span style="font-weight:normal;color:#888;">(${escapeHtml(capitalize(app.vendor))})</span></h4>
                 <div class="nexus-app-skills">${parts.join('')}</div>
-                <button type="button" class="nexus-reset-all-btn" data-vendor="${app.vendor}" data-bundle="${app.bundle}">Reset all settings in this app</button>
+                <button type="button" class="nexus-reset-all-btn" data-vendor="${app.vendor}" data-bundle="${app.bundle}">Reset all properties in this Nexus App</button>
             </div>
         `;
     }).join('');
