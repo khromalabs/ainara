@@ -113,7 +113,7 @@ function getKeyDescription(pathArray) {
             url: 'https://www.reddit.com/prefs/apps',
             description: 'Used for Reddit integration'
         },
-        'crypto': {
+        'coinmarketcap': {
             url: 'https://coinmarketcap.com/api/',
             description: 'Used for cryptocurrency market data'
         },
@@ -128,9 +128,14 @@ function getKeyDescription(pathArray) {
         'email': {
             url: null,
             description: 'Configure IMAP accounts for email integration'
+        },
+        // TODO This only applies to Polaris "Supporters Edition" it should only appear if Ataria is installed
+        // same in ainara.yaml.defaults
+        'hyperliquid': {
+            url: 'https://app.hyperliquid.xyz/join/AINARA',
+            description: 'Hyperliquid DEX: Trade crypto, commodities, indices, and more (AINARA referral)'
         }
     };
-
     if (descriptions[parentPart]) {
         return {
             text: descriptions[parentPart].description,

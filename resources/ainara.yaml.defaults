@@ -67,6 +67,11 @@ memory:
 apis:
   coinmarketcap:
     api_key: ""
+  cryptoexchanges:
+    hyperliquid:
+      api_key: ""
+      secret: ""
+      wallet_address: ""
   helius:
     api_key: ""
   # Example configuration for an exchange (e.g., binance, kraken, coinbase)
