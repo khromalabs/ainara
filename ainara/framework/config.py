@@ -490,6 +490,21 @@ class ConfigManager:
             raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
         current[parts[-1]] = value
 
+    def get_exact(self, key_path: str, default=None):
+        """Get a config value using exact dot notation without Nexus prefixing."""
+        if self.needs_load():
+            logger.info("INFO: Configuration file has changed, reloading.")
+            self.load_config()
+        return self._get_unscoped(key_path, default)
+
+    def set_exact(self, key_path: str, value):
+        """Set a config value using exact dot notation without Nexus prefixing."""
+        if self.needs_load():
+            self.load_config()
+
+        self._set_unscoped(key_path, value)
+        self.save()
+
     def get(
         self,
         key_path: str,
@@ -509,12 +524,11 @@ class ConfigManager:
 
         prefix = _get_caller_nexus_prefix()
         if prefix:
-            if key_path.startswith("skills.") or key_path.startswith("ainara."):
-                raise ValueError(
-                    "Nexus modules must use relative config keys, not "
-                    f"'{key_path}'"
-                )
-            key_path = f"{prefix}.{key_path}"
+            raise ValueError(
+                "config.get() cannot be used from Nexus modules for scoped keys. "
+                "Use self.properties for values declared in _PROPERTIES, or "
+                "config.get_exact(full_key) for explicit shared access."
+            )
 
         return self._get_unscoped(key_path, default)
 
@@ -530,22 +544,12 @@ class ConfigManager:
 
         prefix = _get_caller_nexus_prefix()
         if prefix:
-            if key_path.startswith("skills.") or key_path.startswith("ainara."):
-                raise ValueError(
-                    "Nexus modules must use relative config keys, not "
-                    f"'{key_path}'"
-                )
-            key_path = f"{prefix}.{key_path}"
+            raise ValueError(
+                "config.set() cannot be used from Nexus modules for scoped keys. "
+                "Use config.set_exact(full_key) for explicit full-key access."
+            )
 
-        parts = key_path.split(".")
-        current = self.config
-        for part in parts[:-1]:
-            if not isinstance(current, dict):
-                raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
-            current = current.setdefault(part, {})
-        if not isinstance(current, dict):
-            raise TypeError(f"Config path '{key_path}' traverses a non-dict.")
-        current[parts[-1]] = value
+        self._set_unscoped(key_path, value)
         self.save()
 
     def save(self):

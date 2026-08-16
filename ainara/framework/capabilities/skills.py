@@ -33,8 +33,6 @@ from flask import send_from_directory
 # from ainara.framework.connectors.manager import ConnectorManager
 from ainara.framework.connectors.router import ConnectorRouter
 from ainara.framework.mcp.client_manager import MCPClientManager
-from ainara.framework.skill_config_scanner import scan_skill_config_params
-from ainara.framework.config import nexus_prefix_from_module_name
 
 from .base import CapabilityProvider
 
@@ -478,31 +476,17 @@ class BasePythonSkillProvider(CapabilityProvider):
                                     config_params = meta_config_params
                                 elif skill_file.suffix == ".py":
                                     try:
-                                        vendor = skills_dir.parent.name
-                                        bundle = skills_dir.name
-                                        rel_path = skill_file.relative_to(
-                                            skills_dir
-                                        )
-                                        module_path = ".".join(
-                                            rel_path.with_suffix("").parts
-                                        )
-                                        full_key_prefix = (
-                                            f"skills.nexus.{vendor}."
-                                            f"{bundle}.{module_path}"
-                                        )
                                         config_params = (
-                                            scan_skill_config_params(
-                                                skill_file,
-                                                full_key_prefix=full_key_prefix,
-                                            )
+                                            instance.get_config_properties()
                                         )
-                                    except Exception as scan_e:
+                                    except Exception as prop_e:
                                         self.load_errors.append(
                                             {
                                                 "skill_id": snake_name,
                                                 "error": (
-                                                    "config_params scan"
-                                                    f" failed: {scan_e}"
+                                                    "config property "
+                                                    "resolution failed: "
+                                                    f"{prop_e}"
                                                 ),
                                             }
                                         )

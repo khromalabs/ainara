@@ -16,6 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import importlib
 import logging
 import mimetypes
 import sys
@@ -26,7 +27,7 @@ from flask import send_from_directory
 
 from ainara.framework.config import config, register_nexus_root, nexus_prefix_from_module_name
 from ainara.framework.mcp.client_manager import MCPClientManager
-from ainara.framework.skill_config_scanner import scan_skill_config_params
+from ainara.framework.skill_properties import ConfigurablePropertiesMixin
 
 from .skills import BasePythonSkillProvider
 
@@ -103,15 +104,37 @@ class NexusSkillProvider(BasePythonSkillProvider):
             if not config_prefix:
                 continue
 
-            file_params = scan_skill_config_params(
-                py_file, full_key_prefix=config_prefix
-            )
-            for p in file_params:
-                p["scope"] = "shared"
-                p["module"] = module_path
-                p["vendor"] = vendor
-                p["bundle"] = bundle
-            params.extend(file_params)
+            try:
+                shared_module = importlib.import_module(full_module_path)
+            except Exception as import_e:
+                logger.warning(
+                    f"Failed to import shared module {full_module_path}: {import_e}"
+                )
+                continue
+
+            declared = getattr(shared_module, "_PROPERTIES", None)
+            if not isinstance(declared, dict) or not declared:
+                continue
+
+            for prop_name, raw_schema in declared.items():
+                schema = ConfigurablePropertiesMixin._normalize_schema(
+                    prop_name, raw_schema
+                )
+                params.append(
+                    {
+                        "param": prop_name,
+                        "full_key": f"{config_prefix}.{prop_name}",
+                        "title": schema["title"],
+                        "description": schema.get("description", ""),
+                        "default": schema.get("default"),
+                        "value_type": schema.get("type"),
+                        "schema": schema,
+                        "scope": "shared",
+                        "module": module_path,
+                        "vendor": vendor,
+                        "bundle": bundle,
+                    }
+                )
 
         self.bundle_config_params[(vendor, bundle)] = params
 
@@ -146,6 +169,14 @@ class NexusSkillProvider(BasePythonSkillProvider):
                     f"ainara.nexus.{vendor_dir.name}.{bundle_dir.name}"
                 )
                 logger.info(f"Scanning for Nexus bundles for: {prefix_module}")
+
+                # External Nexus roots must be registered BEFORE skill
+                # instantiation so that `Skill._get_config_prefix()` can
+                # derive the correct full config keys from `__module__`.
+                if not prefix_module.startswith("ainara."):
+                    root = prefix_module.split(".")[0]
+                    register_nexus_root(root, f"skills.nexus.{root}")
+
                 bundle_caps = super().discover(
                     bundle_dir,
                     prefix_module,
@@ -235,11 +266,6 @@ class NexusSkillProvider(BasePythonSkillProvider):
                         prefix_module,
                         skill_files,
                     )
-
-                    # Register external nexus roots if not ainara.nexus
-                    if not prefix_module.startswith("ainara."):
-                        root = prefix_module.split(".")[0]
-                        register_nexus_root(root, f"skills.nexus.{root}")
 
                     self.capabilities.update(bundle_caps)
 
