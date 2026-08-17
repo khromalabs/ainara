@@ -122,14 +122,50 @@ class ConfigurablePropertiesMixin:
                 f"Property '{prop_name}' must define a non-empty 'title'"
             )
 
-        if "type" not in schema:
-            inferred = cls._infer_type_from_default(schema.get("default"))
-            if not inferred:
+        # Validate that composite keys are lists when present
+        for key in ("anyOf", "oneOf", "allOf"):
+            if key in schema and not isinstance(schema[key], list):
                 raise SkillConfigurationError(
-                    f"Property '{prop_name}' must define 'type' or have a "
-                    "default from which a type can be inferred"
+                    f"Property '{prop_name}' must define '{key}' as a list"
                 )
-            schema["type"] = inferred
+
+        if "type" not in schema:
+            if any(key in schema for key in ("anyOf", "oneOf", "allOf")):
+                # Derive a primary display type from the first non-null branch.
+                # The anyOf/oneOf/allOf schema is still preserved for validation.
+                primary = None
+                branches = []
+                for key in ("anyOf", "oneOf", "allOf"):
+                    branches.extend(schema.get(key, []))
+
+                for branch in branches:
+                    if not isinstance(branch, dict):
+                        continue
+                    branch_type = branch.get("type")
+                    if isinstance(branch_type, list):
+                        branch_type = next(
+                            (t for t in branch_type if t != "null"), None
+                        )
+                    if branch_type and branch_type != "null":
+                        primary = branch_type
+                        break
+
+                if primary is None and any(
+                    isinstance(b, dict) and b.get("type") == "null"
+                    for b in branches
+                ):
+                    primary = "null"
+
+                schema["type"] = primary or "string"
+            else:
+                inferred = cls._infer_type_from_default(schema.get("default"))
+                if not inferred:
+                    raise SkillConfigurationError(
+                        f"Property '{prop_name}' must define 'type', "
+                        "'anyOf'/'oneOf', or have a default from which "
+                        "a type can be inferred"
+                    )
+                schema["type"] = inferred
 
         schema.setdefault("description", "")
         return schema
@@ -138,44 +174,34 @@ class ConfigurablePropertiesMixin:
     # Value validation
     # ------------------------------------------------------------------
 
-    @classmethod
-    def _validate_value(cls, prop_name: str, schema: Dict[str, Any], value: Any) -> None:
-        """Validate a resolved value against the property's JSON Schema fragment."""
-        expected_type = schema.get("type")
-
-        if expected_type == "string" and not isinstance(value, str):
-            raise SkillConfigurationError(
-                f"Property '{prop_name}' expected string, got "
-                f"{type(value).__name__}"
-            )
+    @staticmethod
+    def _value_matches_type(expected_type: str, value: Any) -> bool:
+        """Return whether `value` matches a single JSON Schema type name."""
+        if expected_type == "null":
+            return value is None
+        if expected_type == "string":
+            return isinstance(value, str)
         if expected_type == "number":
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise SkillConfigurationError(
-                    f"Property '{prop_name}' expected number, got "
-                    f"{type(value).__name__}"
-                )
+            return not isinstance(value, bool) and isinstance(value, (int, float))
         if expected_type == "integer":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise SkillConfigurationError(
-                    f"Property '{prop_name}' expected integer, got "
-                    f"{type(value).__name__}"
-                )
-        if expected_type == "boolean" and not isinstance(value, bool):
-            raise SkillConfigurationError(
-                f"Property '{prop_name}' expected boolean, got "
-                f"{type(value).__name__}"
-            )
-        if expected_type == "array" and not isinstance(value, list):
-            raise SkillConfigurationError(
-                f"Property '{prop_name}' expected array, got "
-                f"{type(value).__name__}"
-            )
-        if expected_type == "object" and not isinstance(value, dict):
-            raise SkillConfigurationError(
-                f"Property '{prop_name}' expected object, got "
-                f"{type(value).__name__}"
-            )
+            return not isinstance(value, bool) and isinstance(value, int)
+        if expected_type == "boolean":
+            return isinstance(value, bool)
+        if expected_type == "array":
+            return isinstance(value, list)
+        if expected_type == "object":
+            return isinstance(value, dict)
+        # Unknown type names are ignored so valid custom schemas don't break.
+        return True
 
+    @classmethod
+    def _validate_common_constraints(
+        cls,
+        prop_name: str,
+        schema: Dict[str, Any],
+        value: Any,
+    ) -> None:
+        """Validate enum/minimum/maximum/pattern at any schema level."""
         if "enum" in schema and value not in schema["enum"]:
             raise SkillConfigurationError(
                 f"Property '{prop_name}' value {value!r} is not in enum "
@@ -208,6 +234,97 @@ class ConfigurablePropertiesMixin:
                     f"Property '{prop_name}' value {value!r} does not match "
                     f"pattern {schema['pattern']!r}"
                 )
+
+    @classmethod
+    def _validate_simple_schema(
+        cls,
+        prop_name: str,
+        schema: Dict[str, Any],
+        value: Any,
+    ) -> None:
+        """Validate a schema fragment that has no anyOf/oneOf/allOf."""
+        expected_type = schema.get("type")
+
+        if isinstance(expected_type, list):
+            if not any(cls._value_matches_type(t, value) for t in expected_type):
+                raise SkillConfigurationError(
+                    f"Property '{prop_name}' value {value!r} does not match "
+                    f"any of the allowed types {expected_type!r}"
+                )
+        elif expected_type is not None:
+            if not cls._value_matches_type(expected_type, value):
+                raise SkillConfigurationError(
+                    f"Property '{prop_name}' expected {expected_type}, got "
+                    f"{type(value).__name__}"
+                )
+
+        cls._validate_common_constraints(prop_name, schema, value)
+
+    @classmethod
+    def _validate_value(
+        cls,
+        prop_name: str,
+        schema: Dict[str, Any],
+        value: Any,
+    ) -> None:
+        """Validate a value against a schema that may include anyOf/oneOf/allOf."""
+        has_any = "anyOf" in schema
+        has_one = "oneOf" in schema
+        has_all = "allOf" in schema
+
+        if has_any or has_one or has_all:
+            if has_any:
+                branches = schema["anyOf"]
+                if not isinstance(branches, list):
+                    raise SkillConfigurationError(
+                        f"Property '{prop_name}' must define 'anyOf' as a list"
+                    )
+                matches = 0
+                for branch in branches:
+                    try:
+                        cls._validate_value(prop_name, branch, value)
+                        matches += 1
+                    except SkillConfigurationError:
+                        pass
+                if matches == 0:
+                    raise SkillConfigurationError(
+                        f"Property '{prop_name}' value {value!r} does not match "
+                        f"any of the allowed schemas"
+                    )
+
+            if has_one:
+                branches = schema["oneOf"]
+                if not isinstance(branches, list):
+                    raise SkillConfigurationError(
+                        f"Property '{prop_name}' must define 'oneOf' as a list"
+                    )
+                matches = 0
+                for branch in branches:
+                    try:
+                        cls._validate_value(prop_name, branch, value)
+                        matches += 1
+                    except SkillConfigurationError:
+                        pass
+                if matches != 1:
+                    raise SkillConfigurationError(
+                        f"Property '{prop_name}' value {value!r} must match "
+                        f"exactly one of the allowed schemas"
+                    )
+
+            if has_all:
+                branches = schema["allOf"]
+                if not isinstance(branches, list):
+                    raise SkillConfigurationError(
+                        f"Property '{prop_name}' must define 'allOf' as a list"
+                    )
+                for branch in branches:
+                    cls._validate_value(prop_name, branch, value)
+
+            # Top-level enum/range/pattern constraints still apply.
+            cls._validate_common_constraints(prop_name, schema, value)
+            return
+
+        cls._validate_simple_schema(prop_name, schema, value)
 
     # ------------------------------------------------------------------
     # Public API
