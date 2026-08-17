@@ -18,9 +18,9 @@
 
 import re
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Set, Type
 
-from ainara.framework.config import config
+from ainara.framework.config import config, nexus_prefix_from_module_name
 
 
 class SkillConfigurationError(Exception):
@@ -53,18 +53,31 @@ class ConfigurablePropertiesMixin:
 
     _PROPERTIES: Dict[str, Any] = {}
 
+    # --- NEW: Runtime Registry ---
+    _runtime_registry: Dict[str, Set[Type["ConfigurablePropertiesMixin"]]] = {}
+
+    def __init_subclass__(cls, **kwargs):
+        """Automatically register subclasses for runtime discovery."""
+        super().__init_subclass__(**kwargs)
+        module_name = cls.__module__
+        registry = ConfigurablePropertiesMixin._runtime_registry
+        if module_name not in registry:
+            registry[module_name] = set()
+        registry[module_name].add(cls)
+    # -----------------------------
+
     # ------------------------------------------------------------------
     # Prefix handling
     # ------------------------------------------------------------------
 
     @classmethod
     def _get_config_prefix(cls) -> str:
-        """Return the full config key prefix for this class.
+        """Return the Nexus config key prefix for this class.
 
-        Subclasses should override this to namespace their properties,
-        for example using `nexus_prefix_from_module_name(__module__)`.
+        Classes in ``ainara.nexus.*`` modules are scoped under
+        ``skills.nexus.*``. Non-Nexus classes keep an empty prefix.
         """
-        return ""
+        return nexus_prefix_from_module_name(cls.__module__)
 
     @classmethod
     def _get_full_key(cls, prop_name: str) -> str:
@@ -210,10 +223,6 @@ class ConfigurablePropertiesMixin:
                 {
                     "param": prop_name,
                     "full_key": cls._get_full_key(prop_name),
-                    "title": schema["title"],
-                    "description": schema.get("description", ""),
-                    "default": schema.get("default"),
-                    "value_type": schema.get("type"),
                     "schema": schema,
                 }
             )

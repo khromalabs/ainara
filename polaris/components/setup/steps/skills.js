@@ -368,6 +368,56 @@ function escapeHtml(str) {
     return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function showNexusDescriptionModal(btn) {
+    const existing = document.querySelector('.nexus-desc-modal-backdrop');
+    if (existing) existing.remove();
+
+    const rawTitle = btn.dataset.nexusTitle || '';
+    const rawDescription = btn.dataset.nexusDescription || '';
+
+    let title;
+    let description;
+    try { title = decodeURIComponent(rawTitle); } catch (e) { title = rawTitle; }
+    try { description = decodeURIComponent(rawDescription); } catch (e) { description = rawDescription; }
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'nexus-desc-modal-backdrop';
+    backdrop.innerHTML = `
+        <div class="nexus-desc-modal" role="dialog" aria-modal="true" aria-labelledby="nexus-desc-modal-title">
+            <button type="button" class="nexus-desc-modal-close" aria-label="Close">×</button>
+            <h4 id="nexus-desc-modal-title">${escapeHtml(title)}</h4>
+            <div class="nexus-desc-modal-body">${escapeHtml(description)}</div>
+        </div>
+    `;
+
+    const closeBtn = backdrop.querySelector('.nexus-desc-modal-close');
+
+    const close = () => {
+        backdrop.remove();
+        document.removeEventListener('keydown', onKey);
+    };
+
+    const onKey = (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            close();
+        }
+    };
+
+    document.body.appendChild(backdrop);
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', close);
+        closeBtn.focus();
+    }
+
+    backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) close();
+    });
+
+    document.addEventListener('keydown', onKey);
+}
+
 function capitalize(str) {
     if (!str) return '';
     return str.charAt(0).toUpperCase() + str.slice(1);
@@ -420,10 +470,12 @@ function deepEqual(a, b) {
 }
 
 function isNexusParamModified(prop, backendConfig) {
+    const schema = (prop.schema && typeof prop.schema === 'object') ? prop.schema : {};
     const current = getNested(backendConfig, prop.fullKey);
-    const hasDefault = prop.default !== undefined;
-    const currentValue = current !== undefined ? current : (hasDefault ? prop.default : null);
-    const defaultVal = hasDefault ? prop.default : null;
+    const hasDefault = schema.default !== undefined;
+    const defaultVal = hasDefault ? schema.default : null;
+    const currentValue = current !== undefined ? current : defaultVal;
+
     if (!hasDefault && current === undefined) return false;
     return !deepEqual(currentValue, defaultVal);
 }
@@ -620,13 +672,24 @@ function renderNexusParam(prop, backendConfig) {
 
     const fullKey = prop.fullKey;
     const current = getNested(backendConfig, fullKey);
-    const currentValue = current !== undefined ? current : prop.default;
+    const defaultVal = schema.default !== undefined ? schema.default : null;
+    const currentValue = current !== undefined ? current : defaultVal;
 
     const inputId = 'nexus-' + fullKey.replace(/\./g, '-');
-    const defJson = encodeURIComponent(JSON.stringify(prop.default !== undefined ? prop.default : null));
+    const defJson = encodeURIComponent(JSON.stringify(defaultVal));
     const schemaJson = encodeURIComponent(JSON.stringify(schema || {}));
     const isModified = isNexusParamModified(prop, backendConfig);
     const resetBtn = `<button type="button" class="nexus-reset-btn" data-full-key="${fullKey}" data-default="${defJson}" data-value-type="${effectiveType}" data-schema="${schemaJson}" title="Reset to default" ${isModified ? '' : 'disabled'}>↺ Reset</button>`;
+
+    // --- NEW: derive title and long description ---
+    const title = String(schema.title || prop.title || prop.param || fullKey);
+    const longDescription = String(schema.description || prop.description || '');
+    const titleEncoded = encodeURIComponent(title);
+    const descriptionEncoded = encodeURIComponent(longDescription);
+    const infoButton = longDescription
+        ? `<button type="button" class="nexus-info-btn" aria-label="More information about ${escapeHtml(title)}" data-nexus-title="${titleEncoded}" data-nexus-description="${descriptionEncoded}">ⓘ</button>`
+        : '';
+    // ------------------------------------------------
 
     let controlHtml = '';
 
@@ -670,7 +733,10 @@ function renderNexusParam(prop, backendConfig) {
     return `
         <div class="nexus-param-item${isModified ? ' modified' : ''}" data-full-key="${fullKey}">
             <label for="${inputId}">${escapeHtml(prop.param || fullKey)}</label>
-            <div class="param-desc">${escapeHtml(prop.description || '')}</div>
+            <div class="param-desc">
+                ${escapeHtml(title)}
+                ${infoButton}
+            </div>
             <div class="nexus-param-control">
                 ${controlHtml}
                 ${resetBtn}
@@ -785,6 +851,59 @@ function generateNexusUI(properties, backendConfig) {
             .nexus-param-item.modified {
                 background-color: #fff9db;
                 border-radius: 4px;
+            }
+            .nexus-info-btn {
+                border: none;
+                background: none;
+                color: #007bff;
+                cursor: help;
+                font-size: 0.9em;
+                padding: 0;
+                margin-left: 4px;
+                line-height: 1;
+            }
+
+            .nexus-desc-modal-backdrop {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.35);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            }
+
+            .nexus-desc-modal {
+                position: relative;
+                background: #fff;
+                border-radius: 8px;
+                padding: 16px;
+                max-width: 560px;
+                width: calc(100% - 32px);
+                max-height: 80vh;
+                overflow: auto;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            }
+
+            .nexus-desc-modal-close {
+                position: absolute;
+                top: 8px;
+                right: 12px;
+                border: none;
+                background: none;
+                font-size: 22px;
+                cursor: pointer;
+            }
+
+            .nexus-desc-modal h4 {
+                margin: 0 24px 8px 0;
+            }
+
+            .nexus-desc-modal-body {
+                white-space: pre-wrap;
+                line-height: 1.5;
+                overflow-wrap: anywhere;
+                color: #333;
             }
         </style>
     `;
@@ -925,6 +1044,14 @@ function setupNexusListeners(ctx) {
             ctx.modifiedFields.skills.add('nexus');
             updateSkillsNextButtonState(ctx);
             alert(`All settings in ${appName} have been reset to defaults.`);
+        });
+    });
+
+    document.querySelectorAll('.nexus-info-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showNexusDescriptionModal(btn);
         });
     });
 }

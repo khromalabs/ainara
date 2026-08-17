@@ -306,27 +306,42 @@ class CapabilitiesManager:
 
     @staticmethod
     def _clean_config_property(full_key, param_info):
+        """Return a compact property descriptor with ``schema`` as canonical."""
         prop = copy.deepcopy(param_info)
         prop.pop("full_key", None)
 
-        if not prop.get("value_type") and prop.get("schema"):
-            schema = prop["schema"]
-            st = schema.get("type") if isinstance(schema, dict) else None
-            prop["value_type"] = "number" if st == "integer" else (st or "string")
-
-        default = prop.get("default")
         schema = prop.get("schema")
-        if default is None:
-            prop.pop("default", None)
-        elif isinstance(schema, dict):
+        if not isinstance(schema, dict):
+            schema = {}
+
+        # Normalize legacy top-level fields into schema, then remove them
+        # from the top level so the endpoint does not duplicate schema data.
+        legacy_fields = {
+            "type": prop.pop("value_type", None),
+            "default": prop.pop("default", None),
+            "title": prop.pop("title", None),
+            "description": prop.pop("description", None),
+        }
+        for field, value in legacy_fields.items():
+            if value is not None and schema.get(field) is None:
+                schema[field] = value
+
+        # If a default is present, ensure it is valid for the schema.
+        # Invalid defaults are omitted rather than presented to the Wizard.
+        if "default" in schema:
             try:
-                Draft7Validator(schema).validate(default)
+                Draft7Validator(schema).validate(schema["default"])
             except Exception:
                 logger.warning(
                     "Default for %s does not match its schema; omitting default.",
                     full_key,
                 )
-                prop.pop("default", None)
+                schema.pop("default", None)
+
+        if schema:
+            prop["schema"] = schema
+        else:
+            prop.pop("schema", None)
 
         return prop
 

@@ -27,6 +27,7 @@ from flask import send_from_directory
 
 from ainara.framework.config import config, register_nexus_root, nexus_prefix_from_module_name
 from ainara.framework.mcp.client_manager import MCPClientManager
+from ainara.framework.skill import Skill
 from ainara.framework.skill_properties import ConfigurablePropertiesMixin
 
 from .skills import BasePythonSkillProvider
@@ -89,54 +90,39 @@ class NexusSkillProvider(BasePythonSkillProvider):
             self.bundle_config_params[(vendor, bundle)] = params
             return
 
+        # --- NEW: Runtime Registry Lookup ---
         params = []
-        for py_file in sorted(bundle_dir.rglob("*.py")):
-            if py_file.name.startswith("__") or py_file.name == "base.py":
-                continue
-            if py_file.resolve() in skill_files:
-                continue
-
-            rel_path = py_file.relative_to(bundle_dir)
-            module_path = ".".join(rel_path.with_suffix("").parts)
-            full_module_path = f"{prefix_module}.{module_path}"
-            config_prefix = nexus_prefix_from_module_name(full_module_path)
-
-            if not config_prefix:
+        for module_name, classes in (
+            ConfigurablePropertiesMixin._runtime_registry.items()
+        ):
+            # Only process modules that belong to this specific bundle
+            if not module_name.startswith(prefix_module):
                 continue
 
-            try:
-                shared_module = importlib.import_module(full_module_path)
-            except Exception as import_e:
-                logger.warning(
-                    f"Failed to import shared module {full_module_path}: {import_e}"
-                )
+            # Calculate relative module path to match old metadata structure
+            if module_name == prefix_module:
+                relative_module = ""
+            elif module_name.startswith(prefix_module + "."):
+                relative_module = module_name[len(prefix_module) + 1:]
+            else:
                 continue
 
-            declared = getattr(shared_module, "_PROPERTIES", None)
-            if not isinstance(declared, dict) or not declared:
-                continue
+            for cls in classes:
+                # Skip actual Skill classes; their properties are already
+                # collected as scope="skill" in skills.py
+                if issubclass(cls, Skill):
+                    continue
 
-            for prop_name, raw_schema in declared.items():
-                schema = ConfigurablePropertiesMixin._normalize_schema(
-                    prop_name, raw_schema
-                )
-                params.append(
-                    {
-                        "param": prop_name,
-                        "full_key": f"{config_prefix}.{prop_name}",
-                        "title": schema["title"],
-                        "description": schema.get("description", ""),
-                        "default": schema.get("default"),
-                        "value_type": schema.get("type"),
-                        "schema": schema,
-                        "scope": "shared",
-                        "module": module_path,
-                        "vendor": vendor,
-                        "bundle": bundle,
-                    }
-                )
+                for prop in cls.get_config_properties():
+                    p = dict(prop)
+                    p["scope"] = "shared"
+                    p["module"] = relative_module
+                    p["vendor"] = vendor
+                    p["bundle"] = bundle
+                    params.append(p)
 
         self.bundle_config_params[(vendor, bundle)] = params
+        # -----------------------------------
 
     def get_extra_config_properties(self) -> Dict[str, Dict[str, Any]]:
         properties = {}
