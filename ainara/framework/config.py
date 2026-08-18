@@ -21,7 +21,6 @@ import inspect
 import logging
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 # import traceback
@@ -78,17 +77,67 @@ class ConfigManager:
         self.initial_config_valid = True
         self.load_config()
 
+    _saved_games_path = None
+
     def _get_windows_saved_games_path(self):
-        """Get the Saved Games path on Windows using PowerShell."""
+        """Resolve FOLDERID_SavedGames via the Win32 known-folder API.
+
+        The previous implementation shelled out to PowerShell for
+        ``[Environment]::GetFolderPath('SavedGames')``, but .NET's
+        ``SpecialFolder`` enum has no ``SavedGames`` member — that call always
+        raised, so every lookup paid the cost of spawning a PowerShell process
+        only to fail into the ``~/Saved Games`` guess below. The guess happens
+        to be right on a default profile, which is why it went unnoticed, but it
+        is wrong for anyone who has relocated the folder, and the four callers
+        of this method made it ~400ms of wasted subprocess each.
+
+        SHGetKnownFolderPath is the documented API for this and answers in
+        microseconds without leaving the process. The result is cached because
+        a known folder cannot move while the process is running.
+        """
+        if ConfigManager._saved_games_path is not None:
+            return ConfigManager._saved_games_path
+
+        resolved = None
         try:
-            result = subprocess.run(
-                ['powershell', '-Command', "[Environment]::GetFolderPath('SavedGames')"],
-                capture_output=True, text=True, check=True
+            import ctypes
+            from ctypes import wintypes
+
+            class _GUID(ctypes.Structure):
+                _fields_ = [
+                    ("Data1", wintypes.DWORD),
+                    ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8),
+                ]
+
+            # FOLDERID_SavedGames {4C5C32FF-BB9D-43b0-B5B4-2D72E54EAAA4}
+            folder_id = _GUID(
+                0x4C5C32FF, 0xBB9D, 0x43B0,
+                (ctypes.c_ubyte * 8)(
+                    0xB5, 0xB4, 0x2D, 0x72, 0xE5, 0x4E, 0xAA, 0xA4
+                ),
             )
-            return Path(result.stdout.strip())
-        except Exception:
-            # Fallback to default if PowerShell fails
-            return Path(os.path.expanduser('~/Saved Games'))
+            buf = ctypes.c_wchar_p()
+            hresult = ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(folder_id), 0, None, ctypes.byref(buf)
+            )
+            try:
+                if hresult == 0 and buf.value:
+                    resolved = Path(buf.value)
+            finally:
+                ctypes.windll.ole32.CoTaskMemFree(buf)
+        except Exception as e:
+            logger.warning(
+                f"SHGetKnownFolderPath(FOLDERID_SavedGames) failed ({e}); "
+                "falling back to the default profile location"
+            )
+
+        if resolved is None:
+            resolved = Path(os.path.expanduser("~/Saved Games"))
+
+        ConfigManager._saved_games_path = resolved
+        return resolved
 
     def get_default_config_paths(self):
         """Get list of default platform-specific configuration file paths"""
