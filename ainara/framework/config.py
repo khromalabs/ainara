@@ -161,9 +161,29 @@ class ConfigManager:
                 Path("/etc/ainara/ainara.yaml"),
             ])
         elif system == "Windows":
-            # Always use Saved Games\Ainara\Config on Windows
+            # Index 0 is both the preferred search hit AND where a brand-new
+            # config gets created (load_config falls back to config_paths[0]),
+            # so the current default must stay first.
             saved_games = self._get_windows_saved_games_path()
             config_paths.append(saved_games / "Ainara" / "Config" / "ainara.yaml")
+
+            # Pre-v0.11 locations, kept as SEARCH candidates only. The Electron
+            # layer migrates these into Saved Games at startup, but the Python
+            # services can be started without ever going through Electron (the
+            # scheduler, the executor, a bare `python -m ainara.orakle.server`),
+            # and a user who has not run the migration yet still has a real
+            # config sitting in AppData. Without these entries that config is
+            # invisible and load_config silently writes a fresh one from
+            # defaults on top of a working install, so the user's API keys and
+            # trading credentials appear to have vanished. Never used to CREATE
+            # a config, only to find one that is already there.
+            appdata = os.environ.get("APPDATA") or os.path.expanduser(
+                r"~\AppData\Roaming"
+            )
+            config_paths.extend([
+                Path(appdata) / "ainara" / "ainara.yaml",
+                Path(appdata) / "ainara" / "Config" / "ainara.yaml",
+            ])
         else:
             # Fallback for other systems
             config_paths.append(Path(os.path.expanduser("~/.ainara/ainara.yaml")))
@@ -639,9 +659,16 @@ class ConfigManager:
         system = platform.system()
         if system == "Windows":
             base = os.environ.get("LOCALAPPDATA") or os.path.expanduser(
-                "~\\AppData\\Local"
+                r"~\AppData\Local"
             )
-            return Path(base) / "Ainara" / "config-backups"
+            # NOT %LOCALAPPDATA%\Ainara - Windows paths are case-insensitive,
+            # so that is the SAME directory as the %LOCALAPPDATA%inara that
+            # the Electron Saved Games migration copies out and then renames
+            # to *.old.migrated_to_savedgames. These snapshots are the
+            # recovery path for a config wipe, so they must not sit anywhere
+            # a migration can sweep them up - hence a sibling directory whose
+            # name the migration does not match.
+            return Path(base) / "AinaraConfigBackups"
         elif system == "Darwin":
             return Path(
                 os.path.expanduser(
