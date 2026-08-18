@@ -58,17 +58,32 @@ class ConfigManager {
      * @returns {string}
      */
     _getWindowsSavedGamesPath() {
+        if (ConfigManager._cachedSavedGamesPath) {
+            return ConfigManager._cachedSavedGamesPath;
+        }
+
         try {
+            // FOLDERID_SavedGames, resolved through the shell namespace.
+            // NOT [Environment]::GetFolderPath('SavedGames') - .NET's
+            // SpecialFolder enum has no SavedGames member, so that call always
+            // threw and this always fell through to the guess below. The guess
+            // is correct on a default profile, which hid the bug, but it is
+            // wrong for anyone who has relocated the folder.
             const { execSync } = require('child_process');
+            const script = "(New-Object -ComObject Shell.Application)"
+                + ".NameSpace('shell:SavedGames').Self.Path";
             const result = execSync(
-                'powershell -Command "[Environment]::GetFolderPath(\'SavedGames\')"',
-                { encoding: 'utf8' }
+                'powershell -NoProfile -Command "' + script + '"',
+                { encoding: 'utf8', windowsHide: true }
             ).trim();
-            return result;
+            if (!result) throw new Error('empty path returned');
+            ConfigManager._cachedSavedGamesPath = result;
         } catch (error) {
             console.warn('Failed to get Saved Games path via PowerShell, falling back to default');
-            return path.join(os.homedir(), 'Saved Games');
+            ConfigManager._cachedSavedGamesPath = path.join(os.homedir(), 'Saved Games');
         }
+
+        return ConfigManager._cachedSavedGamesPath;
     }
 
     _deepMerge(target, ...sources) {
