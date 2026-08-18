@@ -132,6 +132,8 @@ class ChatManager:
         self.turn_counter = 0
         self.decay_in_progress = False
         self.decay_lock = threading.Lock()
+        self.last_chat_timestamp = None
+        self.last_chat_relative_time = None
         if (
             self.memory_enabled
             and self.green_memories
@@ -1115,6 +1117,63 @@ class ChatManager:
             print(f"Data: {pprint.pformat(data)}")
             print("-----------------------")
 
+    def _handle_test_user_ui_stream(self, command: str, stream: str):
+        """Handles streaming for the /testuserui command."""
+        parts = command.strip().split(" ", 2)
+        usage_msg = "Usage: /testuserui <component_name> <json_data>"
+
+        if len(parts) < 3:
+            if stream == "cli":
+                print(usage_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {
+                        "content": usage_msg,
+                        "flags": {"command": False, "audio": False},
+                    },
+                )
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        _command, component_name, data_json_str = parts
+
+        try:
+            data = json.loads(data_json_str)
+        except json.JSONDecodeError:
+            error_msg = "Error: Invalid JSON data provided."
+            if stream == "cli":
+                print(error_msg)
+            else:  # json stream
+                yield ndjson("signal", "loading", {"state": "start"})
+                yield ndjson("signal", "error", {"message": error_msg})
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
+            return
+
+        component_path = f"/user_skills/components/{component_name}/index.html"
+
+        if stream == "json":
+            yield ndjson("signal", "loading", {"state": "start"})
+            user_data = {
+                "component_path": component_path,
+                "data": data,
+                "query": "User Skill Test",
+            }
+            history_message = f"_orakle_nexus_data_|{json.dumps(user_data)}"
+            self.llm.add_msg(history_message, self.chat_history, "assistant")
+            yield ndjson("ui", "renderNexus", user_data)
+            yield ndjson("signal", "loading", {"state": "stop"})
+            yield ndjson("signal", "completed", None)
+        elif stream == "cli":
+            print("\n--- User Skill Component ---")
+            print(f"Path: {component_path}")
+            print(f"Data: {pprint.pformat(data)}")
+            print("----------------------------")
+
     def _handle_memory_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -1188,6 +1247,22 @@ class ChatManager:
             component_path = f"/nexus/{vendor}/{bundle}/{component}/index.html"
             return f"<nexus path=\"{component_path}\" data='{data_json_str}'/>"
 
+    def _handle_test_user_ui_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testuserui command for all stream types."""
+        if stream:  # cli or json
+            return self._handle_test_user_ui_stream(command, stream)
+        else:  # no stream
+            parts = command.strip().split(" ", 2)
+            usage_msg = "Usage: /testuserui <component_name> <json_data>"
+            if len(parts) < 3:
+                return usage_msg
+
+            _command, component_name, data_json_str = parts
+            component_path = f"/user_skills/components/{component_name}/index.html"
+            return f"<nexus path=\"{component_path}\" data='{data_json_str}'/>"
+
     def _handle_test_doc_view_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -1219,6 +1294,9 @@ class ChatManager:
 
         if command.lower().startswith("/testnexus"):
             return self._handle_test_nexus_command(command, stream)
+
+        if command.lower().startswith("/testuserui"):
+            return self._handle_test_user_ui_command(command, stream)
 
         if command.lower().startswith("/tts"):
             return self._handle_test_tts_command(command, stream)
@@ -1807,7 +1885,7 @@ class ChatManager:
                     query = chunk.get("query")
                     skill_data = chunk.get("data", {})
 
-                    if not all([vendor, bundle, component]):
+                    if not component:
                         logger.error(
                             "Nexus skill result received with incomplete"
                             f" component info: vendor='{vendor}',"
@@ -1815,9 +1893,15 @@ class ChatManager:
                         )
                         continue
 
-                    component_path = (
-                        f"/nexus/{vendor}/{bundle}/{component}/index.html"
-                    )
+                    if vendor and bundle:
+                        component_path = (
+                            f"/nexus/{vendor}/{bundle}/{component}/index.html"
+                        )
+                    else:
+                        # User skills don't have vendor/bundle, use the user skills path
+                        component_path = (
+                            f"/user_skills/components/{component}/index.html"
+                        )
 
                     nexus_data = {
                         "component_path": component_path,

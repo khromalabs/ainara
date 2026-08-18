@@ -28,18 +28,39 @@ import os
 import yaml
 
 
-def _default_config_path():
-    # Mirror framework/platform_utils.get_default_config_paths (Windows/posix).
-    # Windows default is %APPDATA% (Roaming), NOT Documents: Documents is what
-    # OneDrive's "Known Folder Move" silently redirects into cloud sync on a
-    # default Windows 11 setup, which is never acceptable for a file that can
-    # hold venue signing keys. %APPDATA% is always local disk.
+def _default_config_candidates():
+    r"""Mirror ConfigManager.get_default_config_paths (Windows/posix), in order.
+
+    Windows moved to "Saved Games\Ainara\Config" in v0.11 (FOLDERID_SavedGames).
+    Both it and the pre-v0.11 %APPDATA% location are always local disk — the one
+    place a config that can hold venue signing keys must never live is Documents,
+    which OneDrive's "Known Folder Move" silently redirects into cloud sync on a
+    default Windows 11 setup.
+
+    The legacy %APPDATA% path stays in the list as a fallback so the executor
+    keeps finding the config both before and after Polaris runs its migration;
+    index 0 is the current default and is what the not-found error names.
+    """
     if os.name == "nt":
+        saved_games = os.path.join(os.path.expanduser("~"), "Saved Games")
         appdata = os.environ.get("APPDATA") or os.path.join(
             os.path.expanduser("~"), "AppData", "Roaming")
-        return os.path.join(appdata, "ainara", "ainara.yaml")
+        return [
+            os.path.join(saved_games, "Ainara", "Config", "ainara.yaml"),
+            os.path.join(appdata, "ainara", "Config", "ainara.yaml"),
+            os.path.join(appdata, "ainara", "ainara.yaml"),
+        ]
     xdg = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
-    return os.path.join(xdg, "ainara", "ainara.yaml")
+    return [os.path.join(xdg, "ainara", "ainara.yaml")]
+
+
+def _default_config_path():
+    """First existing candidate, else the current-default path (index 0)."""
+    candidates = _default_config_candidates()
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
 
 
 class ExecutorConfig:

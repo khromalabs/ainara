@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 
 from flask import jsonify, request
+from jsonschema import Draft7Validator
 
 # Import the new manager and related types
 from ainara.framework.mcp.client_manager import MCPClientManager
@@ -33,20 +34,22 @@ from ainara.framework.connectors.router import ConnectorRouter
 # Import providers
 from .mcp import MCPToolProvider
 from .nexus import NexusSkillProvider
-from .skills import NativeSkillProvider
+from .skills import NativeSkillProvider, UserSkillProvider
 
 logger = logging.getLogger(__name__)  # Use module-level logger
 
 
 class CapabilitiesManager:
-    def __init__(self, flask_app, config, internet_available: bool):
+    def __init__(self, flask_app, config, internet_available: bool, startup_time: float = None):
         self.app = flask_app
         self.config = config
         self.internet_available = internet_available
+        self.startup_time = startup_time
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         self.mcp_client_manager = None
         # self.connector_manager = None
         self.nexus_provider = None
+        self.user_provider = None
         self.providers = []
         self.provider_map: Dict[str, Any] = {}
         resource_base_dir = self._get_resource_base_dir()
@@ -159,15 +162,31 @@ class CapabilitiesManager:
             self.provider_map["mcp"] = mcp_provider
             logger.info("Initialized MCPToolProvider.")
 
+        # User Skill Provider
+        if self.config.get("user_skills.enabled", False):
+            try:
+                self.user_provider = UserSkillProvider(
+                    self.config, self.mcp_client_manager, self.router, self.startup_time
+                )
+                self.providers.append(self.user_provider)
+                self.provider_map["user_skill"] = self.user_provider
+                logger.info("Initialized UserSkillProvider.")
+            except Exception as e:
+                logger.error(f"Failed to initialize UserSkillProvider: {e}", exc_info=True)
+                self.user_provider = None
+
     def load_capabilities(self):
         """Load all capabilities by delegating to registered providers."""
         logger.info("Loading capabilities from all providers...")
         self.capabilities = {}  # Clear existing capabilities
+        self.load_errors = []   # Clear previous errors
 
         for provider in self.providers:
             try:
                 discovered_caps = provider.discover()
                 self.capabilities.update(discovered_caps)
+                if hasattr(provider, 'load_errors'):
+                    self.load_errors.extend(provider.load_errors)
             except Exception as e:
                 logger.error(
                     "Failed to discover capabilities from provider"
@@ -203,8 +222,12 @@ class CapabilitiesManager:
 
         Args:
             view_mode: "llm" (default) for lean output (no schemas, no hidden params),
-                       or "full" for complete details (schemas, hidden params, schedules).
+                       "full" for complete details (schemas, hidden params, schedules).
+                       "properties" just listing skills properties
         """
+        if view_mode == "properties":
+            return self.get_config_properties()
+
         output_capabilities = {}
         for name, cap_data in self.capabilities.items():
             if cap_data.get("hidden", False):
@@ -244,14 +267,25 @@ class CapabilitiesManager:
             for p in params_to_remove:
                 del params[p]
 
+            # Expose config_params only in full view
+            if view_mode == "full" and "config_params" in cap_data:
+                filtered_config_params = [
+                    p for p in copy.deepcopy(cap_data["config_params"])
+                    if not (p.get("full_key", "") or "").startswith("apis.")
+                ]
+                if filtered_config_params:
+                    info["config_params"] = filtered_config_params
+
             # Add type-specific fields
-            if cap_data["type"] == "skill":
+            if cap_data["type"] in ("skill", "user_skill"):
                 info["matcher_info"] = cap_data.get("matcher_info", "")
                 embeddings_boost_factor = cap_data.get(
                     "embeddings_boost_factor", 1.0
                 )
                 if embeddings_boost_factor != 1.0:
                     info["embeddings_boost_factor"] = embeddings_boost_factor
+                if "ui" in cap_data:
+                    info["ui"] = cap_data["ui"]
             elif cap_data["type"] == "mcp":
                 info["server"] = cap_data.get("server", "unknown")
             elif cap_data["type"] == "nexus":
@@ -281,16 +315,87 @@ class CapabilitiesManager:
 
         return output_capabilities
 
+    @staticmethod
+    def _clean_config_property(full_key, param_info):
+        """Return a compact property descriptor with ``schema`` as canonical."""
+        prop = copy.deepcopy(param_info)
+        prop.pop("full_key", None)
+
+        schema = prop.get("schema")
+        if not isinstance(schema, dict):
+            schema = {}
+
+        # Normalize legacy top-level fields into schema, then remove them
+        # from the top level so the endpoint does not duplicate schema data.
+        legacy_fields = {
+            "type": prop.pop("value_type", None),
+            "default": prop.pop("default", None),
+            "title": prop.pop("title", None),
+            "description": prop.pop("description", None),
+        }
+        for field, value in legacy_fields.items():
+            if value is not None and schema.get(field) is None:
+                schema[field] = value
+
+        # If a default is present, ensure it is valid for the schema.
+        # Invalid defaults are omitted rather than presented to the Wizard.
+        if "default" in schema:
+            try:
+                Draft7Validator(schema).validate(schema["default"])
+            except Exception:
+                logger.warning(
+                    "Default for %s does not match its schema; omitting default.",
+                    full_key,
+                )
+                schema.pop("default", None)
+
+        if schema:
+            prop["schema"] = schema
+        else:
+            prop.pop("schema", None)
+
+        return prop
+
+    def get_config_properties(self) -> Dict[str, Dict[str, Any]]:
+        """Return a flat full_key -> property schema map for the Wizard."""
+        properties = {}
+
+        for cap_name, cap_data in self.capabilities.items():
+            if cap_data.get("hidden", False):
+                continue
+
+            for param_info in cap_data.get("config_params", []) or []:
+                full_key = param_info.get("full_key")
+                if not full_key:
+                    continue
+                if full_key.startswith("apis."):
+                    continue
+                properties[full_key] = self._clean_config_property(
+                    full_key, param_info
+                )
+
+        for provider in self.providers:
+            extra = getattr(provider, "get_extra_config_properties", lambda: {})()
+            for full_key, param_info in extra.items():
+                if full_key.startswith("apis."):
+                    continue
+                properties[full_key] = self._clean_config_property(
+                    full_key, param_info
+                )
+
+        return properties
+
     def get_all_capabilities_description(self) -> str:
         """Generate a combined description of all capabilities for an LLM."""
         description = "You have access to the following capabilities:\n"
         sections = {
             "skill": "\n=== Native Skills ===\n",
+            "user_skill": "\n=== User Skills ===\n",
             "nexus": "\n=== Nexus Skills ===\n",
             "mcp": "\n=== MCP Tools ===\n",
         }
-        content = {"skill": "", "nexus": "", "mcp": ""}
-        found = {"skill": False, "nexus": False, "mcp": False}
+        content = {"skill": "", "user_skill": "", "nexus": "", "mcp": ""}
+        found = {"skill": False, "user_skill": False, "nexus": False, "mcp": False}
 
         for name, cap_data in self.capabilities.items():
             if cap_data.get("hidden", False):
@@ -304,6 +409,8 @@ class CapabilitiesManager:
 
         if not found["skill"]:
             content["skill"] = "(No native skills available)\n"
+        if not found["user_skill"]:
+            content["user_skill"] = "(No user skills available)\n"
         if not found["nexus"]:
             content["nexus"] = "(No Nexus skills available)\n"
         if not found["mcp"]:
@@ -313,6 +420,8 @@ class CapabilitiesManager:
             description
             + sections["skill"]
             + content["skill"]
+            + sections["user_skill"]
+            + content["user_skill"]
             + sections["nexus"]
             + content["nexus"]
             + sections["mcp"]
@@ -349,6 +458,7 @@ class CapabilitiesManager:
         self.register_list_capabilities_endpoint()
         self.register_execute_capability_endpoint()
         self.register_nexus_component_endpoint()
+        self.register_user_component_endpoint()
 
     def register_list_capabilities_endpoint(self):
         """Register the /capabilities endpoint to list all capabilities."""
@@ -420,6 +530,30 @@ class CapabilitiesManager:
             "Registered Nexus component endpoint: GET"
             f" {route_path_base}/<path:component_path>"
         )
+
+    def register_user_component_endpoint(self):
+        """Register the /user_skills/components/<path:component_path> endpoint."""
+        if not self.user_provider:
+            logger.debug("User provider not available, skipping component endpoint registration.")
+            return
+
+        route_path_base = "/user_skills/components"
+
+        @self.app.route(f"{route_path_base}/<path:component_path>", methods=["GET"])
+        def serve_user_component(component_path):
+            try:
+                return self.user_provider.serve_component(component_path)
+            except FileNotFoundError as e:
+                logger.warning(f"User component file not found for path '{component_path}': {e}")
+                return jsonify({"error": "Component file not found"}), 404
+            except PermissionError as e:
+                logger.error(f"Security violation: access denied for user component path '{component_path}': {e}")
+                return jsonify({"error": "Access denied"}), 403
+            except Exception as e:
+                logger.error(f"Error serving user component for path '{component_path}': {e}", exc_info=True)
+                return jsonify({"error": "Internal server error"}), 500
+
+        logger.info(f"Registered User component endpoint: GET {route_path_base}/<path:component_path>")
 
     def register_execute_capability_endpoint(self):
         """Register the /run/{capability_name} endpoint."""

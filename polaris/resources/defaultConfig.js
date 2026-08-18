@@ -18,7 +18,7 @@
 
 module.exports = {
     stt: {
-        review: 'auto',
+        review: 'on',
         smart_send_threshold: 0.75,
         lowerVolume: true,
         modules: {
@@ -84,8 +84,7 @@ module.exports = {
     },
     startup: {
         autoStart: false,
-        startMinimized: false,
-        backupDirectory: ""
+        startMinimized: false
     },
     ollama: {
         serverIp: "127.0.0.1",

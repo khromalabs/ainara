@@ -147,6 +147,8 @@ class Plan:
         self.max_parallel = self.raw.get("max_parallel", 4)
         self.scratchpad_max_chars = self.raw.get("scratchpad_max_chars", 10000)
         self.defaults = self.raw.get("defaults", {})
+        # avoid_report_if (optional) – a single condition string
+        self.avoid_report_if = self.raw.get("avoid_report_if")
 
         # Optional plan-level input variables (a flat mapping of scalars). Keep it
         # flat: the scratchpad resolves one level ({{vars.coin}}), so nested
@@ -233,13 +235,24 @@ class Plan:
                 continue
 
             for avoid_path in step.avoid_step_if:
+                # Strip leading negation prefix if present
+                cleaned_path = avoid_path
+                if avoid_path.startswith('not '):
+                    cleaned_path = avoid_path[4:].strip()
+                    if not cleaned_path:
+                        raise PlanValidationError(
+                            f"Plan '{self.name}': step '{step.name}' has "
+                            "empty path after 'not' in avoid_step_if"
+                        )
+
                 # Parse the reference: "step_name.response.some.path"
-                parts = avoid_path.split(".")
+                parts = cleaned_path.split(".")
                 if len(parts) < 2:
                     raise PlanValidationError(
                         f"Plan '{self.name}': step '{step.name}' has invalid "
                         f"avoid_step_if='{avoid_path}'. "
-                        "Expected format: 'step_name.response.path'"
+                        "Expected format: 'step_name.response.path' "
+                        "(or 'not step_name.response.path')"
                     )
 
                 referenced_step = parts[0]

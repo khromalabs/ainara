@@ -16,6 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -46,6 +47,69 @@ class Scratchpad:
         """Retrieve an agent's stored result."""
         return self.data.get(agent_name)
 
+    def resolve_dotted_path(self, ref: str) -> tuple:
+        """
+        Resolve a dotted reference ``agent_name.path.to.key`` against
+        the stored results. Returns ``(value, error_message_or_None)``.
+        If the path cannot be resolved, *value* is ``None`` and
+        *error_message* describes the problem.
+
+        * The ``response`` field is automatically parsed as JSON when
+          encountered along the path.
+        * If the first segment after the agent name is not found but
+          the agent result has a ``response`` key containing valid
+          JSON, that JSON is parsed and the path is attempted inside
+          it. (Common when a step's output is entirely inside its
+          ``response`` JSON.)
+        """
+        parts = ref.split(".")
+        if len(parts) < 2:
+            msg = f"Invalid dotted reference '{ref}' (need at least agent.field)"
+            logger.warning("Scratchpad: %s", msg)
+            return None, msg
+
+        agent_name = parts[0]
+        rest = parts[1:]
+
+        # --- resolve agent data -------------------------------------------------
+        agent_data = self.data.get(agent_name)
+        if agent_data is None:
+            msg = f"No data for agent '{agent_name}' in reference '{ref}'"
+            logger.warning("Scratchpad: %s", msg)
+            return None, msg
+
+        current = agent_data
+
+        # --- walk the path --------------------------------------------------------
+        for idx, part in enumerate(rest):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+                # auto‑parse JSON response strings
+                if part == "response" and isinstance(current, str):
+                    try:
+                        current = json.loads(current)
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # leave as string
+                continue
+
+            # ---- fallback for missing key at first segment -----------------------
+            if idx == 0 and isinstance(current, dict) and "response" in current:
+                response_val = current["response"]
+                if isinstance(response_val, str):
+                    try:
+                        parsed = json.loads(response_val)
+                        if isinstance(parsed, dict) and part in parsed:
+                            current = parsed[part]
+                            continue
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            msg = f"Path '{ref}' not reachable: '{part}' not found"
+            logger.warning("Scratchpad: %s", msg)
+            return None, msg
+
+        return current, None
+
     def resolve_template(self, template: str) -> str:
         """
         Replace ``{{agent_name.field}}`` placeholders in *template* with
@@ -55,28 +119,14 @@ class Scratchpad:
 
         def _replace(match):
             ref = match.group(1).strip()
-            parts = ref.split(".", 1)
-            if len(parts) != 2:
-                logger.warning(f"Scratchpad: invalid template ref '{ref}'")
-                return match.group(0)
-
-            agent_name, field = parts
-            agent_data = self.data.get(agent_name)
-            if agent_data is None:
-                logger.warning(f"Scratchpad: no data for agent '{agent_name}'")
-                return match.group(0)
-
-            value = agent_data.get(field)
-            if value is None:
-                logger.warning(
-                    f"Scratchpad: no field '{field}' for agent '{agent_name}'"
-                )
+            value, error = self.resolve_dotted_path(ref)
+            if value is None or error is not None:
                 return match.group(0)
 
             text = str(value)
             if len(text) > self.max_chars:
                 logger.warning(
-                    f"Scratchpad: value for '{agent_name}.{field}' "
+                    f"Scratchpad: value for '{ref}' "
                     f"exceeds {self.max_chars} chars ({len(text)}), "
                     "truncating for template injection"
                 )

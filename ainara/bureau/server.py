@@ -334,6 +334,14 @@ def run_agent_in_process(
     from ainara.framework.llm import create_llm_backend
     from ainara.framework.orakle_middleware import OrakleMiddleware
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TODO: Logging from this child process is NOT captured in bureau.log.
+    # The parent process only receives whatever is put onto result_queue.
+    # For better forensics, consider implementing a multiprocessing logging
+    # pattern (e.g., logging.handlers.QueueHandler + QueueListener in the
+    # parent) to route all child logs to the same file.
+    # ═══════════════════════════════════════════════════════════════════════════
+
     providers_to_try = blueprint.get("llm_providers")
     if not providers_to_try:
         default_provider = llm_config.get(
@@ -415,6 +423,7 @@ def run_agent_in_process(
                 # only ever sees "Last error: None" once every provider is tried.
                 last_error = f"[{provider}] {reason_msg}"
                 logger.warning(f"Agent execution failed with provider '{provider}': {reason_msg}. Retrying next...")
+                last_error = f"[{provider}] {reason_msg}"
                 # Do not return, let the loop continue to the next provider
             else:
                 result_queue.put(result, timeout=5)

@@ -16,6 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import importlib
 import logging
 import mimetypes
 import sys
@@ -24,7 +25,10 @@ from typing import Any, Dict, Optional
 
 from flask import send_from_directory
 
+from ainara.framework.config import config, register_nexus_root, nexus_prefix_from_module_name
 from ainara.framework.mcp.client_manager import MCPClientManager
+from ainara.framework.skill import Skill
+from ainara.framework.skill_properties import ConfigurablePropertiesMixin
 
 from .skills import BasePythonSkillProvider
 
@@ -45,9 +49,9 @@ class NexusSkillProvider(BasePythonSkillProvider):
         # Ensure .mjs files are served with the correct MIME type (fixes Windows issue)
         mimetypes.add_type("application/javascript", ".mjs")
 
-        self._configured_path = Path(nexus_path)  # Store original config
-        self.nexus_path = self._get_nexus_base_path()  # Resolve actual path
+        self.nexus_path = config.get_nexus_base_path()
         self.capabilities: Dict[str, Dict[str, Any]] = {}
+        self.bundle_config_params = {}
         if not self.nexus_path.is_dir():
             logger.warning(
                 f"Nexus path '{self.nexus_path}' does not exist or is not a"
@@ -57,14 +61,77 @@ class NexusSkillProvider(BasePythonSkillProvider):
             if not getattr(sys, "frozen", False):
                 self.nexus_path.mkdir(parents=True, exist_ok=True)
 
-    def _get_nexus_base_path(self) -> Path:
-        """Determine the base path for Nexus bundles based on runtime environment."""
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            # Running as PyInstaller bundle (includes APPX)
-            return Path(sys._MEIPASS) / "ainara" / "nexus"
-        else:
-            # Development mode - use configured path
-            return self._configured_path
+    def _collect_bundle_config_params(
+        self,
+        vendor: str,
+        bundle: str,
+        bundle_dir: Path,
+        prefix_module: str,
+        skill_files: set,
+    ):
+        if (vendor, bundle) in self.bundle_config_params:
+            return
+
+        # Prefer pre-generated metadata from skills_metadata.json (required
+        # for Pyarmor-obfuscated bundles). Fall back to AST scanning for
+        # source-mode bundles.
+        metadata = self._load_metadata_registry(bundle_dir)
+        shared_config_params = metadata.get("shared_config_params")
+        if shared_config_params is not None:
+            params = []
+            for module_path, file_params in shared_config_params.items():
+                for p in file_params:
+                    p = dict(p)
+                    p["scope"] = "shared"
+                    p["module"] = module_path
+                    p["vendor"] = vendor
+                    p["bundle"] = bundle
+                    params.append(p)
+            self.bundle_config_params[(vendor, bundle)] = params
+            return
+
+        # --- NEW: Runtime Registry Lookup ---
+        params = []
+        for module_name, classes in (
+            ConfigurablePropertiesMixin._runtime_registry.items()
+        ):
+            # Only process modules that belong to this specific bundle
+            if not module_name.startswith(prefix_module):
+                continue
+
+            # Calculate relative module path to match old metadata structure
+            if module_name == prefix_module:
+                relative_module = ""
+            elif module_name.startswith(prefix_module + "."):
+                relative_module = module_name[len(prefix_module) + 1:]
+            else:
+                continue
+
+            for cls in classes:
+                # Skip actual Skill classes; their properties are already
+                # collected as scope="skill" in skills.py
+                if issubclass(cls, Skill):
+                    continue
+
+                for prop in cls.get_config_properties():
+                    p = dict(prop)
+                    p["scope"] = "shared"
+                    p["module"] = relative_module
+                    p["vendor"] = vendor
+                    p["bundle"] = bundle
+                    params.append(p)
+
+        self.bundle_config_params[(vendor, bundle)] = params
+        # -----------------------------------
+
+    def get_extra_config_properties(self) -> Dict[str, Dict[str, Any]]:
+        properties = {}
+        for (vendor, bundle), params in self.bundle_config_params.items():
+            for p in params:
+                full_key = p.get("full_key")
+                if full_key:
+                    properties[full_key] = p
+        return properties
 
     def discover(self) -> Dict[str, Dict[str, Any]]:
         """Discover and load skills from Nexus bundles."""
@@ -88,6 +155,14 @@ class NexusSkillProvider(BasePythonSkillProvider):
                     f"ainara.nexus.{vendor_dir.name}.{bundle_dir.name}"
                 )
                 logger.info(f"Scanning for Nexus bundles for: {prefix_module}")
+
+                # External Nexus roots must be registered BEFORE skill
+                # instantiation so that `Skill._get_config_prefix()` can
+                # derive the correct full config keys from `__module__`.
+                if not prefix_module.startswith("ainara."):
+                    root = prefix_module.split(".")[0]
+                    register_nexus_root(root, f"skills.nexus.{root}")
+
                 bundle_caps = super().discover(
                     bundle_dir,
                     prefix_module,
@@ -163,6 +238,21 @@ class NexusSkillProvider(BasePythonSkillProvider):
                             "No '_components' directory found for bundle"
                             f" '{bundle_dir.name}'."
                         )
+
+                    # Collect skill files to exclude from shared scanning
+                    skill_files = {
+                        Path(cap_data["file_path"]).resolve()
+                        for cap_data in bundle_caps.values()
+                        if cap_data.get("file_path")
+                    }
+                    self._collect_bundle_config_params(
+                        vendor_dir.name,
+                        bundle_dir.name,
+                        bundle_dir,
+                        prefix_module,
+                        skill_files,
+                    )
+
                     self.capabilities.update(bundle_caps)
 
         logger.info(f"Loaded {len(self.capabilities)} nexus skills.")

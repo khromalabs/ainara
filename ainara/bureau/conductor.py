@@ -30,7 +30,6 @@ from typing import Any, Dict, Optional  # List,
 from ainara.bureau.plan import Plan, PlanValidationError, StepNode
 from ainara.bureau.scratchpad import Scratchpad
 from ainara.framework.orakle_client import call_skill
-from ainara.framework.platform_utils import get_default_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -252,10 +251,10 @@ class Conductor:
             for avoid_plan in avoid_if:
                 avoid_lock = self._locks.get(avoid_plan)
                 if avoid_lock is None:
-                    logger.debug(
-                        "Plan '%s' in avoid_if not found, ignoring.",
-                        avoid_plan,
-                    )
+                    # logger.info(
+                    #     "Plan '%s' in avoid_if not found, ignoring.",
+                    #     avoid_plan,
+                    # )
                     continue
                 if avoid_lock.locked():
                     return None, f"avoid_condition_met:{avoid_plan}"
@@ -323,6 +322,8 @@ class Conductor:
         running_step_ids: Dict[str, str] = {}  # step_name -> step_id
         # Track skipped steps for reporting
         skipped_steps: Dict[str, str] = {}  # step_name -> skip_reason
+        # Track avoid_if evaluation errors for reporting
+        avoid_if_errors: Dict[str, Optional[str]] = {}
 
         try:
             while len(completed) < len(plan.steps):
@@ -346,20 +347,21 @@ class Conductor:
                 for step_name in to_launch:
                     step_node = plan.steps[step_name]
 
-                    logger.debug("==== WILL EXECUTE STEP ===")
-                    logger.debug(f"{step_node}")
+                    # logger.info("==== WILL EXECUTE STEP ===")
+                    # logger.info(f"{step_node}")
 
                     # Check avoid_step_if conditions before spawning (OR logic)
                     if step_node.avoid_step_if:
                         skip_step = False
                         for avoid_path in step_node.avoid_step_if:
-                            should_skip, skip_reason = self._should_skip_step(
+                            should_skip, skip_reason, eval_error = self._should_skip_step(
                                 step_name,
                                 step_node,
                                 scratchpad,
                                 log_prefix,
                                 avoid_path,
                             )
+                            avoid_if_errors[step_name] = eval_error
                             if should_skip:
                                 # Mark step as completed but skipped
                                 skipped_result = {
@@ -368,6 +370,7 @@ class Conductor:
                                     "skills_executed": [],
                                     "failure_reason": None,
                                     "skipped": True,
+                                    "avoid_if_error": eval_error,
                                 }
                                 scratchpad.store(step_name, skipped_result)
                                 completed.add(step_name)
@@ -458,6 +461,11 @@ class Conductor:
                         )
                         break
 
+                    # Inject avoid_if_evaluation error, if any
+                    eval_err = avoid_if_errors.get(step_name)
+                    if eval_err:
+                        result["avoid_if_error"] = eval_err
+
                     scratchpad.store(step_name, result)
                     completed.add(step_name)
                     logger.info(
@@ -511,6 +519,37 @@ class Conductor:
             self.plan_status[plan_name]["last_failure"] = None
             logger.info("%s Plan completed successfully", log_prefix)
 
+        # --- avoid_report_if ---
+        # Only evaluated on success; if truthy (possibly negated) the
+        # forensic report is suppressed to reduce noise.
+        if not failed and plan.avoid_report_if:
+            condition = plan.avoid_report_if
+            invert = False
+            if condition.startswith('not '):
+                invert = True
+                condition = condition[4:].strip()
+
+            value, error = scratchpad.resolve_dotted_path(condition)
+            if error is not None:
+                logger.warning(
+                    "%s avoid_report_if eval error: %s – generating report anyway",
+                    log_prefix, error
+                )
+            else:
+                is_truthy = self._is_truthy(value)
+                should_avoid = is_truthy if not invert else not is_truthy
+                if should_avoid:
+                    logger.info(
+                        "%s Forensic report avoided by condition '%s' (evaluated to %s)",
+                        log_prefix,
+                        plan.avoid_report_if,
+                        "truthy" if is_truthy else "falsy (negated)",
+                    )
+                    # Clean up state and release lock without writing a report
+                    self.plan_status[plan_name].pop("current_run_id", None)
+                    lock.release()
+                    return
+
         self._generate_forensic_report(
             plan_name=plan_name,
             run_id=run_id,
@@ -527,6 +566,26 @@ class Conductor:
 
         self.plan_status[plan_name].pop("current_run_id", None)
         lock.release()
+
+    @staticmethod
+    def _format_response(response: str) -> str:
+        """Pretty-print JSON if possible, else return as-is."""
+        try:
+            parsed = json.loads(response)
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(parsed, indent=2, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return str(response)
+
+    @staticmethod
+    def _is_truthy(value: Any) -> bool:
+        """JS-style truthy evaluation: returns True if value is not falsy."""
+        if value is None or value is False or value == 0 or value == '':
+            return False
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Forensic report
@@ -562,15 +621,19 @@ class Conductor:
             duration = end_time - start_time
 
             # Honour the configured (local-first) logging.directory like every
-            # other log. get_default_log_dir() is Documents-based on Windows,
-            # which OneDrive then syncs — forensic reports must stay on local
-            # disk, so only fall back to it when logging.directory is unset.
+            # other log; only fall back to the platform default when the key is
+            # unset. Forensic reports carry trade detail, so they follow the
+            # same local-disk rule as the rest of the logs.
             log_base = (self.config_manager.get("logging.directory")
                         if self.config_manager else None)
-            reports_dir = (Path(log_base) if log_base
-                           else Path(get_default_log_dir())) / "bureau" / "reports"
+            reports_dir = (
+                Path(log_base) if log_base
+                else Path(self.config_manager.get_default_log_dir())
+            ) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
-            report_path = reports_dir / f"plan_{plan_name}_{run_id}.md"
+            timestamp_str = start_time.astimezone().strftime("%Y%m%d_%H%M")
+            report_name = f"plan_{plan_name}-{timestamp_str}-{run_id}.md"
+            report_path = reports_dir / report_name
 
             if failed:
                 status_label = "❌ FAILED"
@@ -601,11 +664,15 @@ class Conductor:
             for step_name in attempted_steps:
                 step_node = plan.steps[step_name]
                 result = scratchpad.get(step_name) or {}
+                avoid_error = result.get("avoid_if_error")
 
                 if step_name in skipped_steps:
                     status = "⏭️ Skipped"
                 elif step_name in completed:
-                    status = "✅ Completed"
+                    if avoid_error:
+                        status = "⚠️ Completed (gate eval error)"
+                    else:
+                        status = "✅ Completed"
                 else:
                     status = "❌ Failed"
 
@@ -619,15 +686,20 @@ class Conductor:
             lines.append("\n## Step Details\n")
             for step_name in attempted_steps:
                 lines.append(f"### Step: `{step_name}`")
+                result = scratchpad.get(step_name) or {}
+                if result.get("avoid_if_error"):
+                    lines.append(
+                        f"\n> ⚠️ **Warning:** The `avoid_step_if` condition could not be "
+                        f"evaluated: {result['avoid_if_error']}\n"
+                    )
                 if step_name in skipped_steps:
                     skip_reason = skipped_steps[step_name]
                     lines.append(f"**Skipped:** {skip_reason}\n")
                 elif step_name in completed:
-                    result = scratchpad.get(step_name) or {}
                     response = result.get("response", "No response recorded.")
                     lines.append(
                         "**Response / Final Answer:**\n```text\n"
-                        + str(response)
+                        + self._format_response(response)
                         + "\n```\n"
                     )
                 else:
@@ -659,149 +731,88 @@ class Conductor:
         scratchpad: Scratchpad,
         log_prefix: str,
         avoid_path: str = "",
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, Optional[str], Optional[str]]:
         """
         Evaluate an ``avoid_step_if`` condition before executing a step.
 
-        Returns a tuple of (should_skip: bool, skip_reason: Optional[str]).
-        - If the condition is truthy, returns (True, reason_string)
-        - If the condition is falsy, returns (False, None)
-        - On error (missing step, invalid JSON, missing path), returns (False, None)
-          and logs an error (execution continues)
+        Returns a tuple of (should_skip: bool, skip_reason: Optional[str],
+        evaluation_error: Optional[str]).
+        - If the condition is truthy, returns (True, reason_string, None)
+        - If the condition is falsy, returns (False, None, None)
+        - On error (missing step, invalid JSON, missing path), returns (False, None, error_string);
+          the step will **run**, but the error string is surfaced prominently in the forensic report.
         """
-        import json
-
         if not avoid_path:
-            return False, None
+            return False, None, None
 
-        # Parse the reference: "step_name.response.some.path"
-        parts = avoid_path.split(".")
-        referenced_step = parts[0]
-        json_path = parts[1:]  # e.g., ["response", "result", "pending_work"]
+        # Condition negation syntax: 'not step.field.path'
+        # Example:
+        #   avoid_step_if: not exposure.result.actions_taken
+        #
+        # TODO: Future extension
+        # The condition evaluator could be grown into a full boolean expression
+        # language supporting parentheses, 'and', 'or', and both prefix 'not' and
+        # infix 'not()' operators, e.g.:
+        #   (not path1 and path2) or not path3
+        # or:
+        #   not(path1 and path2)
+        # This would allow arbitrarily rich gating logic while keeping the YAML
+        # configuration readable and requiring no special quoting. The evaluator
+        # would require a small recursive‑descent / Pratt parser but would reuse
+        # the same dot‑path resolution engine we already have for the scratchpad.
+        invert = False
+        cleaned_path = avoid_path
+        if avoid_path.startswith('not '):
+            invert = True
+            cleaned_path = avoid_path[4:].strip()
+            if not cleaned_path:
+                # 'not' without a path is invalid – treat as an error
+                error = "Invalid negation: 'not' must be followed by a path"
+                logger.error(
+                    "%s Step '%s': %s. Executing step anyway.",
+                    log_prefix, step_name, error,
+                )
+                return False, None, error
 
-        # Get the referenced step's result from scratchpad
-        referenced_result = scratchpad.get(referenced_step)
-
-        if referenced_result is None:
+        current, error = scratchpad.resolve_dotted_path(cleaned_path)
+        if error is not None:
+            error_reason = f"Condition '{avoid_path}': {error}"
             logger.error(
-                "%s Step '%s' has avoid_step_if='%s' but referenced "
-                "step '%s' has no result in scratchpad. Executing step"
-                " anyway.",
+                "%s Step '%s': %s Executing step anyway.",
                 log_prefix,
                 step_name,
-                avoid_path,
-                referenced_step,
+                error_reason,
             )
-            return False, None
-
-        # Start navigation from the step result
-        current = referenced_result
-
-        # If the path doesn't start with 'response' but the first part is not found,
-        # try to auto-parse the 'response' field if it exists and is a JSON string
-        if (
-            json_path
-            and json_path[0] != "response"
-            and isinstance(current, dict)
-            and json_path[0] not in current
-            and "response" in current
-            and isinstance(current["response"], str)
-        ):
-            try:
-                parsed_response = json.loads(current["response"])
-                logger.debug(
-                    "JSON parse successful! Parsed keys:"
-                    f" {parsed_response.keys() if isinstance(parsed_response, dict) else 'N/A'}"
-                )
-                # Check if the first path part exists in the parsed response
-                if (
-                    isinstance(parsed_response, dict)
-                    and json_path[0] in parsed_response
-                ):
-                    logger.info(
-                        f"Found '{json_path[0]}' in parsed response. Using"
-                        " parsed response as starting point."
-                    )
-                    current = parsed_response
-                else:
-                    logger.info(
-                        f"'{json_path[0]}' not found in parsed response"
-                        " either."
-                    )
-            except (json.JSONDecodeError, TypeError) as e:
-                print(f"JSON parse failed: {e}")
-                logger.error(
-                    "%s Step '%s' has avoid_step_if='%s' but 'response' "
-                    "field contains invalid JSON (%s). Executing step anyway.",
-                    log_prefix,
-                    step_name,
-                    avoid_path,
-                    e,
-                )
-                return False, None
-
-        # Navigate the JSON path
-        for i, part in enumerate(json_path):
-
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-
-                # If we just accessed 'response' and it's a JSON string, parse it
-                if part == "response" and isinstance(current, str):
-                    try:
-                        current = json.loads(current)
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.error(
-                            "%s Step '%s' has avoid_step_if_not='%s' but"
-                            " 'response' field contains invalid JSON (%s)."
-                            " Executing step anyway.",
-                            log_prefix,
-                            step_name,
-                            avoid_path,
-                            e,
-                        )
-                        return False, None
-            else:
-                logger.error(
-                    "%s Step '%s' has avoid_step_if='%s' but path '%s' not "
-                    "found in referenced step result. Executing step anyway.",
-                    log_prefix,
-                    step_name,
-                    avoid_path,
-                    part,
-                )
-                return False, None
+            return False, None, error_reason
 
         # JS-style truthy evaluation
-        is_truthy = not (
-            current is None
-            or current is False
-            or current == 0
-            or current == ""
-            or (isinstance(current, (list, dict)) and len(current) == 0)
-        )
+        is_truthy = self._is_truthy(current)
+        should_trigger = is_truthy if not invert else not is_truthy
 
-        if is_truthy:
-            skip_reason = f"Truthy condition: {avoid_path} = {current!r}"
+        if should_trigger:
+            reason_prefix = "Truthy" if is_truthy else "Falsy (negated)"
+            skip_reason = f"{reason_prefix} condition: {avoid_path} = {current!r}"
             logger.info(
-                "%s Step '%s' avoid_step_if='%s' evaluated to truthy "
+                "%s Step '%s' avoid_step_if='%s' evaluated to %s "
                 "(value=%r). Skipping step.",
                 log_prefix,
                 step_name,
                 avoid_path,
+                reason_prefix.lower(),
                 current,
             )
-            return True, skip_reason
+            return True, skip_reason, None
 
         logger.info(
-            "%s Step '%s' avoid_step_if='%s' evaluated to falsy "
+            "%s Step '%s' avoid_step_if='%s' evaluated to %s "
             "(value=%r). Executing step.",
             log_prefix,
             step_name,
             avoid_path,
+            "falsy" if is_truthy else "truthy (negated)",
             current,
         )
-        return False, None
+        return False, None, None
 
     # ------------------------------------------------------------------
     # Agent spawning & polling

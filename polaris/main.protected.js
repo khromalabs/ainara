@@ -16,14 +16,14 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification } = require('electron');
+const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { EventEmitter } = require('events');
 const semver = require('semver');
 // const yargs = require('yargs/yargs');
 // const { hideBin } = require('yargs/helpers');
 const path = require('path');
-const { ensureWindowsDataLocation } = require('./framework/WindowsMigration');
+const { migrateToSavedGamesIfNeeded } = require('./framework/WindowsMigration');
 const ConfigManager = require('./framework/config');
 const { WindowManager } = require('./windows/WindowManager');
 const ComRingWindow = require('./windows/ComRingWindow');
@@ -67,6 +67,7 @@ let wizardActive = false;
 let updateProgressWindow = null;
 let ollamaClient = null;
 let appReady = false;
+let docsSites = [];
 
 const shortcutKey = config.get('shortcuts.show', 'F1');
 const triggerKey = config.get('shortcuts.trigger', 'Space');
@@ -172,12 +173,12 @@ function showSetupWizard(validationErrors = []) {
     shortcutRegistered = false;
 
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    Logger.info("Screen X " + screenWidth)
+    Logger.info("Screen X:" + screenWidth + " Screen Y:" + screenWidth)
 
     // Create setup window
     setupWindow = new BrowserWindow({
-        width: screenHeight,
-        height: Math.floor(screenHeight * 0.9),
+        width: Math.floor(screenWidth * 0.7),
+        height: Math.floor(screenHeight * 0.95),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
@@ -293,6 +294,7 @@ async function appFirstInitializationTasks() {
     Logger.setDebugMode(debugMode);
     app.isQuitting = false;
     app.isRefreshing = false;
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
     await app.whenReady();
 
     // Apply auto-start setting on launch (in case it drifted, e.g. a reinstall
@@ -386,7 +388,7 @@ async function appInitialization(firstInitialization = true) {
         // Windows data location migration (must happen before services start)
         if (process.platform === 'win32') {
             splashWindow.updateProgress('Checking data location...', 5);
-            const migrationResult = await ensureWindowsDataLocation();
+            const migrationResult = await migrateToSavedGamesIfNeeded();
             if (!migrationResult.success) {
                 splashWindow.close();
                 dialog.showErrorBox(
@@ -396,8 +398,18 @@ async function appInitialization(firstInitialization = true) {
                 app.quit();
                 return;
             }
-            if (!migrationResult.skipped) {
-                Logger.info('Data migration completed successfully');
+            if (migrationResult.migrated) {
+                // Notify user and restart the app to pick up new paths
+                const notification = new Notification({
+                    title: 'Ainara AI',
+                    body: 'Data successfully migrated to the Saved Games folder for better performance and safety. The app will now restart.',
+                    icon: path.join(__dirname, 'assets', 'icon.png')
+                });
+                notification.show();
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                app.relaunch();
+                app.exit();
+                return; // Will not reach due to exit
             }
         }
 
@@ -494,6 +506,19 @@ async function appInitialization(firstInitialization = true) {
 
         // Start background health monitoring now that services are up
         ServiceManager.startHealthCheck();
+
+        // Load documentation sites list from backend
+        try {
+            const response = await net.fetch('http://127.0.0.1:8101/docs/list');
+            if (response.ok) {
+                docsSites = await response.json();
+                Logger.info(`Found ${docsSites.length} documentation sites.`);
+            } else {
+                Logger.warn('Failed to retrieve documentation sites list.');
+            }
+        } catch (e) {
+            Logger.error('Error fetching documentation sites:', e);
+        }
 
         // AUTHENTICATION CHECK
         splashWindow.updateProgress('Verifying Access...', 70);
@@ -743,6 +768,14 @@ async function appCreateTray() {
             image = image.resize({ width: 16, height: 16 });
             Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
         }
+    } else if (process.platform === 'linux') {
+        const size = image.getSize();
+        // Linux tray implementations typically expect 22-24px icons
+        if (size.width > 24 || size.height > 24) {
+            Logger.info(`appCreateTray: Resizing image for Linux (${size.width}x${size.height} → 24x24)`);
+            image = image.resize({ width: 24, height: 24 });
+            Logger.info(`appCreateTray: Image resized. New size: ${JSON.stringify(image.getSize())}`);
+        }
     }
 
     try {
@@ -784,6 +817,7 @@ async function appCreateTray() {
 }
 
 function updateTrayIcon(state, listening=null, notifications=null) {
+    const { nativeImage } = require('electron');
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     if (tray && !tray.isDestroyed()) {
         let iconFileName, listeningTail, notificationsTail;
@@ -806,7 +840,26 @@ function updateTrayIcon(state, listening=null, notifications=null) {
         }
         const iconPath = path.join(__dirname, 'assets', iconFileName);
         try {
-            tray.setImage(iconPath);
+            let image = nativeImage.createFromPath(iconPath);
+            if (image.isEmpty()) {
+                Logger.error(`updateTrayIcon: Failed to load image at ${iconPath}`);
+                return;
+            }
+
+            // Resize for platforms that expect small tray icons
+            if (process.platform === 'linux') {
+                const size = image.getSize();
+                if (size.width > 24 || size.height > 24) {
+                    image = image.resize({ width: 24, height: 24 });
+                }
+            } else if (process.platform === 'win32') {
+                const size = image.getSize();
+                if (size.width > 32 || size.height > 32) {
+                    image = image.resize({ width: 16, height: 16 });
+                }
+            }
+
+            tray.setImage(image);
         } catch (e) {
             Logger.error(`Failed to set tray icon for state ${state}:`, e);
         }
@@ -864,6 +917,10 @@ async function startOllamaKeepAlive() {
 // Add function to update provider submenu
 async function updateProviderSubmenu() {
     try {
+        if (!tray) {
+            Logger.warn('updateProviderSubmenu: tray not available yet, skipping.');
+            return;
+        }
 
         const updateItems = isRunningAsAppX() ? [] : [
             { type: 'separator' },
@@ -965,6 +1022,13 @@ async function updateProviderSubmenu() {
                     }
                 }
             },
+            ...(docsSites.length > 0 ? [{
+                label: 'Nexus Apps Documentation',
+                submenu: docsSites.map(site => ({
+                    label: `${capitalize(site.application)} by ${capitalize(site.publisher)}`,
+                    click: () => shell.openExternal(`http://127.0.0.1:8101/docs/${site.publisher}/${site.application}/`)
+                }))
+            }] : []),
             {
                 label: 'About',
                 click: () => {
@@ -994,6 +1058,8 @@ async function updateProviderSubmenu() {
         Logger.error('Error updating provider submenu:', error);
     }
 }
+
+const capitalize = (str) => str.charAt(0).toUpperCase() + str.slice(1);
 
 function checkForUpdates(interactive = false) {
     Logger.info(`checkForUpdates called. Interactive: ${interactive}`);
@@ -1209,6 +1275,15 @@ function appSetupEventHandlers() {
                 event.sender.send('backup-directory-selected', result.filePaths[0]);
             }
         }
+    });
+
+    // Handle user skills directory selection from setup wizard
+    ipcMain.handle('select-user-skills-directory', async (event) => {
+        const result = await dialog.showOpenDialog({
+            title: 'Select User Skills Directory',
+            properties: ['openDirectory']
+        });
+        return result;
     });
 
     // Correction: Modified 'window-all-closed' handler for tray application behavior.

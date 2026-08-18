@@ -40,24 +40,34 @@ class ConfigManager {
         const platform = process.platform;
         const homeDir = os.homedir();
 
-        // Follow platform-specific standards for config locations
         if (platform === 'win32') {
-            // Check for Windows Store (AppContainer) environment
-            const packageFamilyName = process.env.PackageFamilyName;
-            const localAppData = process.env.LOCALAPPDATA;
-            if (packageFamilyName && localAppData && localAppData.includes('Packages')) {
-                // Windows Store App: Use local app data
-                return path.join(localAppData, 'ainara', 'polaris');
-            } else {
-                // Standard Windows: %APPDATA%\ainara\polaris
-                return path.join(homeDir, 'AppData', 'Roaming', 'ainara', 'polaris');
-            }
-         } else if (platform === 'darwin') {
+            // Always use Saved Games\Ainara\Config\polaris
+            const savedGamesPath = this._getWindowsSavedGamesPath();
+            return path.join(savedGamesPath, 'Ainara', 'Config', 'polaris');
+        } else if (platform === 'darwin') {
             // macOS: ~/Library/Application Support/ainara/polaris
             return path.join(homeDir, 'Library', 'Application Support', 'ainara', 'polaris');
         } else {
             // Linux/Unix: ~/.config/ainara/polaris
             return path.join(homeDir, '.config', 'ainara', 'polaris');
+        }
+    }
+
+    /**
+     * Retrieves the Saved Games folder path on Windows using PowerShell.
+     * @returns {string}
+     */
+    _getWindowsSavedGamesPath() {
+        try {
+            const { execSync } = require('child_process');
+            const result = execSync(
+                'powershell -Command "[Environment]::GetFolderPath(\'SavedGames\')"',
+                { encoding: 'utf8' }
+            ).trim();
+            return result;
+        } catch (error) {
+            console.warn('Failed to get Saved Games path via PowerShell, falling back to default');
+            return path.join(os.homedir(), 'Saved Games');
         }
     }
 

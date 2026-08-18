@@ -299,53 +299,98 @@ button {
     position: relative;
 }
 
-.skills-nav-bar {
-    display: flex;
-    flex-shrink: 0;
-    position: sticky;
-    top: 0;
-    background-color: rgba(255, 255, 255, 0.95);
-    z-index: 100;
+#skills-panel {
+    width: calc(100% - 60px);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#skills-panel .skills-list {
+    width: 100%;
+    padding-right: 0;
+}
+
+#skills-panel .skills-layout {
+    width: 100%;
+}
+
+#api-list {
+    width: 100%;
+}
+
+.api-category {
+    margin-bottom: 30px;
     border-bottom: 1px solid #eee;
-    padding: 10px 0;
-    margin-bottom: 20px;
-    gap: 10px;
-    justify-content: center;
-    backdrop-filter: blur(5px);
+    padding-bottom: 15px;
 }
 
-.skills-nav-item {
-    padding: 8px 20px;
-    color: #666;
-    text-decoration: none;
-    border-radius: 20px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-weight: 500;
+.api-category h3 {
+    margin-top: 0;
+    color: #444;
+    font-size: 18px;
+}
+
+.api-category.Messaging {
+    width: calc(100% - 30px);
+}
+
+.api-category.Apis > .api-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 20px;
+}
+
+.api-group {
+    background-color: #f9f9f9;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    transition: background-color 0.2s, box-shadow 0.2s;
     border: 1px solid transparent;
-    white-space: nowrap;
 }
 
-.skills-nav-item:hover {
-    background-color: #f0f0f0;
-    color: #333;
+.api-group:hover {
+    background-color: #f4f4f4;
+    border: 1px solid #ddd;
 }
 
-.skills-nav-item.active {
-    background-color: #e9f7fe;
-    color: #007bff;
-    border-color: #c5e8f7;
-    font-weight: 600;
+.api-group h4 {
+    margin-top: 0;
+    font-size: 16px;
+    color: #1a2530;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 8px;
 }
 
-.skills-content-area {
-    flex-grow: 1;
-    padding-bottom: 50px; /* Space for scrolling */
+.api-validation-status {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 8px;
+    vertical-align: middle;
+    font-size: 16px;
+    line-height: 1;
+    background-color: transparent;
 }
 
-.skills-section-anchor {
-    scroll-margin-top: 70px; /* Offset for sticky header */
-    margin-bottom: 40px;
+.api-validation-status.success::after { content: '✔'; color: #28a745; }
+.api-validation-status.error::after { content: '✖'; color: #dc3545; }
+.api-validation-status.pending::after { content: '...'; color: #6c757d; }
+
+.api-validation-message {
+    margin-top: 5px;
+    font-size: 0.9em;
+}
+
+.api-validation-message.success { color: #28a745; }
+.api-validation-message.error { color: #dc3545; font-weight: bold; }
+
+.api-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
 }
 
 .skill-category {
@@ -497,6 +542,7 @@ button {
     margin-bottom: 10px;
     display: flex;
     align-items: center;
+    display: none;
 }
 
 .default-filter-option input[type="checkbox"] {
@@ -641,6 +687,21 @@ input:disabled, button:disabled {
     background-color: #f9f9f9;
 }
 
+.existing-providers-section #existing-providers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.existing-providers-section #existing-providers > p {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.existing-providers-section .existing-provider {
+    margin-bottom: 0;
+}
+
 .existing-provider {
     background-color: #e9f7fe;
     border: 1px solid #c5e8f7;
@@ -651,8 +712,9 @@ input:disabled, button:disabled {
 }
 
 .existing-provider.selected {
-    background-color: #d4edda;
-    border-color: #c3e6cb;
+    border: 3px solid #007bff;
+    border-radius: 5px;
+    /* background-color: #e9f7fe; */
 }
 
 .existing-provider label {
@@ -1388,4 +1450,248 @@ input.capturing {
     padding: 15px 20px;
     border-top: 1px solid #eee;
     text-align: right;
+}
+
+/* Capability Grouping Styles */
+.capability-group {
+    margin-bottom: 20px;
+}
+
+.capability-group h3 {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+    color: #17a2b8;
+}
+
+.capability-group ul {
+    padding-left: 20px;
+    margin: 8px 0;
+}
+
+.capability-group li {
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+.capability-group code {
+    background: #f1f1f1;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.95em;
+}
+
+/* ===== Ollama setup status cards ===== */
+.status-card {
+    position: relative;
+    background: #fff;
+    border: 1px solid #e3e6ea;
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.status-card h4 {
+    margin: 0 0 10px;
+    font-size: 1em;
+    color: #1a2530;
+}
+
+.status-card p {
+    margin: 6px 0;
+    color: #555;
+    line-height: 1.5;
+}
+
+.status-card ul {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.status-card .requirement-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #6c757d;
+}
+
+.status-card .requirement-option.met {
+    border-left-color: #28a745;
+}
+
+.status-card .requirement-option.unmet {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 36px;
+}
+
+/* CSS-drawn red cross for unmet requirement rows */
+.status-card .requirement-option.unmet::before,
+.status-card .requirement-option.unmet::after {
+    content: '';
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    width: 4px;
+    height: 18px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card .requirement-option.unmet::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card .requirement-option.unmet::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.status-card .requirement-result {
+    font-weight: bold;
+    white-space: nowrap;
+    color: #333;
+}
+
+.status-card .or-divider {
+    background: transparent;
+    text-align: center;
+    font-weight: bold;
+    color: #6c757d;
+    padding: 6px 0;
+    border-left: none;
+}
+
+.status-card .card-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.status-card.hardware-details {
+    padding-left: 60px; /* make room for the icon */
+}
+
+.hardware-icon::before {
+    content: '🔧';
+    background-color: #f8f9fa;
+}
+
+.status-badge {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.85em;
+}
+
+.status-badge.good {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-badge.warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-badge.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.hardware-details details {
+    margin-top: 8px;
+}
+
+.hardware-details summary {
+    cursor: pointer;
+    color: #007bff;
+    font-size: 0.9em;
+    user-select: none;
+}
+
+.hardware-details ul {
+    margin: 8px 0 0;
+    padding-left: 20px;
+    list-style: disc;
+}
+
+.status-card.ollama-availability.unavailable {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 60px;
+}
+
+/* CSS-drawn red cross for the "Ollama is not running" card */
+.status-card.ollama-availability.unavailable::before,
+.status-card.ollama-availability.unavailable::after {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card.ollama-availability.unavailable::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card.ollama-availability.unavailable::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.status-card.ollama-availability a {
+    color: #007bff;
+    font-weight: bold;
+}
+
+.status-card.error {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 60px;
+}
+
+/* CSS-drawn red cross for full-width error cards */
+.status-card.error::before,
+.status-card.error::after {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card.error::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card.error::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
 }

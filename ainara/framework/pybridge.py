@@ -21,6 +21,7 @@
 
 import argparse
 import atexit
+import copy
 import json
 import logging
 import os
@@ -31,9 +32,10 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import requests
-from flask import Flask, Response, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from flask_sock import Sock
+from jsonschema import Draft7Validator
 
 from ainara import __version__
 from ainara.framework.auth import AuthManager
@@ -48,6 +50,7 @@ from ainara.framework.llm import create_llm_backend
 from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.notifications import NotificationManager
+from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts import create_tts_backend
@@ -118,6 +121,49 @@ def cleanup_audio_buffer(directory, max_size_mb):
             logger.error(f"Error cleaning up old audio file: {e}")
 
 
+def _resolve_dotted(data, dotted_path):
+    current = data
+    for part in dotted_path.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def _get_skill_config_properties():
+    global _skill_config_properties_cache
+    if _skill_config_properties_cache is not None:
+        return _skill_config_properties_cache
+
+    fetcher = OrakleCapabilityFetcher(
+        config.get("orakle.servers", ["http://127.0.0.1:8100"])
+    )
+    _skill_config_properties_cache = fetcher.fetch_config_properties()
+    return _skill_config_properties_cache
+
+
+def _validate_skill_config(config_data, properties):
+    errors = []
+    for full_key, prop in (properties or {}).items():
+        schema = prop.get("schema")
+        if not isinstance(schema, dict):
+            continue
+
+        value = _resolve_dotted(config_data, full_key)
+        if value is None:
+            continue
+
+        try:
+            Draft7Validator(schema).validate(value)
+        except Exception as e:
+            errors.append(
+                f"{full_key}: {getattr(e, 'message', str(e))}"
+            )
+
+    return errors
+
+
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
@@ -125,6 +171,8 @@ sock = Sock(app)
 
 # Add at module level
 startup_time = datetime.now(timezone.utc)
+
+_skill_config_properties_cache = None
 
 
 def parse_args():
@@ -925,7 +973,23 @@ def create_app():
                     400,
                 )
 
-            # Validate the configuration
+            # Fetch and cache skill property schemas from Orakle
+            skill_properties = _get_skill_config_properties()
+            if skill_properties is None:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": (
+                                "Cannot validate skill configuration: unable"
+                                " to fetch property schemas from Orakle."
+                            ),
+                        }
+                    ),
+                    503,
+                )
+
+            # Validate the configuration structure
             validation_result = config.validate_config(data)
             if not validation_result["valid"]:
                 return (
@@ -939,9 +1003,26 @@ def create_app():
                     400,
                 )
 
-            # Update the configuration
-            config.update_config(data)
-            # # logger.info(f"new configuration: {pprint.pformat(data)}")
+            # Apply changes to the in-memory copy and validate skill values
+            original_config = copy.deepcopy(config.config)
+            config.update_config(data, save=False)
+            skill_errors = _validate_skill_config(
+                config.config, skill_properties
+            )
+            if skill_errors:
+                config.config = original_config
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "Invalid skill configuration",
+                            "errors": skill_errors,
+                        }
+                    ),
+                    400,
+                )
+
+            config.save()
 
             new_llm = create_llm_backend(config.get("llm", {}))
             app.llm = new_llm
@@ -966,6 +1047,37 @@ def create_app():
         return send_file(
             os.path.join(audio_dir, filename), mimetype="audio/wav"
         )
+
+    @app.route("/docs/list", methods=["GET"])
+    def docs_list():
+        """Return list of available documentation sites."""
+        base = config.get_nexus_base_path()
+        sites = []
+        if base.is_dir():
+            for vendor_dir in base.iterdir():
+                if not vendor_dir.is_dir() or vendor_dir.name.startswith(("_", ".")):
+                    continue
+                for app_dir in vendor_dir.iterdir():
+                    if not app_dir.is_dir() or app_dir.name.startswith(("_", ".")):
+                        continue
+                    if (app_dir / "site" / "index.html").is_file():
+                        sites.append({
+                            "publisher": vendor_dir.name,
+                            "application": app_dir.name,
+                        })
+        return jsonify(sites)
+
+    @app.route("/docs/<publisher>/<application>/", defaults={"filename": "index.html"})
+    @app.route("/docs/<publisher>/<application>/<path:filename>")
+    def serve_docs(publisher, application, filename):
+        """Serve static documentation files for a given publisher/application."""
+        if ".." in publisher or ".." in application or ".." in filename:
+            return jsonify({"error": "Invalid path"}), 400
+        base = config.get_nexus_base_path()
+        site_dir = base / publisher / application / "site"
+        if not site_dir.is_dir():
+            return jsonify({"error": "Documentation site not found"}), 404
+        return send_from_directory(str(site_dir), filename)
 
     @app.route("/framework/chat", methods=["POST"])
     def framework_chat():

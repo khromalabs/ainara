@@ -19,7 +19,8 @@
                 <div class="step" data-step="ollama">Ollama Setup</div>
                 <div class="step" data-step="llm">LLM Providers</div>
                 <div class="step" data-step="stt">Voice Setup</div>
-                <div class="step" data-step="skills">APIs</div>
+                <div class="step" data-step="api">API Setup</div>
+                <div class="step" data-step="skills">Skills</div>
                 <div class="step" data-step="mcp">MCP Servers</div>
                 <div class="step" data-step="shortcuts">Shortcuts</div>
                 <div class="step" data-step="finish">Finish</div>
@@ -32,7 +33,7 @@
                     <div style="width: 100%; text-align: center">
                     <img width="300px" src="../assets/logo3.png" alt="Ainara Polaris Logo" class="logo">
                     <h2>Welcome to Ainara Polaris "Supporters Edition" Setup</h2>
-                    <p>This wizard will help you configure Ainara Polaris for its first use. Ainara Polaris is a next-gen friendly and powerful conversational AI assistant capable of generating automatically evolutive memories about the user, featuring the exclusive Orakle client-side skills execution engine. Ainara can seamlessly use either local LLM models via Ollama or API based cloud LLM models.</p>
+                    <p>This wizard will help you configure Ainara Polaris for its first use. Ainara Polaris is a next-gen friendly, powerful conversational AI assistant featuring evolutive memories, agents orchestration and the Orakle skills execution engine. Ainara can seamlessly use either local or commercial LLM models.</p>
                     <p>This wizard will help you to set up your LLM provider and configure API keys for various skills, among other options.</p>
 
                     <!-- Auth Section -->
@@ -67,7 +68,7 @@
                 <!-- LLM setup step -->
                 <div class="step-panel" id="llm-panel">
                     <h2>LLM Provider Setup</h2>
-                    <p><b>At least one provider, local (via Ollama) or remote, must be correctly configured and selected</b>. In order to use any commercial LLM provider <b>an API key must be obtained</b>. Some providers offer free access, most require purchasing some credit.</p>
+                    <p><b>At least one provider (local or remote) must be correctly configured and selected</b>. In order to use any commercial LLM provider <b>an API key must be obtained</b>. Some offer free access, most require purchasing some credit.</p>
 
                     <div id="api-key-info-container"></div>
 
@@ -122,18 +123,23 @@
                     <div id="stt-test-result" class="hidden"></div>
                 </div>
 
+                <!-- API Setup step -->
+                <div class="step-panel" id="api-panel">
+                    <h2>API Setup</h2>
+                    <p>Configure optional API keys and email accounts.</p>
+                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b><br><br>
+                    <div id="api-list" class="api-list">
+                        <p>Loading API configuration...</p>
+                    </div>
+                </div>
+
                 <!-- Skills setup step -->
                 <div class="step-panel" id="skills-panel">
-                    <h2>APIs & Capabilities</h2>
-                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b><br><br>
-                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities at any moment, simply ask her.</b><br><br>
-                    <p>The following skills require API keys. All are optional, but especially the search services are highly recommended.</p>
-
+                    <h2>Skills</h2>
+                    <p>Configure available Nexus skills properties, users skills directory and scheduled skills.</p>
                     <div class="skills-list">
-                        <!-- This will be populated dynamically -->
                         <p>Loading available skills...</p>
                     </div>
-
                 </div>
 
                 <!-- MCP Servers setup step -->
@@ -185,7 +191,7 @@
                                 <li><strong>Talk to Ainara</strong>: Hold down the Push-to-Talk key (<span id="trigger-key-display">Space</span>) while speaking.</li>
                                 <li><strong>Release to send</strong>: Release the Push-to-Talk key when you're done speaking to process your request.</li>
                                 <li><strong>Hide the interface</strong>: Press the Hide UI key (<span id="hide-key-display">Escape</span>) or click outside the interface to hide it.</li>
-				<li><strong>Type input</strong>: Just type any letter or number and the input control will show up.</li>
+				<li><strong>Type input</strong>: while Ainara's window is focused, just type any letter or number and the input control will show up.</li>
                             </ol>
                         </div>
                     </div>

@@ -24,7 +24,7 @@ import logging
 import os
 import re
 import time
-from typing import Dict, Generator, List, Optional, Union
+from typing import Any, Dict, Generator, List, Optional, Union
 
 import requests
 
@@ -45,6 +45,7 @@ class OrakleCapabilityFetcher:
 
     def __init__(self, orakle_servers: List[str]):
         self.orakle_servers = orakle_servers
+        self._config_properties_cache = None
 
     def fetch_capabilities(self) -> List[dict]:
         """Query Orakle servers for capabilities and store them in structured format."""
@@ -98,6 +99,32 @@ class OrakleCapabilityFetcher:
                 "No Orakle capabilities found, is the Orakle server running?"
             )
         return capabilities
+
+    def fetch_config_properties(self) -> Optional[Dict[str, Any]]:
+        """Fetch the flat full_key -> property schema map from Orakle."""
+        if self._config_properties_cache is not None:
+            return self._config_properties_cache
+
+        for server in self.orakle_servers:
+            try:
+                response = requests.get(
+                    f"{server}/capabilities",
+                    params={"view": "properties"},
+                    timeout=5,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if isinstance(data, dict):
+                        self._config_properties_cache = data
+                        return self._config_properties_cache
+            except requests.RequestException as e:
+                logger.warning(
+                    "Failed to fetch config properties from %s: %s",
+                    server,
+                    e,
+                )
+
+        return None
 
     def _process_orakle_skills(self, raw_capabilities: dict) -> List[dict]:
         """Process raw skill capabilities into structured format."""
@@ -756,8 +783,9 @@ class OrakleMiddleware:
                 continue
 
             # Format skill description with parameters
+            source_tag = "[USER]" if skill_id.startswith("user_") else "[SYSTEM]"
             skill_desc = (
-                f"## Skill id {skill_id} (match score: {score:.2f})\n\n"
+                f"## Skill id {skill_id} {source_tag} (match score: {score:.2f})\n\n"
             )
             skill_desc += (
                 "Description:"
@@ -834,6 +862,8 @@ class OrakleMiddleware:
 
         select_prompt = """
 You are an expert data analyist. You combine built-in knowledge with real-time capabilities through the ORAKLE query system. ORAKLE connects with external API servers to access real-time data; these capabilities are called skills. Task is to identify from a query in natural language the skill and parameters matching the query intention. If no match can be found return an empty skill_id next to a descriptive error about why none of the possible candidates fits. Search carefully among the available skills.
+
+IMPORTANT: If multiple skills seem equally relevant for the user's intent, always prefer skills marked as [USER] over those marked as [SYSTEM].
 """
         match_providers = self.config_manager.get("orakle.match_providers", [])
         llm_config = self.config_manager.get("llm", {})
@@ -1109,7 +1139,7 @@ You are an expert data analyist. You combine built-in knowledge with real-time c
             # If the skill is a nexus skill with a UI, yield the component data directly
             if (
                 skill_info
-                and skill_info.get("type") == "nexus"
+                and (skill_info.get("type") == "nexus" or skill_info.get("type") == "user_skill")
                 and skill_info.get("ui")
             ):
                 component_name = skill_info.get("ui", {}).get("component")
@@ -1126,7 +1156,7 @@ You are an expert data analyist. You combine built-in knowledge with real-time c
                     }
                 except json.JSONDecodeError:
                     error_msg = (
-                        f"Nexus skill '{selected_skill_id}' did not return"
+                        f"Nexus or user skill '{selected_skill_id}' did not return"
                         " valid JSON data."
                     )
                     logger.error(f"ORAKLE: {error_msg} Data: {result}")

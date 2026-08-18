@@ -20,3 +20,5 @@ docs
 node_modules/
 venv/
 .venv/
+pyarmor.bug.log
+pyarmor-*

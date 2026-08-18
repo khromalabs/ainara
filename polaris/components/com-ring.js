@@ -202,13 +202,13 @@ class ComRing extends BaseComponent {
                 async function checkPybridgeAndInitializeAudio() {
                     let retries = 0;
                     while (retries < 20) {
-                        // console.log('RUBEN Attempt connection to pybridge health:' + retries);
+                        // console.log('Attempt connection to pybridge health:' + retries);
                         const url = me.config.get('pybridge.api_url') + '/health';
-                        // console.log('RUBEN url: ' + url);
+                        // console.log('url: ' + url);
                         try {
                             const response = await fetch(url);
-                            // console.log('RUBEN response');
-                            console.log(response);
+                            // console.log('response');
+                            // console.log(response);
                             if (response.ok) {
                                 me.initializeAudioStream();
                                 break;
@@ -457,7 +457,7 @@ class ComRing extends BaseComponent {
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
             if (this.isProcessingUserMessage) {
-                console.log("process-typed-message: Avoiding concurrent entry");
+                console.log("process-typed-message: isProcessingUserMessage=true, avoiding concurrent entry");
                 return;
             }
             this.isProcessingUserMessage = true;
@@ -794,6 +794,7 @@ class ComRing extends BaseComponent {
 
     async processUserMessage(message, typed = false) {
         console.log('processUserMessage:', message);
+        this.ignoreIncomingEvents = false;
         if (!typed) {
             // Show user message in display window
             ipcRenderer.send('transcription-received', message);
@@ -840,6 +841,11 @@ class ComRing extends BaseComponent {
 
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (result) => {
+            if (this.isProcessingUserMessage) {
+                console.log("setupTranscriptionHandler: isProcessingUserMessage=true, avoiding concurrent entry");
+                return;
+            }
+
             // [MODIFIED] Handle both object (new) and string (legacy) formats
             let text = '';
             let confidence = undefined;
@@ -1125,7 +1131,6 @@ class ComRing extends BaseComponent {
     }
 
     async enterTypingMode() {
-        this.ignoreIncomingEvents = false;
         this.text = "";
         // Set state in window
         await ipcRenderer.invoke('set-typing-mode-state', true);
@@ -1671,12 +1676,12 @@ Visit our project site at: https://ainara.app
     }
 
     abortLLMResponse() {
-        console.log('Aborting LLM response');
+        console.log('Interrupting playback (stream continues in background)');
 
         // Set flag to ignore incoming events
         this.ignoreIncomingEvents = true;
 
-        // Clear message queue
+        // Clear message queue and mark no message is currently being processed
         this.messageQueue = [];
         this.isProcessingMessage = false;
         this.currentMessageId = null;
@@ -1717,8 +1722,8 @@ Visit our project site at: https://ainara.app
         sttStatus.classList.remove('active');
         sttStatus.textContent = '';
 
-        // Reset state
-        this.state.isProcessingLLM = false;
+        // Keep isProcessingLLM true so processAIResponse() continues reading
+        // the stream and lets the backend finish persisting the full message.
         this.state.isAwaitingResponse = false;
 
         // Notify chat-display about the abort
