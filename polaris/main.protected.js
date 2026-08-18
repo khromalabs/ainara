@@ -17,7 +17,7 @@
 // Lesser General Public License for more details.
 
 const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification, net } = require('electron');
-const { autoUpdater } = require('electron-updater');
+// const { autoUpdater } = require('electron-updater');
 const { EventEmitter } = require('events');
 const semver = require('semver');
 // const yargs = require('yargs/yargs');
@@ -274,6 +274,8 @@ function initializeOllamaClient() {
 
 function isRunningAsAppX() {
     // This is a reliable way to check for APPX/MSIX packaged environments.
+    // TODO seems to be not working force true
+    return true;
     return !!process.env.PackageFamilyName;
 }
 
@@ -1008,6 +1010,7 @@ async function updateProviderSubmenu() {
                 label: 'Hide',
                 click: () => windowManager.hideAll(true)
             },
+            // TODO This should not appear on Appx
             ...updateItems,
             { type: 'separator' },
             {
