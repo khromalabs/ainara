@@ -541,7 +541,10 @@ class Conductor:
             return (
                 isinstance(value, str)
                 and len(value) > threshold
-                and re.search(r'\\[ntbfru]', value)
+                and (
+                    re.search(r'[\n\t\r\b\f]', value)
+                    or re.search(r'\\[ntbfru]', value)
+                )
             )
 
         def _handle_str(value: str, path: str) -> str:
