@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import multiprocessing
+import re
 import threading
 import time
 import uuid
@@ -569,14 +570,97 @@ class Conductor:
 
     @staticmethod
     def _format_response(response: str) -> str:
-        """Pretty-print JSON if possible, else return as-is."""
+        """Pretty-print JSON and abbreviate long escaped string fields.
+
+        Keeps the JSON compact and human-readable by replacing long escaped
+        strings with a placeholder, then appends the decoded value below the
+        JSON block.
+        """
         try:
-            parsed = json.loads(response)
-            if isinstance(parsed, (dict, list)):
-                return json.dumps(parsed, indent=2, ensure_ascii=False)
+            data = json.loads(response)
         except (json.JSONDecodeError, TypeError):
-            pass
-        return str(response)
+            return str(response)
+
+        if not isinstance(data, (dict, list)):
+            return str(response)
+
+        appendix = []
+        threshold = 40
+
+        def _should_abbreviate(value) -> bool:
+            return (
+                isinstance(value, str)
+                and len(value) > threshold
+                and (
+                    re.search(r'[\n\t\r\b\f]', value)
+                    or re.search(r'\\[ntbfru]', value)
+                )
+            )
+
+        def _handle_str(value: str, path: str) -> str:
+            decoded = Conductor._unescape_readable(value)
+            appendix.append((path, decoded))
+            return f"<see decoded appendix: {path}>"
+
+        def _walk_shallow(obj, path: str = "") -> None:
+            if isinstance(obj, dict):
+                for key, value in list(obj.items()):
+                    child_path = f"{path}.{key}" if path else key
+                    if _should_abbreviate(value):
+                        obj[key] = _handle_str(value, child_path)
+                    elif isinstance(value, dict):
+                        for nested_key, nested_value in list(value.items()):
+                            nested_path = f"{child_path}.{nested_key}"
+                            if _should_abbreviate(nested_value):
+                                value[nested_key] = _handle_str(
+                                    nested_value, nested_path
+                                )
+            elif isinstance(obj, list):
+                for idx, item in enumerate(obj):
+                    item_path = f"{path}[{idx}]"
+                    if isinstance(item, dict):
+                        for nested_key, nested_value in list(item.items()):
+                            nested_path = f"{item_path}.{nested_key}"
+                            if _should_abbreviate(nested_value):
+                                item[nested_key] = _handle_str(
+                                    nested_value, nested_path
+                                )
+
+        _walk_shallow(data)
+
+        pretty_json = json.dumps(data, indent=2, ensure_ascii=False)
+
+        if not appendix:
+            return pretty_json
+
+        parts = [pretty_json, "\n\n**Decoded long fields:**\n"]
+        for path, value in appendix:
+            parts.append(f"### `{path}`\n```text\n{value}\n```\n")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _unescape_readable(text: str) -> str:
+        """Decode common JSON/string escapes for human-readable forensic reports."""
+        unicode_escape = re.compile(r"\\u([0-9a-fA-F]{4})")
+        simple_escapes = {
+            r"\n": "\n",
+            r"\t": "\t",
+            r"\r": "\r",
+            r"\b": "\b",
+            r"\f": "\f",
+            r"\"": '"',
+            r"\\": "\\",
+        }
+
+        def replace_unicode(match):
+            return chr(int(match.group(1), 16))
+
+        def replace_escape(match):
+            esc = match.group(0)
+            return simple_escapes.get(esc, esc)
+
+        text = unicode_escape.sub(replace_unicode, text)
+        return re.sub(r"\\[ntrb\"\\]|\\f", replace_escape, text)
 
     @staticmethod
     def _is_truthy(value: Any) -> bool:
