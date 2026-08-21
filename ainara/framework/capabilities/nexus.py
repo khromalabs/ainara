@@ -65,32 +65,12 @@ class NexusSkillProvider(BasePythonSkillProvider):
         self,
         vendor: str,
         bundle: str,
-        bundle_dir: Path,
         prefix_module: str,
-        skill_files: set,
     ):
         if (vendor, bundle) in self.bundle_config_params:
             return
 
-        # Prefer pre-generated metadata from skills_metadata.json (required
-        # for Pyarmor-obfuscated bundles). Fall back to AST scanning for
-        # source-mode bundles.
-        metadata = self._load_metadata_registry(bundle_dir)
-        shared_config_params = metadata.get("shared_config_params")
-        if shared_config_params is not None:
-            params = []
-            for module_path, file_params in shared_config_params.items():
-                for p in file_params:
-                    p = dict(p)
-                    p["scope"] = "shared"
-                    p["module"] = module_path
-                    p["vendor"] = vendor
-                    p["bundle"] = bundle
-                    params.append(p)
-            self.bundle_config_params[(vendor, bundle)] = params
-            return
-
-        # --- NEW: Runtime Registry Lookup ---
+        # --- Runtime Registry Lookup ---
         params = []
         for module_name, classes in (
             ConfigurablePropertiesMixin._runtime_registry.items()
@@ -239,18 +219,10 @@ class NexusSkillProvider(BasePythonSkillProvider):
                             f" '{bundle_dir.name}'."
                         )
 
-                    # Collect skill files to exclude from shared scanning
-                    skill_files = {
-                        Path(cap_data["file_path"]).resolve()
-                        for cap_data in bundle_caps.values()
-                        if cap_data.get("file_path")
-                    }
                     self._collect_bundle_config_params(
                         vendor_dir.name,
                         bundle_dir.name,
-                        bundle_dir,
                         prefix_module,
-                        skill_files,
                     )
 
                     self.capabilities.update(bundle_caps)

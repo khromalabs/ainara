@@ -468,28 +468,19 @@ class BasePythonSkillProvider(CapabilityProvider):
                                 ),
                             }
                             if capability_type == "nexus":
-                                config_params = None
-                                meta_config_params = meta.get(
-                                    "config_params"
-                                )
-                                if meta_config_params:
-                                    config_params = meta_config_params
-                                elif skill_file.suffix == ".py":
-                                    try:
-                                        config_params = (
-                                            instance.get_config_properties()
-                                        )
-                                    except Exception as prop_e:
-                                        self.load_errors.append(
-                                            {
-                                                "skill_id": snake_name,
-                                                "error": (
-                                                    "config property "
-                                                    "resolution failed: "
-                                                    f"{prop_e}"
-                                                ),
-                                            }
-                                        )
+                                config_params = []
+                                try:
+                                    config_params = instance.get_config_properties()
+                                except Exception as prop_e:
+                                    self.load_errors.append(
+                                        {
+                                            "skill_id": snake_name,
+                                            "error": (
+                                                "config property resolution failed: "
+                                                f"{prop_e}"
+                                            ),
+                                        }
+                                    )
                                 if config_params:
                                     for p in config_params:
                                         p.setdefault("scope", "skill")
