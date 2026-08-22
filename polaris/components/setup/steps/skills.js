@@ -665,6 +665,25 @@ function groupNexusApps(properties) {
     });
 }
 
+const NEXUS_SEARCH_MAX_RESULTS = 20;
+
+function buildNexusSearchString(prop) {
+    const schema = (prop.schema && typeof prop.schema === 'object') ? prop.schema : {};
+    const fullKey = prop.fullKey || '';
+    const parts = fullKey.split('.');
+    const vendor = prop.vendor || parts[2] || '';
+    const bundle = prop.bundle || parts[3] || '';
+    const skill = prop.skill || (parts.length > 4 ? parts[parts.length - 2] : '') || '';
+    const param = prop.param || parts[parts.length - 1] || '';
+    const title = schema.title || prop.title || '';
+    const description = schema.description || prop.description || '';
+
+    return [fullKey, vendor, bundle, skill, param, title, description]
+        .join(' ')
+        .toLowerCase()
+        .trim();
+}
+
 function renderNexusParam(prop, backendConfig) {
     const schema = (prop.schema && typeof prop.schema === 'object') ? prop.schema : {};
     const effectiveType = schema.type || prop.value_type || 'string';
@@ -730,8 +749,10 @@ function renderNexusParam(prop, backendConfig) {
     }
 
     controlHtml = controlHtml.replace(/\sdisabled(?=[\s>])/g, '');
+    const searchString = buildNexusSearchString(prop);
+
     return `
-        <div class="nexus-param-item${isModified ? ' modified' : ''}" data-full-key="${fullKey}">
+        <div class="nexus-param-item${isModified ? ' modified' : ''}" data-full-key="${fullKey}" data-search="${escapeHtml(searchString)}">
             <label for="${inputId}">${escapeHtml(prop.param || fullKey)}</label>
             <div class="param-desc">
                 ${escapeHtml(title)}
@@ -905,6 +926,42 @@ function generateNexusUI(properties, backendConfig) {
                 overflow-wrap: anywhere;
                 color: #333;
             }
+
+            /* Nexus properties search */
+            .nexus-search-container {
+                margin-bottom: 15px;
+                padding: 12px;
+                background-color: #f8f9fa;
+                border-radius: 8px;
+            }
+
+            #nexus-search-input {
+                width: 100%;
+                padding: 10px 12px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                font-size: 14px;
+                background-color: #fff;
+                box-sizing: border-box;
+                transition: border-color 0.2s, box-shadow 0.2s;
+            }
+
+            #nexus-search-input:focus {
+                outline: none;
+                border-color: #007bff;
+                box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+            }
+
+            #nexus-search-status {
+                margin-top: 8px;
+                font-size: 0.9em;
+                color: #6c757d;
+            }
+
+            #nexus-search-status.too-many {
+                color: #dc3545;
+                font-weight: bold;
+            }
         </style>
     `;
 
@@ -976,7 +1033,19 @@ function generateNexusUI(properties, backendConfig) {
         `;
     }).join('');
 
-    return `${nexusStyles}<div class="nexus-apps-list">${appsHtml}</div>`;
+    return `
+        ${nexusStyles}
+        <div class="nexus-search-container">
+            <input
+                type="search"
+                id="nexus-search-input"
+                placeholder="Search properties… (try: khromalabs tradingaccount breakeven)"
+                autocomplete="off"
+            >
+            <div id="nexus-search-status"></div>
+        </div>
+        <div class="nexus-apps-list">${appsHtml}</div>
+    `;
 }
 
 function setupTabListeners() {
@@ -988,6 +1057,32 @@ function setupTabListeners() {
             const content = document.querySelector(`.skills-tab-content[data-tab-content="${tab.dataset.tab}"]`);
             if (content) content.classList.add('active');
         });
+    });
+}
+
+function resetNexusSearchVisibility() {
+    document.querySelectorAll('.nexus-param-item').forEach(item => { item.style.display = ''; });
+    document.querySelectorAll('.nexus-domain-card, details.nexus-skill, .nexus-app').forEach(el => { el.style.display = ''; });
+}
+
+function refreshNexusContainerVisibility() {
+    document.querySelectorAll('.nexus-domain-card').forEach(card => {
+        const hasVisibleItem = Array.from(card.querySelectorAll('.nexus-param-item'))
+            .some(item => item.style.display !== 'none');
+        card.style.display = hasVisibleItem ? '' : 'none';
+    });
+
+    document.querySelectorAll('details.nexus-skill').forEach(details => {
+        const hasVisibleCard = details.querySelector('.nexus-domain-card') &&
+            Array.from(details.querySelectorAll('.nexus-domain-card'))
+                .some(card => card.style.display !== 'none');
+        details.style.display = hasVisibleCard ? '' : 'none';
+    });
+
+    document.querySelectorAll('.nexus-app').forEach(app => {
+        const hasVisibleDetails = Array.from(app.querySelectorAll('details.nexus-skill'))
+            .some(details => details.style.display !== 'none');
+        app.style.display = hasVisibleDetails ? '' : 'none';
     });
 }
 
@@ -1054,6 +1149,53 @@ function setupNexusListeners(ctx) {
             showNexusDescriptionModal(btn);
         });
     });
+
+    const searchInput = document.getElementById('nexus-search-input');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            const rawQuery = searchInput.value.trim();
+            const query = rawQuery.toLowerCase();
+            const statusEl = document.getElementById('nexus-search-status');
+            const allItems = Array.from(document.querySelectorAll('.nexus-param-item'));
+
+            // Clear search: show everything again
+            if (!query) {
+                resetNexusSearchVisibility();
+                if (statusEl) statusEl.textContent = '';
+                return;
+            }
+
+            const tokens = query.split(/\s+/).filter(Boolean);
+            let matchCount = 0;
+
+            allItems.forEach(item => {
+                const haystack = (item.dataset.search || '').toLowerCase();
+                const matches = tokens.every(token => haystack.includes(token));
+                item.style.display = matches ? '' : 'none';
+                if (matches) matchCount++;
+            });
+
+            if (matchCount > NEXUS_SEARCH_MAX_RESULTS) {
+                // Too many matches: hide everything and ask the user to narrow down
+                allItems.forEach(item => { item.style.display = 'none'; });
+                if (statusEl) {
+                    statusEl.textContent = `Too many results (${matchCount}). Please add more keywords to narrow the search.`;
+                    statusEl.classList.add('too-many');
+                }
+            } else {
+                if (statusEl) {
+                    if (matchCount === 0) {
+                        statusEl.textContent = 'No matching properties.';
+                    } else {
+                        statusEl.textContent = `${matchCount} result${matchCount === 1 ? '' : 's'}`;
+                    }
+                    statusEl.classList.remove('too-many');
+                }
+            }
+
+            refreshNexusContainerVisibility();
+        });
+    }
 }
 
 function generateUserSkillsUI() {
