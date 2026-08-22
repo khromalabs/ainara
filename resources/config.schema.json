@@ -229,6 +229,12 @@
                                 "default_lang": {"type": "string"},
                                 "default_voice": {"type": "string"},
                                 "default_speed": {"type": "string"},
+                                "num_threads": {
+                                    "oneOf": [
+                                        {"type": "string", "enum": ["auto"]},
+                                        {"type": "integer", "minimum": 1}
+                                    ]
+                                },
                                 "languages": {
                                     "type": "object",
                                     "patternProperties": {
