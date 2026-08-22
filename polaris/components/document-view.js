@@ -544,7 +544,13 @@ class DocumentView extends BaseComponent {
         }
 
         const newContentHtml = this.parseMarkdown(content, true);
-        contentArea.insertAdjacentHTML('beforeend', "<BR>" + newContentHtml);
+        const indicator = contentArea.querySelector('.streaming-indicator');
+        const newHtml = "<BR>" + newContentHtml;
+        if (indicator) {
+            indicator.insertAdjacentHTML('beforebegin', newHtml);
+        } else {
+            contentArea.insertAdjacentHTML('beforeend', newHtml);
+        }
         // Add this line to hydrate frames
         this.hydrateNexusFrames(contentArea);
         this.initAllSortableTables();
@@ -751,6 +757,25 @@ class DocumentView extends BaseComponent {
                 iframe.src = 'about:blank';
             }
             this.container.removeChild(child);
+        }
+    }
+
+    setStreamingActive(active) {
+        const chatItem = this.container?.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
+        const contentArea = chatItem?.querySelector('.document-content');
+        if (!contentArea) return;
+
+        if (active) {
+            if (contentArea.querySelector('.streaming-indicator')) return;
+
+            const indicator = document.createElement('div');
+            indicator.className = 'streaming-indicator';
+            indicator.textContent = 'Answering';
+            contentArea.appendChild(indicator);
+        } else {
+            contentArea.querySelector('.streaming-indicator')?.remove();
         }
     }
 }
