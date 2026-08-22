@@ -1039,7 +1039,7 @@ function generateNexusUI(properties, backendConfig) {
             <input
                 type="search"
                 id="nexus-search-input"
-                placeholder="Search properties… (try: khromalabs tradingaccount breakeven)"
+                placeholder="Search properties…"
                 autocomplete="off"
             >
             <div id="nexus-search-status"></div>
@@ -1063,6 +1063,7 @@ function setupTabListeners() {
 function resetNexusSearchVisibility() {
     document.querySelectorAll('.nexus-param-item').forEach(item => { item.style.display = ''; });
     document.querySelectorAll('.nexus-domain-card, details.nexus-skill, .nexus-app').forEach(el => { el.style.display = ''; });
+    updateNexusSkillSummaries();
 }
 
 function refreshNexusContainerVisibility() {
@@ -1083,6 +1084,18 @@ function refreshNexusContainerVisibility() {
         const hasVisibleDetails = Array.from(app.querySelectorAll('details.nexus-skill'))
             .some(details => details.style.display !== 'none');
         app.style.display = hasVisibleDetails ? '' : 'none';
+    });
+}
+
+function updateNexusSkillSummaries() {
+    document.querySelectorAll('details.nexus-skill').forEach(details => {
+        const visibleItems = Array.from(details.querySelectorAll('.nexus-param-item'))
+            .filter(item => item.style.display !== 'none');
+        const visibleModified = visibleItems.filter(item => item.classList.contains('modified')).length;
+        const desc = details.querySelector('.nexus-skill-desc');
+        if (desc) {
+            desc.textContent = formatNexusPropertySummary(visibleItems.length, visibleModified);
+        }
     });
 }
 
@@ -1193,6 +1206,7 @@ function setupNexusListeners(ctx) {
                 }
             }
 
+            updateNexusSkillSummaries();
             refreshNexusContainerVisibility();
         });
     }
