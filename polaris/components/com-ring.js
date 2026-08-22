@@ -802,6 +802,13 @@ class ComRing extends BaseComponent {
         }
         try {
             if (message) {
+                // TODO this is not working yet it should retrieve the users' message before the answer is available
+                // // Optimistically pull the just-persisted user message into chat-history.
+                // // Awaiting before the LLM request starts orders this fetch ahead of the
+                // // 'completed' fetch, preventing duplicate appends.
+                // if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                //     await this.fetchAndAppendNewChatMessages();
+                // }
                 await this.processAIResponse(message);
                 this.circle.classList.add('faded');
             }
@@ -1528,6 +1535,11 @@ Visit our project site at: https://ainara.app
     }
 
     async fetchAndAppendNewChatMessages() {
+        // TODO: This method is not safe against concurrent invocations.
+        // If a new exchange starts while one is already pending, two fetches can
+        // both append the same user message. Serialize calls by chaining on a
+        // this._appendChain promise; each queued call should read the freshest
+        // lastMessageTimestamp when its turn runs.
         if (!this.lastMessageTimestamp) {
             console.log('No last message timestamp, skipping append.');
             return;

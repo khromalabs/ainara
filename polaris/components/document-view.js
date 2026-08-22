@@ -533,7 +533,9 @@ class DocumentView extends BaseComponent {
             return;
         }
 
-        const chatHistoryItem = this.shadowRoot.querySelector('.document-item');
+        const chatHistoryItem = this.shadowRoot.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
         if (!chatHistoryItem) {
             return;
         }
