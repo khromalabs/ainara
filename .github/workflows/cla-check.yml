@@ -1,0 +1,19 @@
+name: "License Verification"
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+jobs:
+  cla-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check acceptance checkbox
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if echo "$PR_BODY" | grep -qi "\-\s*\[x\]\s*I accept the terms of the dual license"; then
+            echo "Acceptance confirmed. Thank you for your contribution!"
+            exit 0
+          else
+            echo "ERROR: You must check the box accepting the contribution agreement in the PR description in order to merge the code."
+            exit 1
+          fi
