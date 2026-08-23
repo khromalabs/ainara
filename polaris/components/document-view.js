@@ -776,6 +776,7 @@ class DocumentView extends BaseComponent {
             indicator.className = 'streaming-indicator';
             indicator.textContent = 'Answering';
             contentArea.appendChild(indicator);
+            contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
         } else {
             contentArea.querySelector('.streaming-indicator')?.remove();
         }
