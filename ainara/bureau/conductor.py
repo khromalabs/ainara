@@ -596,9 +596,9 @@ class Conductor:
         if not appendix:
             return pretty_json
 
-        parts = [pretty_json, "\n\n**Decoded long fields:**\n"]
+        parts = [pretty_json, "```\n\n**Decoded long fields:**\n"]
         for path, value in appendix:
-            parts.append(f"### `{path}`\n```text\n{value}\n```\n")
+            parts.append(f"### `{path}`\n```text\n{value}\n\n")
         return "\n".join(parts)
 
     @staticmethod
