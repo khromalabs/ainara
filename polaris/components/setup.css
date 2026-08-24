@@ -1480,6 +1480,127 @@ input.capturing {
     font-size: 0.95em;
 }
 
+/* ===== Task Model Routing (LLM step) ===== */
+.task-routing-section {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+
+.task-routing-section h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.task-routing-group {
+    margin-top: 20px;
+}
+
+.task-routing-group h4 {
+    margin: 0 0 5px 0;
+}
+
+.task-routing-add-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.task-routing-add-row select {
+    flex: 1;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #fff;
+    font-size: 0.95em;
+}
+
+.task-routing-add-btn {
+    background-color: #007bff;
+    color: white;
+    padding: 8px 16px;
+    white-space: nowrap;
+}
+
+.task-routing-add-btn:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+.task-routing-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0 0;
+}
+
+.task-routing-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 5px;
+}
+
+.task-routing-model-name {
+    font-family: monospace;
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}
+
+.task-routing-warning {
+    color: #dc3545;
+    font-weight: bold;
+    font-size: 0.85em;
+}
+
+.task-routing-controls {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.task-routing-move-btn {
+    padding: 2px 8px;
+    font-size: 0.75em;
+    background-color: #e9ecef;
+    color: #343a40;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.task-routing-move-btn:hover:not(:disabled) {
+    background-color: #dae0e5;
+}
+
+.task-routing-remove-btn {
+    padding: 2px 10px;
+    font-size: 1em;
+    line-height: 1.2;
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+}
+
+.task-routing-remove-btn:hover {
+    background-color: #f5c6cb;
+}
+
+.task-routing-empty {
+    color: #6c757d;
+    font-style: italic;
+    font-size: 0.9em;
+    padding: 4px 0;
+}
+
 /* ===== Ollama setup status cards ===== */
 .status-card {
     position: relative;
