@@ -62,5 +62,6 @@ ccxt==4.5.35
 openwakeword @ git+https://github.com/khromalabs/openWakeWord.git@tag_v0.6.0
 trafilatura==2.0.0
 speexdsp_ns==0.1.2
+keyring==25.7.0
 # fix weird dependency error
 setuptools<82

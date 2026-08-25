@@ -91,16 +91,48 @@ async function setupAuthListeners(config, ipcRenderer, updateButtonVisibility) {
             const status = await response.json();
 
             if (status.authorized) {
-                if (pollingInterval) {
-                    clearInterval(pollingInterval);
+                let keystoreAvailable = true;
+                let hasMasterKey = false;
+                try {
+                    const vaultStatus = await fetch(config.get('pybridge.api_url') + '/vault/status').then(r => r.json());
+                    keystoreAvailable = !!vaultStatus.keystore_available;
+                    hasMasterKey = !!vaultStatus.has_master_key;
+                } catch (e) {
+                    console.warn('Vault status check failed', e);
                 }
+
+                if (!keystoreAvailable) {
+                    // Keystore missing/locked; continue but warn.
+                    if (pollingInterval) clearInterval(pollingInterval);
+                    statusMsg.textContent = 'Wallet verified, but the OS keystore is unavailable. Sensitive values will remain plaintext.';
+                    statusMsg.className = "warning-message";
+                    authContainer.classList.add('verified');
+                    verifyBtn.textContent = "Verified";
+                    updateButtonVisibility();
+                    return true;
+                }
+
+                if (!hasMasterKey) {
+                    // Authorized before the vault existed -> require a fresh login.
+                    if (pollingInterval) clearInterval(pollingInterval);
+                    statusMsg.textContent = 'Wallet verified, but your secret vault has not been created yet. Please login again to secure your secrets.';
+                    statusMsg.className = "warning-message";
+                    authContainer.classList.remove('verified');
+                    verifyBtn.disabled = false;
+                    verifyBtn.textContent = "Login with Solana Wallet";
+                    updateButtonVisibility();
+                    return false;
+                }
+
+                if (pollingInterval) clearInterval(pollingInterval);
                 statusMsg.textContent = `Success! Wallet verified: ${status.wallet}`;
                 statusMsg.className = "success-message";
                 authContainer.classList.add('verified');
                 verifyBtn.textContent = "Verified";
                 updateButtonVisibility();
+                return true;
             }
-            return status.authorized;
+            return false;
         } catch (e) {
             console.error("Auth polling error", e);
         }

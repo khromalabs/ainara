@@ -20,6 +20,12 @@ module.exports = {
     }
 };
 
+function isSensitivePath(path) {
+    const keyName = path.split('.').pop().toLowerCase();
+    const sensitiveKeys = ['api_key', 'apikey', 'secret', 'password', 'token'];
+    return sensitiveKeys.some(key => keyName.includes(key));
+}
+
 async function generateApiUI(ctx) {
     // Reset validation state
     ctx.state.initialApiValues = {};
@@ -165,63 +171,125 @@ function updateApiNextButtonState(ctx) {
 }
 
 async function saveApiConfig(ctx) {
-    // If no API fields were modified, skip saving
-    if (ctx.modifiedFields.api.size === 0) return;
+    const backendConfig = await ctx.api.loadBackendConfig();
 
-    try {
-        const backendConfig = await ctx.api.loadBackendConfig();
-
-        function setValueAtPath(obj, path, value) {
-            const parts = path.split('.');
-            let current = obj;
-            for (let i = 0; i < parts.length - 1; i++) {
-                const part = parts[i];
-                if (!(part in current)) current[part] = {};
-                current = current[part];
-            }
-            current[parts[parts.length - 1]] = value;
+    function getValueAtPath(obj, path) {
+        const parts = path.split('.');
+        let current = obj;
+        for (const part of parts) {
+            if (current === undefined || current === null || typeof current !== 'object') return undefined;
+            current = current[part];
         }
+        return current;
+    }
 
-        // Save modified API keys
-        document.querySelectorAll('#api-list input[data-path]').forEach(input => {
-            const path = input.dataset.path;
-            if (ctx.modifiedFields.api.has(path)) {
-                setValueAtPath(backendConfig, path, input.value.trim());
+    function setValueAtPath(obj, path, value) {
+        const parts = path.split('.');
+        let current = obj;
+        for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i];
+            if (!(part in current)) current[part] = {};
+            current = current[part];
+        }
+        current[parts[parts.length - 1]] = value;
+    }
+
+    // Determine if there is anything to save:
+    // - any modified field
+    // - any plaintext sensitive field (for migration)
+    const plaintextSensitiveExists = Array.from(
+        document.querySelectorAll('#api-list input[data-path]')
+    ).some(input => {
+        const path = input.dataset.path;
+        const value = getValueAtPath(backendConfig, path);
+        return (
+            value &&
+            typeof value === 'string' &&
+            !value.startsWith('enc:v1:') &&
+            isSensitivePath(path)
+        );
+    });
+
+    if (ctx.modifiedFields.api.size === 0 && !plaintextSensitiveExists) {
+        return;
+    }
+
+    // Apply modified fields from inputs
+    document.querySelectorAll('#api-list input[data-path]').forEach(input => {
+        const path = input.dataset.path;
+        if (ctx.modifiedFields.api.has(path)) {
+            setValueAtPath(backendConfig, path, input.value.trim());
+        }
+    });
+
+    // Save email accounts if modified (unchanged — passwords stay plaintext for now)
+    // TODO(secrets): Encrypt email account passwords once ConfigManager path
+    // resolution supports list indices (e.g. apis.messaging.email.accounts.0.password).
+    // At that point, route them through vault.encrypt()/get_secret() just like
+    // the api_key/secret fields above.
+    if (ctx.modifiedFields.api.has('apis.messaging.email')) {
+        const emailAccounts = [];
+        const rows = document.querySelectorAll('#email-accounts-table .email-row:not(.ghost)');
+
+        rows.forEach(row => {
+            const id = row.querySelector('.email-id').value.trim();
+            const host = row.querySelector('.email-host').value.trim();
+            const port = row.querySelector('.email-port').value.trim();
+            const user = row.querySelector('.email-user').value.trim();
+            const pass = row.querySelector('.email-pass').value.trim();
+
+            if (id && host && user && pass) {
+                const accountObj = { id, imap_host: host, username: user, password: pass };
+                if (port) accountObj.imap_port = parseInt(port);
+                emailAccounts.push(accountObj);
             }
         });
 
-        // Save email accounts if modified
-        if (ctx.modifiedFields.api.has('apis.messaging.email')) {
-            const emailAccounts = [];
-            const rows = document.querySelectorAll('#email-accounts-table .email-row:not(.ghost)');
-
-            rows.forEach(row => {
-                const id = row.querySelector('.email-id').value.trim();
-                const host = row.querySelector('.email-host').value.trim();
-                const port = row.querySelector('.email-port').value.trim();
-                const user = row.querySelector('.email-user').value.trim();
-                const pass = row.querySelector('.email-pass').value.trim();
-
-                if (id && host && user && pass) {
-                    const accountObj = { id, imap_host: host, username: user, password: pass };
-                    if (port) accountObj.imap_port = parseInt(port);
-                    emailAccounts.push(accountObj);
-                }
-            });
-
-            if (!backendConfig.apis) backendConfig.apis = {};
-            if (!backendConfig.apis.messaging) backendConfig.apis.messaging = {};
-            if (!backendConfig.apis.messaging.email) backendConfig.apis.messaging.email = {};
-            backendConfig.apis.messaging.email.accounts = emailAccounts;
-        }
-
-        await ctx.api.saveBackendConfig(backendConfig, ctx.config.get('pybridge.api_url'));
-        await ctx.api.saveBackendConfig(backendConfig, ctx.config.get('orakle.api_url'));
-
-        ctx.modifiedFields.api.clear();
-    } catch (error) {
-        console.error('Error saving API config:', error);
+        if (!backendConfig.apis) backendConfig.apis = {};
+        if (!backendConfig.apis.messaging) backendConfig.apis.messaging = {};
+        if (!backendConfig.apis.messaging.email) backendConfig.apis.messaging.email = {};
+        backendConfig.apis.messaging.email.accounts = emailAccounts;
     }
+
+    // Encrypt all plaintext sensitive fields (new or legacy) via the vault
+    const vaultUrl = ctx.config.get('pybridge.api_url');
+    const encryptPromises = [];
+    document.querySelectorAll('#api-list input[data-path]').forEach(input => {
+        const path = input.dataset.path;
+        const value = getValueAtPath(backendConfig, path);
+
+        if (
+            value &&
+            typeof value === 'string' &&
+            !value.startsWith('enc:v1:') &&
+            isSensitivePath(path)
+        ) {
+            encryptPromises.push(
+                fetch(vaultUrl + '/vault/encrypt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path, value })
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.success) {
+                        setValueAtPath(backendConfig, path, result.blob);
+                    } else {
+                        console.warn(`Vault encrypt failed for ${path}: ${result.error}`);
+                    }
+                })
+                .catch(error => console.warn(`Vault encrypt error for ${path}:`, error))
+            );
+        }
+    });
+
+    await Promise.all(encryptPromises);
+
+    // Save to both servers
+    await ctx.api.saveBackendConfig(backendConfig, ctx.config.get('pybridge.api_url'));
+    await ctx.api.saveBackendConfig(backendConfig, ctx.config.get('orakle.api_url'));
+
+    ctx.modifiedFields.api.clear();
 }
 
 function resetApiKeys(ctx) {
@@ -274,11 +342,53 @@ async function loadExistingApiKeys(ctx) {
             return current;
         }
 
-        // Find all API key inputs
-        document.querySelectorAll('#api-list input[data-path]').forEach(input => {
+        // Collect all input paths and raw values
+        const inputs = document.querySelectorAll('#api-list input[data-path]');
+        const rawValues = {};
+        const encryptedPaths = [];
+
+        inputs.forEach(input => {
             const path = input.dataset.path;
             const value = getValueAtPath(backendConfig, path);
+            rawValues[path] = value;
 
+            if (
+                value &&
+                typeof value === 'string' &&
+                value.startsWith('enc:v1:') &&
+                isSensitivePath(path)
+            ) {
+                encryptedPaths.push(path);
+            }
+        });
+
+        // Batch-decrpyt encrypted sensitive values
+        let decryptedValues = {};
+        if (encryptedPaths.length > 0) {
+            try {
+                const response = await fetch(
+                    ctx.config.get('pybridge.api_url') + '/vault/reveal',
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ paths: encryptedPaths })
+                    }
+                );
+                const result = await response.json();
+                if (result.success) {
+                    decryptedValues = result.values;
+                } else {
+                    console.warn('Vault reveal failed:', result.errors);
+                }
+            } catch (error) {
+                console.warn('Vault reveal error:', error);
+            }
+        }
+
+        // Fill inputs with decrypted (or raw) values
+        inputs.forEach(input => {
+            const path = input.dataset.path;
+            let value = decryptedValues[path] || rawValues[path];
             if (value && value !== '<key>') {
                 input.value = value;
             }
@@ -383,8 +493,7 @@ function generateEmailTableHtml(config) {
     const createRow = (acc, isGhost = false) => `
         <div class="email-row ${isGhost ? 'ghost' : ''}">
             <div class="email-cell"><input type="text" class="email-id" placeholder="ID (e.g. gmail)" value="${acc.id || ''}" ${isGhost ? '' : 'required'}></div>
-            <div class="email-cell"><input type="text" class="email-host" placeholder="imap.email.com" value="${acc.imap_host || ''}" ${isGhost ? '' : 'required'}></div>
-            <div class="email-cell"><input type="number" class="email-port" placeholder="993" value="${acc.imap_port || ''}"></div>
+            <div class="email-cell"><input type="text" class="email-host" placeholder="imap.email.com" value="${acc.imap_host || ''}" ${isGhost ? '' : 'required'}></div>            <div class="email-cell"><input type="number" class="email-port" placeholder="993" value="${acc.imap_port || ''}"></div>
             <div class="email-cell"><input type="text" class="email-user" placeholder="user@email.com" value="${acc.username || ''}" ${isGhost ? '' : 'required'}></div>
             <div class="email-cell">
                 <div class="password-wrapper">
