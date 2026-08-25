@@ -74,7 +74,7 @@ class LoggingManager:
 
         # Initialize logger with combined filters
         filter_string = "|".join(self._filters) if self._filters else ""
-        self._logger = logging.getLogger(filter_string)
+        self._logger = logging.getLogger(filter_string if filter_string else None)
         logger = self._logger
         log_level = getattr(logging, log_level.upper())
         logger.setLevel(log_level)

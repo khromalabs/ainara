@@ -26,6 +26,15 @@ from . import envelope
 logger = logging.getLogger(__name__)
 
 SENSITIVE_KEY_MARKERS = ("api_key", "apikey", "secret", "password", "token")
+VAULT_PREFIXES = ("apis.cryptoexchanges.",)
+
+
+def is_sensitive_path(path: str) -> bool:
+    """Check if a dotted path matches vault encryption policy."""
+    if not any(path.startswith(prefix) for prefix in VAULT_PREFIXES):
+        return False
+    key_name = path.split(".")[-1].lower()
+    return any(marker in key_name for marker in SENSITIVE_KEY_MARKERS)
 
 
 class SecretVaultError(Exception):
@@ -100,17 +109,21 @@ class SecretVault:
         if value is not None and not self.is_encrypted(path):
             self.set_secret(path, value)
 
-    def migrate_all(self, prefix: str = "apis.") -> list:
-        """Encrypt all non-empty sensitive strings under the given dotted prefix.
+    def migrate_all(self, prefixes: tuple[str, ...] | list[str] | None = None) -> list:
+        """Encrypt all non-empty sensitive strings under the given dotted prefixes.
 
         Only dict paths are traversed; list-indexed values (e.g.
         ``apis.messaging.email.accounts[].password``) are intentionally skipped
         until ConfigManager supports list paths. Writes the config file once.
         """
-        if not prefix.endswith("."):
-            prefix += "."
+        if prefixes is None:
+            prefixes = VAULT_PREFIXES
 
-        logger.info(f"Starting SecretVault.migrate_all() with prefix: '{prefix}'")
+        normalized_prefixes = tuple(
+            p if p.endswith(".") else f"{p}." for p in prefixes
+        )
+
+        logger.info(f"Starting SecretVault.migrate_all() with prefixes: {normalized_prefixes}")
         migrated = []
         skipped_already_encrypted = []
         skipped_non_sensitive = []
@@ -124,7 +137,7 @@ class SecretVault:
                 if isinstance(value, dict):
                     walk(value, key_path)
                 elif isinstance(value, str):
-                    if not key_path.startswith(prefix):
+                    if not any(key_path.startswith(p) for p in normalized_prefixes):
                         continue
 
                     is_sensitive = any(

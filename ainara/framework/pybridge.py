@@ -51,7 +51,12 @@ from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.notifications import NotificationManager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
-from ainara.framework.secrets import SecretVaultUnavailable, get_vault
+from ainara.framework.secrets import (
+    SENSITIVE_KEY_MARKERS,
+    VAULT_PREFIXES,
+    SecretVaultUnavailable,
+    get_vault,
+)
 from ainara.framework.secrets.keystore import KeystoreProvider
 from ainara.framework.secrets.wallet import WalletKeyDerivation
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
@@ -1837,6 +1842,14 @@ def create_app():
         return jsonify({
             "keystore_available": available,
             "has_master_key": has_key,
+        })
+
+    @app.route("/vault/policy", methods=["GET"])
+    def vault_policy():
+        """Return encryption policy rules for sensitive configuration paths."""
+        return jsonify({
+            "prefixes": list(VAULT_PREFIXES),
+            "markers": list(SENSITIVE_KEY_MARKERS),
         })
 
 

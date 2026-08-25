@@ -1,5 +1,7 @@
 const utils = require('../core/utils');
 
+let vaultPolicy = null;
+
 module.exports = {
     id: 'api',
 
@@ -21,9 +23,15 @@ module.exports = {
 };
 
 function isSensitivePath(path) {
+    if (!vaultPolicy || !Array.isArray(vaultPolicy.prefixes) || !Array.isArray(vaultPolicy.markers)) {
+        throw new Error('Vault policy is not loaded from backend.');
+    }
+    const matchesPrefix = vaultPolicy.prefixes.some(prefix => path.startsWith(prefix));
+    if (!matchesPrefix) {
+        return false;
+    }
     const keyName = path.split('.').pop().toLowerCase();
-    const sensitiveKeys = ['api_key', 'apikey', 'secret', 'password', 'token'];
-    return sensitiveKeys.some(key => keyName.includes(key));
+    return vaultPolicy.markers.some(marker => keyName.includes(marker));
 }
 
 async function generateApiUI(ctx) {
@@ -32,6 +40,12 @@ async function generateApiUI(ctx) {
     ctx.state.apiValidationStatus = {};
 
     try {
+        const policyRes = await fetch(ctx.config.get('pybridge.api_url') + '/vault/policy');
+        if (!policyRes.ok) {
+            throw new Error(`Failed to load vault policy from backend: ${policyRes.statusText}`);
+        }
+        vaultPolicy = await policyRes.json();
+
         const response = await fetch(
             ctx.config.get('pybridge.api_url') + '/config/defaults'
         );
