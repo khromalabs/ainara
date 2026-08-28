@@ -86,10 +86,68 @@ class TestOrakleMiddleware(unittest.TestCase):
         self.assertIn("Processing:", result)
         print("PASSED")
 
-    def test_attribute_rejection_query_attribute(self):
-        """Tests that orakle tags with query as attribute are rejected."""
-        print("\n--- Testing: Attribute rejection (query attribute) ---")
+    # `query` is the ONE permitted attribute, not a rejected one. It is the
+    # documented "data form" in the system prompts the LLM is actually given:
+    #
+    #     <orakle query="action intent">data payload here</orakle>
+    #
+    # (framework.chat_manager.system_prompt.mu and framework.agent.system_prompt.mu)
+    #
+    # This used to be asserted the other way round, which contradicted the
+    # prompt, the middleware's own rejection message ("Orakle tags only accept
+    # the 'query' attribute") and _check_for_invalid_attributes, which strips a
+    # valid query= before deciding. The feature, its prompt documentation and
+    # the test asserting its opposite all arrived in the same upstream import,
+    # so it had never passed. Rejecting `query` would guardrail the exact syntax
+    # we instruct the model to produce.
+
+    def test_query_attribute_is_accepted(self):
+        """The documented data form is processed, not guardrailed."""
+        print("\n--- Testing: query attribute accepted (data form) ---")
+        input_text = '<orakle query="save this">a large data payload</orakle>'
+        result = self._run_test_stream(input_text)
+        self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        self.assertNotIn("[__AINARA_GUARDRAIL__]", result)
+        print("PASSED")
+
+    def test_query_attribute_without_a_data_payload_is_accepted(self):
+        """An empty data form still carries a usable intent in the attribute.
+
+        The prompt asks for the simple form when there is no payload, but the
+        intent here is present and unambiguous, so this is processed rather than
+        refused. Contrast test_empty_command: <orakle></orakle> has no intent
+        anywhere and is NOT processed.
+        """
+        print("\n--- Testing: query attribute, no data payload ---")
         input_text = '<orakle query="get weather in Paris"></orakle>'
+        result = self._run_test_stream(input_text)
+        self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        self.assertNotIn("[__AINARA_GUARDRAIL__]", result)
+        print("PASSED")
+
+    def test_query_attribute_splits_intent_from_data(self):
+        """The attribute is the intent; the tag content is the data acted upon."""
+        print("\n--- Testing: intent/data split ---")
+        tags, _, _, guardrail = self.middleware._extract_orakle_tags(
+            '<orakle query="save this">a large data payload</orakle>')
+        self.assertIsNone(guardrail)
+        self.assertEqual(len(tags), 1)
+        _, _, intent, data = tags[0]
+        self.assertEqual(intent, "save this")
+        self.assertEqual(data, "a large data payload")
+
+        # No payload -> data is None, and the intent still stands on its own.
+        tags, _, _, _ = self.middleware._extract_orakle_tags(
+            '<orakle query="get weather in Paris"></orakle>')
+        _, _, intent, data = tags[0]
+        self.assertEqual(intent, "get weather in Paris")
+        self.assertIsNone(data)
+        print("PASSED")
+
+    def test_invalid_attribute_alongside_query_is_still_rejected(self):
+        """Permitting `query` must not permit anything that travels with it."""
+        print("\n--- Testing: query plus an invalid attribute ---")
+        input_text = '<orakle query="get weather" type="weather">x</orakle>'
         result = self._run_test_stream(input_text)
         self.assertIn("[__AINARA_GUARDRAIL__]", result)
         self.assertIn("attribute", result.lower())
