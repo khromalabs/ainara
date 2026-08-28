@@ -82,6 +82,18 @@ MAX_PLAUSIBLE_PRICE_PNL_FRACTION = 0.02
 # to holds long enough for an annualization to mean anything (MIN_RELIABLE_HOLD_DAYS).
 MAX_PLAUSIBLE_NET_ANNUAL_PCT = 300.0
 
+# Above this share of the window spent positioned, the timing layer did not time
+# anything: it held. The benchmark asks whether choosing WHEN to be on beats
+# always being on, and a rule that was never off has not answered that question —
+# so the comparison is reported and the verdict withheld, the same posture the
+# plausibility guard takes toward a number it cannot stand behind.
+#
+# This subsumes the single-trade case, and for a better reason than counting
+# trades would: the benchmark's window runs from the first recorded open to the
+# last recorded close, so ONE trade spans its own window exactly and always
+# reports 100% occupancy.
+MAX_VERDICT_OCCUPANCY = 0.99
+
 # Ordering for rolling several coins' hedge health up to one book-wide verdict.
 _HEALTH_RANK = {"flat": 0, "ok": 1, "warn": 2, "critical": 3}
 
@@ -554,7 +566,11 @@ class TradingPortfolio(Skill):
 
             trades.append({
                 "opened_at": row["opened_at"], "closed_at": row["closed_at"],
+                # Carried through for the benchmark's causal direction: which way
+                # the FIRST trade of the window was positioned.
+                "short_venue": row.get("short_venue"),
                 "hold_days": round(hold_days, 3), "notional_usd": notional,
+                "size": row.get("size"),
                 "exit_reason": row.get("exit_reason"),
                 "annualized_metrics_reliable": reliable,
                 "predicted": {
@@ -646,7 +662,235 @@ class TradingPortfolio(Skill):
                 " data_quality_fault on the trade itself. "
             ) + summary.get("note", "")
         return {"action": "analytics", "coin": coin, "summary": summary,
-                "trades": trades, "as_of": _now_iso()}
+                "trades": trades, "benchmark": self._benchmark(coin, trades),
+                "as_of": _now_iso()}
+
+    def _benchmark(self, coin, trades):
+        """What the same capital would have earned held continuously.
+
+        The decision rule is a TIMING layer: it chooses when to be positioned. The
+        only question that establishes whether it earns its place is whether it
+        beat simply opening the hedge once and holding it — and nothing here ever
+        made that comparison, so a rule that lost to always-on would have looked
+        identical to one that won.
+
+        Three things this deliberately gets right, because getting them wrong is
+        how a timing layer flatters itself:
+
+        The direction is CAUSAL. It is the side the FIRST trade in the window
+        took, which is information that existed at the start. Choosing the better
+        of the two after the fact would benchmark against hindsight and make
+        almost any rule look good.
+
+        The denominator is the WHOLE window, not the time spent positioned. Carry
+        forgone while flat is a real cost of the timing layer, and charging the
+        rule only for the hours it chose to show up is what hides it.
+
+        Funding comes from the PUBLIC per-venue series, not from account payments.
+        The account has no funding rows for the hours it sat flat, which are
+        exactly the hours the benchmark is being paid for.
+
+        Never raises: analytics that cannot fetch a benchmark must still report
+        the trades.
+        """
+        scored = [t for t in trades if t.get("notional_usd")]
+        if not scored:
+            return {"note": "no closed trade with a recorded notional yet, so"
+                            " there is nothing to compare a benchmark against"}
+        # A verdict is the one output nobody re-derives, so every input is checked
+        # against what a delta-neutral carry trade can actually do BEFORE one is
+        # rendered. Without this the benchmark will happily report `beat_holding:
+        # true` off a realized net that was one leg's missing closing fill.
+        input_faults = _benchmark_input_faults(scored)
+        if input_faults:
+            return {
+                "error": "the benchmark's inputs are not credible, so no verdict"
+                         " was rendered",
+                "data_quality": input_faults,
+                "note": ("one or more recorded trades carry numbers a hedged"
+                         " round trip cannot produce. `beat_holding` and the"
+                         " verdict are deliberately ABSENT rather than computed"
+                         " from them. Fix the measurement (the usual cause is a"
+                         " closing fill outside the trade's recorded window) and"
+                         " re-run."),
+            }
+        lo = min(_iso_ms(t["opened_at"]) for t in scored)
+        hi = max(_iso_ms(t["closed_at"]) for t in scored)
+        window_days = (hi - lo) / 86_400_000
+        # The side the first trade took — the causal choice, not the better one.
+        first = min(scored, key=lambda t: _iso_ms(t["opened_at"]))
+        side = 1 if first.get("short_venue") == "hyperliquid" else -1
+        notional = _mean([t["notional_usd"] for t in scored]) or 0.0
+        if window_days <= 0 or notional <= 0:
+            return {"note": "the recorded trades span no time, so a held"
+                            " benchmark has nothing to accrue over"}
+        try:
+            # Imported here rather than at module scope: the engine pulls in the
+            # matcher and config stack, and a portfolio read must not depend on
+            # it loading. Funding history is public mainnet data either way —
+            # the same series the engine's own signal is computed on.
+            from ainara.orakle.skills.trading.carry_engine import (
+                TradingCarryEngine)
+            engine = TradingCarryEngine()
+            hours = int((time.time() * 1000 - lo) / 3_600_000) + 2
+            hl = engine._hl_funding_history(coin, "mainnet", hours)
+            dy = engine._dydx_funding_history(coin, "mainnet", hours)
+            fee_fraction = engine._round_trip_cost_fraction("hyperliquid", "dydx")
+        except Exception as e:
+            self.logger.warning("benchmark funding fetch failed: %s", e)
+            return {"error": f"could not read public funding history: {e}",
+                    "note": "the held-hedge benchmark could not be computed;"
+                            " the trades above stand on their own"}
+
+        aligned = [t for t in sorted(set(hl) & set(dy)) if lo <= t <= hi]
+        if len(aligned) < 2:
+            return {"note": "no aligned public funding history over the recorded"
+                            " window, so a held benchmark cannot be computed"}
+        # A summed rate against the notional at OPEN. This build records no public
+        # mark series, so a price move over the window is not accounted for, and
+        # that understates a hedge whose mark rose. Stated rather than assumed
+        # away: it is the one term here that is knowably approximate.
+        gross_usd = side * sum(hl[t] - dy[t] for t in aligned) * notional
+        funding_basis = (
+            "a summed rate against the notional at OPEN — no mark series is"
+            " recorded, so a price move over the window is NOT accounted for and"
+            " this understates a hedge whose mark rose")
+        rule_usd = sum((t["realized"] or {}).get("net_usd") or 0.0 for t in scored)
+
+        # BOTH sides pay the same execution basis, and it is this rule's own
+        # MEASURED cost per round trip. The held hedge makes exactly one round
+        # trip; the rule made as many as it made, and that difference is precisely
+        # what a timing layer costs.
+        measured = _execution_cost(scored)
+        if measured is None:
+            # Nothing measured to charge, or execution that came out free. Fall
+            # back to the modelled fee and SAY so, rather than quietly reverting
+            # to the asymmetry this was written to remove.
+            per_round_trip = fee_fraction * notional
+            held_fees, held_slippage = per_round_trip, 0.0
+            cost_basis = ("modelled fees only (_round_trip_cost_fraction); no"
+                          " measured execution cost was available, so the two"
+                          " sides are NOT charged alike — read the verdict with"
+                          " that in mind")
+            rule_fees = rule_slippage = None
+        else:
+            per_round_trip, rule_fees, rule_slippage = measured
+            # Split the held hedge's single round trip the same way the rule's
+            # are, so each term of the decomposition below compares like with
+            # like. Charging the benchmark a lump and the rule an itemised bill
+            # is not a comparison.
+            held_fees = rule_fees / len(scored)
+            held_slippage = rule_slippage / len(scored)
+            cost_basis = (f"the rule's own measured cost per round trip — fees"
+                          f" plus slippage over {len(scored)} round trip(s) —"
+                          f" charged once to the held hedge and"
+                          f" {len(scored)} time(s) to the rule")
+        held_execution = per_round_trip
+        net_usd = gross_usd - held_execution
+        years = window_days / DAYS_PER_YEAR
+
+        # Both from the SAME window: mixing a hold measured over fills with a
+        # window measured from the ledger's stamps lets occupancy round above 100%.
+        hours_positioned = sum(t["hold_days"] for t in scored) * 24
+        window_hours = max(window_days * 24, hours_positioned)
+        occupancy = (hours_positioned / window_hours) if window_hours else 1.0
+
+        def annual_pct(usd):
+            return (usd / notional / years * 100) if years and notional else None
+
+        # Exactly additive, and it has to be: a decomposition that does not sum to
+        # the gap invites the reader to trust whichever term suits them. The rule's
+        # funding is its realized net plus back the execution it paid.
+        rule_execution = ((rule_fees or 0.0) + (rule_slippage or 0.0)
+                          if measured else None)
+        rule_funding = (rule_usd + rule_execution) if measured is not None else None
+        decomposition = None
+        if measured is not None:
+            decomposition = {
+                "funding_usd": round(rule_funding - gross_usd, 4),
+                "fees_usd": round(held_fees - (rule_fees or 0.0), 4),
+                "slippage_usd": round(held_slippage - (rule_slippage or 0.0), 4),
+                "note": ("what the gap is MADE OF, summing to gap_usd. Funding is"
+                         " the carry the rule captured against the carry holding"
+                         " would have; the other two are the extra round trips it"
+                         " paid for. `beat_holding` quoted without this is the"
+                         " easiest number here to misread."),
+            }
+            # The held side's single round trip is inside `fees_usd` above; state
+            # the residual rather than let a rounding difference read as meaning.
+            drift = round((rule_usd - net_usd) - (
+                decomposition["funding_usd"] + decomposition["fees_usd"]
+                + decomposition["slippage_usd"]), 4)
+            if drift:
+                decomposition["rounding_usd"] = drift
+
+        out = {
+            "method": ("the hedge opened once at the start of the window and held"
+                       " to the end, paying ONE round trip of the same execution"
+                       " the rule actually paid. Direction is the side the first"
+                       " trade took, so no hindsight."),
+            "window": {"from": first["opened_at"],
+                       "to": max(t["closed_at"] for t in scored),
+                       "days": round(window_days, 2),
+                       "funding_hours": len(aligned)},
+            "side": "short_hyperliquid" if side > 0 else "short_dydx",
+            "notional_usd": round(notional, 2),
+            "notional_basis": "mean notional across the recorded trades",
+            "funding_basis": funding_basis,
+            "execution_cost_basis": cost_basis,
+            "execution_cost_per_round_trip_usd": round(per_round_trip, 4),
+            "held": {"gross_funding_usd": round(gross_usd, 4),
+                     "fees_usd": round(held_fees, 4),
+                     "slippage_usd": round(held_slippage, 4),
+                     "execution_usd": round(held_execution, 4),
+                     "round_trips": 1,
+                     "net_usd": round(net_usd, 4),
+                     "annual_pct_notional": _round(annual_pct(net_usd), 2)},
+            "decision_rule": {
+                "net_usd": round(rule_usd, 4),
+                "annual_pct_notional": _round(annual_pct(rule_usd), 2),
+                "fees_usd": _round(rule_fees, 4),
+                "slippage_usd": _round(rule_slippage, 4),
+                "round_trips": len(scored),
+                "hours_positioned": round(hours_positioned, 1),
+                "window_hours": round(window_hours, 1),
+                "occupancy_pct": _round(occupancy * 100, 1)},
+            "gap_usd": round(rule_usd - net_usd, 4),
+            "gap_annual_pct_notional": _round(
+                annual_pct(rule_usd) - annual_pct(net_usd)
+                if annual_pct(net_usd) is not None else None, 2),
+        }
+        if decomposition:
+            out["gap_decomposition"] = decomposition
+
+        # The verdict is withheld when its subject is absent. A rule positioned for
+        # the whole window did not time anything, so `beat_holding` would be a
+        # statement about execution and luck wearing the benchmark's clothes. Same
+        # posture as the plausibility guard: report the comparison, refuse the
+        # conclusion.
+        withheld = []
+        if occupancy >= MAX_VERDICT_OCCUPANCY:
+            withheld.append(
+                f"the rule was positioned {occupancy * 100:.1f}% of the window, so"
+                f" it never chose to sit out — there is no timing decision here to"
+                f" judge, and carry forgone while flat is not merely small but"
+                f" absent")
+        if withheld:
+            out["verdict_withheld"] = withheld
+            out["note"] = (
+                "the comparison above is reported, and `beat_holding` is"
+                " deliberately ABSENT: " + "; ".join(withheld) + ". The benchmark"
+                " asks whether choosing WHEN to be positioned beats always being"
+                " positioned, and nothing here answers that question.")
+            return out
+
+        out["beat_holding"] = rule_usd > net_usd
+        out["verdict"] = (
+            "the decision rule BEAT holding the hedge over this window"
+            if rule_usd > net_usd else
+            "the decision rule LOST to simply holding the hedge over this window."
+            " A timing layer that does not beat always-on is not adding value.")
+        return out
 
     @staticmethod
     def _fee_breakeven_days(pred_spread_annual_pct):
@@ -990,6 +1234,11 @@ class TradingPortfolio(Skill):
                 for a in by_coin.values()),
             "total_realized_net_usd": round(net_total, 4) if have else None,
             "trades_faulted": faulted,
+            # A COUNT, not a book-wide verdict. Direction and funding spread are
+            # per-coin, so there is no meaningful single "side" to benchmark the
+            # book against, and rolling several verdicts into one would be
+            # exactly the kind of false summary the per-coin guard refuses.
+            "benchmark_verdicts": _benchmark_tally(by_coin),
         }
         if faulted:
             summary["note"] = (
@@ -1143,6 +1392,101 @@ def _overlap(h, d):
     hs, he = _iso_ms(h["opened_at"]), (_iso_ms(h["closed_at"]) if h.get("closed_at") else now)
     ds, de = _iso_ms(d["opened_at"]), (_iso_ms(d["closed_at"]) if d.get("closed_at") else now)
     return max(0.0, min(he, de) - max(hs, ds))
+
+
+def _benchmark_tally(by_coin):
+    """How the per-coin benchmarks came out, without inventing a book verdict.
+
+    Reports the distribution — how many coins beat holding, lost to it, had the
+    verdict withheld, or could not be measured — and names the coins in each
+    group so the reader goes to the per-coin benchmark rather than to a number
+    that averaged four different windows together.
+    """
+    beat, lost, withheld, unavailable = [], [], [], []
+    for coin, a in sorted(by_coin.items()):
+        b = a.get("benchmark") or {}
+        if "beat_holding" in b:
+            (beat if b["beat_holding"] else lost).append(coin)
+        elif b.get("verdict_withheld"):
+            withheld.append(coin)
+        else:
+            unavailable.append(coin)
+    return {
+        "beat_holding": beat,
+        "lost_to_holding": lost,
+        "verdict_withheld": withheld,
+        "not_measured": unavailable,
+        "note": ("per-coin results, deliberately not combined: each coin's"
+                 " benchmark has its own direction, window and funding series."
+                 " See by_coin[<coin>].benchmark."),
+    }
+
+
+def _annual_pct(usd, notional, days):
+    """Annualized percent of notional, or None when it cannot be formed."""
+    if usd is None or not notional or not days:
+        return None
+    return usd / notional / (days / DAYS_PER_YEAR) * 100
+
+
+def _execution_cost(trades):
+    """What one round trip of THIS rule's execution actually cost, in dollars.
+
+    Fees plus slippage. Slippage is the realized price PnL with its sign flipped:
+    a delta-neutral hedge's two legs cancel, so what survives is the spread paid
+    getting in and out, and it is systematically negative. Signed rather than
+    absolute, deliberately — a round trip that happened to fill favourably was
+    cheap, and charging it as a cost would be the same error in the other
+    direction.
+
+    Returns (cost_per_round_trip, fees, slippage) summed across `trades`, or None
+    when no trade carries either figure — which is "nothing was measured", not
+    "execution was free". A measured cost of zero, or a negative one where fills
+    beat the spread, is a real answer and is honoured.
+
+    This exists so the benchmark cannot compare a rule carrying its REAL fees and
+    REAL slippage against a held hedge charged one MODELLED fee and no slippage
+    at all (`_round_trip_cost_fraction` is 2*(fa+fb), fees only). That is not a
+    like-for-like comparison, it is biased one way, and the bias scales with the
+    number of round trips the rule makes — which is the thing a timing layer does
+    more of than holding, by definition.
+    """
+    measurable = [t for t in trades
+                  if (t.get("realized") or {}).get("fees_usd") is not None
+                  or (t.get("realized") or {}).get("price_pnl_usd") is not None]
+    if not measurable:
+        return None
+    fees = sum((t.get("realized") or {}).get("fees_usd") or 0.0
+               for t in measurable)
+    slippage = -sum((t.get("realized") or {}).get("price_pnl_usd") or 0.0
+                    for t in measurable)
+    return (fees + slippage) / len(measurable), fees, slippage
+
+
+def _benchmark_input_faults(trades):
+    """Every reason the benchmark should refuse to render a verdict, or [].
+
+    Re-derives the plausibility test from each trade's own realized numbers rather
+    than trusting an upstream flag. The benchmark is the last thing a reader looks
+    at and the first thing they quote, so it has to be able to refuse on its own
+    evidence — a caller that forgot to run the guard must not be able to buy a
+    verdict by omission.
+    """
+    faults = []
+    for t in trades:
+        realized = t.get("realized") or {}
+        notional, hold_days = t.get("notional_usd"), t.get("hold_days") or 0
+        # _analytics reports the annualized net already; recompute it when the
+        # caller did not, so this holds for a trade dict assembled anywhere.
+        net_annual = realized.get("net_annual_pct_notional")
+        if net_annual is None:
+            net_annual = _annual_pct(realized.get("net_usd"), notional, hold_days)
+        fault = _price_pnl_fault(realized, notional, net_annual,
+                                 hold_days >= MIN_RELIABLE_HOLD_DAYS)
+        if fault:
+            faults.append({**fault, "opened_at": t.get("opened_at"),
+                           "closed_at": t.get("closed_at")})
+    return faults
 
 
 def _fill_coverage(legs):
