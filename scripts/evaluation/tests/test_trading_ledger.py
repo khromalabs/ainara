@@ -28,6 +28,14 @@ import unittest
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
+from scripts.evaluation.tests._executor_env import (  # noqa: E402
+    require_framework_deps)
+
+# Before the ainara imports below: they need the framework's dependencies,
+# which the executor's virtualenv does not carry. Skips with a reason there
+# instead of failing to import.
+require_framework_deps()
+
 from ainara.orakle.skills.trading import _ledger as L  # noqa: E402
 
 # A decide verdict as the carry engine emits it, and the /hedge/open result the

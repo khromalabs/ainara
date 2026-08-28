@@ -25,6 +25,14 @@ import unittest
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
+from scripts.evaluation.tests._executor_env import (  # noqa: E402
+    require_executor_deps)
+
+# Before the executor imports below: they need the venue signing SDKs, which
+# live only in the executor's virtualenv. Skips with a reason there instead of
+# failing to import.
+require_executor_deps()
+
 from executor.server import QuietHealthProbes  # noqa: E402
 
 STAMP = '127.0.0.1 - - [28/Jul/2026 12:38:02] '

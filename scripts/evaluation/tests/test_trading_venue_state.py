@@ -29,6 +29,14 @@ sys.path.insert(0, os.path.abspath(
 
 import requests  # noqa: E402
 
+from scripts.evaluation.tests._executor_env import (  # noqa: E402
+    require_executor_deps)
+
+# Before the executor imports below: they need the venue signing SDKs, which
+# live only in the executor's virtualenv. Skips with a reason there instead of
+# failing to import.
+require_executor_deps()
+
 from executor.errors import VenueStateUnavailable  # noqa: E402
 from executor.venues import dydx as D  # noqa: E402
 from executor.venues.hyperliquid import HyperliquidExecutor  # noqa: E402
