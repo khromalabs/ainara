@@ -35,6 +35,30 @@ from ainara.framework.orakle_client import call_skill
 logger = logging.getLogger(__name__)
 
 
+def _skill_reported_error(result_str: str) -> Optional[str]:
+    """Return a failure reason if the skill's own result carries an error.
+
+    ``call_skill`` only signals transport-level problems, as an "Error: ..."
+    string. A skill that completes the round trip but returns a structured
+    ``{"error": ...}`` otherwise counts as a completed step — so the plan reports
+    SUCCESS and ``on_failure`` never fires. Results arrive as the JSON of Orakle's
+    ``{"result": {...}}`` envelope.
+    """
+    try:
+        payload = json.loads(result_str)
+    except (ValueError, TypeError):
+        return None  # not JSON — nothing to inspect
+    if not isinstance(payload, dict):
+        return None
+    inner = payload.get("result")
+    if isinstance(inner, dict):
+        payload = inner
+    error = payload.get("error")
+    if error:
+        return f"Skill '{{skill}}' reported an error: {error}"
+    return None
+
+
 def _run_skill_in_process(
     orakle_servers: list,
     skill_id: str,
@@ -51,30 +75,37 @@ def _run_skill_in_process(
             orakle_servers, skill_id, params, timeout=timeout
         )
 
-        # Check if the result indicates an application-level error
-        # (the skill completed the round trip but returned an error key)
-        failure_reason = None
-        try:
-            parsed = json.loads(result_str)
-            # Look for an explicit error key at top level or under "result"
-            error = parsed.get("error") or (isinstance(parsed.get("result"), dict) and parsed.get("result", {}).get("error"))
-            if error:
-                failure_reason = f"Skill error: {error}"
-                result_response = str(error)
-            else:
-                result_response = result_str  # keep the pretty-printed JSON as is
-        except json.JSONDecodeError:
-            result_response = result_str
-            # fallback to transport-level check
-            if result_str.startswith("Error:"):
-                failure_reason = result_str
+        reported = _skill_reported_error(result_str)
+        if reported:
+            reported = reported.format(skill=skill_id)
+            logger.warning("Skill step '%s' reported an error: %s",
+                           skill_id, reported)
+            result_queue.put(
+                {
+                    "response": result_str,
+                    "turns_used": 0,
+                    "skills_executed": [skill_id],
+                    "failure_reason": reported,
+                },
+                timeout=5,
+            )
+            return
 
-        result = {
-            "response": result_response if not failure_reason else result_response,
-            "turns_used": 0,
-            "skills_executed": [skill_id],
-            "failure_reason": failure_reason,
-        }
+        # Check if the result indicates an error
+        if result_str.startswith("Error:"):
+            result = {
+                "response": result_str,
+                "turns_used": 0,
+                "skills_executed": [skill_id],
+                "failure_reason": result_str,
+            }
+        else:
+            result = {
+                "response": result_str,
+                "turns_used": 0,
+                "skills_executed": [skill_id],
+                "failure_reason": None,
+            }
 
         result_queue.put(result, timeout=5)
     except Exception as e:
@@ -192,7 +223,8 @@ class Conductor:
     # ------------------------------------------------------------------
 
     def trigger_plan(
-        self, plan_name: str, avoid_if: Optional[Any] = None
+        self, plan_name: str, avoid_if: Optional[Any] = None,
+        vars: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Attempt to start a plan run.  Returns ``(run_id, error_str)``
@@ -201,6 +233,11 @@ class Conductor:
         * ``"plan_not_found"``   – no plan with that name is loaded
         * ``"already_running"``  – the plan's lock is held; run in progress
         * ``"avoid_condition_met:<blocking_plan>"`` – a plan specified in avoid_if is running
+
+        ``vars`` overrides the plan's own ``vars`` defaults for this run only
+        (e.g. ``{"coin": "ETH"}`` to point a coin-parameterized plan at a
+        different asset). Unknown keys are allowed; steps simply won't reference
+        them.
         """
         if plan_name not in self.plans:
             return None, "plan_not_found"
@@ -227,9 +264,15 @@ class Conductor:
             return None, "already_running"
 
         run_id = str(uuid.uuid4())[:8]
+        # Merge this run's overrides onto the plan's vars defaults. A missing
+        # override leaves the default (so BTC stays the default coin); an unknown
+        # key is harmless (no step references it).
+        run_vars = dict(self.plans[plan_name].vars)
+        if vars:
+            run_vars.update(vars)
         thread = threading.Thread(
             target=self._execute_plan,
-            args=(plan_name, run_id, lock),
+            args=(plan_name, run_id, lock, run_vars),
             name=f"conductor-{plan_name}-{run_id}",
             daemon=True,
         )
@@ -241,7 +284,8 @@ class Conductor:
     # ------------------------------------------------------------------
 
     def _execute_plan(
-        self, plan_name: str, run_id: str, lock: threading.Lock
+        self, plan_name: str, run_id: str, lock: threading.Lock,
+        run_vars: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Orchestrate the full DAG execution for a single plan run.
@@ -250,6 +294,12 @@ class Conductor:
         log_prefix = f"[conductor:{plan_name}:{run_id}]"
         plan = self.plans[plan_name]
         scratchpad = Scratchpad(max_chars=plan.scratchpad_max_chars)
+        # Seed plan input variables so step params can resolve {{vars.<name>}}
+        # (e.g. {{vars.coin}}). Stored like any step result, under the reserved
+        # name "vars"; a step called "vars" would be unusual and is not used here.
+        if run_vars:
+            scratchpad.store("vars", dict(run_vars))
+            logger.info("%s Plan vars: %s", log_prefix, run_vars)
 
         # Create a shared list for blacklisted providers in this specific plan run
         manager = multiprocessing.Manager()
@@ -669,7 +719,16 @@ class Conductor:
             end_time = datetime.now(timezone.utc)
             duration = end_time - start_time
 
-            reports_dir = Path(self.config_manager.get_default_log_dir()) / "bureau" / "reports"
+            # Honour the configured (local-first) logging.directory like every
+            # other log; only fall back to the platform default when the key is
+            # unset. Forensic reports carry trade detail, so they follow the
+            # same local-disk rule as the rest of the logs.
+            log_base = (self.config_manager.get("logging.directory")
+                        if self.config_manager else None)
+            reports_dir = (
+                Path(log_base) if log_base
+                else Path(self.config_manager.get_default_log_dir())
+            ) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
             timestamp_str = start_time.astimezone().strftime("%Y%m%d_%H%M")
             report_name = f"plan_{plan_name}-{timestamp_str}-{run_id}.md"

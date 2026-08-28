@@ -1,0 +1,85 @@
+# Ainara Conductor plan: delta-neutral funding-carry EXIT.
+#
+# The other half of delta_neutral_farm.yaml. `carry_engine.decide` is stateless —
+# it can only ever say open/sit_out — so without this plan the live system enters
+# a position and never leaves it, while the backtest's economics have always
+# assumed a ~14-day hold with fees charged for entry AND exit.
+#
+# Copy this file into your Ainara config's bureau/ directory (e.g.
+# %APPDATA%/ainara/bureau/) so the Conductor loads it, then schedule it in
+# scheduler.yaml. Both venues fund HOURLY, so an hourly cron matches the signal.
+#
+# Flow:  evaluate_exit (deterministic) -> close (deterministic) -> report (agent)
+#
+# No LLM touches the order path — same rule as the entry plan. The exit rule is
+# the one the backtest models: close when the EMA-smoothed spread decays back
+# inside the threshold band, or flips sign.
+#
+# SAFETY: closing only ever reduces exposure, so it is never capped or refused.
+# The riskier direction is failing to close, so every gate here errs toward
+# holding, and an unreadable signal is never treated as a reason to exit.
+
+on_failure: notify
+max_parallel: 1
+scratchpad_max_chars: 12000
+
+# Plan input variables. `coin` parameterizes the whole plan; BTC is the default,
+# and a run overrides it with vars, e.g.:
+#   scripts/scheduler.py --run-plan delta_neutral_exit --coin ETH
+# or a scheduler.yaml entry with `vars: {coin: SOL}`. The exit MUST run per coin
+# on its own cron, exactly as the entry does.
+vars:
+  coin: BTC
+
+defaults:
+  execution_timeout: 180
+  max_turns: 12
+
+steps:
+
+  # 1. Deterministic exit decision. Reads the CURRENT position (public APIs, no
+  #    keys) and compares it to the EMA-smoothed cross-venue spread, returning
+  #    close / hold / none plus `skip_close` for the gate below.
+  evaluate_exit:
+    type: skill
+    skill: trading_carry_engine
+    params:
+      action: decide_exit
+      coin: "{{vars.coin}}"
+
+  # 2. Close both legs. Skipped whenever the verdict is not "close" (hold, or
+  #    nothing open). Two independent gates, as on the entry plan: avoid_step_if
+  #    here, plus the skill's own re-check of the verdict — which is what actually
+  #    holds, because avoid_step_if fails OPEN on an unresolvable path.
+  close:
+    type: skill
+    skill: trading_executor_client
+    depends_on: [evaluate_exit]
+    avoid_step_if: "evaluate_exit.response.result.skip_close"
+    params:
+      action: close_hedge
+      # Whole verdict: scratchpad templates only resolve one level, so
+      # {{evaluate_exit.response.result.coin}} would silently not resolve.
+      decision: "{{evaluate_exit.response}}"
+      dry_run: false
+
+  # 3. Report. The only step where an LLM belongs: prose for a human, after the
+  #    money has moved. Depends on `close` because it reads {{close.response}} —
+  #    a skipped step still completes, with an empty response.
+  report:
+    type: agent
+    depends_on: [evaluate_exit, close]
+    goal: |
+      Summarize this delta-neutral funding-carry EXIT check in a few plain
+      sentences for the operator. The exit decision was:
+      {{evaluate_exit.response}}
+
+      If the action was "hold", state plainly that the position is still open and
+      still being paid, and give the smoothed spread vs the exit threshold.
+      If the action was "none", state that there was nothing to close.
+      If the action was "close", summarize the close outcome:
+      {{close.response}}
+
+      Keep it concise and factual: the coin, the decision and why, and — if it
+      closed — whether BOTH legs are confirmed flat. If anything is still open,
+      say so first and clearly.

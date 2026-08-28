@@ -20,8 +20,10 @@ import copy
 import inspect
 import logging
 import os
+import platform
 import shutil
 import sys
+import time
 from pathlib import Path
 # import traceback
 import yaml
@@ -159,9 +161,29 @@ class ConfigManager:
                 Path("/etc/ainara/ainara.yaml"),
             ])
         elif system == "Windows":
-            # Always use Saved Games\Ainara\Config on Windows
+            # Index 0 is both the preferred search hit AND where a brand-new
+            # config gets created (load_config falls back to config_paths[0]),
+            # so the current default must stay first.
             saved_games = self._get_windows_saved_games_path()
             config_paths.append(saved_games / "Ainara" / "Config" / "ainara.yaml")
+
+            # Pre-v0.11 locations, kept as SEARCH candidates only. The Electron
+            # layer migrates these into Saved Games at startup, but the Python
+            # services can be started without ever going through Electron (the
+            # scheduler, the executor, a bare `python -m ainara.orakle.server`),
+            # and a user who has not run the migration yet still has a real
+            # config sitting in AppData. Without these entries that config is
+            # invisible and load_config silently writes a fresh one from
+            # defaults on top of a working install, so the user's API keys and
+            # trading credentials appear to have vanished. Never used to CREATE
+            # a config, only to find one that is already there.
+            appdata = os.environ.get("APPDATA") or os.path.expanduser(
+                r"~\AppData\Roaming"
+            )
+            config_paths.extend([
+                Path(appdata) / "ainara" / "ainara.yaml",
+                Path(appdata) / "ainara" / "Config" / "ainara.yaml",
+            ])
         else:
             # Fallback for other systems
             config_paths.append(Path(os.path.expanduser("~/.ainara/ainara.yaml")))
@@ -609,12 +631,83 @@ class ConfigManager:
         # backup previous config if exists
         if os.path.isfile(self.config_file_path):
             shutil.copy(self.config_file_path, f"{self.config_file_path}.bak")
+            # Versioned off-sync snapshot of the OUTGOING content, taken BEFORE
+            # the overwrite. The single `.bak` above sits next to the config and
+            # is clobbered every save, so it is useless when a bad save (e.g. a
+            # setup-wizard overwrite) is exactly what you need to recover from —
+            # both got wiped together on 2026-07-29. Snapshotting the outgoing
+            # file keeps the last good state safe even if the new write is bad.
+            # Best-effort: never let it break a save.
+            self._backup_config_file()
 
         with open(self.config_file_path, "w") as f:
             # backup original file
             yaml.dump(self.config, f, default_flow_style=False)
             logger.info(f"Configuration saved to: {self.config_file_path}")
         self.last_modified_time = os.path.getmtime(self.config_file_path)
+
+    def _local_config_backup_dir(self) -> Path:
+        """A guaranteed-LOCAL, non-synced directory for config snapshots.
+
+        Deliberately NOT derived from data/cache config (a bad wizard can point
+        those at OneDrive) nor from the platform data-dir default, so that a
+        relocation of the data directory can never drag the snapshots into a
+        cloud-sync folder with it. The config holds live private keys, so
+        snapshots stay on local disk, out of any cloud-sync folder and out of
+        git.
+        """
+        system = platform.system()
+        if system == "Windows":
+            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser(
+                r"~\AppData\Local"
+            )
+            # NOT %LOCALAPPDATA%\Ainara - Windows paths are case-insensitive,
+            # so that is the SAME directory as the %LOCALAPPDATA%inara that
+            # the Electron Saved Games migration copies out and then renames
+            # to *.old.migrated_to_savedgames. These snapshots are the
+            # recovery path for a config wipe, so they must not sit anywhere
+            # a migration can sweep them up - hence a sibling directory whose
+            # name the migration does not match.
+            return Path(base) / "AinaraConfigBackups"
+        elif system == "Darwin":
+            return Path(
+                os.path.expanduser(
+                    "~/Library/Application Support/Ainara/config-backups"
+                )
+            )
+        base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+            "~/.local/state"
+        )
+        return Path(base) / "ainara" / "config-backups"
+
+    def _backup_config_file(self, keep: int = 15):
+        """Snapshot the just-saved config to a local, versioned backup, pruning
+        to the most recent `keep`. Best-effort — a backup failure must never
+        propagate out of save()."""
+        try:
+            src = self.config_file_path
+            if not src or not os.path.isfile(src):
+                return
+            bdir = self._local_config_backup_dir()
+            bdir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%d_%H%M%S")
+            dest = bdir / f"ainara.yaml.{stamp}.bak"
+            shutil.copy2(src, dest)
+            # Contains live keys: lock it down where the OS honours it.
+            try:
+                if os.name == "posix":
+                    os.chmod(dest, 0o600)
+            except OSError:
+                pass
+            # Prune oldest — the timestamp format sorts lexicographically.
+            snaps = sorted(bdir.glob("ainara.yaml.*.bak"))
+            for old in snaps[:-keep]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning(f"Config backup skipped (non-fatal): {e}")
 
     def update_config(self, new_config, save=True):
         """Update configuration with new values"""
@@ -631,9 +724,19 @@ class ConfigManager:
                 "use set() instead."
             )
 
-        # Recursively update the configuration
+        # Recursively deep-MERGE new values into the existing config.
+        #
+        # This deliberately does NOT delete keys that are absent from `source`.
+        # An earlier version mirrored `target` onto `source` (deleting anything
+        # not in the payload), which turned every partial PUT /config into a
+        # destructive overwrite: a caller that sent only the sections it manages
+        # would silently wipe the rest (e.g. the setup wizard dropping the
+        # `trading` and `apis.hyperliquid`/`apis.dydx` keys and emptying
+        # `llm.providers`). Merge semantics make partial updates safe — a caller
+        # only ever changes what it sends. Replacing a value (including whole
+        # lists like `llm.providers`) still works, since non-dict values are
+        # overwritten wholesale below.
         def update_dict(target, source):
-            # Update existing keys and add new ones from source
             for key, value in source.items():
                 if (
                     isinstance(value, dict)
@@ -642,12 +745,7 @@ class ConfigManager:
                 ):
                     update_dict(target[key], value)  # Recurse for nested dicts
                 else:
-                    target[key] = value  # Add new key or update existing one
-
-            # Remove keys from target that are not in source
-            keys_to_remove = [key for key in target if key not in source]
-            for key in keys_to_remove:
-                del target[key]
+                    target[key] = value  # Add new key or replace existing value
 
         update_dict(self.config, new_config)
         if save:
@@ -743,3 +841,13 @@ class ConfigManager:
 
 # Global config instance
 config = ConfigManager()
+
+
+def get_data_dir() -> Path:
+    """Return the user data directory, honouring the 'data.directory' config key.
+
+    Prefer this over ConfigManager.get_default_data_dir(), which ignores the
+    configured location. Falls back to the platform default when the key is
+    unset (e.g. before a config file has been written).
+    """
+    return Path(config.get("data.directory") or config.get_default_data_dir())

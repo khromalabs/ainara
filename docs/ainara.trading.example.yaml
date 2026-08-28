@@ -1,0 +1,154 @@
+# Delta-Neutral Funding Carry — example configuration
+#
+# Merge these keys into your existing ainara.yaml (they are additive; nothing here
+# replaces your llm/stt/tts/memory settings). Point Ainara at the file with the
+# AINARA_CONFIG environment variable.
+#
+# Full reference, and the reasoning behind every default:
+#   docs/delta_neutral_guide.md
+#
+# EVERY VALUE BELOW IS A PLACEHOLDER. Replace them. In particular, start on testnet
+# and start small — the two size caps have no protective defaults.
+#
+# Keep this file, its data, and its logs on LOCAL disk. Not OneDrive, not Dropbox:
+# a cloud-synced config holds your trading credentials, and a cloud-synced SQLite
+# ledger corrupts.
+
+apis:
+  hyperliquid:
+    network: testnet                  # testnet | mainnet
+    testnet:
+      account_address: "0xYOUR_MASTER_ADDRESS"   # used for reads
+      agent_private_key: "0xYOUR_AGENT_KEY"      # AGENT key: trades, cannot withdraw
+    mainnet:
+      account_address: "0xYOUR_MASTER_ADDRESS"
+      agent_private_key: "0xYOUR_AGENT_KEY"
+
+  dydx:
+    network: testnet                  # testnet | mainnet
+    testnet:
+      account_address: "dydx1YOUR_ADDRESS"
+      agent_private_key: "0xYOUR_PERMISSIONED_KEY"  # hex, NOT a mnemonic
+      authenticator_id: 0000                        # printed by setup_dydx_permission
+    mainnet:
+      account_address: "dydx1YOUR_ADDRESS"
+      agent_private_key: "0xYOUR_PERMISSIONED_KEY"
+      authenticator_id: 0000
+
+  executor:
+    url: "http://127.0.0.1:8130"      # where the executor daemon listens
+    timeout: 30                        # seconds; opens/closes use a longer window
+
+  # Only needed if you let Ainara trigger plans conversationally (see bureau below).
+  bureau:
+    url: "http://127.0.0.1:8010"
+
+bureau:
+  # Plans Ainara may trigger from a conversation. DENY-BY-DEFAULT: omit this whole
+  # block and she can only read, never run. Removing a name revokes it.
+  #
+  # Triggering a PLAN (rather than letting the model call the skills itself) keeps
+  # the deterministic step order, the sit-out gate, the entry/exit interlock, and the
+  # ledger write. The model picks which plan and which coin; it never composes an
+  # order. One run handles ONE coin.
+  plan_runner:
+    allowed_plans:
+      - delta_neutral_farm            # evaluate, and open if the edge clears
+      - delta_neutral_exit            # evaluate, and close if the edge decayed
+
+trading:
+  # MAINNET GATE. Must be true or the daemon refuses every mainnet order. It is a
+  # notice that you have read the venues' terms — not legal clearance, and not a
+  # substitute for checking whether you may use these venues at all.
+  jurisdiction_acknowledged: false
+
+  # ---- sizing. SET BOTH EXPLICITLY. -----------------------------------------
+  # Effective size per leg = min(margin rule, hard cap), floored to the coarser
+  # venue step. Closing orders are NEVER capped — a size limit must never be able
+  # to trap you in a position.
+  #
+  # Each leg's margin may use at most this % of the smaller account's free
+  # collateral. Unset falls back to 50%, which is not a safe default.
+  max_account_margin_pct: 20
+  executor:
+    # Absolute ceiling on one opening order. Unset means NO ceiling. Start low.
+    max_order_notional_usd: 100
+    # cross_pct: 0.05                 # how far each leg crosses the book for a taker fill
+    # fill_timeout_s: 15              # seconds to wait for a leg before unwinding
+
+  carry_engine:
+    # Sizing multiplier: notional = margin budget x leverage. NOT the venue's
+    # leverage setting. With the margin rule above, book notional is structurally
+    # capped at (max_account_margin_pct x leverage) x equity — 20% x 3 = 0.6x here.
+    leverage: 3.0
+    # The EMA-smoothed funding spread must clear this (annualized %) to open.
+    enter_threshold_annual_pct: 4.0
+    # Closes when the smoothed spread decays back inside this band, or flips sign.
+    # Defaults to the entry threshold, which is what the backtest modelled. LOWERING
+    # it adds hysteresis and holds positions longer — sensible if fees are eating
+    # you, but not backtested.
+    # exit_threshold_annual_pct: 4.0
+    # EMA span for the funding signal (~14 days). The strategy trades the SMOOTHED
+    # spread, never the raw one. Do not set this small.
+    smoothing_span_hours: 336
+
+  # ---- dYdX position isolation (only if holding >1 coin at once) -------------
+  # dYdX v4 is cross-margined PER SUBACCOUNT, so coins sharing one share a
+  # liquidation and the liquidation price cannot be computed — every leg reports
+  # "liquidation unknown" and goes unmonitored. One coin per subaccount fixes that.
+  #
+  # Requires two one-time on-chain steps with your OWNER wallet: widen the
+  # authenticator, and fund each subaccount. See the guide.
+  #dydx:
+  #  subaccounts:
+  #    BTC: 0
+  #    ETH: 1
+  #    SOL: 2
+
+  # ---- the always-on guard ---------------------------------------------------
+  watchdog:
+    # monitor = report only (default). active = auto-flatten a broken hedge and
+    # auto-shave a near-liquidation one. Run ACTIVE for anything unattended.
+    mode: monitor
+    # interval_seconds: 5
+    # liq_critical_pct: 5.0           # a leg inside this % of liquidation is critical
+    # reduce_fraction: 0.5            # how much of each leg one shave takes
+    # reduce_cooldown_seconds: 300    # minimum gap between shaves on one coin
+    # confirm_polls: 3                # broken-hedge sightings before acting
+
+  # ---- off-box alerting. Set this before running unattended. -----------------
+  # Everything above escalates locally — a log line, an alarm file, a /health field —
+  # and all three go quiet together when the machine does.
+  notify:
+    # Push: any HTTP endpoint. ntfy needs webhook_format: text; Discord needs
+    # webhook_json_field: content; Slack needs webhook_json_field: text.
+    webhook_url: "https://discord.com/api/webhooks/ID/TOKEN"
+    webhook_json_field: content
+    # DEAD-MAN SWITCH: an external monitor that alerts when the pings STOP. This is
+    # the half that reports the watchdog's own death, which nothing local can.
+    # Set period 5min / grace 5min at the monitor's end.
+    heartbeat_url: "https://hc-ping.com/YOUR-UUID"
+    # repeat_seconds: 900             # re-alert interval while a condition persists
+
+# ---------------------------------------------------------------------------
+# scheduler.yaml (a SEPARATE file, alongside ainara.yaml)
+# ---------------------------------------------------------------------------
+# services:
+#   executor:
+#     enabled: true          # supervise the daemon + watchdog; restart if they die
+#
+# plans:
+#   # ONE ENTRY PER COIN. The plans default to vars.coin=BTC, so a single schedule
+#   # only ever checks BTC and other coins would never auto-exit. Stagger them: three
+#   # simultaneous runs triple the burst load on the dYdX indexer.
+#   delta_neutral_exit:
+#     cron: "5 * * * *"
+#     enabled: true
+#     vars: { coin: BTC }
+#     avoid_if: [delta_neutral_farm]
+#   delta_neutral_exit_eth:
+#     plan: delta_neutral_exit
+#     cron: "10 * * * *"
+#     enabled: true
+#     vars: { coin: ETH }
+#     avoid_if: [delta_neutral_farm]

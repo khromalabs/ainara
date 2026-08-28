@@ -97,8 +97,10 @@ if not _running_in_venv():
 # ---------------------------------------------------------------------------
 import argparse  # noqa: E402
 import json  # noqa: E402
+import shutil  # noqa: E402
 import signal  # noqa: E402
 import subprocess  # noqa: E402
+import tempfile  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 
@@ -128,6 +130,31 @@ BUREAU_LOG = os.path.join(LOG_DIR, "bureau.log")
 ORAKLE_CMD = "python -m ainara.orakle.server"
 BUREAU_CMD = "python -m ainara.bureau.server"
 
+# Trading executor managed services — OPT-IN via scheduler.yaml `services.executor`.
+# These run from the SEPARATE executor virtualenv (the venue signing SDKs conflict
+# with Ainara's main deps), so they launch with a different interpreter than the
+# scheduler's own. Supervising them is process-lifecycle ONLY: it keeps the daemon
+# and the position watchdog alive and healthy. It NEVER opens or closes a position
+# and NEVER arms any trading cron — "the engine is up" and "the strategy is armed"
+# are deliberately separate switches.
+EXECUTOR_CMD = "python -m executor.server"
+WATCHDOG_CMD = "python -m executor.watchdog"
+EXECUTOR_LOG_NAME = "executor.log"
+WATCHDOG_LOG_NAME = "executor_watchdog.log"
+DEFAULT_EXECUTOR_HEALTH_URL = "http://127.0.0.1:8130/health"
+# The position watchdog has no HTTP surface; it freshens a heartbeat file each
+# loop. Must match executor/watchdog.py's default (trading.watchdog.heartbeat_file).
+DEFAULT_WATCHDOG_HEARTBEAT = os.path.join(
+    tempfile.gettempdir(), "ainara_executor_watchdog_heartbeat.txt"
+)
+DEFAULT_WATCHDOG_HEARTBEAT_MAX_AGE = 30  # seconds (~6× the 5s watchdog poll)
+
+
+def default_executor_python():
+    """Path to the executor virtualenv's interpreter, mirroring _find_venv_python."""
+    sub = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
+    return str(PROJECT_ROOT / "executor" / ".venv" / sub[0] / sub[1])
+
 # Default scheduler settings (overridden by ainara.yaml scheduler: section)
 DEFAULT_BUREAU_URL = "http://127.0.0.1:8010"
 DEFAULT_ORAKLE_HEALTH_URL = "http://127.0.0.1:8100/health"
@@ -137,6 +164,12 @@ DEFAULT_RESTART_GRACE_POLL_INTERVAL = 5
 DEFAULT_MAX_RESTART_ATTEMPTS = 3
 HEARTBEAT_LOG_INTERVAL = 60
 HEALTH_CHECK_TIMEOUT = 3
+
+# Log rotation for the scheduler's OWN captured logs (ORAKLE_LOG/BUREAU_LOG and,
+# when managed, executor.log/executor_watchdog.log) — see rotate_log_if_large.
+DEFAULT_LOG_ROTATE_MAX_MB = 10
+DEFAULT_LOG_ROTATE_BACKUP_COUNT = 5
+LOG_ROTATE_CHECK_INTERVAL = 60  # seconds; mirrors HEARTBEAT_LOG_INTERVAL
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +199,22 @@ DEFAULT_SCHEDULER_YAML = """\
 #restart_grace_period: 30
 #restart_grace_poll_interval: 5
 #max_restart_attempts: 3
+
+# Managed services (optional). Supervise the trading executor daemon + position
+# watchdog alongside Bureau/Orakle, so they don't have to be started by hand. This
+# is process-lifecycle only — it keeps them alive/healthy and NEVER opens a
+# position or arms any trading cron. Off by default; the daemon/watchdog run from
+# the executor's own virtualenv (auto-detected at executor/.venv).
+#services:
+#  executor:
+#    enabled: false
+#    #venv_python: "C:/path/to/executor/.venv/Scripts/python.exe"  # override auto-detect
+#    #health_url: "http://127.0.0.1:8130/health"
+#    #heartbeat_file: "..."       # must match trading.watchdog.heartbeat_file
+#    #heartbeat_max_age: 30       # seconds; watchdog considered dead past this
+#    #log_dir: "..."              # defaults to ainara.yaml logging.directory, so the
+#                                 # executor + watchdog logs sit with every other
+#                                 # Ainara log rather than in /tmp
 
 # Plan schedules
 plans:
@@ -252,7 +301,175 @@ def load_scheduler_config(raw):
         "max_restart_attempts": raw.get(
             "max_restart_attempts", DEFAULT_MAX_RESTART_ATTEMPTS
         ),
+        **_load_executor_config(raw),
     }
+
+
+def default_executor_log_dir():
+    """Where the executor services' logs go: the same Logs/ directory as every other
+    Ainara log, falling back to LOG_DIR if that cannot be resolved.
+
+    LOG_DIR is "/tmp", which on Windows resolves to C:\\tmp — not the real temp dir,
+    and not anywhere anyone thinks to look. These two files are the forensic record
+    of the component that moves money: after the 2026-07-27 incident had to be
+    reconstructed from venue fill history, "somewhere nobody looks" is not good
+    enough. `logging.directory` in ainara.yaml is where the rest already live.
+
+    Deliberately NOT applied to ORAKLE_LOG / BUREAU_LOG: those are the scheduler's
+    captured stdout, while the framework writes its OWN rotating orakle.log and
+    bureau.log into that same directory. Pointing both at one path would give one
+    file two writers.
+    """
+    try:
+        d = ConfigManager().get("logging.directory")
+        if d:
+            os.makedirs(d, exist_ok=True)
+            return d
+    except Exception as e:
+        log_error(f"could not resolve logging.directory ({e}); "
+                  f"executor logs fall back to {LOG_DIR}")
+    return LOG_DIR
+
+
+def _load_log_rotation_config():
+    """(max_bytes, backup_count) for rotating the scheduler's OWN captured
+    logs — read fresh on every check (see LOG_ROTATE_CHECK_INTERVAL) so a
+    config change takes effect without a scheduler restart, same as every
+    other trading risk-control knob.
+
+    Deliberately SEPARATE keys from the framework's own logging.max_size_mb /
+    logging.backup_count (ainara/framework/logging_setup.py, which already
+    rotates orakle.log/bureau.log/pybridge.log via RotatingFileHandler): that
+    key's default is a raw BYTE count despite its "_mb" name, so a value
+    someone actually sets there meaning megabytes would be read as bytes and
+    rotate on almost every line. New code gets its own, correctly-named keys
+    rather than inheriting that ambiguity.
+    """
+    try:
+        mgr = ConfigManager()
+        max_mb = float(mgr.get("logging.rotation.max_size_mb",
+                               DEFAULT_LOG_ROTATE_MAX_MB))
+        backups = int(mgr.get("logging.rotation.backup_count",
+                             DEFAULT_LOG_ROTATE_BACKUP_COUNT))
+        return max_mb * 1024 * 1024, backups
+    except Exception as e:
+        log_error(f"could not read log-rotation config, using defaults: {e}")
+        return (DEFAULT_LOG_ROTATE_MAX_MB * 1024 * 1024,
+                DEFAULT_LOG_ROTATE_BACKUP_COUNT)
+
+
+def rotate_log_if_large(log_file, max_bytes, backup_count):
+    """Copytruncate rotation for a log a subprocess holds open as its stdout/
+    stderr for its entire lifetime (every log start_service() manages).
+
+    Renaming the live file would leave that subprocess writing into the now-
+    invisible, renamed-away inode forever — nothing here can tell a plain
+    subprocess to reopen stdout the way SIGHUP tells nginx or syslog to.
+    Copying the content out to a numbered backup and then truncating the
+    ORIGINAL file IN PLACE keeps the subprocess's existing file descriptor
+    valid; it simply starts writing into an empty file again. This is
+    logrotate's own 'copytruncate' strategy, built for exactly this situation.
+
+    backup_count <= 0 truncates without keeping history (matches stdlib
+    RotatingFileHandler's own backupCount=0 semantics).
+    """
+    try:
+        if not os.path.exists(log_file) or os.path.getsize(log_file) < max_bytes:
+            return
+        oldest = f"{log_file}.{backup_count}"
+        if backup_count > 0 and os.path.exists(oldest):
+            os.remove(oldest)
+        for i in range(backup_count - 1, 0, -1):
+            src, dst = f"{log_file}.{i}", f"{log_file}.{i + 1}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+        if backup_count > 0:
+            shutil.copy2(log_file, f"{log_file}.1")
+        with open(log_file, "r+") as f:
+            f.truncate(0)
+        log_info(f"rotated {log_file} (reached {max_bytes} bytes)")
+    except Exception as e:
+        # Never let log-hygiene housekeeping take down the supervisor loop.
+        log_error(f"log rotation failed for {log_file}: {e}")
+
+
+def _load_executor_config(raw):
+    """Executor managed-services settings from scheduler.yaml `services.executor`.
+
+    Default OFF: users who don't run the trading strategy never spawn its daemon.
+
+    `enabled` also honours `trading.executor.autostart` in ainara.yaml (OR'd with
+    scheduler.yaml's own key), because that file — not this one — is what Polaris's
+    setup wizard already reads and writes via the pybridge /config API. Routing the
+    toggle through ainara.yaml means the GUI never has to locate or parse
+    scheduler.yaml itself: doing that in Node would mean re-deriving the
+    AINARA_CONFIG-aware config-directory resolution ConfigManager already owns, which
+    is exactly the split-brain that made Bureau load zero plans (see docs/
+    progress_report.md 1.1) — one bug from duplicating this logic is enough.
+    """
+    svc = ((raw.get("services") or {}).get("executor") or {})
+    log_dir = svc.get("log_dir") or default_executor_log_dir()
+    autostart_flag = bool(ConfigManager().get("trading.executor.autostart", False))
+    return {
+        "executor_enabled": bool(svc.get("enabled", False)) or autostart_flag,
+        "executor_python": svc.get("venv_python") or default_executor_python(),
+        "executor_log": os.path.join(log_dir, EXECUTOR_LOG_NAME),
+        "watchdog_log": os.path.join(log_dir, WATCHDOG_LOG_NAME),
+        "executor_health_url": svc.get(
+            "health_url", DEFAULT_EXECUTOR_HEALTH_URL),
+        "watchdog_heartbeat_file": svc.get(
+            "heartbeat_file", DEFAULT_WATCHDOG_HEARTBEAT),
+        "watchdog_heartbeat_max_age": svc.get(
+            "heartbeat_max_age", DEFAULT_WATCHDOG_HEARTBEAT_MAX_AGE),
+    }
+
+
+def executor_services(sched_config):
+    """The executor daemon + position watchdog as managed-service descriptors,
+    or an empty list when management is disabled. The daemon probes via HTTP; the
+    watchdog (no HTTP surface) via its heartbeat file."""
+    if not sched_config.get("executor_enabled"):
+        return []
+    py = sched_config["executor_python"]
+    cwd = str(PROJECT_ROOT)
+    return [
+        {"name": "executor", "cmd": EXECUTOR_CMD,
+         "log": sched_config["executor_log"],
+         "python_exe": py, "cwd": cwd,
+         "health": {"type": "http", "url": sched_config["executor_health_url"]}},
+        {"name": "watchdog", "cmd": WATCHDOG_CMD,
+         "log": sched_config["watchdog_log"],
+         "python_exe": py, "cwd": cwd,
+         "health": {"type": "heartbeat",
+                    "path": sched_config["watchdog_heartbeat_file"],
+                    "max_age": sched_config["watchdog_heartbeat_max_age"]}},
+    ]
+
+
+def restart_managed_service(svc, sched_config):
+    """Stop and restart a managed service (cross-venv aware), waiting for its own
+    health probe. The executor-service analogue of restart_service."""
+    identifier = svc["cmd"].split(" -m ")[1]
+    log_info(f"Restarting {svc['name']}...")
+    stop_process(identifier)
+    time.sleep(2)
+    success, msg = start_service(
+        svc["name"], svc["cmd"], svc["log"], python_exe=svc["python_exe"],
+        cwd=svc["cwd"])
+    if not success:
+        log_error(msg)
+        return False
+    grace = sched_config["restart_grace_period"]
+    poll = sched_config["restart_grace_poll_interval"]
+    elapsed = 0
+    while elapsed < grace:
+        time.sleep(poll)
+        elapsed += poll
+        if check_health(svc):
+            log_info(f"{svc['name']} is healthy after restart")
+            return True
+    log_error(f"{svc['name']} did not become healthy within {grace}s")
+    return False
 
 
 def load_schedules(raw):
@@ -331,6 +548,27 @@ def check_service_health(url, timeout=None):
         return False
 
 
+def check_heartbeat(path, max_age_s):
+    """Liveness by file freshness — for a service with no HTTP surface (the
+    position watchdog). True if the file exists and its timestamp is recent."""
+    try:
+        if not os.path.exists(path):
+            return False
+        with open(path, encoding="utf-8") as fh:
+            ts = float(fh.read().strip())
+        return (time.time() - ts) <= max_age_s
+    except (OSError, ValueError):
+        return False
+
+
+def check_health(svc):
+    """Health of a managed service, dispatching on its declared probe type."""
+    h = svc["health"]
+    if h["type"] == "heartbeat":
+        return check_heartbeat(h["path"], h["max_age"])
+    return check_service_health(h["url"])
+
+
 # ---------------------------------------------------------------------------
 # Process management
 # ---------------------------------------------------------------------------
@@ -380,18 +618,35 @@ def stop_process(identifier):
             pass
 
 
-def start_service(service_name, cmd, log_file):
-    """Start a service if not already running. Returns (success, message)."""
+def start_service(service_name, cmd, log_file, python_exe=None, cwd=None):
+    """Start a service if not already running. Returns (success, message).
+
+    `python_exe` selects the interpreter — defaults to the scheduler's own
+    (sys.executable) for Orakle/Bureau, but the executor services pass their
+    separate venv's interpreter so they load the right dependency set.
+
+    `cwd` sets the working directory. The `ainara` package is pip-installed so
+    Orakle/Bureau resolve from anywhere, but the `executor` package is run in place
+    via `-m` and only imports when the cwd is the project root — so the executor
+    services pass it explicitly.
+    """
     if is_service_running(cmd):
         return True, f"{service_name} is already running"
 
     try:
-        with open(log_file, "w") as log:
+        # APPEND, never truncate. A supervisor that restarts a crashed service and
+        # erases the log explaining why it crashed is worse than no supervisor: the
+        # 2026-07-27 watchdog incident was diagnosed from venue fills precisely
+        # because its own output was gone, and auto-restart would have destroyed it
+        # a second time. Growth is bounded in practice — these services log only on
+        # risk, not per poll.
+        with open(log_file, "a") as log:
             module = cmd.split(" -m ")[1]
-            full_cmd = f"{sys.executable} -m {module}"
+            full_cmd = f'"{python_exe or sys.executable}" -m {module}'
 
             if os.name == "nt":
-                subprocess.Popen(full_cmd, stdout=log, stderr=log, shell=True)
+                subprocess.Popen(full_cmd, stdout=log, stderr=log, shell=True,
+                                 cwd=cwd)
             else:
                 subprocess.Popen(
                     full_cmd,
@@ -399,6 +654,7 @@ def start_service(service_name, cmd, log_file):
                     stderr=log,
                     shell=True,
                     executable="/bin/bash",
+                    cwd=cwd,
                 )
 
         time.sleep(2)
@@ -411,13 +667,24 @@ def start_service(service_name, cmd, log_file):
         return False, f"Error starting {service_name}: {e}"
 
 
-def stop_services():
-    """Stop Bureau and Orakle."""
+def stop_services(sched_config=None):
+    """Stop Bureau and Orakle — and the executor services too when managed."""
     log_info("Stopping services...")
     stop_process("ainara.bureau.server")
     stop_process("ainara.orakle.server")
 
-    for log_file in [ORAKLE_LOG, BUREAU_LOG]:
+    logs = [ORAKLE_LOG, BUREAU_LOG]
+    if sched_config and sched_config.get("executor_enabled"):
+        # Stop the watchdog BEFORE the daemon: with the daemon already gone the
+        # watchdog cannot act on a broken hedge anyway, and this avoids it logging
+        # spurious alarms during the brief teardown window.
+        stop_process("executor.watchdog")
+        stop_process("executor.server")
+        # The executor logs are deliberately NOT added to `logs` below: they are the
+        # trading stack's forensic record and a clean stop is no reason to destroy
+        # it. "Why did it stop?" is a question you ask AFTER stopping.
+
+    for log_file in logs:
         if os.path.exists(log_file):
             os.remove(log_file)
 
@@ -455,12 +722,19 @@ def restart_service(service_name, cmd, log_file, health_url, sched_config):
 # ---------------------------------------------------------------------------
 # Plan triggering
 # ---------------------------------------------------------------------------
-def trigger_plan(plan_name, bureau_url, avoid_if=None):
-    """Trigger a plan execution via Bureau API."""
+def trigger_plan(plan_name, bureau_url, avoid_if=None, plan_vars=None):
+    """Trigger a plan execution via Bureau API.
+
+    plan_vars (a flat dict, e.g. {"coin": "ETH"}) overrides the plan's own vars
+    for this run only — how one coin-parameterized plan is pointed at different
+    assets.
+    """
     url = f"{bureau_url}/v1/conductor/plans/{plan_name}/run"
     body = {}
     if avoid_if:
         body["avoid_if"] = avoid_if
+    if plan_vars:
+        body["vars"] = plan_vars
     try:
         response = requests.post(url, json=body or None, timeout=30)
         if response.status_code == 200 or response.status_code == 202:
@@ -516,10 +790,17 @@ def build_scheduler(schedules, bureau_url):
                 day_of_week=parts[4],
             )
             avoid_if = plan_config.get("avoid_if")
+            # Optional per-schedule vars override (e.g. vars: {coin: ETH}) so the
+            # same coin-parameterized plan can be scheduled per asset. The job id
+            # is still the schedule key, so a coin-specific schedule needs its own
+            # key (e.g. a "target" plan + distinct key) — kept simple here: one
+            # schedule entry, one job, its own vars.
+            plan_vars = plan_config.get("vars")
+            target_plan = plan_config.get("plan", plan_name)
             scheduler.add_job(
                 trigger_plan,
                 trigger=trigger,
-                args=[plan_name, bureau_url, avoid_if],
+                args=[target_plan, bureau_url, avoid_if, plan_vars],
                 id=plan_name,
                 name=f"Plan: {plan_name}",
                 replace_existing=True,
@@ -616,8 +897,15 @@ def watchdog_loop(sched_config):
         },
     }
 
-    restart_counters = {name: 0 for name in services}
+    # Executor services (opt-in) are supervised alongside — but their failure is
+    # NON-FATAL: an unhealthy trading daemon must not take down the rest of Ainara,
+    # so it is retried indefinitely rather than triggering the shutdown that a core
+    # service failure does.
+    managed = executor_services(sched_config)
+    all_counted = list(services) + [s["name"] for s in managed]
+    restart_counters = {name: 0 for name in all_counted}
     last_heartbeat = time.time()
+    last_log_rotation_check = time.time()
     interval = sched_config["health_check_interval"]
     max_attempts = sched_config["max_restart_attempts"]
 
@@ -628,9 +916,23 @@ def watchdog_loop(sched_config):
         now = time.time()
         if now - last_heartbeat >= HEARTBEAT_LOG_INTERVAL:
             log_info(
-                f"Watchdog heartbeat — monitoring {len(services)} service(s)"
+                f"Watchdog heartbeat — monitoring "
+                f"{len(services) + len(managed)} service(s)"
             )
             last_heartbeat = now
+
+        # Log rotation for every log this scheduler captures directly (raw
+        # subprocess stdout/stderr, never rotated on its own — see
+        # rotate_log_if_large). Checked far less often than health, since the
+        # common case is just a cheap size stat; `managed` is empty when the
+        # executor services aren't enabled, so this naturally covers exactly
+        # the logs that exist.
+        if now - last_log_rotation_check >= LOG_ROTATE_CHECK_INTERVAL:
+            max_bytes, backup_count = _load_log_rotation_config()
+            for log_file in ([s["log"] for s in services.values()]
+                            + [s["log"] for s in managed]):
+                rotate_log_if_large(log_file, max_bytes, backup_count)
+            last_log_rotation_check = now
 
         for name, svc in services.items():
             if not check_service_health(svc["health_url"]):
@@ -654,8 +956,24 @@ def watchdog_loop(sched_config):
                             f"{name} failed to restart after "
                             f"{max_attempts} attempts. Shutting down."
                         )
-                        stop_services()
+                        stop_services(sched_config)
                         sys.exit(1)
+            else:
+                restart_counters[name] = 0
+
+        # Executor services: restart on failure, but NEVER shut Ainara down for them.
+        for svc in managed:
+            name = svc["name"]
+            if not check_health(svc):
+                log_info(f"{name} (executor) is unhealthy — restarting")
+                if restart_managed_service(svc, sched_config):
+                    restart_counters[name] = 0
+                else:
+                    restart_counters[name] += 1
+                    log_error(
+                        f"{name} restart failed "
+                        f"({restart_counters[name]} in a row); will keep retrying. "
+                        "The trading stack is degraded — check its log.")
             else:
                 restart_counters[name] = 0
 
@@ -673,6 +991,16 @@ def print_status(sched_config, schedules):
     print("Service Status:")
     print(f"  Orakle:  {'running' if orakle_healthy else 'stopped'}")
     print(f"  Bureau:  {'running' if bureau_healthy else 'stopped'}")
+    managed = executor_services(sched_config)
+    if managed:
+        for svc in managed:
+            label = "Executor" if svc["name"] == "executor" else "Watchdog"
+            probe = ("heartbeat" if svc["health"]["type"] == "heartbeat"
+                     else "health")
+            print(f"  {label}: {'running' if check_health(svc) else 'stopped'}"
+                  f"  ({probe})")
+    else:
+        print("  Executor: not managed (services.executor.enabled: false)")
     print()
     print("Scheduled Plans:")
     if not schedules:
@@ -727,6 +1055,14 @@ def parse_args():
             "(used with --run-plan)"
         ),
     )
+    parser.add_argument(
+        "--coin",
+        metavar="SYMBOL",
+        help=(
+            "Override the coin for a coin-parameterized plan, e.g. ETH or SOL "
+            "(used with --run-plan; sends vars={coin: SYMBOL})"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -741,7 +1077,7 @@ def main():
 
     # Handle --stop
     if args.stop:
-        stop_services()
+        stop_services(sched_config)
         return
 
     # Handle --status
@@ -776,8 +1112,10 @@ def main():
             if args.avoid_if
             else None
         )
+        plan_vars = {"coin": args.coin.strip().upper()} if args.coin else None
         success = trigger_plan(
-            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if
+            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if,
+            plan_vars=plan_vars,
         )
         sys.exit(0 if success else 1)
 
@@ -829,6 +1167,29 @@ def main():
         sys.exit(1)
 
     log_info("All services healthy")
+
+    # Start the trading executor managed services (opt-in). Process lifecycle only
+    # — this brings the daemon + position watchdog up and keeps them healthy; it
+    # does NOT open any position or arm any trading cron. A failure here does NOT
+    # abort the scheduler: the rest of Ainara should run even if the (optional)
+    # trading stack can't start.
+    for svc in executor_services(sched_config):
+        log_info(f"Starting {svc['name']} (executor venv)...")
+        ok, msg = start_service(svc["name"], svc["cmd"], svc["log"],
+                                python_exe=svc["python_exe"], cwd=svc["cwd"])
+        log_info(f"  {msg}")
+    for svc in executor_services(sched_config):
+        healthy, waited = False, 0
+        while waited < sched_config["restart_grace_period"]:
+            if check_health(svc):
+                healthy = True
+                break
+            time.sleep(sched_config["restart_grace_poll_interval"])
+            waited += sched_config["restart_grace_poll_interval"]
+        log_info(f"  {svc['name']}: {'healthy' if healthy else 'NOT healthy yet'}")
+        if not healthy:
+            log_error(f"{svc['name']} did not come up — the trading stack may be "
+                      "unavailable; check its log and the executor venv.")
 
     # Build and start the cron scheduler
     scheduler = build_scheduler(schedules, sched_config["bureau_url"])

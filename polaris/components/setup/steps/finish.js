@@ -55,6 +55,27 @@ async function init(ctx) {
         comringNotificationsCheckbox.checked = config.get('ui.comringNotifications');
     }
 
+    const autoStartCheckbox = document.getElementById('auto-start-checkbox');
+    if (autoStartCheckbox) {
+        autoStartCheckbox.addEventListener('change', markFinishModified);
+        autoStartCheckbox.checked = config.get('startup.autoStart', false);
+    }
+
+    // Trading automation checkboxes: listeners only, here. Unlike the checkboxes
+    // above these read/write the BACKEND config (ainara.yaml, shared with
+    // Orakle/the executor/watchdog), not the local polaris.json, so their
+    // `.checked` state can't be set synchronously at page load —
+    // initializeTradingAutomationSection() populates it once backendConfig is
+    // fetched, whenever the finish panel becomes active.
+    const executorAutostartCheckbox = document.getElementById('executor-autostart-checkbox');
+    if (executorAutostartCheckbox) {
+        executorAutostartCheckbox.addEventListener('change', markFinishModified);
+    }
+    const watchdogActiveCheckbox = document.getElementById('watchdog-active-checkbox');
+    if (watchdogActiveCheckbox) {
+        watchdogActiveCheckbox.addEventListener('change', markFinishModified);
+    }
+
     const backupDirectoryInput = document.getElementById('backup-directory-input');
     const browseBackupDirectoryBtn = document.getElementById('browse-backup-directory-btn');
 
@@ -88,6 +109,51 @@ async function init(ctx) {
         loadAndDisplayCapabilities(ctx).catch(err => {
             console.error('Error loading capabilities:', err);
         });
+        initializeTradingAutomationSection(ctx).catch(err => {
+            console.error('Error initializing trading automation section:', err);
+        });
+    }
+}
+
+// Shows the Trading Automation section only once real Hyperliquid + dYdX
+// credentials are present (both venues are required for a delta-neutral hedge),
+// and populates the two checkboxes from the backend config (ainara.yaml) — unlike
+// their sibling checkboxes on this step, these read/write trading.executor.autostart
+// and trading.watchdog.mode, not the local polaris.json.
+async function initializeTradingAutomationSection(ctx) {
+    const section = document.getElementById('trading-automation-section');
+    if (!section) return;
+
+    const { modifiedFields, api } = ctx;
+
+    try {
+        const backendConfig = await api.loadBackendConfig();
+        const hlAddr = backendConfig?.apis?.hyperliquid?.mainnet?.account_address
+            || backendConfig?.apis?.hyperliquid?.testnet?.account_address;
+        const dydxAddr = backendConfig?.apis?.dydx?.mainnet?.account_address
+            || backendConfig?.apis?.dydx?.testnet?.account_address;
+        // extractApiKeysFromConfig treats an unset key as the literal placeholder
+        // "<key>", not an empty string — an unconfigured field is NOT truthy-but-set.
+        const isSet = (v) => !!v && v !== '<key>';
+        const tradingConfigured = isSet(hlAddr) && isSet(dydxAddr);
+
+        section.classList.toggle('hidden', !tradingConfigured);
+        if (!tradingConfigured) return;
+
+        // Skip re-setting a checkbox the user already toggled this session — the
+        // finish panel can be re-activated by navigating back and forward before
+        // clicking Finish, and re-fetching the SAVED backend value would silently
+        // discard an in-progress, unsaved change.
+        const executorCheckbox = document.getElementById('executor-autostart-checkbox');
+        if (executorCheckbox && !modifiedFields.finish.has('executor-autostart-checkbox')) {
+            executorCheckbox.checked = !!backendConfig?.trading?.executor?.autostart;
+        }
+        const watchdogCheckbox = document.getElementById('watchdog-active-checkbox');
+        if (watchdogCheckbox && !modifiedFields.finish.has('watchdog-active-checkbox')) {
+            watchdogCheckbox.checked = backendConfig?.trading?.watchdog?.mode === 'active';
+        }
+    } catch (error) {
+        console.error('Error initializing trading automation section:', error);
     }
 }
 
@@ -195,6 +261,43 @@ async function saveFinishStepConfig(ctx) {
             if (!backendConfig.backup) backendConfig.backup = {};
             backendConfig.backup.directory = backupDirectory;
             backendConfig.backup.enabled = !!backupDirectory;
+            await api.saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+        }
+
+        if (modifiedFields.finish.has('auto-start-checkbox')) {
+            config.set('startup.autoStart', document.getElementById('auto-start-checkbox').checked);
+            // Notify the main process to apply the setting immediately
+            ctx.ipcRenderer.send('set-auto-start');
+        }
+
+        if (modifiedFields.finish.has('executor-autostart-checkbox')
+            || modifiedFields.finish.has('watchdog-active-checkbox')) {
+            // Backend keys (ainara.yaml), not local polaris.json — read by
+            // scripts/scheduler.py (executor.autostart) and the standalone
+            // watchdog process (watchdog.mode), neither of which orakle/pybridge
+            // hot-reload for: both take effect the next time those processes
+            // (re)start, which the wizard copy says explicitly.
+            const backendConfig = await api.loadBackendConfig();
+            if (!backendConfig.trading) {
+                backendConfig.trading = {};
+            }
+
+            if (modifiedFields.finish.has('executor-autostart-checkbox')) {
+                const isChecked = document.getElementById('executor-autostart-checkbox').checked;
+                if (!backendConfig.trading.executor) {
+                    backendConfig.trading.executor = {};
+                }
+                backendConfig.trading.executor.autostart = isChecked;
+            }
+
+            if (modifiedFields.finish.has('watchdog-active-checkbox')) {
+                const isChecked = document.getElementById('watchdog-active-checkbox').checked;
+                if (!backendConfig.trading.watchdog) {
+                    backendConfig.trading.watchdog = {};
+                }
+                backendConfig.trading.watchdog.mode = isChecked ? 'active' : 'monitor';
+            }
+
             await api.saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         }
 

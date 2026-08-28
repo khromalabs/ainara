@@ -39,6 +39,10 @@ from .base import CapabilityProvider
 logger = logging.getLogger(__name__)
 
 
+def _to_pascal(s: str) -> str:
+    return "".join(w.capitalize() for w in s.split("_") if w)
+
+
 class BasePythonSkillProvider(CapabilityProvider):
     """Abstract base provider for discovering Python-based skills from the filesystem."""
 
@@ -367,7 +371,7 @@ class BasePythonSkillProvider(CapabilityProvider):
                     # Flat structure: e.g., "hello.py" → parts = ("hello",)
                     if len(parts) == 1:
                         file_name = parts[0]
-                        class_name = class_name_prefix + file_name.capitalize()
+                        class_name = class_name_prefix + _to_pascal(file_name)
                     else:
                         logger.warning(
                             f"Skipping nested file in flat mode: {skill_file}"
@@ -377,10 +381,14 @@ class BasePythonSkillProvider(CapabilityProvider):
                     # Subdirectory structure: e.g., "dir/sub.py" → parts = ("dir", "sub")
                     if len(parts) == 2:
                         dir_name, file_name = parts
+                        # _to_pascal, not str.capitalize: a multi-word file stem
+                        # like "carry_engine.py" must resolve to CarryEngine
+                        # (class TradingCarryEngine), and capitalize() would
+                        # lowercase everything after the first letter.
                         class_name = (
                             class_name_prefix
-                            + dir_name.capitalize()
-                            + file_name.capitalize()
+                            + _to_pascal(dir_name)
+                            + _to_pascal(file_name)
                         )
                     else:
                         logger.warning(

@@ -1,0 +1,90 @@
+# Ainara Conductor plan: delta-neutral funding-carry farm.
+#
+# Runs on a schedule via scripts/scheduler.py (Ainara Sentinel Scheduler). To
+# activate, copy this file into your Ainara config's bureau/ directory
+# (e.g. %APPDATA%/ainara/bureau/) so the Conductor loads it, then reference it in
+# scheduler.yaml with a cron.
+#
+# Flow:  evaluate (deterministic) -> execute (agent, only if not sitting out) -> report
+#
+# SAFETY: the execute step only runs when the engine says "open". It places live
+# orders through the executor daemon, which enforces its own dry_run / testnet /
+# mainnet-jurisdiction gate. Keep the executor on testnet until you have fully
+# validated a live run.
+
+on_failure: notify
+max_parallel: 1
+scratchpad_max_chars: 12000
+
+# Plan input variables. `coin` parameterizes the whole plan; BTC is the default,
+# and a run overrides it with vars, e.g.:
+#   scripts/scheduler.py --run-plan delta_neutral_farm --coin ETH
+# or a scheduler.yaml entry with `vars: {coin: SOL}`. Both venues support the
+# majors (dYdX clobPairId BTC=0, ETH=1, SOL=5); the engine maps coin -> the two
+# venue symbols itself (BTC / BTC-USD).
+vars:
+  coin: BTC
+
+defaults:
+  execution_timeout: 180
+  max_turns: 12
+
+steps:
+
+  # 1. Deterministic decision. carry_engine.decide fetches its own funding
+  #    history for both venues, computes the EMA-smoothed cross-venue spread, and
+  #    returns a flat verdict including `sit_out` (the gate for the next step).
+  evaluate:
+    type: skill
+    skill: trading_carry_engine
+    params:
+      action: decide
+      coin: "{{vars.coin}}"
+      capital_usd: 500
+
+  # 2. Execution — deterministic, no LLM. The engine's verdict is already a
+  #    complete instruction, so there is no judgement left to exercise here; an
+  #    agent could only retype the fields, slowly and unreliably.
+  #
+  #    The daemon's /hedge/open owns the whole sequence: refuse unless flat ->
+  #    short leg -> confirm filled -> long leg -> confirm filled -> unwind the
+  #    short if the long fails. The only outcomes are BOTH legs on or NOTHING on,
+  #    and the unwind is code rather than a prose instruction.
+  #
+  #    Two independent gates guard this step: avoid_step_if below, and the skill's
+  #    own re-check of the verdict's sit_out (which holds even if the Conductor
+  #    fails to resolve the path — it fails OPEN).
+  execute:
+    type: skill
+    skill: trading_executor_client
+    depends_on: [evaluate]
+    avoid_step_if: "evaluate.response.result.sit_out"
+    params:
+      action: open_hedge
+      # The whole verdict, not field-by-field: scratchpad templates only resolve
+      # one level ({{step.field}}), so {{evaluate.response.result.size}} would
+      # silently not resolve. The skill unwraps and parses this.
+      decision: "{{evaluate.response}}"
+      dry_run: false
+
+  # 3. Report the outcome (runs whether or not execute was skipped — a skipped
+  #    step still completes, with an empty response). This is the one step where
+  #    an LLM earns its place: it turns the run into prose for a human, after the
+  #    money has already moved, so a bad summary costs a paragraph, not capital.
+  #    It must depend on `execute`, not just `evaluate` — it reads
+  #    {{execute.response}}, and without the edge the DAG is free to run it first.
+  report:
+    type: agent
+    depends_on: [evaluate, execute]
+    goal: |
+      Summarize this delta-neutral funding-carry run in a few plain sentences for
+      the operator. The engine's decision was:
+      {{evaluate.response}}
+
+      If the action was "sit_out", state that no position was opened and why (the
+      smoothed spread did not clear the entry threshold). If the action was "open",
+      summarize the execution outcome:
+      {{execute.response}}
+
+      Keep it concise and factual: the coin, the decision, the venues/sides if
+      opened, and whether the position is confirmed hedged or was unwound.

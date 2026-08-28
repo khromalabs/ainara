@@ -1,0 +1,1973 @@
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
+#
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
+#
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Lesser General Public License for more details.
+
+"""Read-only status + review of the delta-neutral funding-carry positions.
+
+Answers two questions, and nothing that moves money:
+  - status: what is open RIGHT NOW — is it hedged, how close to liquidation, and
+    what is it earning or paying this hour.
+  - review: what has already CLOSED — reconstructs completed round-trips from each
+    venue's own public history (fills + funding payments) so the model can reflect
+    on whether the strategy actually earned out, not just what it was predicted to.
+
+Deliberately key-free and daemon-free: every read is a PUBLIC venue endpoint keyed
+by the account address in config, so it still works when the executor daemon is
+down — which is exactly the moment you most want to see an unmanaged position. It
+holds no keys, places no orders, and carries no jurisdiction gate (like the other
+read-only trading data skills).
+
+The funding-direction math here is the convention settled empirically against real
+2026-07-22 mainnet payments on BOTH venues (do not "correct" it from first
+principles): a position's per-hour funding cash-flow is
+
+    receive_per_hour = -signed_size * rate * mark          # + = you RECEIVE
+
+For a Hyperliquid short (szi<0) at a positive rate this is positive (a short is
+paid when funding is positive); for a dYdX long (size>0) at a negative rate it is
+positive (a long is paid when funding is negative). Both were reproduced to the
+cent against the venues' own settled payments.
+"""
+
+import datetime
+import logging
+import time
+from typing import Annotated, Any, Dict, List, Literal, Optional
+
+import requests
+
+from ainara.framework.config import config
+from ainara.framework.skill import Skill
+from ainara.orakle.skills.trading import _ledger
+
+HOURS_PER_YEAR = 24 * 365
+DAYS_PER_YEAR = 365.0
+# Below this hold, annualizing a realized rate amplifies noise (a handful of
+# funding hours, or the fixed round-trip fee, scaled to a year) — so realized-vs-
+# predicted RATE metrics are only trusted past it. Raw dollars are always reported.
+MIN_RELIABLE_HOLD_DAYS = 1.0
+
+# A venue size at or below this is flat. Used to tell a genuinely open leg from a
+# review window that simply does not reach back to the leg's opening fills.
+_FLAT_SIZE_EPS = 1e-9
+
+# The ledger's two stamps look like a trade's bounds and are not. Both are
+# recorded when a ROUTE completed rather than when a FILL happened, and they err
+# in OPPOSITE directions: `opened_at` is written after the two-leg open finished,
+# so the opening fills precede it, while `closed_at` is written when the closing
+# order was sent, so the closing fills follow it. Observed on a real BTC trade:
+# the Hyperliquid opening fill sits 3 seconds before its own `opened_at`.
+#
+# Since the price PnL IS the sum of signed fill cash, clipping either end drops a
+# whole leg's notional out of the sum — and clipping both does not look wrong,
+# because a window that catches no fills sums to $0.00, exactly what a healthy
+# hedge reports. So the window is extended at both ends to the fills that
+# actually opened and closed the position. Close is the looser of the two: a
+# close can be retried or filled in pieces.
+_OPEN_SETTLE_SECONDS = 300.0
+_CLOSE_SETTLE_SECONDS = 900.0
+
+# Beyond this, the two legs were not simultaneously in the market and the
+# position carried outright directional exposure. Any price PnL from that is a
+# REAL result — a broken hedge — not a measurement artifact, and it must be
+# counted rather than excluded. Observed live: two legs closing 8.01 hours apart
+# while BTC fell 2.54%, which the plausibility guard called a measurement fault.
+_MAX_HEDGED_LEG_GAP_SECONDS = 60.0
+
+# A benchmark window shorter than one intended hold cannot say anything about
+# timing: over a day, execution cost dwarfs carry and the annualized figures are
+# noise. Observed: a 1.02-day window reporting -212% annualized on $59 notional.
+MIN_BENCHMARK_WINDOW_DAYS = 14.0
+
+# `review`'s default window, derived from the hold it has to contain rather than
+# fixed. A 7-day default against a 14-day strategy could not see a completed
+# trade at all, and reported the half it could see as a live position.
+MIN_REVIEW_LOOKBACK_DAYS = 90.0
+REVIEW_LOOKBACK_HOLDS = 6
+
+# Both legs of a delta-neutral hedge move together and cancel, so realized price
+# PnL is slippage and residual imbalance — a small fraction of notional. Past
+# this it is a measurement fault, most often a closing fill stamped outside the
+# trade's recorded window, and it is reported as one rather than as a result.
+MAX_PLAUSIBLE_PRICE_PNL_FRACTION = 0.02
+
+# An annualized net past this is not a funding carry. Deliberately loose: the
+# point is to refuse the absurd, not to adjudicate a good quarter. Only applied
+# to holds long enough for an annualization to mean anything (MIN_RELIABLE_HOLD_DAYS).
+MAX_PLAUSIBLE_NET_ANNUAL_PCT = 300.0
+
+# Above this share of the window spent positioned, the timing layer did not time
+# anything: it held. The benchmark asks whether choosing WHEN to be on beats
+# always being on, and a rule that was never off has not answered that question —
+# so the comparison is reported and the verdict withheld, the same posture the
+# plausibility guard takes toward a number it cannot stand behind.
+#
+# This subsumes the single-trade case, and for a better reason than counting
+# trades would: the benchmark's window runs from the first recorded open to the
+# last recorded close, so ONE trade spans its own window exactly and always
+# reports 100% occupancy.
+MAX_VERDICT_OCCUPANCY = 0.99
+
+# Ordering for rolling several coins' hedge health up to one book-wide verdict.
+_HEALTH_RANK = {"flat": 0, "ok": 1, "warn": 2, "critical": 3}
+
+_HL_INFO = {
+    "mainnet": "https://api.hyperliquid.xyz/info",
+    "testnet": "https://api.hyperliquid-testnet.xyz/info",
+}
+_DYDX_INDEXER = {
+    "mainnet": "https://indexer.dydx.trade",
+    "testnet": "https://indexer.v4testnet.dydx.exchange",
+}
+
+
+def _dydx_subaccount_for(coin):
+    """Subaccount holding `coin` on dYdX, per trading.dydx.subaccounts.
+
+    Mirrors DydxExecutor.subaccount_for and the carry engine's copy. Unmapped coins
+    use 0, so an unset map behaves exactly as it did before isolation.
+    """
+    m = config.get("trading.dydx.subaccounts", {}) or {}
+    return int({str(k).upper(): v for k, v in m.items()}.get(
+        (coin or "").split("-")[0].upper(), 0))
+
+
+def _dydx_liquidation_price(equity, size_signed, mark_px, mmf):
+    """Cross-margin liquidation price for a SINGLE-position dYdX subaccount.
+
+    dYdX does not hand out a liquidationPx (Hyperliquid does), so derive it. dYdX
+    v4 is cross-margined per subaccount: liquidation triggers once equity falls to
+    the maintenance margin requirement. With one open position,
+
+        P = (equity - size*mark) / (|size|*mmf - size)
+
+    Returns None when price alone can never liquidate the leg (e.g. a long whose
+    equity exceeds its notional) — "no reachable liquidation", NOT "unknown". This
+    mirrors executor/venues/dydx.liquidation_price, which is validated to reproduce
+    Hyperliquid's own reported liq to the dollar; kept in sync by hand because the
+    executor lives in a separate venv this skill cannot import.
+
+    SINGLE-POSITION ONLY: with several positions in one subaccount the MMR is the
+    sum across them, so _dydx_leg does NOT call this then — it degrades to
+    "liquidation unknown", mirroring executor/venues/dydx.state().
+    """
+    s = float(size_signed)
+    mark_px = float(mark_px)
+    if not s or mark_px <= 0:
+        return None
+    denom = abs(s) * float(mmf) - s
+    if denom == 0:
+        return None
+    p = (float(equity) - s * mark_px) / denom
+    if p <= 0:
+        return None
+    if s > 0 and p >= mark_px:
+        return None
+    if s < 0 and p <= mark_px:
+        return None
+    return p
+
+
+class TradingPortfolio(Skill):
+    """Read-only status and post-mortem review of the delta-neutral carry book.
+
+    Aggregates the two venue legs into one picture a human can read: whether the
+    hedge is intact and balanced, how far each leg sits from liquidation, and the
+    live funding cash-flow. Its `review` action reconstructs already-closed
+    round-trips from public venue history so the strategy can be judged on realized
+    results. No keys, no orders, no daemon dependency.
+    """
+
+    matcher_info = (
+        "Use this skill to CHECK or REVIEW the delta-neutral funding-carry"
+        " (cross-venue perpetual) positions on Hyperliquid and dYdX: whether the"
+        " position is open and hedged, how balanced the two legs are, how close"
+        " each leg is to liquidation, how much funding it is earning or paying"
+        " right now, and its unrealized PnL. Also use it to REVIEW closed trades"
+        " and reflect on performance: realized net, funding captured, fees, and"
+        " how long positions were held. Read-only; it never opens or closes"
+        " anything. Keywords: position status, how is my trade doing, am I hedged,"
+        " funding earned, carry PnL, review my trades, closed positions, trading"
+        " performance, how did the strategy do. Handles a SINGLE asset (BTC, ETH,"
+        " SOL) or the WHOLE BOOK at once (all positions / my portfolio / how is"
+        " everything doing) via coin='ALL'."
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.name = "portfolio"
+        self.logger = logging.getLogger(__name__)
+
+    # ------------------------------------------------------------------
+    # config / addresses
+    # ------------------------------------------------------------------
+    def _target(self, venue):
+        """(network, account_address) for a venue, from the SAME config the
+        executor trades on — so status reads exactly the account that is live."""
+        network = config.get(f"apis.{venue}.network", "mainnet")
+        addr = config.get(f"apis.{venue}.{network}.account_address")
+        return network, addr
+
+    # ------------------------------------------------------------------
+    # live venue reads (public /info and indexer — no keys)
+    # ------------------------------------------------------------------
+    def _hl_leg(self, coin):
+        """Normalize the Hyperliquid position for `coin`, or a flat leg."""
+        network, addr = self._target("hyperliquid")
+        if not addr:
+            return {"venue": "hyperliquid", "error": "no account_address in config"}
+        base = _HL_INFO[network]
+        st = requests.post(base, json={"type": "clearinghouseState", "user": addr},
+                           timeout=20).json()
+        acct_value = float(st.get("marginSummary", {}).get("accountValue", 0) or 0)
+        leg = {"venue": "hyperliquid", "network": network, "coin": coin,
+               "account_value": acct_value, "size": 0.0, "open": False}
+        for p in st.get("assetPositions", []):
+            pos = p.get("position", {})
+            if pos.get("coin") != coin:
+                continue
+            szi = float(pos.get("szi", 0) or 0)
+            pos_val = float(pos.get("positionValue", 0) or 0)
+            mark = pos_val / abs(szi) if szi else None
+            liq = pos.get("liquidationPx")
+            liq = float(liq) if liq is not None else None
+            # Committed margin (exchange-reported) and leverage on it. HL gives
+            # marginUsed directly; leverage = notional / margin (matches its
+            # configured cross leverage). Guard the divide for a flat/zero leg.
+            margin_used = float(pos.get("marginUsed", 0) or 0)
+            leverage = (pos_val / margin_used) if margin_used > 0 else None
+            # A null liquidation distance must never render as "safe". HL returns
+            # no liquidationPx when the position is not liquidatable by price
+            # alone, which is benign — but an unreadable mark is not, and the two
+            # were previously indistinguishable because neither carried a note.
+            liq_note = None
+            # `not mark` rather than `mark is None`: a missing positionValue
+            # divides out to 0.0, which is just as unreadable as None and would
+            # otherwise fall through to the benign note below.
+            if not mark:
+                liq_note = ("liquidation unknown: no mark price for this position,"
+                            " so distance to liquidation is NOT assessed — this leg"
+                            " is unmonitored, not safe")
+            elif liq is None:
+                liq_note = ("not liquidatable by price alone (Hyperliquid reports"
+                            " no liquidation price for this position)")
+            leg.update({
+                "open": abs(szi) > 0, "size": szi, "side": "long" if szi > 0 else "short",
+                "entry_px": _f(pos.get("entryPx")), "mark_px": mark,
+                "liquidation_px": liq,
+                "liq_distance_pct": (abs(mark - liq) / mark * 100)
+                if (liq and mark) else None,
+                "liq_note": liq_note,
+                "unrealized_pnl": _f(pos.get("unrealizedPnl")),
+                "margin_used_usd": margin_used if margin_used > 0 else None,
+                "leverage": leverage,
+            })
+        return leg
+
+    def _dydx_leg(self, coin):
+        """Normalize the dYdX position for `<coin>-USD`, or a flat leg. Liquidation
+        is DERIVED (dYdX gives no liq), and reports why when it can't be."""
+        network, addr = self._target("dydx")
+        if not addr:
+            return {"venue": "dydx", "error": "no account_address in config"}
+        indexer = _DYDX_INDEXER[network]
+        market = f"{coin}-USD"
+        r = requests.get(f"{indexer}/v4/addresses/{addr}", timeout=20).json()
+        subs = r.get("subaccounts") or []
+        leg = {"venue": "dydx", "network": network, "coin": market,
+               "size": 0.0, "open": False}
+        if not subs:
+            leg["note"] = "no subaccount yet (unfunded)"
+            return leg
+        # Search EVERY subaccount: under position isolation
+        # (trading.dydx.subaccounts) the coin lives in its own, so reading subs[0]
+        # would report a funded ETH or SOL leg as flat.
+        s = next((x for x in subs
+                  if market in (x.get("openPerpetualPositions") or {})), None)
+        if s is None:
+            # Not held anywhere. Report the mapped subaccount's equity if it exists,
+            # else the primary, so the caller still sees the account it would use.
+            s = next((x for x in subs
+                      if x.get("subaccountNumber") == _dydx_subaccount_for(coin)),
+                     subs[0])
+            leg["account_value"] = float(s.get("equity", 0) or 0)
+            leg["subaccount"] = s.get("subaccountNumber")
+            return leg
+        equity = float(s.get("equity", 0) or 0)
+        free_coll = float(s.get("freeCollateral", 0) or 0)
+        leg["account_value"] = equity
+        leg["subaccount"] = s.get("subaccountNumber")
+        open_perps = s.get("openPerpetualPositions") or {}
+        pos = open_perps.get(market)
+        sz = abs(float(pos.get("size", 0) or 0))
+        signed = sz if pos.get("side") == "LONG" else -sz
+        mark, mmf = self._dydx_market_risk(indexer, market)
+        liq = liq_dist = note = None
+        # dYdX is cross-margined per subaccount: with more than one open position
+        # the maintenance-margin requirement is the SUM across them, so the
+        # single-position formula below reads OPTIMISTICALLY safe. Mirror the
+        # executor's dydx.state() and report "unknown" rather than a misleadingly
+        # rosy distance. (Proper fix: isolate each coin in its own subaccount.)
+        multi = sum(1 for p in open_perps.values()
+                    if abs(float(p.get("size", 0) or 0)) > 0) > 1
+        if mark is None:
+            note = "liquidation unknown: market risk params unavailable"
+        elif multi:
+            note = ("liquidation unknown: multiple positions share cross-margin"
+                    f" subaccount {s.get('subaccountNumber')} — single-position"
+                    " formula is not valid, this leg is unmonitored. Isolate coins"
+                    " via trading.dydx.subaccounts")
+        else:
+            liq = _dydx_liquidation_price(equity, signed, mark, mmf)
+            if liq is None:
+                note = "not liquidatable by price alone (equity exceeds notional)"
+            else:
+                liq_dist = abs(mark - liq) / mark * 100
+        # Committed margin on dYdX = initial margin requirement = equity minus
+        # freeCollateral (dYdX reports no per-position marginUsed). Leverage =
+        # notional / that committed margin, same formula as the HL leg. Under
+        # position isolation the subaccount holds spare collateral beyond this
+        # requirement, so this leverage reads high while the liq buffer stays
+        # safe — both are true; see the dashboard's margin/leverage labels.
+        margin_used = equity - free_coll
+        notional = (sz * mark) if (mark is not None) else None
+        leverage = (notional / margin_used) if (notional and margin_used > 0) else None
+        leg.update({
+            "open": sz > 0, "size": signed,
+            "side": "long" if signed > 0 else "short",
+            "entry_px": _f(pos.get("entryPrice")), "mark_px": mark,
+            "liquidation_px": liq, "liq_distance_pct": liq_dist,
+            "unrealized_pnl": _f(pos.get("unrealizedPnl")), "liq_note": note,
+            "margin_used_usd": margin_used if margin_used > 0 else None,
+            "leverage": leverage,
+        })
+        return leg
+
+    @staticmethod
+    def _dydx_market_risk(indexer, market):
+        """(oracle_price, maintenance_margin_fraction) for a dYdX market."""
+        try:
+            md = requests.get(
+                f"{indexer}/v4/perpetualMarkets?ticker={market}", timeout=20
+            ).json()["markets"][market]
+            return float(md["oraclePrice"]), float(md["maintenanceMarginFraction"])
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "dydx market risk unavailable for %s: %s", market, e)
+            return None, None
+
+    def _latest_funding(self, venue, coin):
+        """Most recent HOURLY funding rate for `coin` on `venue` (a fraction),
+        used as the live earn/pay rate. None if unreadable."""
+        try:
+            if venue == "hyperliquid":
+                network, _ = self._target("hyperliquid")
+                start = int((time.time() - 6 * 3600) * 1000)
+                rows = requests.post(_HL_INFO[network], json={
+                    "type": "fundingHistory", "coin": coin, "startTime": start,
+                }, timeout=20).json()
+                return float(rows[-1]["fundingRate"]) if rows else None
+            network, _ = self._target("dydx")
+            rows = requests.get(
+                f"{_DYDX_INDEXER[network]}/v4/historicalFunding/{coin}-USD?limit=1",
+                timeout=20).json().get("historicalFunding", [])
+            return float(rows[0]["rate"]) if rows else None
+        except Exception as e:
+            self.logger.warning("latest funding unavailable %s/%s: %s",
+                                venue, coin, e)
+            return None
+
+    # ------------------------------------------------------------------
+    # status
+    # ------------------------------------------------------------------
+    def _status(self, coin, size_tol_pct):
+        hl, dy = self._hl_leg(coin), self._dydx_leg(coin)
+        legs = {"hyperliquid": hl, "dydx": dy}
+
+        hl_open, dy_open = hl.get("open"), dy.get("open")
+        hl_sz, dy_sz = float(hl.get("size", 0) or 0), float(dy.get("size", 0) or 0)
+
+        # Hedge verdict — the one line a human actually wants.
+        if not hl_open and not dy_open:
+            verdict, health = "flat — no open position", "flat"
+        elif hl_open != dy_open:
+            naked = "hyperliquid" if hl_open else "dydx"
+            verdict = f"BROKEN HEDGE: only {naked} holds a leg — naked directional"
+            health = "critical"
+        elif (hl_sz > 0) == (dy_sz > 0):
+            verdict = "NOT DELTA-NEUTRAL: both legs are the same direction"
+            health = "critical"
+        else:
+            imb = abs(abs(hl_sz) - abs(dy_sz)) / max(abs(hl_sz), abs(dy_sz)) * 100
+            if imb > size_tol_pct:
+                verdict = (f"IMBALANCED: legs differ by {imb:.1f}% — net "
+                           f"{'long' if hl_sz + dy_sz > 0 else 'short'} "
+                           f"{abs(hl_sz + dy_sz):.6f} {coin} unhedged")
+                health = "warn"
+            else:
+                verdict = "hedged and balanced"
+                health = "ok"
+
+        # Live funding cash-flow. -size*rate*mark; + means the leg is being PAID.
+        economics = {"net_funding_per_hour_usd": None}
+        per_leg = {}
+        net_hr = 0.0
+        measurable = True
+        for name, leg in legs.items():
+            if not leg.get("open"):
+                continue
+            rate = self._latest_funding(name, coin)
+            mark = leg.get("mark_px")
+            if rate is None or not mark:
+                per_leg[name] = {"funding_rate_hourly": rate, "note":
+                                 "funding cash-flow unmeasurable (missing rate/mark)"}
+                measurable = False
+                continue
+            recv_hr = -float(leg["size"]) * rate * float(mark)
+            per_leg[name] = {
+                "funding_rate_hourly_pct": round(rate * 100, 5),
+                "funding_rate_annual_pct": round(rate * HOURS_PER_YEAR * 100, 2),
+                "you_receive_per_hour_usd": round(recv_hr, 5),
+                "side": leg.get("side"),
+            }
+            net_hr += recv_hr
+        if per_leg:
+            economics = {
+                "per_leg": per_leg,
+                "net_funding_per_hour_usd": round(net_hr, 5) if measurable else None,
+                "net_funding_per_day_usd": round(net_hr * 24, 4) if measurable else None,
+                "net_funding_annual_usd": round(net_hr * HOURS_PER_YEAR, 2)
+                if measurable else None,
+                "note": None if measurable else
+                "one or more legs' funding could not be read; net is incomplete",
+            }
+
+        unrl = _sum_optional(hl.get("unrealized_pnl"), dy.get("unrealized_pnl"))
+        return {
+            "action": "status", "coin": coin, "health": health, "verdict": verdict,
+            "net_delta": round(hl_sz + dy_sz, 8),
+            "legs": legs,
+            "economics": economics,
+            "combined_unrealized_pnl_usd": unrl,
+            "liquidation": {
+                "hyperliquid_distance_pct": hl.get("liq_distance_pct"),
+                "hyperliquid_note": hl.get("liq_note"),
+                "dydx_distance_pct": dy.get("liq_distance_pct"),
+                "dydx_note": dy.get("liq_note"),
+            },
+            "as_of": _now_iso(),
+        }
+
+    # ------------------------------------------------------------------
+    # review (closed round-trips, reconstructed from public history)
+    # ------------------------------------------------------------------
+    def _review(self, coin, lookback_days):
+        since_ms = int((time.time() - lookback_days * 86400) * 1000)
+        hl_eps = self._episodes_hl(coin, since_ms)
+        dy_eps = self._episodes_dydx(coin, since_ms)
+
+        # Pair one HL episode with one dYdX episode by time overlap: a hedge is a
+        # matched pair opened and closed together. Unpaired episodes are surfaced
+        # too — an unmatched leg is exactly the kind of thing worth reflecting on.
+        trips, used_dy = [], set()
+        for h in hl_eps:
+            match, best = None, 0.0
+            for i, d in enumerate(dy_eps):
+                if i in used_dy:
+                    continue
+                ov = _overlap(h, d)
+                if ov > best:
+                    best, match = ov, i
+            if match is not None and best > 0:
+                used_dy.add(match)
+                trips.append(self._round_trip(coin, h, dy_eps[match]))
+            else:
+                trips.append(self._round_trip(coin, h, None))
+        for i, d in enumerate(dy_eps):
+            if i not in used_dy:
+                trips.append(self._round_trip(coin, None, d))
+
+        trips.sort(key=lambda t: t.get("opened_at") or "", reverse=True)
+        closed = [t for t in trips if t["status"] == "closed"]
+        incomplete = [t for t in trips if t["status"] == "incomplete_window"]
+        unpaired = [t for t in trips if t["status"] == "unpaired_closed"]
+        r_closed = [t["realized_net_usd"] for t in closed
+                    if t.get("realized_net_usd") is not None]
+        r_all = [t["realized_net_usd"] for t in (closed + unpaired)
+                 if t.get("realized_net_usd") is not None]
+        summary = {
+            "round_trips": len(trips),
+            "hedge_round_trips_closed": len(closed),
+            "unpaired_closed_legs": len(unpaired),
+            "still_open": sum(1 for t in trips if t["status"] == "open"),
+            # Trades the window caught the close of but not the open. Counted
+            # separately and deliberately NOT as `still_open`: they are flat.
+            "incomplete_window_round_trips": len(incomplete),
+            # The strategy's own scorecard: complete hedges only.
+            "hedge_realized_net_usd": round(sum(r_closed), 4) if r_closed else None,
+            "winning_hedges": sum(1 for r in r_closed if r > 0),
+            "losing_hedges": sum(1 for r in r_closed if r < 0),
+            # True realized cash, INCLUDING unpaired legs (anomalies still cost money).
+            "total_realized_net_usd": round(sum(r_all), 4) if r_all else None,
+        }
+        if incomplete:
+            summary["note"] = (
+                f"{len(incomplete)} trade(s) closed inside this {lookback_days:g}-day"
+                " window but OPENED before it, so they could not be reconstructed"
+                " and contribute nothing to the figures above. They are flat, not"
+                " open. Re-run with a longer lookback_days to score them.")
+        return {"action": "review", "coin": coin, "lookback_days": lookback_days,
+                "summary": summary, "round_trips": trips, "as_of": _now_iso()}
+
+    # ------------------------------------------------------------------
+    # analytics — realized vs the prediction the engine made at entry
+    # ------------------------------------------------------------------
+    def _analytics(self, coin, benchmark=False):
+        """Join the ledger's PREDICTED edge against realized outcomes rebuilt from
+        venue history over each trade's exact window.
+
+        The honest comparison is RATE vs RATE, not dollars: a prediction assumes a
+        ~14-day hold, so comparing its dollar total to a trade closed in hours is
+        meaningless — but 'did we capture the funding EDGE we predicted' holds at
+        any duration. So the headline is `funding_capture_ratio` (realized funding
+        annualized ÷ predicted smoothed spread). Fees are a fixed round-trip cost
+        reported separately, because annualizing them over a short hold produces a
+        scary number that says nothing about the strategy — only about holding too
+        briefly to clear the toll.
+        """
+        rows = _ledger.trades(coin=coin, status="closed")
+        trades, captures, pred_spreads, real_funding_annuals = [], [], [], []
+        faults, breaches = [], []
+        net_total = 0.0
+        for row in rows:
+            lo, hi = _iso_ms(row["opened_at"]), _iso_ms(row["closed_at"])
+            hold_days = max((hi - lo) / 86_400_000, 0.0)
+            notional = row.get("notional_usd")
+            realized = self._realized_in_window(coin, lo, hi)
+
+            # Annualizing a rate over a very short hold amplifies noise: a few lucky
+            # (or unlucky) funding hours, or the fixed round-trip fee, blow up when
+            # scaled to a year. So the rate metrics are only TRUSTED past a minimum
+            # hold; below it we report the raw dollars and flag the rest unreliable,
+            # rather than present noise as a 4x "capture".
+            reliable = hold_days >= MIN_RELIABLE_HOLD_DAYS
+            r_funding_annual = r_net_annual = capture = None
+            if notional and hold_days > 0:
+                r_funding_annual = (realized["funding_usd"] / notional
+                                    / hold_days * DAYS_PER_YEAR * 100)
+                r_net_annual = (realized["net_usd"] / notional
+                                / hold_days * DAYS_PER_YEAR * 100)
+
+            # Numbers a delta-neutral hedge cannot produce, or numbers computed
+            # from fills that do not round-trip the position. A faulted trade is
+            # kept OUT of the running total and out of every headline rate: a
+            # total that silently averaged in a fabricated figure is worse than
+            # one that says which trades it could not measure.
+            fault = _price_pnl_fault(realized, notional, r_net_annual, reliable)
+            if fault:
+                faults.append({**fault, "opened_at": row["opened_at"],
+                               "closed_at": row["closed_at"]})
+            else:
+                net_total += realized["net_usd"]
+            # A separate finding, and deliberately not a fault: the numbers are
+            # right and the money is real. It is the HEDGE that failed, so this
+            # trade still counts toward every total above.
+            integrity = _hedge_integrity(realized)
+            if integrity:
+                breaches.append({**integrity, "opened_at": row["opened_at"],
+                                 "closed_at": row["closed_at"],
+                                 "net_usd": realized.get("net_usd")})
+
+            pred_spread = row.get("pred_smoothed_spread_annual_pct")
+            if (reliable and pred_spread and r_funding_annual is not None
+                    and not fault):
+                capture = r_funding_annual / pred_spread
+                captures.append(capture)
+                pred_spreads.append(pred_spread)
+                real_funding_annuals.append(r_funding_annual)
+
+            trades.append({
+                "opened_at": row["opened_at"], "closed_at": row["closed_at"],
+                # Carried through for the benchmark's causal direction: which way
+                # the FIRST trade of the window was positioned.
+                "short_venue": row.get("short_venue"),
+                "hold_days": round(hold_days, 3), "notional_usd": notional,
+                "size": row.get("size"),
+                "exit_reason": row.get("exit_reason"),
+                "annualized_metrics_reliable": reliable,
+                "predicted": {
+                    "smoothed_spread_annual_pct": pred_spread,
+                    "net_annual_pct_on_capital": row.get(
+                        "pred_net_annual_pct_on_capital"),
+                    "net_over_hold_pct_notional": row.get(
+                        "pred_net_over_hold_pct_notional"),
+                },
+                "realized": {
+                    **realized,
+                    # Two denominators, named rather than implied. They answer
+                    # different questions — a funding rate is earned against the
+                    # notional that actually accrued funding, a net return is
+                    # measured against the capital deployed over the hold — and
+                    # quoting one where the other was meant is a real error. See
+                    # `notional_basis` for what this build can actually
+                    # distinguish.
+                    "funding_annual_pct_notional": _round(r_funding_annual, 2),
+                    "funding_rate_denominator_usd": _round(notional, 2),
+                    "net_annual_pct_notional": _round(r_net_annual, 2),
+                    "net_rate_denominator_usd": _round(notional, 2),
+                    "fees_pct_notional": _round(
+                        realized["fees_usd"] / notional * 100, 4)
+                    if notional else None,
+                },
+                # This build records neither mid-hold size changes nor a public
+                # mark series, so both denominators above are the opening
+                # notional and collapse onto each other. They diverge once a
+                # position is resized or the mark moves materially, so the basis
+                # is stated rather than left to be assumed equal.
+                "notional_basis": (
+                    "the opening notional — no size-change record and no public"
+                    " mark series, so a resize or a price move over the hold is"
+                    " NOT accounted for in either denominator"),
+                "mark_drift_pct": None,
+                "funding_capture_ratio": _round(capture, 3),
+                "held_past_fee_breakeven": (hold_days >= self._fee_breakeven_days(
+                    pred_spread)) if pred_spread else None,
+                # Present and False only when something is actually wrong, so a
+                # reader scanning for it finds nothing on a healthy trade.
+                "data_quality_ok": fault is None,
+                **({"data_quality_fault": fault} if fault else {}),
+                # Present and False only when the hedge actually broke, so a
+                # reader scanning a healthy trade finds nothing.
+                **({"hedge_integrity": integrity} if integrity else {}),
+            })
+
+        short_held = sum(1 for t in trades
+                         if not t["annualized_metrics_reliable"])
+        summary = {
+            "closed_trades_on_record": len(rows),
+            "trades_scored": len(captures),  # only holds long enough to trust a rate
+            "trades_too_short_to_score": short_held,
+            # Excludes any trade whose numbers failed the plausibility guard. A
+            # total that silently averaged in a fabricated figure is worse than a
+            # total that says which trades it could not measure.
+            "total_realized_net_usd": round(net_total, 4) if rows else None,
+            "data_quality": {
+                "trades_faulted": len(faults),
+                "excluded_from_totals_and_rates": len(faults),
+                "faults": faults,
+            },
+            # Counted IN the totals above, unlike a data-quality fault. The
+            # measurement is sound; the hedge is what failed, and the loss is
+            # real money that must not be quietly dropped.
+            "hedge_integrity": {
+                "trades_with_broken_hedge": len(breaches),
+                "counted_in_totals": True,
+                "breaches": breaches,
+            },
+            "mean_predicted_spread_annual_pct": _round(_mean(pred_spreads), 2),
+            "mean_realized_funding_annual_pct": _round(_mean(real_funding_annuals), 2),
+            "mean_funding_capture_ratio": _round(_mean(captures), 3),
+            "winners": sum(1 for t in trades
+                           if (t["realized"]["net_usd"] or 0) > 0),
+            "losers": sum(1 for t in trades
+                          if (t["realized"]["net_usd"] or 0) < 0),
+        }
+        if not rows:
+            summary["note"] = ("no closed trades on record yet — the ledger records"
+                               " from the next real open/close onward.")
+        elif not captures:
+            summary["note"] = (
+                f"no trade has been held past ~{MIN_RELIABLE_HOLD_DAYS:g} day(s)"
+                " yet, so realized-vs-predicted RATES are not meaningful — a short"
+                " hold makes both funding and fees annualize to noise. Only the raw"
+                " dollars are real: over a short hold, fixed fees dominate.")
+        else:
+            summary["note"] = (
+                "funding_capture_ratio (realized funding rate ÷ predicted) is the"
+                " honest gauge, but only over trades held long enough to trust —"
+                f" {short_held} short-held trade(s) are excluded from the rates.")
+        if faults:
+            summary["note"] = (
+                f"{len(faults)} trade(s) FAILED the data-quality guard and are"
+                " excluded from every figure above. Report the fault, not the"
+                " number: a faulted trade's net_usd measures something other than"
+                " that trade. See summary.data_quality.faults, and"
+                " data_quality_fault on the trade itself. "
+            ) + summary.get("note", "")
+        if breaches:
+            summary["note"] = (
+                f"{len(breaches)} trade(s) were NOT hedged for part of their"
+                " life — the legs opened or closed far enough apart to leave the"
+                " position outright. Those figures are correct and ARE counted:"
+                " the money is real, and what failed was the hedge, not the"
+                " measurement. See summary.hedge_integrity. "
+            ) + summary.get("note", "")
+        return {"action": "analytics", "coin": coin, "summary": summary,
+                "trades": trades,
+                "benchmark": (self._benchmark(coin, trades) if benchmark
+                              else _benchmark_not_requested()),
+                "as_of": _now_iso()}
+
+    def _benchmark(self, coin, trades):
+        """What the same capital would have earned held continuously.
+
+        The decision rule is a TIMING layer: it chooses when to be positioned. The
+        only question that establishes whether it earns its place is whether it
+        beat simply opening the hedge once and holding it — and nothing here ever
+        made that comparison, so a rule that lost to always-on would have looked
+        identical to one that won.
+
+        Three things this deliberately gets right, because getting them wrong is
+        how a timing layer flatters itself:
+
+        The direction is CAUSAL. It is the side the FIRST trade in the window
+        took, which is information that existed at the start. Choosing the better
+        of the two after the fact would benchmark against hindsight and make
+        almost any rule look good.
+
+        The denominator is the WHOLE window, not the time spent positioned. Carry
+        forgone while flat is a real cost of the timing layer, and charging the
+        rule only for the hours it chose to show up is what hides it.
+
+        Funding comes from the PUBLIC per-venue series, not from account payments.
+        The account has no funding rows for the hours it sat flat, which are
+        exactly the hours the benchmark is being paid for.
+
+        Never raises: analytics that cannot fetch a benchmark must still report
+        the trades.
+        """
+        scored = [t for t in trades if t.get("notional_usd")]
+        if not scored:
+            return {"note": "no closed trade with a recorded notional yet, so"
+                            " there is nothing to compare a benchmark against"}
+        # A verdict is the one output nobody re-derives, so every input is checked
+        # against what a delta-neutral carry trade can actually do BEFORE one is
+        # rendered. Without this the benchmark will happily report `beat_holding:
+        # true` off a realized net that was one leg's missing closing fill.
+        input_faults = _benchmark_input_faults(scored)
+        if input_faults:
+            return {
+                "error": "the benchmark's inputs are not credible, so no verdict"
+                         " was rendered",
+                "data_quality": input_faults,
+                "note": ("one or more recorded trades carry numbers a hedged"
+                         " round trip cannot produce. `beat_holding` and the"
+                         " verdict are deliberately ABSENT rather than computed"
+                         " from them. Fix the measurement (the usual cause is a"
+                         " closing fill outside the trade's recorded window) and"
+                         " re-run."),
+            }
+        lo = min(_iso_ms(t["opened_at"]) for t in scored)
+        hi = max(_iso_ms(t["closed_at"]) for t in scored)
+        window_days = (hi - lo) / 86_400_000
+        # The side the first trade took — the causal choice, not the better one.
+        first = min(scored, key=lambda t: _iso_ms(t["opened_at"]))
+        side = 1 if first.get("short_venue") == "hyperliquid" else -1
+        notional = _mean([t["notional_usd"] for t in scored]) or 0.0
+        if window_days <= 0 or notional <= 0:
+            return {"note": "the recorded trades span no time, so a held"
+                            " benchmark has nothing to accrue over"}
+        try:
+            # Imported here rather than at module scope: the engine pulls in the
+            # matcher and config stack, and a portfolio read must not depend on
+            # it loading. Funding history is public mainnet data either way —
+            # the same series the engine's own signal is computed on.
+            from ainara.orakle.skills.trading.carry_engine import (
+                TradingCarryEngine)
+            engine = TradingCarryEngine()
+            hours = int((time.time() * 1000 - lo) / 3_600_000) + 2
+            hl = engine._hl_funding_history(coin, "mainnet", hours)
+            dy = engine._dydx_funding_history(coin, "mainnet", hours)
+            fee_fraction = engine._round_trip_cost_fraction("hyperliquid", "dydx")
+        except Exception as e:
+            self.logger.warning("benchmark funding fetch failed: %s", e)
+            return {"error": f"could not read public funding history: {e}",
+                    "note": "the held-hedge benchmark could not be computed;"
+                            " the trades above stand on their own"}
+
+        aligned = [t for t in sorted(set(hl) & set(dy)) if lo <= t <= hi]
+        if len(aligned) < 2:
+            return {"note": "no aligned public funding history over the recorded"
+                            " window, so a held benchmark cannot be computed"}
+        # A summed rate against the notional at OPEN. This build records no public
+        # mark series, so a price move over the window is not accounted for, and
+        # that understates a hedge whose mark rose. Stated rather than assumed
+        # away: it is the one term here that is knowably approximate.
+        gross_usd = side * sum(hl[t] - dy[t] for t in aligned) * notional
+        funding_basis = (
+            "a summed rate against the notional at OPEN — no mark series is"
+            " recorded, so a price move over the window is NOT accounted for and"
+            " this understates a hedge whose mark rose")
+        rule_usd = sum((t["realized"] or {}).get("net_usd") or 0.0 for t in scored)
+
+        # BOTH sides pay the same execution basis, and it is this rule's own
+        # MEASURED cost per round trip. The held hedge makes exactly one round
+        # trip; the rule made as many as it made, and that difference is precisely
+        # what a timing layer costs.
+        measured = _execution_cost(scored)
+        if measured is None:
+            # Nothing measured to charge, or execution that came out free. Fall
+            # back to the modelled fee and SAY so, rather than quietly reverting
+            # to the asymmetry this was written to remove.
+            per_round_trip = fee_fraction * notional
+            held_fees, held_slippage = per_round_trip, 0.0
+            cost_basis = ("modelled fees only (_round_trip_cost_fraction); no"
+                          " measured execution cost was available, so the two"
+                          " sides are NOT charged alike — read the verdict with"
+                          " that in mind")
+            rule_fees = rule_slippage = None
+        else:
+            per_round_trip, rule_fees, rule_slippage = measured
+            # Split the held hedge's single round trip the same way the rule's
+            # are, so each term of the decomposition below compares like with
+            # like. Charging the benchmark a lump and the rule an itemised bill
+            # is not a comparison.
+            held_fees = rule_fees / len(scored)
+            held_slippage = rule_slippage / len(scored)
+            cost_basis = (f"the rule's own measured cost per round trip — fees"
+                          f" plus slippage over {len(scored)} round trip(s) —"
+                          f" charged once to the held hedge and"
+                          f" {len(scored)} time(s) to the rule")
+        held_execution = per_round_trip
+        net_usd = gross_usd - held_execution
+        years = window_days / DAYS_PER_YEAR
+
+        # Both from the SAME window: mixing a hold measured over fills with a
+        # window measured from the ledger's stamps lets occupancy round above 100%.
+        hours_positioned = sum(t["hold_days"] for t in scored) * 24
+        window_hours = max(window_days * 24, hours_positioned)
+        occupancy = (hours_positioned / window_hours) if window_hours else 1.0
+
+        def annual_pct(usd):
+            return (usd / notional / years * 100) if years and notional else None
+
+        # Exactly additive, and it has to be: a decomposition that does not sum to
+        # the gap invites the reader to trust whichever term suits them. The rule's
+        # funding is its realized net plus back the execution it paid.
+        rule_execution = ((rule_fees or 0.0) + (rule_slippage or 0.0)
+                          if measured else None)
+        rule_funding = (rule_usd + rule_execution) if measured is not None else None
+        decomposition = None
+        if measured is not None:
+            decomposition = {
+                "funding_usd": round(rule_funding - gross_usd, 4),
+                "fees_usd": round(held_fees - (rule_fees or 0.0), 4),
+                "slippage_usd": round(held_slippage - (rule_slippage or 0.0), 4),
+                "note": ("what the gap is MADE OF, summing to gap_usd. Funding is"
+                         " the carry the rule captured against the carry holding"
+                         " would have; the other two are the extra round trips it"
+                         " paid for. `beat_holding` quoted without this is the"
+                         " easiest number here to misread."),
+            }
+            # The held side's single round trip is inside `fees_usd` above; state
+            # the residual rather than let a rounding difference read as meaning.
+            drift = round((rule_usd - net_usd) - (
+                decomposition["funding_usd"] + decomposition["fees_usd"]
+                + decomposition["slippage_usd"]), 4)
+            if drift:
+                decomposition["rounding_usd"] = drift
+
+        out = {
+            "method": ("the hedge opened once at the start of the window and held"
+                       " to the end, paying ONE round trip of the same execution"
+                       " the rule actually paid. Direction is the side the first"
+                       " trade took, so no hindsight."),
+            "window": {"from": first["opened_at"],
+                       "to": max(t["closed_at"] for t in scored),
+                       "days": round(window_days, 2),
+                       "funding_hours": len(aligned)},
+            "side": "short_hyperliquid" if side > 0 else "short_dydx",
+            "notional_usd": round(notional, 2),
+            "notional_basis": "mean notional across the recorded trades",
+            "funding_basis": funding_basis,
+            "execution_cost_basis": cost_basis,
+            "execution_cost_per_round_trip_usd": round(per_round_trip, 4),
+            "held": {"gross_funding_usd": round(gross_usd, 4),
+                     "fees_usd": round(held_fees, 4),
+                     "slippage_usd": round(held_slippage, 4),
+                     "execution_usd": round(held_execution, 4),
+                     "round_trips": 1,
+                     "net_usd": round(net_usd, 4),
+                     "annual_pct_notional": _round(annual_pct(net_usd), 2)},
+            "decision_rule": {
+                "net_usd": round(rule_usd, 4),
+                "annual_pct_notional": _round(annual_pct(rule_usd), 2),
+                "fees_usd": _round(rule_fees, 4),
+                "slippage_usd": _round(rule_slippage, 4),
+                "round_trips": len(scored),
+                "hours_positioned": round(hours_positioned, 1),
+                "window_hours": round(window_hours, 1),
+                "occupancy_pct": _round(occupancy * 100, 1)},
+            "gap_usd": round(rule_usd - net_usd, 4),
+            "gap_annual_pct_notional": _round(
+                annual_pct(rule_usd) - annual_pct(net_usd)
+                if annual_pct(net_usd) is not None else None, 2),
+        }
+        if decomposition:
+            out["gap_decomposition"] = decomposition
+
+        # Part of the rule's net may be outright P&L from a hedge that broke,
+        # which is not the timing decision this is judging. Reported beside the
+        # verdict rather than removed from it: the money was really made or lost,
+        # and dropping it would flatter the rule.
+        breaches = [t for t in scored if t.get("hedge_integrity")]
+        if breaches:
+            out["hedge_integrity"] = {
+                "trades_with_broken_hedge": len(breaches),
+                "note": ("part of the rule's net is outright P&L from intervals"
+                         " when the position was not hedged, not carry the timing"
+                         " rule earned. It is COUNTED — the money is real — but"
+                         " the gap below is not purely a timing result."),
+                "breaches": [
+                    {"opened_at": t["opened_at"], "closed_at": t["closed_at"],
+                     "net_usd": (t["realized"] or {}).get("net_usd"),
+                     **t["hedge_integrity"]} for t in breaches],
+            }
+
+        # The verdict is withheld when its subject is absent. A rule positioned for
+        # the whole window did not time anything, so `beat_holding` would be a
+        # statement about execution and luck wearing the benchmark's clothes. Same
+        # posture as the plausibility guard: report the comparison, refuse the
+        # conclusion.
+        withheld = []
+        if occupancy >= MAX_VERDICT_OCCUPANCY:
+            withheld.append(
+                f"the rule was positioned {occupancy * 100:.1f}% of the window, so"
+                f" it never chose to sit out — there is no timing decision here to"
+                f" judge, and carry forgone while flat is not merely small but"
+                f" absent")
+        # A window shorter than one intended hold cannot answer the question. Over
+        # a day, execution cost dwarfs the carry and the annualized figures are a
+        # short window amplified, not a return: a real 1.02-day window reported
+        # -212% annualized on $59 of notional, where the funding earned was 1.8
+        # cents against 18 cents of execution.
+        min_window = max(MIN_BENCHMARK_WINDOW_DAYS, _expected_hold_days())
+        if window_days < min_window:
+            withheld.append(
+                f"the recorded trades span {window_days:.2f} days, short of the"
+                f" {min_window:g}-day minimum this comparison needs. Over a window"
+                f" this brief, execution cost dominates the carry on both sides"
+                f" and the annualized figures are noise rather than a return")
+        if withheld:
+            out["verdict_withheld"] = withheld
+            out["note"] = (
+                "the comparison above is reported, and `beat_holding` is"
+                " deliberately ABSENT: " + "; ".join(withheld) + ". The benchmark"
+                " asks whether choosing WHEN to be positioned beats always being"
+                " positioned, and nothing here answers that question.")
+            return out
+
+        out["beat_holding"] = rule_usd > net_usd
+        out["verdict"] = (
+            "the decision rule BEAT holding the hedge over this window"
+            if rule_usd > net_usd else
+            "the decision rule LOST to simply holding the hedge over this window."
+            " A timing layer that does not beat always-on is not adding value.")
+        return out
+
+    @staticmethod
+    def _fee_breakeven_days(pred_spread_annual_pct):
+        """Days the predicted funding rate needs to run to cover a round trip's
+        ~0.17%-of-notional fees. Below this a close is a loss no matter the edge."""
+        if not pred_spread_annual_pct or pred_spread_annual_pct <= 0:
+            return float("inf")
+        daily = pred_spread_annual_pct / 100.0 / DAYS_PER_YEAR
+        return (0.0017 / daily) if daily else float("inf")
+
+    # ---- raw per-venue fills (shared by episode reconstruction and window sums) ----
+    def _raw_fills_hl(self, coin, since_ms):
+        """Normalized HL fills for `coin` since `since_ms`, oldest→newest."""
+        network, addr = self._target("hyperliquid")
+        fills = requests.post(_HL_INFO[network], json={
+            "type": "userFillsByTime", "user": addr, "startTime": since_ms,
+        }, timeout=20).json()
+        rows = []
+        for f in fills:
+            if f.get("coin") != coin:
+                continue
+            # HL 'dir' is explicit: a BUY is "Open Long" or "Close Short"; a SELL
+            # is "Open Short" or "Close Long". That alone gives the signed delta.
+            d = str(f.get("dir", "")).lower()
+            buy = d in ("open long", "close short")
+            sz = float(f["sz"])
+            rows.append({"t": int(f["time"]), "sz": sz, "px": float(f["px"]),
+                         "buy": buy, "signed": sz if buy else -sz,
+                         "fee": float(f.get("fee", 0) or 0)})
+        rows.sort(key=lambda r: r["t"])
+        return rows
+
+    def _raw_fills_dydx(self, coin, since_ms):
+        """Normalized dYdX fills for `<coin>-USD` since `since_ms`, oldest→newest."""
+        network, addr = self._target("dydx")
+        indexer = _DYDX_INDEXER[network]
+        market = f"{coin}-USD"
+        fills = requests.get(
+            f"{indexer}/v4/fills?address={addr}"
+            f"&subaccountNumber={_dydx_subaccount_for(coin)}&limit=100",
+            timeout=20).json().get("fills", [])
+        rows = []
+        for f in fills:
+            t = _iso_ms(f["createdAt"])
+            if t < since_ms or f.get("market") != market:
+                continue
+            sz = float(f["size"])
+            buy = f["side"].upper() == "BUY"
+            rows.append({"t": t, "sz": sz, "px": float(f["price"]),
+                         "buy": buy, "signed": sz if buy else -sz,
+                         "fee": float(f.get("fee", 0) or 0)})
+        rows.sort(key=lambda r: r["t"])
+        return rows
+
+    # ---- per-venue episode reconstruction ----
+    def _live_size(self, venue, coin):
+        """What this venue holds RIGHT NOW, signed. None when it cannot be read.
+
+        The episode reconstructor works from fills alone and therefore assumes the
+        leg was flat at the start of the window. When it was not — the window
+        misses the open — the reconstructor's running total never returns to zero
+        and it reports a position that does not exist. The venue's CURRENT size is
+        what settles it, and it is one public read.
+
+        None on any failure, which leaves the reconstruction exactly as it was.
+        This distinguishes a real open position from a fabricated one; it is not
+        allowed to be the reason a review cannot be produced at all.
+        """
+        try:
+            leg = (self._hl_leg(coin) if venue == "hyperliquid"
+                   else self._dydx_leg(coin))
+            if leg.get("error"):
+                return None
+            return float(leg.get("size") or 0.0)
+        except Exception as e:
+            self.logger.warning("live size unavailable %s/%s: %s", venue, coin, e)
+            return None
+
+    def _episodes_hl(self, coin, since_ms):
+        """Walk HL fills oldest→newest, tracking signed size; an episode runs from
+        the fill that leaves flat to the fill that returns to flat."""
+        network, addr = self._target("hyperliquid")
+        rows = self._raw_fills_hl(coin, since_ms)
+        funding = self._funding_hl(coin, since_ms, addr, network)
+        return _episodes_from_rows(rows, funding, "hyperliquid",
+                                   self._live_size("hyperliquid", coin))
+
+    def _episodes_dydx(self, coin, since_ms):
+        network, addr = self._target("dydx")
+        rows = self._raw_fills_dydx(coin, since_ms)
+        funding = self._funding_dydx(coin, since_ms, addr,
+                                     _DYDX_INDEXER[network])
+        return _episodes_from_rows(rows, funding, "dydx",
+                                   self._live_size("dydx", coin))
+
+    # ---- realized outcome over an EXACT window (for ledger-bounded analytics) ----
+    def _realized_in_window(self, coin, lo_ms, hi_ms):
+        """Realized funding / fees / price-PnL between two timestamps, summed from
+        BOTH venues' public history. The ledger supplies exact [open, close]
+        bounds, so this is precise where `review`'s episode pairing was fuzzy.
+
+        Funding is bounded with a small tail so an hourly stamp landing right on
+        the close is not dropped; a payment strictly after the close is excluded.
+
+        The ledger's two stamps are not the trade's bounds — see
+        _OPEN_SETTLE_SECONDS. Both err, in opposite directions, and clipping
+        either end drops a whole leg's notional out of the price-PnL sum. So the
+        window is extended at both ends to the fills that ACTUALLY opened and
+        closed the position (`_leg_window`), and it reports which stamp each edge
+        ended up on so a reader can see whether either had to move. Deliberately
+        not done by correcting the ledger's columns: a walk fixes every row
+        already recorded, a column only fixes rows written after it.
+
+        Also reports `coverage` — whether the fills it counted actually
+        round-trip the position — and `leg_timing`, how far apart the two legs
+        opened and closed. A window clipped at both ends counts nothing, sums to
+        $0.00 and looks exactly like a healthy flat hedge, so every magnitude
+        check passes it; and a price gap between two fills that did not happen at
+        the same moment is not only a price gap.
+        """
+        _, addr_hl = self._target("hyperliquid")
+        net_hl = self._target("hyperliquid")[0]
+        _, addr_dy = self._target("dydx")
+        indexer = _DYDX_INDEXER[self._target("dydx")[0]]
+        open_grace = int(_OPEN_SETTLE_SECONDS * 1000)
+        close_grace = int(_CLOSE_SETTLE_SECONDS * 1000)
+        # Fetched from BEFORE the ledger's opening stamp, or the opening fills are
+        # not merely outside the window — they are not in hand at all, and no
+        # amount of walking finds them.
+        fetch_from = lo_ms - open_grace
+        fills = {"hyperliquid": self._raw_fills_hl(coin, fetch_from),
+                 "dydx": self._raw_fills_dydx(coin, fetch_from)}
+        windows = {v: _leg_window(rows, lo_ms, hi_ms, open_grace, close_grace)
+                   for v, rows in fills.items()}
+        live = [w for w in windows.values() if w]
+
+        opened = min([w["open_ms"] for w in live], default=lo_ms)
+        lo = min(opened, lo_ms)
+        open_basis = "position_open" if lo < lo_ms else "opened_at"
+        closes = [w["close_ms"] for w in live if w["close_ms"] is not None]
+        settled = max([*closes, hi_ms])
+        close_basis = "position_flat" if settled > hi_ms else "closed_at"
+        hi = settled + 1000
+
+        funding = fees = price_pnl = 0.0
+        legs = {}
+        for venue, rows in fills.items():
+            agg = legs.setdefault(venue, {"fills": 0, "signed": 0.0, "gross": 0.0})
+            for r in rows:
+                if lo <= r["t"] <= hi:
+                    fees += r["fee"]
+                    # sell brings cash in (+), buy pays out (-); sum = price PnL.
+                    price_pnl += r["px"] * r["sz"] * (1 if not r["buy"] else -1)
+                    agg["fills"] += 1
+                    agg["signed"] += r["signed"]
+                    agg["gross"] += abs(r["signed"])
+        for t, amt in self._funding_hl(coin, fetch_from, addr_hl, net_hl):
+            if lo <= t <= hi:
+                funding += amt
+        for t, amt in self._funding_dydx(coin, fetch_from, addr_dy, indexer):
+            if lo <= t <= hi:
+                funding += amt
+        return {"funding_usd": round(funding, 4), "fees_usd": round(fees, 4),
+                "price_pnl_usd": round(price_pnl, 4),
+                "net_usd": round(funding + price_pnl - fees, 4),
+                # What the window actually spanned, and on whose authority. A
+                # reader comparing these against the ledger's own two stamps can
+                # see at a glance whether either edge had to be moved.
+                "window_open_at": _iso_from_ms(lo),
+                "window_open_basis": open_basis,
+                "window_close_at": _iso_from_ms(settled),
+                "window_close_basis": close_basis,
+                "position_flat_at": (_iso_from_ms(max(closes))
+                                     if closes else None),
+                "leg_timing": _leg_timing(windows),
+                "coverage": _fill_coverage(legs)}
+
+    def _funding_hl(self, coin, since_ms, addr, network):
+        rows = requests.post(_HL_INFO[network], json={
+            "type": "userFunding", "user": addr, "startTime": since_ms,
+        }, timeout=20).json()
+        return [(int(r["time"]), float(r["delta"]["usdc"]))
+                for r in rows if r.get("delta", {}).get("coin") == coin]
+
+    def _funding_dydx(self, coin, since_ms, addr, indexer):
+        rows = requests.get(
+            f"{indexer}/v4/fundingPayments?address={addr}"
+            f"&subaccountNumber={_dydx_subaccount_for(coin)}&limit=100",
+            timeout=20).json().get("fundingPayments", [])
+        out = []
+        for r in rows:
+            if r.get("ticker") != f"{coin}-USD":
+                continue
+            t = _iso_ms(r["createdAt"])
+            if t < since_ms:
+                continue
+            # dYdX reports payment as a positive number the account RECEIVED.
+            out.append((t, float(r.get("payment", 0) or 0)))
+        return out
+
+    def _round_trip(self, coin, hl_ep, dy_ep):
+        legs = {}
+        funding = 0.0
+        fees = 0.0
+        price_pnl = 0.0
+        opened = closed = None
+        for name, ep in (("hyperliquid", hl_ep), ("dydx", dy_ep)):
+            if ep is None:
+                continue
+            legs[name] = ep
+            funding += ep.get("funding_usd", 0.0)
+            fees += ep.get("fees_usd", 0.0)
+            if ep.get("realized_price_pnl_usd") is not None:
+                price_pnl += ep["realized_price_pnl_usd"]
+            opened = _min_iso(opened, ep.get("opened_at"))
+            closed = _max_iso(closed, ep.get("closed_at"))
+
+        # Status by what's actually there. A leg still open -> live position. Both
+        # legs present and closed -> a complete hedge round trip. A single closed
+        # leg -> "unpaired_closed": a naked leg that opened and resolved on its own
+        # (e.g. an unwound half of a botched open) — still has a realized result
+        # worth surfacing, which is the whole point of the review.
+        #
+        # "incomplete_window" is none of those: the lookback caught a trade's close
+        # but not its open, so what is here is half a round trip. It used to be
+        # reported as `open`, with the closing fill's price standing in as
+        # `entry_px`, which invented a live position on a flat account. A window
+        # that is too short is a configuration matter; reporting a position that
+        # does not exist is a correctness one.
+        present = [ep for ep in (hl_ep, dy_ep) if ep is not None]
+        any_open = any(ep.get("open") for ep in present)
+        incomplete = any(ep.get("incomplete_window") for ep in present)
+        both = hl_ep is not None and dy_ep is not None
+        if any_open:
+            status = "open"
+        elif incomplete:
+            status = "incomplete_window"
+        else:
+            status = "closed" if both else "unpaired_closed"
+
+        realized_net = None
+        if status in ("closed", "unpaired_closed"):
+            realized_net = round(funding + price_pnl - fees, 4)
+        hold_h = None
+        if opened and closed and status not in ("open", "incomplete_window"):
+            hold_h = round((_iso_ms(closed) - _iso_ms(opened)) / 3_600_000, 2)
+        out = {
+            "coin": coin, "status": status, "opened_at": opened,
+            "closed_at": closed if status not in ("open", "incomplete_window")
+            else None,
+            "hold_hours": hold_h,
+            "funding_received_usd": round(funding, 4),
+            "fees_usd": round(fees, 4),
+            "price_pnl_usd": round(price_pnl, 4) if not incomplete else None,
+            "realized_net_usd": realized_net,
+            "legs": legs,
+        }
+        if status == "incomplete_window":
+            out["note"] = (
+                "the review window does not reach this trade's OPENING fills, so"
+                " it cannot be reconstructed and no realized result is reported."
+                " This is NOT an open position — both venues are flat. Re-run with"
+                " a longer lookback_days.")
+        return out
+
+    # ------------------------------------------------------------------
+    # all-coins (book-wide) views — the "how's everything?" question. Each per-coin
+    # result is unchanged; these just enumerate the coins and roll up a summary, so
+    # a request that names no coin no longer silently reports only BTC.
+    # ------------------------------------------------------------------
+    def _open_coins(self):
+        """Base coins with an open leg on EITHER venue (public reads, no keys)."""
+        coins = set()
+        net, addr = self._target("hyperliquid")
+        if addr:
+            st = requests.post(_HL_INFO[net], json={
+                "type": "clearinghouseState", "user": addr}, timeout=20).json()
+            for p in st.get("assetPositions", []):
+                pos = p.get("position", {})
+                if abs(float(pos.get("szi", 0) or 0)) > 0:
+                    coins.add(pos.get("coin"))
+        net, addr = self._target("dydx")
+        if addr:
+            r = requests.get(f"{_DYDX_INDEXER[net]}/v4/addresses/{addr}",
+                             timeout=20).json()
+            for sub in (r.get("subaccounts") or []):
+                for mkt, pos in (sub.get("openPerpetualPositions") or {}).items():
+                    if abs(float(pos.get("size", 0) or 0)) > 0:
+                        coins.add(mkt.split("-")[0])
+        return sorted(c for c in coins if c)
+
+    def _status_all(self, size_tol_pct):
+        coins = self._open_coins()
+        if not coins:
+            return {"action": "status", "scope": "all_open", "health": "flat",
+                    "verdict": "flat — no open positions on either venue",
+                    "open_coins": [], "positions": [], "as_of": _now_iso()}
+        positions = [self._status(c, size_tol_pct) for c in coins]
+        worst = "flat"
+        net_hr, funding_measurable, unrl = 0.0, True, []
+        for p in positions:
+            if _HEALTH_RANK.get(p["health"], 0) > _HEALTH_RANK.get(worst, 0):
+                worst = p["health"]
+            f = (p.get("economics") or {}).get("net_funding_per_hour_usd")
+            if f is None:
+                funding_measurable = False
+            else:
+                net_hr += f
+            if p.get("combined_unrealized_pnl_usd") is not None:
+                unrl.append(p["combined_unrealized_pnl_usd"])
+        summary = {
+            "open_positions": len(positions),
+            "worst_health": worst,
+            "attention_needed": worst in ("warn", "critical"),
+            "net_funding_per_hour_usd": round(net_hr, 5) if funding_measurable else None,
+            "net_funding_per_day_usd": round(net_hr * 24, 4) if funding_measurable else None,
+            "combined_unrealized_pnl_usd": round(sum(unrl), 4) if unrl else None,
+            "note": None if funding_measurable else
+            "one or more legs' funding could not be read; net is incomplete",
+            "delta_note": "net_delta is per-coin (each in its own units); deltas are"
+                          " not summed across assets",
+        }
+        return {"action": "status", "scope": "all_open", "health": worst,
+                "verdict": f"{len(positions)} open position(s); worst health: {worst}",
+                "open_coins": coins, "summary": summary, "positions": positions,
+                "as_of": _now_iso()}
+
+    def _review_all(self, lookback_days):
+        coins = sorted(set(self._open_coins())
+                       | {r["coin"] for r in _ledger.trades() if r.get("coin")})
+        if not coins:
+            return {"action": "review", "scope": "all", "lookback_days": lookback_days,
+                    "summary": {"note": "no open positions or recorded trades"},
+                    "by_coin": {}, "as_of": _now_iso()}
+        by_coin = {c: self._review(c, lookback_days) for c in coins}
+        hedge_net, total_net, have_h, have_t, closed = 0.0, 0.0, False, False, 0
+        incomplete = 0
+        for r in by_coin.values():
+            s = r["summary"]
+            if s.get("hedge_realized_net_usd") is not None:
+                hedge_net += s["hedge_realized_net_usd"]; have_h = True
+            if s.get("total_realized_net_usd") is not None:
+                total_net += s["total_realized_net_usd"]; have_t = True
+            closed += s.get("hedge_round_trips_closed", 0)
+            incomplete += s.get("incomplete_window_round_trips", 0)
+        summary = {"coins": coins, "hedge_round_trips_closed": closed,
+                   "incomplete_window_round_trips": incomplete,
+                   "hedge_realized_net_usd": round(hedge_net, 4) if have_h else None,
+                   "total_realized_net_usd": round(total_net, 4) if have_t else None}
+        if incomplete:
+            summary["note"] = (
+                f"{incomplete} trade(s) opened before this {lookback_days:g}-day"
+                " window and could not be reconstructed. They are flat, not open,"
+                " and contribute nothing to the totals above. Re-run with a longer"
+                " lookback_days to score them.")
+        return {"action": "review", "scope": "all", "lookback_days": lookback_days,
+                "summary": summary, "by_coin": by_coin, "as_of": _now_iso()}
+
+    def _analytics_all(self, benchmark=False):
+        coins = sorted({r["coin"] for r in _ledger.trades() if r.get("coin")})
+        if not coins:
+            return {"action": "analytics", "scope": "all", "by_coin": {},
+                    "summary": {"note": "no trades on record yet — the ledger records"
+                                " from the next real open/close onward."},
+                    "as_of": _now_iso()}
+        by_coin = {c: self._analytics(c, benchmark=benchmark) for c in coins}
+        net_total, have, faulted = 0.0, False, 0
+        for a in by_coin.values():
+            t = a["summary"].get("total_realized_net_usd")
+            if t is not None:
+                net_total += t; have = True
+            faulted += (a["summary"].get("data_quality") or {}).get(
+                "trades_faulted", 0)
+        summary = {
+            "coins": coins,
+            "closed_trades_on_record": sum(
+                a["summary"].get("closed_trades_on_record", 0)
+                for a in by_coin.values()),
+            "total_realized_net_usd": round(net_total, 4) if have else None,
+            "trades_faulted": faulted,
+            # A COUNT, not a book-wide verdict. Direction and funding spread are
+            # per-coin, so there is no meaningful single "side" to benchmark the
+            # book against, and rolling several verdicts into one would be
+            # exactly the kind of false summary the per-coin guard refuses.
+            #
+            # Only when one was asked for: tallying an unrequested benchmark
+            # would file every coin under "not_measured", which reads as a
+            # measurement failure rather than a question nobody put.
+            "benchmark_verdicts": (_benchmark_tally(by_coin) if benchmark
+                                   else _benchmark_not_requested()),
+        }
+        if faulted:
+            summary["note"] = (
+                f"{faulted} trade(s) across the book failed the data-quality"
+                " guard and are excluded from the total above. See each coin's"
+                " summary.data_quality for what was wrong.")
+        return {"action": "analytics", "scope": "all", "summary": summary,
+                "by_coin": by_coin, "as_of": _now_iso()}
+
+    # ------------------------------------------------------------------
+    def run(
+        self,
+        action: Annotated[
+            Literal["status", "review", "analytics"],
+            "'status' = live open position (hedge health, liquidation, funding"
+            " earned now). 'review' = reconstruct CLOSED round-trips from venue"
+            " history. 'analytics' = compare each recorded trade's PREDICTED edge"
+            " against realized outcomes (did the strategy earn what the model"
+            " forecast).",
+        ] = "status",
+        coin: Annotated[
+            str,
+            "Which asset(s) to report. Default 'ALL' — a book-wide view across"
+            " EVERY open/recorded coin at once; use it whenever the user does not"
+            " name one specific coin (e.g. 'how are my positions / my book / my"
+            " delta-neutral trades doing?'). Pass a single symbol (BTC, ETH, SOL,"
+            " ...) ONLY when the user explicitly asks about that one asset. Do NOT"
+            " default to BTC.",
+        ] = "ALL",
+        lookback_days: Annotated[
+            Optional[float],
+            "For 'review': how far back to reconstruct closed trades. Leave unset"
+            " unless the user names a period — the default is derived from the"
+            " strategy's own expected hold (at least 90 days), and a shorter"
+            " window cannot see a completed trade at all. Do NOT pass a small"
+            " number to 'check recent trades': a window that catches a trade's"
+            " close but not its open cannot reconstruct it.",
+        ] = None,
+        size_tolerance_pct: Annotated[
+            float, "For 'status': leg-size mismatch above this reads as imbalanced"
+        ] = 15.0,
+        benchmark: Annotated[
+            bool,
+            "For 'analytics': also compare the strategy against simply opening"
+            " the hedge once and HOLDING it for the whole period. Pass true when"
+            " the user asks whether the strategy is actually worth running, if"
+            " it beats just holding, whether the timing/entry rule adds anything,"
+            " or wants it judged rather than described. Off by default because it"
+            " reads two public funding-history series PER COIN and is noticeably"
+            " slower; the realized-vs-predicted figures do not need it.",
+        ] = False,
+    ) -> Dict[str, Any]:
+        """Report live status or reconstruct closed trades. Read-only.
+
+        `coin='ALL'` (the default) aggregates across every open/recorded coin so a
+        question that names no asset covers the whole book, not just BTC.
+        """
+        try:
+            c = str(coin).strip().upper()
+            allc = c in ("ALL", "*", "")
+            if action == "status":
+                if allc:
+                    return self._status_all(size_tolerance_pct)
+                result = self._status(c, size_tolerance_pct)
+                # Breadcrumb: even when the caller scopes to one coin (e.g. the LLM
+                # passed a specific symbol for a general question), never let the
+                # answer hide the rest of the book — name the other open positions
+                # so they can be asked about. Deterministic; does not rely on the
+                # caller having chosen 'ALL'.
+                others = [x for x in self._open_coins() if x != c]
+                if others:
+                    result["other_open_positions"] = others
+                    result["hint"] = (
+                        f"You also have open positions in {', '.join(others)}."
+                        " Ask about your whole book (or 'all') to include them.")
+                return result
+            if action == "review":
+                # Unset means "use the window the strategy's own hold requires",
+                # not a fixed week. See _default_lookback_days.
+                lb = (_default_lookback_days() if lookback_days is None
+                      else float(lookback_days))
+                return self._review_all(lb) if allc else self._review(c, lb)
+            if action == "analytics":
+                bm = bool(benchmark)
+                return (self._analytics_all(benchmark=bm) if allc
+                        else self._analytics(c, benchmark=bm))
+            return {"error": f"unknown action {action!r}; use 'status', 'review'"
+                    " or 'analytics'"}
+        except requests.RequestException as e:
+            return {"error": f"venue read failed: {e}"}
+
+
+# ----------------------------------------------------------------------
+# small pure helpers (module-level so they stay testable)
+# ----------------------------------------------------------------------
+def _f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _now_iso():
+    return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def _expected_hold_days():
+    """The hold the strategy is configured for, or the 14-day default."""
+    try:
+        return float(config.get("trading.carry_engine.expected_hold_days", 14.0)
+                     or 14.0)
+    except (TypeError, ValueError):
+        return 14.0
+
+
+def _default_lookback_days():
+    """How far `review` looks back when the caller does not say.
+
+    Derived from `expected_hold_days` rather than fixed, because the number that
+    makes a window too short is the hold it has to contain. A desk configured for
+    28-day holds gets a 168-day window without anyone remembering to widen it.
+
+    Floored at MIN_REVIEW_LOOKBACK_DAYS so a misconfigured or tiny hold cannot
+    reintroduce a window that cannot see a completed trade.
+    """
+    return max(MIN_REVIEW_LOOKBACK_DAYS,
+               round(_expected_hold_days() * REVIEW_LOOKBACK_HOLDS))
+
+
+def _iso_ms(s):
+    return int(datetime.datetime.fromisoformat(
+        s.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def _min_iso(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if _iso_ms(a) <= _iso_ms(b) else b
+
+
+def _max_iso(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if _iso_ms(a) >= _iso_ms(b) else b
+
+
+def _sum_optional(*vals):
+    got = [v for v in vals if v is not None]
+    return round(sum(got), 4) if got else None
+
+
+def _round(v, n):
+    return round(v, n) if v is not None else None
+
+
+def _mean(vals):
+    return sum(vals) / len(vals) if vals else None
+
+
+def _overlap(h, d):
+    """Seconds of time overlap between two episodes' [open, close] intervals; open
+    episodes extend to now. Used to pair the two legs of one hedge."""
+    now = time.time() * 1000
+    hs, he = _iso_ms(h["opened_at"]), (_iso_ms(h["closed_at"]) if h.get("closed_at") else now)
+    ds, de = _iso_ms(d["opened_at"]), (_iso_ms(d["closed_at"]) if d.get("closed_at") else now)
+    return max(0.0, min(he, de) - max(hs, ds))
+
+
+def _benchmark_not_requested():
+    """The benchmark slot when nobody asked for it.
+
+    Present rather than omitted, and explicit rather than empty. An absent key
+    reads as "this build has no benchmark" and a bare note reads as "it could
+    not be computed" — both of which are the wrong thing to conclude, and the
+    second is a finding this skill reports for real elsewhere. `requested:
+    false` is the discriminator, and it says how to get one.
+
+    A fresh dict each call: a shared module-level constant handed to every
+    caller is one mutation away from corrupting every later response.
+    """
+    return {
+        "requested": False,
+        "note": ("not computed. The held-hedge benchmark reads two public"
+                 " funding-history series per coin, so it is opt-in rather than"
+                 " charged to every analytics call. Pass benchmark=true to ask"
+                 " whether the decision rule beat simply holding the hedge."),
+    }
+
+
+def _benchmark_tally(by_coin):
+    """How the per-coin benchmarks came out, without inventing a book verdict.
+
+    Reports the distribution — how many coins beat holding, lost to it, had the
+    verdict withheld, or could not be measured — and names the coins in each
+    group so the reader goes to the per-coin benchmark rather than to a number
+    that averaged four different windows together.
+    """
+    beat, lost, withheld, unavailable = [], [], [], []
+    for coin, a in sorted(by_coin.items()):
+        b = a.get("benchmark") or {}
+        if "beat_holding" in b:
+            (beat if b["beat_holding"] else lost).append(coin)
+        elif b.get("verdict_withheld"):
+            withheld.append(coin)
+        else:
+            unavailable.append(coin)
+    return {
+        "beat_holding": beat,
+        "lost_to_holding": lost,
+        "verdict_withheld": withheld,
+        "not_measured": unavailable,
+        "note": ("per-coin results, deliberately not combined: each coin's"
+                 " benchmark has its own direction, window and funding series."
+                 " See by_coin[<coin>].benchmark."),
+    }
+
+
+def _annual_pct(usd, notional, days):
+    """Annualized percent of notional, or None when it cannot be formed."""
+    if usd is None or not notional or not days:
+        return None
+    return usd / notional / (days / DAYS_PER_YEAR) * 100
+
+
+def _execution_cost(trades):
+    """What one round trip of THIS rule's execution actually cost, in dollars.
+
+    Fees plus slippage. Slippage is the realized price PnL with its sign flipped:
+    a delta-neutral hedge's two legs cancel, so what survives is the spread paid
+    getting in and out, and it is systematically negative. Signed rather than
+    absolute, deliberately — a round trip that happened to fill favourably was
+    cheap, and charging it as a cost would be the same error in the other
+    direction.
+
+    Returns (cost_per_round_trip, fees, slippage) summed across `trades`, or None
+    when no trade carries either figure — which is "nothing was measured", not
+    "execution was free". A measured cost of zero, or a negative one where fills
+    beat the spread, is a real answer and is honoured.
+
+    This exists so the benchmark cannot compare a rule carrying its REAL fees and
+    REAL slippage against a held hedge charged one MODELLED fee and no slippage
+    at all (`_round_trip_cost_fraction` is 2*(fa+fb), fees only). That is not a
+    like-for-like comparison, it is biased one way, and the bias scales with the
+    number of round trips the rule makes — which is the thing a timing layer does
+    more of than holding, by definition.
+    """
+    measurable = [t for t in trades
+                  if (t.get("realized") or {}).get("fees_usd") is not None
+                  or (t.get("realized") or {}).get("price_pnl_usd") is not None]
+    if not measurable:
+        return None
+    fees = sum((t.get("realized") or {}).get("fees_usd") or 0.0
+               for t in measurable)
+    slippage = -sum((t.get("realized") or {}).get("price_pnl_usd") or 0.0
+                    for t in measurable)
+    return (fees + slippage) / len(measurable), fees, slippage
+
+
+def _benchmark_input_faults(trades):
+    """Every reason the benchmark should refuse to render a verdict, or [].
+
+    Re-derives the plausibility test from each trade's own realized numbers rather
+    than trusting an upstream flag. The benchmark is the last thing a reader looks
+    at and the first thing they quote, so it has to be able to refuse on its own
+    evidence — a caller that forgot to run the guard must not be able to buy a
+    verdict by omission.
+    """
+    faults = []
+    for t in trades:
+        realized = t.get("realized") or {}
+        notional, hold_days = t.get("notional_usd"), t.get("hold_days") or 0
+        # _analytics reports the annualized net already; recompute it when the
+        # caller did not, so this holds for a trade dict assembled anywhere.
+        net_annual = realized.get("net_annual_pct_notional")
+        if net_annual is None:
+            net_annual = _annual_pct(realized.get("net_usd"), notional, hold_days)
+        fault = _price_pnl_fault(realized, notional, net_annual,
+                                 hold_days >= MIN_RELIABLE_HOLD_DAYS)
+        if fault:
+            faults.append({**fault, "opened_at": t.get("opened_at"),
+                           "closed_at": t.get("closed_at")})
+    return faults
+
+
+def _leg_window(rows, lo_ms, hi_ms, open_grace_ms, close_grace_ms):
+    """When one venue's leg actually opened and closed, around the ledger's window.
+
+    `rows` are that venue's normalized fills (oldest first, `signed` carrying the
+    direction). Returns `{"open_ms", "close_ms", "fills"}` for the position
+    episode the ledger's `[lo_ms, hi_ms]` refers to, or None when this leg has no
+    fills near that window at all. `close_ms` is None for an episode that never
+    returned to flat.
+
+    Folds fills into episodes (flat -> ... -> flat) rather than walking outward
+    from each edge independently, and that is the point. Two independent walks
+    cannot tell a trade's own opening fills from the CLOSING fills of a position
+    that was shut minutes earlier and re-opened — the engine does re-enter when a
+    spread flips — and would silently glue the two together. Folding separates
+    them by construction, and the episode overlapping the ledger's own window is
+    the one the row is talking about.
+
+    It also keeps two different facts apart that a size-sum cannot: "this leg
+    round-tripped inside the window" and "this window contains no fills for this
+    leg" both sum to flat. Here they are an episode, or None.
+
+    Pure, and deliberately so: the defect it exists to fix is arithmetic, and it
+    should be testable without a network read.
+    """
+    lo_bound, hi_bound = lo_ms - open_grace_ms, hi_ms + close_grace_ms
+    episodes, cur, running = [], None, 0.0
+    for r in rows:
+        if not (lo_bound <= r["t"] <= hi_bound):
+            continue
+        if cur is None:
+            cur = {"open_ms": r["t"], "close_ms": None, "fills": 0}
+        cur["fills"] += 1
+        running += r["signed"]
+        if abs(running) <= _FLAT_SIZE_EPS:
+            cur["close_ms"] = r["t"]
+            episodes.append(cur)
+            cur, running = None, 0.0
+    if cur is not None:
+        episodes.append(cur)
+    if not episodes:
+        return None
+
+    def overlap(ep):
+        end = hi_bound if ep["close_ms"] is None else ep["close_ms"]
+        return min(end, hi_ms) - max(ep["open_ms"], lo_ms)
+
+    best = max(episodes, key=overlap)
+    if overlap(best) < 0:
+        # No episode reaches into the ledger's window. One that STRADDLES it still
+        # describes this trade — a hedge opened and closed either side of a window
+        # both of whose stamps are late — and anything else is a different trade's.
+        straddling = [e for e in episodes
+                      if e["open_ms"] <= lo_ms
+                      and (e["close_ms"] is None or e["close_ms"] >= hi_ms)]
+        if not straddling:
+            return None
+        best = straddling[0]
+    return best
+
+
+def _leg_timing(windows):
+    """How far apart the two legs opened and closed, in seconds.
+
+    A hedge is delta-neutral only while BOTH legs are in the market. Legs that
+    open or close far apart leave the position outright for that interval, and
+    any price move over it is real money — not the measurement artifact the
+    magnitude guard would otherwise call it.
+
+    None for a gap that cannot be formed (a leg missing, or an episode that never
+    closed), which means "not established", never "simultaneous".
+    """
+    hl, dy = windows.get("hyperliquid"), windows.get("dydx")
+    if not hl or not dy:
+        return None
+    out = {"open_gap_seconds": round(
+        abs(hl["open_ms"] - dy["open_ms"]) / 1000, 3)}
+    if hl["close_ms"] is not None and dy["close_ms"] is not None:
+        out["close_gap_seconds"] = round(
+            abs(hl["close_ms"] - dy["close_ms"]) / 1000, 3)
+    else:
+        out["close_gap_seconds"] = None
+    gaps = [g for g in (out["open_gap_seconds"], out["close_gap_seconds"])
+            if g is not None]
+    out["max_gap_seconds"] = max(gaps) if gaps else None
+    out["hedged_throughout"] = (
+        None if out["max_gap_seconds"] is None
+        else out["max_gap_seconds"] <= _MAX_HEDGED_LEG_GAP_SECONDS)
+    return out
+
+
+def _hedge_integrity(realized):
+    """A breach of delta-neutrality during the trade, or None.
+
+    Separate from `data_quality_fault` on purpose. A trade whose legs closed
+    hours apart has numbers that are entirely correct and an outcome that is
+    entirely real; what failed was the hedge, not the measurement. Calling it a
+    measurement fault would exclude a genuine loss from the realized total and
+    flatter the strategy — which is the exact direction of error this whole guard
+    layer exists to prevent.
+    """
+    timing = (realized or {}).get("leg_timing")
+    if not timing or timing.get("hedged_throughout") is not False:
+        return None
+    gap = timing["max_gap_seconds"]
+    which = ("closed" if (timing.get("close_gap_seconds") or 0) >= gap
+             else "opened")
+    return {
+        "hedged_throughout": False,
+        "max_gap_seconds": gap,
+        "open_gap_seconds": timing.get("open_gap_seconds"),
+        "close_gap_seconds": timing.get("close_gap_seconds"),
+        "detail": (
+            f"the two legs {which} {gap / 3600:.2f} hours apart, so the position"
+            f" was outright — not hedged — for that interval. Any price move over"
+            f" it landed on one leg alone. The realized figures are CORRECT and"
+            f" are counted; what failed here was the hedge, not the measurement."),
+    }
+
+
+def _fill_coverage(legs):
+    """Did the counted fills actually round-trip the position on each leg?
+
+    Two ways a window can measure something other than the trade it names:
+
+      - it counted NO fills for a leg, so there is nothing of that leg in the
+        figures at all;
+      - the fills it did count do not net back to flat, so it holds one side of a
+        round trip whose other side falls outside it.
+
+    The residual is judged against the gross size traded rather than an absolute
+    epsilon, so the test means the same thing on a 0.001 BTC leg and a 40 SOL one
+    and does not fire on accumulated float error.
+    """
+    reasons, counted = [], 0
+    out_legs = {}
+    for venue, agg in sorted(legs.items()):
+        counted += agg["fills"]
+        residual = agg["signed"]
+        gross = agg["gross"]
+        out_legs[venue] = {"fills": agg["fills"], "residual_size": _round(residual, 8)}
+        if agg["fills"] == 0:
+            reasons.append(f"no {venue} fills fall inside this trade's window")
+        elif gross and abs(residual) > 1e-6 * gross:
+            reasons.append(
+                f"{venue} fills inside the window do not round-trip the position"
+                f" (residual size {residual:.8g} against {gross:.8g} traded)")
+    return {"complete": not reasons, "fills_counted": counted,
+            "legs": out_legs, "reasons": reasons}
+
+
+def _price_pnl_fault(realized, notional, net_annual_pct, reliable):
+    """A data-quality fault on one round trip's realized numbers, or None.
+
+    Three checks, and the FIRST is the one that matters most, because it is the
+    only one that can see a failure which looks like success:
+
+      0. COMPLETENESS. Did the window count fills that actually round-trip the
+         position? A window clipped at both ends counts nothing, sums to 0.00, and
+         reports precisely what a healthy hedge reports — so every magnitude test
+         passes it. Checked before anything else and without reference to
+         notional, because a zero-fill window is a fault at any size.
+      1. Price PnL that is a meaningful fraction of notional. Both legs move
+         together and cancel; what is left is slippage and residual imbalance.
+      2. An annualized net no funding spread produces. Only meaningful over a hold
+         long enough to annualize (`reliable`), which is why it is passed in
+         rather than re-derived.
+
+    Check 0 runs only when `realized` carries a `coverage` block, which is to say
+    when it came from _realized_in_window. A trade dict assembled anywhere else
+    has no fills to assert anything about, so its absence means "not asserted",
+    never "asserted fine".
+
+    Returns a dict naming the offending field and what it was measured against, so
+    a caller can report the fault rather than the number. Never raises: a guard
+    that can fall over is a guard that stops guarding on the day it matters.
+    """
+    coverage = (realized or {}).get("coverage")
+    if coverage and not coverage.get("complete", True):
+        return {
+            "field": "coverage",
+            "fills_counted": coverage.get("fills_counted"),
+            "legs": coverage.get("legs"),
+            "detail": (
+                "the realized figures were computed from fills that do not"
+                " round-trip this position, so they measure something other than"
+                " this trade: "
+                + "; ".join(coverage.get("reasons") or ["reason unrecorded"])
+                + ". A window that counts no fills sums to zero, which is what a"
+                  " healthy hedge also reports — so this is reported as the fault"
+                  " it is rather than as a flat result."),
+        }
+    if not notional or notional <= 0:
+        return None
+    # Both magnitude checks below rest on the same premise: the two legs move
+    # together and cancel, so what survives is small. A hedge whose legs were not
+    # simultaneously in the market had no such cancellation for that interval,
+    # and its price PnL is outright directional P&L — real money, correctly
+    # measured. Calling that a measurement fault would exclude a genuine loss
+    # from the realized total and flatter the strategy. The breach is reported
+    # instead, by _hedge_integrity.
+    timing = (realized or {}).get("leg_timing") or {}
+    if timing.get("hedged_throughout") is False:
+        return None
+    price_pnl = (realized or {}).get("price_pnl_usd")
+    if price_pnl is not None:
+        fraction = abs(price_pnl) / notional
+        if fraction > MAX_PLAUSIBLE_PRICE_PNL_FRACTION:
+            return {
+                "field": "price_pnl_usd",
+                "value": price_pnl,
+                "notional_usd": round(notional, 2),
+                "pct_of_notional": round(fraction * 100, 2),
+                "limit_pct_of_notional": MAX_PLAUSIBLE_PRICE_PNL_FRACTION * 100,
+                "detail": (
+                    f"realized price PnL of {price_pnl} is"
+                    f" {fraction * 100:.1f}% of the ${notional:,.2f} this hedge"
+                    f" held. Both legs move together and cancel by construction,"
+                    f" so a figure this size is a measurement fault — most often a"
+                    f" closing fill stamped outside the trade's recorded window —"
+                    f" not a result."),
+            }
+    if (reliable and net_annual_pct is not None
+            and abs(net_annual_pct) > MAX_PLAUSIBLE_NET_ANNUAL_PCT):
+        return {
+            "field": "net_annual_pct_notional",
+            "value": round(net_annual_pct, 2),
+            "notional_usd": round(notional, 2),
+            "limit_pct": MAX_PLAUSIBLE_NET_ANNUAL_PCT,
+            "detail": (
+                f"an annualized net of {net_annual_pct:,.0f}% of notional is not"
+                f" a funding carry. Something upstream of this number is wrong;"
+                f" it is reported as a fault rather than as a return."),
+        }
+    return None
+
+
+def _episodes_from_rows(rows, funding, venue, live_size=None):
+    """Fold signed fills into position episodes (flat → ... → flat), attaching the
+    funding payments and fees that fall inside each one.
+
+    An episode is one life of a position: it begins when cumulative size leaves
+    zero and ends when it returns to zero. Realized price PnL is the signed cash
+    from the fills over the episode (sells bring in, buys pay out); for a fully
+    round-tripped hedge leg it is small and mostly offset by the other leg.
+
+    `live_size` is what the venue is actually holding now, and it exists to settle
+    the one thing fills alone cannot answer. The walk assumes the leg was flat at
+    the window's start, so a trade whose OPENING fills fall outside the lookback
+    presents only its closing fills — and a buy from a zero baseline reads as
+    opening a long. A trailing episode that the venue says is not there is not an
+    open position; it is a window that does not reach back far enough, and it is
+    labelled as one. Pass None (unknown) and the reconstruction is unchanged.
+    """
+    episodes, cur = [], None
+    running = 0.0
+    for r in rows:
+        if cur is None:
+            cur = {"opened_at": _iso_from_ms(r["t"]), "open_ms": r["t"],
+                   "close_ms": None, "fills": 0, "fees_usd": 0.0,
+                   "cash": 0.0, "entry_px": r["px"], "exit_px": None,
+                   "size": 0.0, "venue": venue}
+        cur["fills"] += 1
+        cur["fees_usd"] += r["fee"]
+        # Cash convention: a sell (+cash), a buy (-cash). Sum over a closed episode
+        # = realized price PnL on that leg.
+        cur["cash"] += (r["px"] * r["sz"]) * (1 if not r["buy"] else -1)
+        cur["size"] = max(cur["size"], abs(running + r["signed"]))
+        running += r["signed"]
+        if abs(running) < 1e-12:  # back to flat -> episode closed
+            cur["close_ms"] = r["t"]
+            cur["closed_at"] = _iso_from_ms(r["t"])
+            cur["exit_px"] = r["px"]
+            episodes.append(cur)
+            cur = None
+    if cur is not None:  # never returned to flat inside the window
+        venue_flat = live_size is not None and abs(live_size) <= _FLAT_SIZE_EPS
+        cur["closed_at"] = None
+        cur["open"] = not venue_flat
+        cur["incomplete_window"] = venue_flat
+        cur["size"] = abs(running)  # CURRENT live size, not the peak it reached
+        if venue_flat:
+            # Not an entry: it is simply the earliest fill the window happens to
+            # contain, and on the trade that exposed this it was a CLOSING fill.
+            cur["first_fill_px_in_window"] = cur["entry_px"]
+            cur["entry_px"] = None
+            cur["size"] = None
+            cur["note"] = (
+                f"the lookback does not reach this {venue} leg's OPENING fills —"
+                f" it holds only part of the trade, and {venue} is flat now."
+                f" Nothing here is a live position. Widen the review window to"
+                f" reconstruct the round trip.")
+        episodes.append(cur)
+
+    for ep in episodes:
+        ep.setdefault("open", False)
+        ep.setdefault("incomplete_window", False)
+        lo = ep["open_ms"]
+        hi = ep["close_ms"] if ep["close_ms"] is not None else int(time.time() * 1000)
+        ep["funding_usd"] = round(
+            sum(amt for t, amt in funding if lo <= t <= hi + 1000), 6)
+        # An incomplete window has no realized price PnL to report: the cash it
+        # holds is one side of a round trip whose other side is outside it, which
+        # is precisely the number that must not be presented as a result.
+        ep["realized_price_pnl_usd"] = (
+            round(ep["cash"], 4)
+            if not ep["open"] and not ep["incomplete_window"] else None)
+        ep["fees_usd"] = round(ep["fees_usd"], 6)
+        # tidy internal keys we don't need to surface
+        for k in ("open_ms", "close_ms", "cash"):
+            ep.pop(k, None)
+    return episodes
+
+
+def _iso_from_ms(ms):
+    return datetime.datetime.fromtimestamp(ms / 1000, datetime.UTC).isoformat()
