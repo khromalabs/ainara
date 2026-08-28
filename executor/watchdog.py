@@ -679,6 +679,61 @@ class Watchdog:
             logger.error("watchdog: could not write alarm file %s: %s",
                          self.alarm_file, e)
 
+    def _adopt_inherited_alarm(self):
+        """Take ownership of an alarm file left behind by a previous process.
+
+        `_alarm_published` starts False in every new process, and only the
+        `elif self._alarm_published` branch of _publish_alarms removes the file.
+        So a watchdog that replaced a crashed one NEVER cleared that one's alarm:
+        server.py kept serving it on /health and it kept reading, inside the
+        five-minute freshness window, as a LIVE emergency raised by a process that
+        no longer exists.
+
+        NOT simply deleted. An alarm that was live at the moment of a crash is
+        information — quite possibly information about why the crash happened —
+        and the crash is the least convenient moment to silently discard it. It is
+        marked as inherited instead, with its ORIGINAL timestamp intact so it ages
+        exactly as it would have, and `_alarm_published` is set so the first poll
+        that finds nothing wrong retires it through the normal all-clear path
+        rather than leaving it to linger.
+
+        An unreadable file is treated the same way: something is there, this
+        process did not write it, and the first clean poll should remove it.
+        """
+        try:
+            if not os.path.exists(self.alarm_file):
+                return
+            with open(self.alarm_file, encoding="utf-8") as fh:
+                payload = json.load(fh)
+            if not isinstance(payload, dict):
+                raise ValueError(f"alarm file holds {type(payload).__name__}")
+        except Exception as e:
+            logger.warning(
+                "watchdog: an alarm file exists at %s but could not be read (%s)."
+                " It was not written by this process. Treating it as inherited —"
+                " the first clean poll will retire it.", self.alarm_file, e)
+            self._alarm_published = True
+            return
+        payload = {
+            **payload,
+            # `ts` is deliberately NOT refreshed: the age of the alarm is the whole
+            # basis on which /health decides it is stale.
+            "inherited_from_previous_process": True,
+            "inherited_at": time.time(),
+            "inherited_note": (
+                "this alarm was written by a watchdog process that is no longer"
+                " running. It is NOT being refreshed by the current one, and the"
+                " current one has not (yet) found the condition itself. It will be"
+                " retired on the first poll that finds nothing wrong."),
+        }
+        self._write_alarm_file(payload)
+        self._alarm_published = True
+        logger.warning(
+            "watchdog: adopting an alarm file left by a previous process (%s,"
+            " raised %s). Marked as inherited and NOT treated as a live alarm"
+            " raised by this loop; it will be retired on the first clean poll.",
+            payload.get("alarm"), payload.get("ts"))
+
     def _publish_alarms(self, report):
         """Refresh the alarm file and push off-box. Runs EVERY poll.
 
@@ -1118,6 +1173,10 @@ class Watchdog:
         logger.info("watchdog starting: mode=%s interval=%ss heartbeat=%s",
                     self.mode, self.interval, self.heartbeat_file)
         logger.info("watchdog: %s", self.notifier.describe())
+        # Before anything else: an alarm file sitting here was not written by this
+        # process. Claim it so it cannot masquerade as a live emergency this loop
+        # is raising, and so the first clean poll retires it.
+        self._adopt_inherited_alarm()
         # Send one on startup: it confirms the channel actually works, which you want
         # to learn now rather than during the first emergency.
         self.notifier.send(

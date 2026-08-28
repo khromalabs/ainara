@@ -61,6 +61,27 @@ DAYS_PER_YEAR = 365.0
 # predicted RATE metrics are only trusted past it. Raw dollars are always reported.
 MIN_RELIABLE_HOLD_DAYS = 1.0
 
+# A venue size at or below this is flat. Used to tell a genuinely open leg from a
+# review window that simply does not reach back to the leg's opening fills.
+_FLAT_SIZE_EPS = 1e-9
+
+# `review`'s default window, derived from the hold it has to contain rather than
+# fixed. A 7-day default against a 14-day strategy could not see a completed
+# trade at all, and reported the half it could see as a live position.
+MIN_REVIEW_LOOKBACK_DAYS = 90.0
+REVIEW_LOOKBACK_HOLDS = 6
+
+# Both legs of a delta-neutral hedge move together and cancel, so realized price
+# PnL is slippage and residual imbalance — a small fraction of notional. Past
+# this it is a measurement fault, most often a closing fill stamped outside the
+# trade's recorded window, and it is reported as one rather than as a result.
+MAX_PLAUSIBLE_PRICE_PNL_FRACTION = 0.02
+
+# An annualized net past this is not a funding carry. Deliberately loose: the
+# point is to refuse the absurd, not to adjudicate a good quarter. Only applied
+# to holds long enough for an annualization to mean anything (MIN_RELIABLE_HOLD_DAYS).
+MAX_PLAUSIBLE_NET_ANNUAL_PCT = 300.0
+
 # Ordering for rolling several coins' hedge health up to one book-wide verdict.
 _HEALTH_RANK = {"flat": 0, "ok": 1, "warn": 2, "critical": 3}
 
@@ -189,12 +210,28 @@ class TradingPortfolio(Skill):
             # configured cross leverage). Guard the divide for a flat/zero leg.
             margin_used = float(pos.get("marginUsed", 0) or 0)
             leverage = (pos_val / margin_used) if margin_used > 0 else None
+            # A null liquidation distance must never render as "safe". HL returns
+            # no liquidationPx when the position is not liquidatable by price
+            # alone, which is benign — but an unreadable mark is not, and the two
+            # were previously indistinguishable because neither carried a note.
+            liq_note = None
+            # `not mark` rather than `mark is None`: a missing positionValue
+            # divides out to 0.0, which is just as unreadable as None and would
+            # otherwise fall through to the benign note below.
+            if not mark:
+                liq_note = ("liquidation unknown: no mark price for this position,"
+                            " so distance to liquidation is NOT assessed — this leg"
+                            " is unmonitored, not safe")
+            elif liq is None:
+                liq_note = ("not liquidatable by price alone (Hyperliquid reports"
+                            " no liquidation price for this position)")
             leg.update({
                 "open": abs(szi) > 0, "size": szi, "side": "long" if szi > 0 else "short",
                 "entry_px": _f(pos.get("entryPx")), "mark_px": mark,
                 "liquidation_px": liq,
                 "liq_distance_pct": (abs(mark - liq) / mark * 100)
                 if (liq and mark) else None,
+                "liq_note": liq_note,
                 "unrealized_pnl": _f(pos.get("unrealizedPnl")),
                 "margin_used_usd": margin_used if margin_used > 0 else None,
                 "leverage": leverage,
@@ -388,6 +425,7 @@ class TradingPortfolio(Skill):
             "combined_unrealized_pnl_usd": unrl,
             "liquidation": {
                 "hyperliquid_distance_pct": hl.get("liq_distance_pct"),
+                "hyperliquid_note": hl.get("liq_note"),
                 "dydx_distance_pct": dy.get("liq_distance_pct"),
                 "dydx_note": dy.get("liq_note"),
             },
@@ -425,6 +463,7 @@ class TradingPortfolio(Skill):
 
         trips.sort(key=lambda t: t.get("opened_at") or "", reverse=True)
         closed = [t for t in trips if t["status"] == "closed"]
+        incomplete = [t for t in trips if t["status"] == "incomplete_window"]
         unpaired = [t for t in trips if t["status"] == "unpaired_closed"]
         r_closed = [t["realized_net_usd"] for t in closed
                     if t.get("realized_net_usd") is not None]
@@ -435,6 +474,9 @@ class TradingPortfolio(Skill):
             "hedge_round_trips_closed": len(closed),
             "unpaired_closed_legs": len(unpaired),
             "still_open": sum(1 for t in trips if t["status"] == "open"),
+            # Trades the window caught the close of but not the open. Counted
+            # separately and deliberately NOT as `still_open`: they are flat.
+            "incomplete_window_round_trips": len(incomplete),
             # The strategy's own scorecard: complete hedges only.
             "hedge_realized_net_usd": round(sum(r_closed), 4) if r_closed else None,
             "winning_hedges": sum(1 for r in r_closed if r > 0),
@@ -442,6 +484,12 @@ class TradingPortfolio(Skill):
             # True realized cash, INCLUDING unpaired legs (anomalies still cost money).
             "total_realized_net_usd": round(sum(r_all), 4) if r_all else None,
         }
+        if incomplete:
+            summary["note"] = (
+                f"{len(incomplete)} trade(s) closed inside this {lookback_days:g}-day"
+                " window but OPENED before it, so they could not be reconstructed"
+                " and contribute nothing to the figures above. They are flat, not"
+                " open. Re-run with a longer lookback_days to score them.")
         return {"action": "review", "coin": coin, "lookback_days": lookback_days,
                 "summary": summary, "round_trips": trips, "as_of": _now_iso()}
 
@@ -463,13 +511,13 @@ class TradingPortfolio(Skill):
         """
         rows = _ledger.trades(coin=coin, status="closed")
         trades, captures, pred_spreads, real_funding_annuals = [], [], [], []
+        faults = []
         net_total = 0.0
         for row in rows:
             lo, hi = _iso_ms(row["opened_at"]), _iso_ms(row["closed_at"])
             hold_days = max((hi - lo) / 86_400_000, 0.0)
             notional = row.get("notional_usd")
             realized = self._realized_in_window(coin, lo, hi)
-            net_total += realized["net_usd"]
 
             # Annualizing a rate over a very short hold amplifies noise: a few lucky
             # (or unlucky) funding hours, or the fixed round-trip fee, blow up when
@@ -483,8 +531,22 @@ class TradingPortfolio(Skill):
                                     / hold_days * DAYS_PER_YEAR * 100)
                 r_net_annual = (realized["net_usd"] / notional
                                 / hold_days * DAYS_PER_YEAR * 100)
+
+            # Numbers a delta-neutral hedge cannot produce, or numbers computed
+            # from fills that do not round-trip the position. A faulted trade is
+            # kept OUT of the running total and out of every headline rate: a
+            # total that silently averaged in a fabricated figure is worse than
+            # one that says which trades it could not measure.
+            fault = _price_pnl_fault(realized, notional, r_net_annual, reliable)
+            if fault:
+                faults.append({**fault, "opened_at": row["opened_at"],
+                               "closed_at": row["closed_at"]})
+            else:
+                net_total += realized["net_usd"]
+
             pred_spread = row.get("pred_smoothed_spread_annual_pct")
-            if reliable and pred_spread and r_funding_annual is not None:
+            if (reliable and pred_spread and r_funding_annual is not None
+                    and not fault):
                 capture = r_funding_annual / pred_spread
                 captures.append(capture)
                 pred_spreads.append(pred_spread)
@@ -504,15 +566,38 @@ class TradingPortfolio(Skill):
                 },
                 "realized": {
                     **realized,
+                    # Two denominators, named rather than implied. They answer
+                    # different questions — a funding rate is earned against the
+                    # notional that actually accrued funding, a net return is
+                    # measured against the capital deployed over the hold — and
+                    # quoting one where the other was meant is a real error. See
+                    # `notional_basis` for what this build can actually
+                    # distinguish.
                     "funding_annual_pct_notional": _round(r_funding_annual, 2),
+                    "funding_rate_denominator_usd": _round(notional, 2),
                     "net_annual_pct_notional": _round(r_net_annual, 2),
+                    "net_rate_denominator_usd": _round(notional, 2),
                     "fees_pct_notional": _round(
                         realized["fees_usd"] / notional * 100, 4)
                     if notional else None,
                 },
+                # This build records neither mid-hold size changes nor a public
+                # mark series, so both denominators above are the opening
+                # notional and collapse onto each other. They diverge once a
+                # position is resized or the mark moves materially, so the basis
+                # is stated rather than left to be assumed equal.
+                "notional_basis": (
+                    "the opening notional — no size-change record and no public"
+                    " mark series, so a resize or a price move over the hold is"
+                    " NOT accounted for in either denominator"),
+                "mark_drift_pct": None,
                 "funding_capture_ratio": _round(capture, 3),
                 "held_past_fee_breakeven": (hold_days >= self._fee_breakeven_days(
                     pred_spread)) if pred_spread else None,
+                # Present and False only when something is actually wrong, so a
+                # reader scanning for it finds nothing on a healthy trade.
+                "data_quality_ok": fault is None,
+                **({"data_quality_fault": fault} if fault else {}),
             })
 
         short_held = sum(1 for t in trades
@@ -521,7 +606,15 @@ class TradingPortfolio(Skill):
             "closed_trades_on_record": len(rows),
             "trades_scored": len(captures),  # only holds long enough to trust a rate
             "trades_too_short_to_score": short_held,
+            # Excludes any trade whose numbers failed the plausibility guard. A
+            # total that silently averaged in a fabricated figure is worse than a
+            # total that says which trades it could not measure.
             "total_realized_net_usd": round(net_total, 4) if rows else None,
+            "data_quality": {
+                "trades_faulted": len(faults),
+                "excluded_from_totals_and_rates": len(faults),
+                "faults": faults,
+            },
             "mean_predicted_spread_annual_pct": _round(_mean(pred_spreads), 2),
             "mean_realized_funding_annual_pct": _round(_mean(real_funding_annuals), 2),
             "mean_funding_capture_ratio": _round(_mean(captures), 3),
@@ -544,6 +637,14 @@ class TradingPortfolio(Skill):
                 "funding_capture_ratio (realized funding rate ÷ predicted) is the"
                 " honest gauge, but only over trades held long enough to trust —"
                 f" {short_held} short-held trade(s) are excluded from the rates.")
+        if faults:
+            summary["note"] = (
+                f"{len(faults)} trade(s) FAILED the data-quality guard and are"
+                " excluded from every figure above. Report the fault, not the"
+                " number: a faulted trade's net_usd measures something other than"
+                " that trade. See summary.data_quality.faults, and"
+                " data_quality_fault on the trade itself. "
+            ) + summary.get("note", "")
         return {"action": "analytics", "coin": coin, "summary": summary,
                 "trades": trades, "as_of": _now_iso()}
 
@@ -601,20 +702,45 @@ class TradingPortfolio(Skill):
         return rows
 
     # ---- per-venue episode reconstruction ----
+    def _live_size(self, venue, coin):
+        """What this venue holds RIGHT NOW, signed. None when it cannot be read.
+
+        The episode reconstructor works from fills alone and therefore assumes the
+        leg was flat at the start of the window. When it was not — the window
+        misses the open — the reconstructor's running total never returns to zero
+        and it reports a position that does not exist. The venue's CURRENT size is
+        what settles it, and it is one public read.
+
+        None on any failure, which leaves the reconstruction exactly as it was.
+        This distinguishes a real open position from a fabricated one; it is not
+        allowed to be the reason a review cannot be produced at all.
+        """
+        try:
+            leg = (self._hl_leg(coin) if venue == "hyperliquid"
+                   else self._dydx_leg(coin))
+            if leg.get("error"):
+                return None
+            return float(leg.get("size") or 0.0)
+        except Exception as e:
+            self.logger.warning("live size unavailable %s/%s: %s", venue, coin, e)
+            return None
+
     def _episodes_hl(self, coin, since_ms):
         """Walk HL fills oldest→newest, tracking signed size; an episode runs from
         the fill that leaves flat to the fill that returns to flat."""
         network, addr = self._target("hyperliquid")
         rows = self._raw_fills_hl(coin, since_ms)
         funding = self._funding_hl(coin, since_ms, addr, network)
-        return _episodes_from_rows(rows, funding, "hyperliquid")
+        return _episodes_from_rows(rows, funding, "hyperliquid",
+                                   self._live_size("hyperliquid", coin))
 
     def _episodes_dydx(self, coin, since_ms):
         network, addr = self._target("dydx")
         rows = self._raw_fills_dydx(coin, since_ms)
         funding = self._funding_dydx(coin, since_ms, addr,
                                      _DYDX_INDEXER[network])
-        return _episodes_from_rows(rows, funding, "dydx")
+        return _episodes_from_rows(rows, funding, "dydx",
+                                   self._live_size("dydx", coin))
 
     # ---- realized outcome over an EXACT window (for ledger-bounded analytics) ----
     def _realized_in_window(self, coin, lo_ms, hi_ms):
@@ -624,6 +750,13 @@ class TradingPortfolio(Skill):
 
         Funding is bounded with a small tail so an hourly stamp landing right on
         the close is not dropped; a payment strictly after the close is excluded.
+
+        Also reports `coverage`: whether the fills it counted actually round-trip
+        the position. A window clipped at both ends counts nothing, sums to $0.00
+        and looks exactly like a healthy flat hedge, so every magnitude check
+        passes it. That is the one failure mode that cannot be caught by looking
+        at the numbers, which is why it is asserted here at the point the fills
+        are counted rather than inferred downstream.
         """
         hi = hi_ms + 1000
         funding = fees = price_pnl = 0.0
@@ -631,12 +764,18 @@ class TradingPortfolio(Skill):
         net_hl = self._target("hyperliquid")[0]
         _, addr_dy = self._target("dydx")
         indexer = _DYDX_INDEXER[self._target("dydx")[0]]
-        for fetch in (self._raw_fills_hl, self._raw_fills_dydx):
+        legs = {}
+        for venue, fetch in (("hyperliquid", self._raw_fills_hl),
+                             ("dydx", self._raw_fills_dydx)):
+            agg = legs.setdefault(venue, {"fills": 0, "signed": 0.0, "gross": 0.0})
             for r in fetch(coin, lo_ms):
                 if lo_ms <= r["t"] <= hi:
                     fees += r["fee"]
                     # sell brings cash in (+), buy pays out (-); sum = price PnL.
                     price_pnl += r["px"] * r["sz"] * (1 if not r["buy"] else -1)
+                    agg["fills"] += 1
+                    agg["signed"] += r["signed"]
+                    agg["gross"] += abs(r["signed"])
         for t, amt in self._funding_hl(coin, lo_ms, addr_hl, net_hl):
             if lo_ms <= t <= hi:
                 funding += amt
@@ -645,7 +784,8 @@ class TradingPortfolio(Skill):
                 funding += amt
         return {"funding_usd": round(funding, 4), "fees_usd": round(fees, 4),
                 "price_pnl_usd": round(price_pnl, 4),
-                "net_usd": round(funding + price_pnl - fees, 4)}
+                "net_usd": round(funding + price_pnl - fees, 4),
+                "coverage": _fill_coverage(legs)}
 
     def _funding_hl(self, coin, since_ms, addr, network):
         rows = requests.post(_HL_INFO[network], json={
@@ -692,27 +832,48 @@ class TradingPortfolio(Skill):
         # leg -> "unpaired_closed": a naked leg that opened and resolved on its own
         # (e.g. an unwound half of a botched open) — still has a realized result
         # worth surfacing, which is the whole point of the review.
+        #
+        # "incomplete_window" is none of those: the lookback caught a trade's close
+        # but not its open, so what is here is half a round trip. It used to be
+        # reported as `open`, with the closing fill's price standing in as
+        # `entry_px`, which invented a live position on a flat account. A window
+        # that is too short is a configuration matter; reporting a position that
+        # does not exist is a correctness one.
         present = [ep for ep in (hl_ep, dy_ep) if ep is not None]
         any_open = any(ep.get("open") for ep in present)
+        incomplete = any(ep.get("incomplete_window") for ep in present)
         both = hl_ep is not None and dy_ep is not None
-        status = "open" if any_open else ("closed" if both else "unpaired_closed")
+        if any_open:
+            status = "open"
+        elif incomplete:
+            status = "incomplete_window"
+        else:
+            status = "closed" if both else "unpaired_closed"
 
         realized_net = None
         if status in ("closed", "unpaired_closed"):
             realized_net = round(funding + price_pnl - fees, 4)
         hold_h = None
-        if opened and closed and status != "open":
+        if opened and closed and status not in ("open", "incomplete_window"):
             hold_h = round((_iso_ms(closed) - _iso_ms(opened)) / 3_600_000, 2)
-        return {
+        out = {
             "coin": coin, "status": status, "opened_at": opened,
-            "closed_at": closed if status != "open" else None,
+            "closed_at": closed if status not in ("open", "incomplete_window")
+            else None,
             "hold_hours": hold_h,
             "funding_received_usd": round(funding, 4),
             "fees_usd": round(fees, 4),
-            "price_pnl_usd": round(price_pnl, 4),
+            "price_pnl_usd": round(price_pnl, 4) if not incomplete else None,
             "realized_net_usd": realized_net,
             "legs": legs,
         }
+        if status == "incomplete_window":
+            out["note"] = (
+                "the review window does not reach this trade's OPENING fills, so"
+                " it cannot be reconstructed and no realized result is reported."
+                " This is NOT an open position — both venues are flat. Re-run with"
+                " a longer lookback_days.")
+        return out
 
     # ------------------------------------------------------------------
     # all-coins (book-wide) views — the "how's everything?" question. Each per-coin
@@ -785,6 +946,7 @@ class TradingPortfolio(Skill):
                     "by_coin": {}, "as_of": _now_iso()}
         by_coin = {c: self._review(c, lookback_days) for c in coins}
         hedge_net, total_net, have_h, have_t, closed = 0.0, 0.0, False, False, 0
+        incomplete = 0
         for r in by_coin.values():
             s = r["summary"]
             if s.get("hedge_realized_net_usd") is not None:
@@ -792,9 +954,17 @@ class TradingPortfolio(Skill):
             if s.get("total_realized_net_usd") is not None:
                 total_net += s["total_realized_net_usd"]; have_t = True
             closed += s.get("hedge_round_trips_closed", 0)
+            incomplete += s.get("incomplete_window_round_trips", 0)
         summary = {"coins": coins, "hedge_round_trips_closed": closed,
+                   "incomplete_window_round_trips": incomplete,
                    "hedge_realized_net_usd": round(hedge_net, 4) if have_h else None,
                    "total_realized_net_usd": round(total_net, 4) if have_t else None}
+        if incomplete:
+            summary["note"] = (
+                f"{incomplete} trade(s) opened before this {lookback_days:g}-day"
+                " window and could not be reconstructed. They are flat, not open,"
+                " and contribute nothing to the totals above. Re-run with a longer"
+                " lookback_days to score them.")
         return {"action": "review", "scope": "all", "lookback_days": lookback_days,
                 "summary": summary, "by_coin": by_coin, "as_of": _now_iso()}
 
@@ -806,18 +976,26 @@ class TradingPortfolio(Skill):
                                 " from the next real open/close onward."},
                     "as_of": _now_iso()}
         by_coin = {c: self._analytics(c) for c in coins}
-        net_total, have = 0.0, False
+        net_total, have, faulted = 0.0, False, 0
         for a in by_coin.values():
             t = a["summary"].get("total_realized_net_usd")
             if t is not None:
                 net_total += t; have = True
+            faulted += (a["summary"].get("data_quality") or {}).get(
+                "trades_faulted", 0)
         summary = {
             "coins": coins,
             "closed_trades_on_record": sum(
                 a["summary"].get("closed_trades_on_record", 0)
                 for a in by_coin.values()),
             "total_realized_net_usd": round(net_total, 4) if have else None,
+            "trades_faulted": faulted,
         }
+        if faulted:
+            summary["note"] = (
+                f"{faulted} trade(s) across the book failed the data-quality"
+                " guard and are excluded from the total above. See each coin's"
+                " summary.data_quality for what was wrong.")
         return {"action": "analytics", "scope": "all", "summary": summary,
                 "by_coin": by_coin, "as_of": _now_iso()}
 
@@ -842,7 +1020,14 @@ class TradingPortfolio(Skill):
             " default to BTC.",
         ] = "ALL",
         lookback_days: Annotated[
-            float, "For 'review': how far back to reconstruct trades"] = 7.0,
+            Optional[float],
+            "For 'review': how far back to reconstruct closed trades. Leave unset"
+            " unless the user names a period — the default is derived from the"
+            " strategy's own expected hold (at least 90 days), and a shorter"
+            " window cannot see a completed trade at all. Do NOT pass a small"
+            " number to 'check recent trades': a window that catches a trade's"
+            " close but not its open cannot reconstruct it.",
+        ] = None,
         size_tolerance_pct: Annotated[
             float, "For 'status': leg-size mismatch above this reads as imbalanced"
         ] = 15.0,
@@ -872,8 +1057,11 @@ class TradingPortfolio(Skill):
                         " Ask about your whole book (or 'all') to include them.")
                 return result
             if action == "review":
-                return self._review_all(lookback_days) if allc \
-                    else self._review(c, lookback_days)
+                # Unset means "use the window the strategy's own hold requires",
+                # not a fixed week. See _default_lookback_days.
+                lb = (_default_lookback_days() if lookback_days is None
+                      else float(lookback_days))
+                return self._review_all(lb) if allc else self._review(c, lb)
             if action == "analytics":
                 return self._analytics_all() if allc else self._analytics(c)
             return {"error": f"unknown action {action!r}; use 'status', 'review'"
@@ -894,6 +1082,24 @@ def _f(v):
 
 def _now_iso():
     return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def _default_lookback_days():
+    """How far `review` looks back when the caller does not say.
+
+    Derived from `expected_hold_days` rather than fixed, because the number that
+    makes a window too short is the hold it has to contain. A desk configured for
+    28-day holds gets a 168-day window without anyone remembering to widen it.
+
+    Floored at MIN_REVIEW_LOOKBACK_DAYS so a misconfigured or tiny hold cannot
+    reintroduce a window that cannot see a completed trade.
+    """
+    try:
+        hold = float(config.get("trading.carry_engine.expected_hold_days", 14.0)
+                     or 14.0)
+    except (TypeError, ValueError):
+        hold = 14.0
+    return max(MIN_REVIEW_LOOKBACK_DAYS, round(hold * REVIEW_LOOKBACK_HOLDS))
 
 
 def _iso_ms(s):
@@ -939,7 +1145,114 @@ def _overlap(h, d):
     return max(0.0, min(he, de) - max(hs, ds))
 
 
-def _episodes_from_rows(rows, funding, venue):
+def _fill_coverage(legs):
+    """Did the counted fills actually round-trip the position on each leg?
+
+    Two ways a window can measure something other than the trade it names:
+
+      - it counted NO fills for a leg, so there is nothing of that leg in the
+        figures at all;
+      - the fills it did count do not net back to flat, so it holds one side of a
+        round trip whose other side falls outside it.
+
+    The residual is judged against the gross size traded rather than an absolute
+    epsilon, so the test means the same thing on a 0.001 BTC leg and a 40 SOL one
+    and does not fire on accumulated float error.
+    """
+    reasons, counted = [], 0
+    out_legs = {}
+    for venue, agg in sorted(legs.items()):
+        counted += agg["fills"]
+        residual = agg["signed"]
+        gross = agg["gross"]
+        out_legs[venue] = {"fills": agg["fills"], "residual_size": _round(residual, 8)}
+        if agg["fills"] == 0:
+            reasons.append(f"no {venue} fills fall inside this trade's window")
+        elif gross and abs(residual) > 1e-6 * gross:
+            reasons.append(
+                f"{venue} fills inside the window do not round-trip the position"
+                f" (residual size {residual:.8g} against {gross:.8g} traded)")
+    return {"complete": not reasons, "fills_counted": counted,
+            "legs": out_legs, "reasons": reasons}
+
+
+def _price_pnl_fault(realized, notional, net_annual_pct, reliable):
+    """A data-quality fault on one round trip's realized numbers, or None.
+
+    Three checks, and the FIRST is the one that matters most, because it is the
+    only one that can see a failure which looks like success:
+
+      0. COMPLETENESS. Did the window count fills that actually round-trip the
+         position? A window clipped at both ends counts nothing, sums to 0.00, and
+         reports precisely what a healthy hedge reports — so every magnitude test
+         passes it. Checked before anything else and without reference to
+         notional, because a zero-fill window is a fault at any size.
+      1. Price PnL that is a meaningful fraction of notional. Both legs move
+         together and cancel; what is left is slippage and residual imbalance.
+      2. An annualized net no funding spread produces. Only meaningful over a hold
+         long enough to annualize (`reliable`), which is why it is passed in
+         rather than re-derived.
+
+    Check 0 runs only when `realized` carries a `coverage` block, which is to say
+    when it came from _realized_in_window. A trade dict assembled anywhere else
+    has no fills to assert anything about, so its absence means "not asserted",
+    never "asserted fine".
+
+    Returns a dict naming the offending field and what it was measured against, so
+    a caller can report the fault rather than the number. Never raises: a guard
+    that can fall over is a guard that stops guarding on the day it matters.
+    """
+    coverage = (realized or {}).get("coverage")
+    if coverage and not coverage.get("complete", True):
+        return {
+            "field": "coverage",
+            "fills_counted": coverage.get("fills_counted"),
+            "legs": coverage.get("legs"),
+            "detail": (
+                "the realized figures were computed from fills that do not"
+                " round-trip this position, so they measure something other than"
+                " this trade: "
+                + "; ".join(coverage.get("reasons") or ["reason unrecorded"])
+                + ". A window that counts no fills sums to zero, which is what a"
+                  " healthy hedge also reports — so this is reported as the fault"
+                  " it is rather than as a flat result."),
+        }
+    if not notional or notional <= 0:
+        return None
+    price_pnl = (realized or {}).get("price_pnl_usd")
+    if price_pnl is not None:
+        fraction = abs(price_pnl) / notional
+        if fraction > MAX_PLAUSIBLE_PRICE_PNL_FRACTION:
+            return {
+                "field": "price_pnl_usd",
+                "value": price_pnl,
+                "notional_usd": round(notional, 2),
+                "pct_of_notional": round(fraction * 100, 2),
+                "limit_pct_of_notional": MAX_PLAUSIBLE_PRICE_PNL_FRACTION * 100,
+                "detail": (
+                    f"realized price PnL of {price_pnl} is"
+                    f" {fraction * 100:.1f}% of the ${notional:,.2f} this hedge"
+                    f" held. Both legs move together and cancel by construction,"
+                    f" so a figure this size is a measurement fault — most often a"
+                    f" closing fill stamped outside the trade's recorded window —"
+                    f" not a result."),
+            }
+    if (reliable and net_annual_pct is not None
+            and abs(net_annual_pct) > MAX_PLAUSIBLE_NET_ANNUAL_PCT):
+        return {
+            "field": "net_annual_pct_notional",
+            "value": round(net_annual_pct, 2),
+            "notional_usd": round(notional, 2),
+            "limit_pct": MAX_PLAUSIBLE_NET_ANNUAL_PCT,
+            "detail": (
+                f"an annualized net of {net_annual_pct:,.0f}% of notional is not"
+                f" a funding carry. Something upstream of this number is wrong;"
+                f" it is reported as a fault rather than as a return."),
+        }
+    return None
+
+
+def _episodes_from_rows(rows, funding, venue, live_size=None):
     """Fold signed fills into position episodes (flat → ... → flat), attaching the
     funding payments and fees that fall inside each one.
 
@@ -947,6 +1260,14 @@ def _episodes_from_rows(rows, funding, venue):
     zero and ends when it returns to zero. Realized price PnL is the signed cash
     from the fills over the episode (sells bring in, buys pay out); for a fully
     round-tripped hedge leg it is small and mostly offset by the other leg.
+
+    `live_size` is what the venue is actually holding now, and it exists to settle
+    the one thing fills alone cannot answer. The walk assumes the leg was flat at
+    the window's start, so a trade whose OPENING fills fall outside the lookback
+    presents only its closing fills — and a buy from a zero baseline reads as
+    opening a long. A trailing episode that the venue says is not there is not an
+    open position; it is a window that does not reach back far enough, and it is
+    labelled as one. Pass None (unknown) and the reconstruction is unchanged.
     """
     episodes, cur = [], None
     running = 0.0
@@ -969,19 +1290,38 @@ def _episodes_from_rows(rows, funding, venue):
             cur["exit_px"] = r["px"]
             episodes.append(cur)
             cur = None
-    if cur is not None:  # still open
+    if cur is not None:  # never returned to flat inside the window
+        venue_flat = live_size is not None and abs(live_size) <= _FLAT_SIZE_EPS
         cur["closed_at"] = None
-        cur["open"] = True
+        cur["open"] = not venue_flat
+        cur["incomplete_window"] = venue_flat
         cur["size"] = abs(running)  # CURRENT live size, not the peak it reached
+        if venue_flat:
+            # Not an entry: it is simply the earliest fill the window happens to
+            # contain, and on the trade that exposed this it was a CLOSING fill.
+            cur["first_fill_px_in_window"] = cur["entry_px"]
+            cur["entry_px"] = None
+            cur["size"] = None
+            cur["note"] = (
+                f"the lookback does not reach this {venue} leg's OPENING fills —"
+                f" it holds only part of the trade, and {venue} is flat now."
+                f" Nothing here is a live position. Widen the review window to"
+                f" reconstruct the round trip.")
         episodes.append(cur)
 
     for ep in episodes:
         ep.setdefault("open", False)
+        ep.setdefault("incomplete_window", False)
         lo = ep["open_ms"]
         hi = ep["close_ms"] if ep["close_ms"] is not None else int(time.time() * 1000)
         ep["funding_usd"] = round(
             sum(amt for t, amt in funding if lo <= t <= hi + 1000), 6)
-        ep["realized_price_pnl_usd"] = round(ep["cash"], 4) if not ep["open"] else None
+        # An incomplete window has no realized price PnL to report: the cash it
+        # holds is one side of a round trip whose other side is outside it, which
+        # is precisely the number that must not be presented as a result.
+        ep["realized_price_pnl_usd"] = (
+            round(ep["cash"], 4)
+            if not ep["open"] and not ep["incomplete_window"] else None)
         ep["fees_usd"] = round(ep["fees_usd"], 6)
         # tidy internal keys we don't need to surface
         for k in ("open_ms", "close_ms", "cash"):
