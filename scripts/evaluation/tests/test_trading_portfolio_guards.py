@@ -347,11 +347,8 @@ class AnalyticsExcludesFaultedTrades(unittest.TestCase):
     def setUp(self):
         self.p = TradingPortfolio()
         self._rows = P._ledger.trades
-        # _analytics calls _benchmark, which fetches public funding history over
-        # the network. These tests are about the fault handling around it, so it
-        # is stubbed out — the benchmark has its own suite in
-        # test_trading_benchmark.py.
-        self.p._benchmark = lambda coin, trades: {"note": "stubbed"}
+        # No _benchmark stub needed: it is opt-in and these calls do not ask for
+        # it, so nothing here reaches the network. See test_trading_benchmark.py.
 
     def tearDown(self):
         P._ledger.trades = self._rows

@@ -508,7 +508,7 @@ class TradingPortfolio(Skill):
     # ------------------------------------------------------------------
     # analytics — realized vs the prediction the engine made at entry
     # ------------------------------------------------------------------
-    def _analytics(self, coin):
+    def _analytics(self, coin, benchmark=False):
         """Join the ledger's PREDICTED edge against realized outcomes rebuilt from
         venue history over each trade's exact window.
 
@@ -662,7 +662,9 @@ class TradingPortfolio(Skill):
                 " data_quality_fault on the trade itself. "
             ) + summary.get("note", "")
         return {"action": "analytics", "coin": coin, "summary": summary,
-                "trades": trades, "benchmark": self._benchmark(coin, trades),
+                "trades": trades,
+                "benchmark": (self._benchmark(coin, trades) if benchmark
+                              else _benchmark_not_requested()),
                 "as_of": _now_iso()}
 
     def _benchmark(self, coin, trades):
@@ -1212,14 +1214,14 @@ class TradingPortfolio(Skill):
         return {"action": "review", "scope": "all", "lookback_days": lookback_days,
                 "summary": summary, "by_coin": by_coin, "as_of": _now_iso()}
 
-    def _analytics_all(self):
+    def _analytics_all(self, benchmark=False):
         coins = sorted({r["coin"] for r in _ledger.trades() if r.get("coin")})
         if not coins:
             return {"action": "analytics", "scope": "all", "by_coin": {},
                     "summary": {"note": "no trades on record yet — the ledger records"
                                 " from the next real open/close onward."},
                     "as_of": _now_iso()}
-        by_coin = {c: self._analytics(c) for c in coins}
+        by_coin = {c: self._analytics(c, benchmark=benchmark) for c in coins}
         net_total, have, faulted = 0.0, False, 0
         for a in by_coin.values():
             t = a["summary"].get("total_realized_net_usd")
@@ -1238,7 +1240,12 @@ class TradingPortfolio(Skill):
             # per-coin, so there is no meaningful single "side" to benchmark the
             # book against, and rolling several verdicts into one would be
             # exactly the kind of false summary the per-coin guard refuses.
-            "benchmark_verdicts": _benchmark_tally(by_coin),
+            #
+            # Only when one was asked for: tallying an unrequested benchmark
+            # would file every coin under "not_measured", which reads as a
+            # measurement failure rather than a question nobody put.
+            "benchmark_verdicts": (_benchmark_tally(by_coin) if benchmark
+                                   else _benchmark_not_requested()),
         }
         if faulted:
             summary["note"] = (
@@ -1280,6 +1287,16 @@ class TradingPortfolio(Skill):
         size_tolerance_pct: Annotated[
             float, "For 'status': leg-size mismatch above this reads as imbalanced"
         ] = 15.0,
+        benchmark: Annotated[
+            bool,
+            "For 'analytics': also compare the strategy against simply opening"
+            " the hedge once and HOLDING it for the whole period. Pass true when"
+            " the user asks whether the strategy is actually worth running, if"
+            " it beats just holding, whether the timing/entry rule adds anything,"
+            " or wants it judged rather than described. Off by default because it"
+            " reads two public funding-history series PER COIN and is noticeably"
+            " slower; the realized-vs-predicted figures do not need it.",
+        ] = False,
     ) -> Dict[str, Any]:
         """Report live status or reconstruct closed trades. Read-only.
 
@@ -1312,7 +1329,9 @@ class TradingPortfolio(Skill):
                       else float(lookback_days))
                 return self._review_all(lb) if allc else self._review(c, lb)
             if action == "analytics":
-                return self._analytics_all() if allc else self._analytics(c)
+                bm = bool(benchmark)
+                return (self._analytics_all(benchmark=bm) if allc
+                        else self._analytics(c, benchmark=bm))
             return {"error": f"unknown action {action!r}; use 'status', 'review'"
                     " or 'analytics'"}
         except requests.RequestException as e:
@@ -1392,6 +1411,27 @@ def _overlap(h, d):
     hs, he = _iso_ms(h["opened_at"]), (_iso_ms(h["closed_at"]) if h.get("closed_at") else now)
     ds, de = _iso_ms(d["opened_at"]), (_iso_ms(d["closed_at"]) if d.get("closed_at") else now)
     return max(0.0, min(he, de) - max(hs, ds))
+
+
+def _benchmark_not_requested():
+    """The benchmark slot when nobody asked for it.
+
+    Present rather than omitted, and explicit rather than empty. An absent key
+    reads as "this build has no benchmark" and a bare note reads as "it could
+    not be computed" — both of which are the wrong thing to conclude, and the
+    second is a finding this skill reports for real elsewhere. `requested:
+    false` is the discriminator, and it says how to get one.
+
+    A fresh dict each call: a shared module-level constant handed to every
+    caller is one mutation away from corrupting every later response.
+    """
+    return {
+        "requested": False,
+        "note": ("not computed. The held-hedge benchmark reads two public"
+                 " funding-history series per coin, so it is opt-in rather than"
+                 " charged to every analytics call. Pass benchmark=true to ask"
+                 " whether the decision rule beat simply holding the hedge."),
+    }
 
 
 def _benchmark_tally(by_coin):

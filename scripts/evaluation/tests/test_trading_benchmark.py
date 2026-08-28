@@ -355,6 +355,74 @@ class AnnualPct(unittest.TestCase):
         self.assertIsNone(P._annual_pct(None, 1000.0, 14.0))
 
 
+class BenchmarkIsOptIn(BenchmarkBase):
+    """It costs two public funding reads per coin, so nobody pays unless asked."""
+
+    ROW = {"coin": "BTC", "opened_at": "2026-08-01T00:00:00+00:00",
+           "closed_at": "2026-08-15T00:00:00+00:00", "notional_usd": 1000.0,
+           "short_venue": "hyperliquid", "size": 0.01,
+           "pred_smoothed_spread_annual_pct": 9.38}
+
+    def setUp(self):
+        super().setUp()
+        self._rows = P._ledger.trades
+        P._ledger.trades = lambda coin=None, status=None: [dict(self.ROW)]
+        self.p._realized_in_window = lambda c, lo, hi: {
+            "funding_usd": 3.6, "fees_usd": 1.7, "price_pnl_usd": -0.4,
+            "net_usd": 1.5, "coverage": self.GOOD_COVERAGE}
+        self.calls = []
+        self.p._benchmark = lambda coin, trades: (
+            self.calls.append(coin) or {"beat_holding": True})
+
+    def tearDown(self):
+        P._ledger.trades = self._rows
+
+    def test_it_is_not_computed_by_default(self):
+        self.p.run(action="analytics", coin="BTC")
+        self.assertEqual(self.calls, [])
+
+    def test_it_is_computed_when_asked_for(self):
+        out = self.p.run(action="analytics", coin="BTC", benchmark=True)
+        self.assertEqual(self.calls, ["BTC"])
+        self.assertTrue(out["benchmark"]["beat_holding"])
+
+    def test_the_unrequested_slot_says_so_rather_than_going_missing(self):
+        # An absent key reads as "this build has no benchmark"; a bare note reads
+        # as "it could not be computed". Neither is what happened.
+        b = self.p.run(action="analytics", coin="BTC")["benchmark"]
+        self.assertIs(b["requested"], False)
+        self.assertIn("benchmark=true", b["note"])
+        self.assertNotIn("beat_holding", b)
+        self.assertNotIn("error", b)
+
+    def test_not_requested_is_a_fresh_dict_each_call(self):
+        a, b = P._benchmark_not_requested(), P._benchmark_not_requested()
+        self.assertIsNot(a, b)
+        a["mutated"] = True
+        self.assertNotIn("mutated", P._benchmark_not_requested())
+
+    def test_the_rest_of_analytics_is_unchanged_without_it(self):
+        out = self.p.run(action="analytics", coin="BTC")
+        self.assertEqual(out["summary"]["total_realized_net_usd"], 1.5)
+        self.assertEqual(len(out["trades"]), 1)
+        self.assertTrue(out["trades"][0]["data_quality_ok"])
+
+    def test_the_book_wide_tally_is_not_faked_when_unrequested(self):
+        # Tallying an unrequested benchmark would file every coin under
+        # "not_measured", which reads as a measurement failure.
+        self.p._open_coins = lambda: ["BTC"]
+        out = self.p.run(action="analytics", coin="ALL")
+        v = out["summary"]["benchmark_verdicts"]
+        self.assertIs(v["requested"], False)
+        self.assertNotIn("not_measured", v)
+
+    def test_the_book_wide_tally_appears_when_requested(self):
+        self.p._open_coins = lambda: ["BTC"]
+        out = self.p.run(action="analytics", coin="ALL", benchmark=True)
+        v = out["summary"]["benchmark_verdicts"]
+        self.assertEqual(v["beat_holding"], ["BTC"])
+
+
 class BenchmarkTally(unittest.TestCase):
     """The book-wide view counts verdicts; it does not manufacture one."""
 
