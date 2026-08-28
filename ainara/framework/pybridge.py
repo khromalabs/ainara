@@ -51,6 +51,14 @@ from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.notifications import NotificationManager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
+from ainara.framework.secrets import (
+    SENSITIVE_KEY_MARKERS,
+    VAULT_PREFIXES,
+    SecretVaultUnavailable,
+    get_vault,
+)
+from ainara.framework.secrets.keystore import KeystoreProvider
+from ainara.framework.secrets.wallet import WalletKeyDerivation
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts import create_tts_backend
@@ -856,6 +864,43 @@ def create_app():
         success, msg = auth_manager.verify_and_login(
             wallet, signature, message
         )
+
+        if success:
+            try:
+                provider = KeystoreProvider()
+                logger.info(f"Auth verify succeeded for wallet {wallet}. Checking KeystoreProvider availability...")
+                if provider.is_available():
+                    if isinstance(signature, list):
+                        logger.info("Deriving master key from signature and setting into OS keystore...")
+                        sig_bytes = bytes(signature)
+                        provider.set_key(
+                            WalletKeyDerivation.derive_signature(
+                                sig_bytes, wallet
+                            )
+                        )
+                        migrated = get_vault().migrate_all()
+                        if migrated:
+                            logger.info(
+                                "Vault migration encrypted %d sensitive"
+                                " config value(s): %s",
+                                len(migrated),
+                                ", ".join(migrated),
+                            )
+                        else:
+                            logger.info("Vault migration completed: no sensitive keys needed encryption.")
+                    else:
+                        logger.warning(
+                            f"Auth signature format not supported (expected list, got {type(signature).__name__});"
+                            " vault key was not created."
+                        )
+                else:
+                    logger.warning(
+                        "OS keystore unavailable; sensitive config values"
+                        " will remain plaintext."
+                    )
+            except Exception as e:
+                logger.error(f"Vault setup/migration after auth failed: {e}", exc_info=True)
+
         return jsonify({"success": success, "message": msg})
 
     @app.route("/auth/status", methods=["GET"])
@@ -1779,6 +1824,151 @@ def create_app():
                 for item in pending_items:
                     logger.info(f" [{item['source']}]: {item['summary']}\n")
         return jsonify({"pending": pending_count})
+
+    @app.route("/vault/status", methods=["GET"])
+    def vault_status():
+        """Check keystore availability and whether the master key exists."""
+        provider = KeystoreProvider()
+        available = provider.is_available()
+        has_key = False
+        if available:
+            try:
+                provider.get_key()
+                has_key = True
+            except Exception as e:
+                logger.info(f"/vault/status check: master key not found or unavailable ({e})")
+                has_key = False
+        logger.info(f"/vault/status: keystore_available={available}, has_master_key={has_key}")
+        return jsonify({
+            "keystore_available": available,
+            "has_master_key": has_key,
+        })
+
+    @app.route("/vault/policy", methods=["GET"])
+    def vault_policy():
+        """Return encryption policy rules for sensitive configuration paths."""
+        return jsonify({
+            "prefixes": list(VAULT_PREFIXES),
+            "markers": list(SENSITIVE_KEY_MARKERS),
+        })
+
+
+    @app.route("/vault/setup", methods=["POST"])
+    def vault_setup():
+        """Verify a wallet signature and derive/store the master key."""
+        data = request.get_json(force=True)
+        wallet = data.get("wallet")
+        signature = data.get("signature")
+
+        logger.info(f"/vault/setup request received for wallet: {wallet}")
+
+        if not wallet or not signature:
+            logger.warning("/vault/setup failed: Missing wallet or signature")
+            return (
+                jsonify({"success": False, "error": "Missing wallet or signature"}),
+                400,
+            )
+
+        try:
+            if isinstance(signature, list):
+                sig_bytes = bytes(signature)
+            else:
+                logger.warning(f"/vault/setup invalid signature format: {type(signature).__name__}")
+                return (
+                    jsonify({"success": False, "error": "Invalid signature format"}),
+                    400,
+                )
+
+            if not WalletKeyDerivation.verify_signature(
+                wallet, sig_bytes, WalletKeyDerivation.MESSAGE
+            ):
+                logger.warning(f"/vault/setup failed signature verification for wallet: {wallet}")
+                return (
+                    jsonify({"success": False, "error": "Invalid signature"}),
+                    401,
+                )
+
+            master_key = WalletKeyDerivation.derive_signature(sig_bytes, wallet)
+            provider = KeystoreProvider()
+            provider.set_key(master_key)
+            logger.info("/vault/setup master key stored successfully. Triggering migrate_all()...")
+
+            migrated = get_vault().migrate_all()
+            if migrated:
+                logger.info(f"/vault/setup migrated {len(migrated)} config key(s): {', '.join(migrated)}")
+            else:
+                logger.info("/vault/setup migration complete: no new keys to encrypt.")
+
+            return jsonify({"success": True, "migrated": migrated})
+        except Exception as e:
+            logger.error(f"Vault setup failed: {e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)}), 500
+
+
+    @app.route("/vault/encrypt", methods=["POST"])
+    def vault_encrypt():
+        """Return an encrypted blob for a path without writing config."""
+        data = request.get_json(force=True)
+        path = data.get("path")
+        value = data.get("value")
+
+        if not path or value is None:
+            return (
+                jsonify({"success": False, "error": "path and value are required"}),
+                400,
+            )
+
+        try:
+            blob = get_vault().encrypt(path, value)
+            return jsonify({"success": True, "blob": blob})
+        except SecretVaultUnavailable as e:
+            logger.error(f"Vault unavailable during encrypt: {e}")
+            return jsonify({"success": False, "error": "vault_unavailable"}), 503
+        except Exception as e:
+            logger.error(f"Vault encrypt failed: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+
+    @app.route("/vault/reveal", methods=["POST"])
+    def vault_reveal():
+        """Decrypt multiple config values (used by the wizard to display them)."""
+        data = request.get_json(force=True)
+        paths = data.get("paths", [])
+
+        if not isinstance(paths, list) or not paths:
+            return (
+                jsonify({"success": False, "error": "paths must be a non-empty list"}),
+                400,
+            )
+
+        vault = get_vault()
+        values = {}
+        errors = {}
+        for path in paths:
+            try:
+                values[path] = vault.get_secret(path)
+            except SecretVaultUnavailable:
+                errors[path] = "vault_unavailable"
+            except Exception as e:
+                errors[path] = str(e)
+
+        return jsonify({"success": True, "values": values, "errors": errors})
+
+
+    @app.route("/vault/scrub-backup", methods=["POST"])
+    def vault_scrub_backup():
+        """Rewrite the config backup file from the current (encrypted) config.
+
+        Note: this relies on ConfigManager.save() overwriting the .bak from
+        the current in-memory config. If your ConfigManager does something
+        different, this endpoint will need a follow-up tweak.
+        """
+        try:
+            config.save()
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.error(f"Vault scrub-backup failed: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
 
     return app
 

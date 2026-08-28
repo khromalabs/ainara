@@ -20,10 +20,12 @@
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Tuple
 
+import onnxruntime
 import soundfile as sf
 from kokoro_onnx import Kokoro
 # import numpy as np  # Enabled for silence padding
@@ -35,6 +37,15 @@ from ..config import get_data_dir
 from .base import TTSBackend
 
 
+def _auto_thread_budget() -> int:
+    """Pick a TTS thread budget that leaves CPU headroom for audio/UI."""
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpus = os.cpu_count() or 2
+    return max(1, min(4, cpus // 2))
+
+
 class KokoroTTS(TTSBackend):
     """
     Kokoro TTS implementation using ONNX Runtime.
@@ -44,6 +55,7 @@ class KokoroTTS(TTSBackend):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(__name__)
+        self._create_lock = threading.Lock()
 
         # Initialize mixer (Kokoro v1.0 is 24khz)
         mixer.init(frequency=24000)
@@ -94,7 +106,30 @@ class KokoroTTS(TTSBackend):
             f"Loading Kokoro ONNX engine from {self.model_path}..."
         )
         try:
-            self.engine = Kokoro(self.model_path, self.voices_path)
+            sess_options = onnxruntime.SessionOptions()
+            num_threads_config = config.get(
+                "tts.modules.kokoro.num_threads", "auto"
+            )
+            if num_threads_config in (None, "auto"):
+                sess_options.intra_op_num_threads = _auto_thread_budget()
+            else:
+                sess_options.intra_op_num_threads = max(
+                    1, int(num_threads_config)
+                )
+            sess_options.inter_op_num_threads = 1
+            sess_options.add_session_config_entry(
+                "session.intra_op.allow_spinning", "0"
+            )
+            self.logger.info(
+                "Kokoro ONNX intra-op threads:"
+                f" {sess_options.intra_op_num_threads}"
+            )
+            session = onnxruntime.InferenceSession(
+                self.model_path,
+                providers=onnxruntime.get_available_providers(),
+                sess_options=sess_options,
+            )
+            self.engine = Kokoro.from_session(session, self.voices_path)
         except Exception as e:
             self.logger.error(f"Failed to initialize Kokoro: {e}")
             raise
@@ -158,12 +193,13 @@ class KokoroTTS(TTSBackend):
             phonemes, _ = self.g2p(cleaned_text)
 
             # Generate audio
-            samples, sample_rate = self.engine.create(
-                phonemes,
-                voice=target_voice,
-                speed=self.default_speed,
-                is_phonemes=True,
-            )
+            with self._create_lock:
+                samples, sample_rate = self.engine.create(
+                    phonemes,
+                    voice=target_voice,
+                    speed=self.default_speed,
+                    is_phonemes=True,
+                )
 
             # Save to temp file for pygame playback
             try:
@@ -196,12 +232,13 @@ class KokoroTTS(TTSBackend):
             # Phonemize text using Misaki G2P
             phonemes, _ = self.g2p(cleaned_text)
 
-            samples, sample_rate = self.engine.create(
-                phonemes,
-                voice=self.default_voice,
-                speed=self.default_speed,
-                is_phonemes=True,
-            )
+            with self._create_lock:
+                samples, sample_rate = self.engine.create(
+                    phonemes,
+                    voice=self.default_voice,
+                    speed=self.default_speed,
+                    is_phonemes=True,
+                )
 
             # Determine temp dir
             try:

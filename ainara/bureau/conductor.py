@@ -323,6 +323,8 @@ class Conductor:
         running_step_ids: Dict[str, str] = {}  # step_name -> step_id
         # Track skipped steps for reporting
         skipped_steps: Dict[str, str] = {}  # step_name -> skip_reason
+        # Track steps aborted mid-run (plan failure) for reporting
+        aborted_steps: Dict[str, str] = {}  # step_name -> abort reason
         # Track avoid_if evaluation errors for reporting
         avoid_if_errors: Dict[str, Optional[str]] = {}
 
@@ -432,7 +434,11 @@ class Conductor:
                     )
 
                 if failed:
-                    self._abort_running_steps(running_step_ids, log_prefix)
+                    aborted_steps.update(
+                        self._abort_running_steps(
+                            running_step_ids, log_prefix
+                        )
+                    )
                     break
 
                 # Poll running steps for completion
@@ -478,7 +484,11 @@ class Conductor:
                     )
 
                 if failed:
-                    self._abort_running_steps(running_step_ids, log_prefix)
+                    aborted_steps.update(
+                        self._abort_running_steps(
+                            running_step_ids, log_prefix
+                        )
+                    )
                     break
 
                 # Small sleep to avoid busy-waiting
@@ -494,7 +504,9 @@ class Conductor:
                 e,
                 exc_info=True,
             )
-            self._abort_running_steps(running_step_ids, log_prefix)
+            aborted_steps.update(
+                self._abort_running_steps(running_step_ids, log_prefix)
+            )
 
         # Finalize
         if failed:
@@ -562,6 +574,7 @@ class Conductor:
             failed_step=failed_step,
             failure_reason=failure_reason,
             skipped_steps=skipped_steps,
+            aborted_steps=aborted_steps,
             log_prefix=log_prefix,
         )
 
@@ -633,9 +646,9 @@ class Conductor:
         if not appendix:
             return pretty_json
 
-        parts = [pretty_json, "\n\n**Decoded long fields:**\n"]
+        parts = [pretty_json, "```\n\n**Decoded long fields:**\n"]
         for path, value in appendix:
-            parts.append(f"### `{path}`\n```text\n{value}\n```\n")
+            parts.append(f"### `{path}`\n```text\n{value}\n\n")
         return "\n".join(parts)
 
     @staticmethod
@@ -689,6 +702,7 @@ class Conductor:
         - failed_step (str): Name of the failed step (if any)
         - failure_reason (str): Reason for failure (if any)
         - skipped_steps (dict): Dict of skipped step names to skip reasons
+        - aborted_steps (dict): Dict of aborted step names to abort reasons
         - log_prefix (str): Prefix for logger output
         """
         plan = kwargs.get("plan")
@@ -698,6 +712,7 @@ class Conductor:
         failed_step = kwargs.get("failed_step")
         failure_reason = kwargs.get("failure_reason")
         skipped_steps = kwargs.get("skipped_steps", {})
+        aborted_steps = kwargs.get("aborted_steps", {})
         log_prefix = kwargs.get("log_prefix", "")
 
         try:
@@ -741,9 +756,12 @@ class Conductor:
             lines.append("| Step | Type | Status | Turns | Skills Executed |")
             lines.append("|---|---|---|---|---|")
 
-            attempted_steps = list(completed)
-            if failed and failed_step and failed_step not in attempted_steps:
-                attempted_steps.append(failed_step)
+            # Report steps in plan declaration (YAML) order, regardless of
+            # outcome (completed / skipped / failed / aborted).
+            attempted = set(completed) | set(aborted_steps)
+            if failed and failed_step:
+                attempted.add(failed_step)
+            attempted_steps = [n for n in plan.steps if n in attempted]
 
             for step_name in attempted_steps:
                 step_node = plan.steps[step_name]
@@ -752,6 +770,8 @@ class Conductor:
 
                 if step_name in skipped_steps:
                     status = "⏭️ Skipped"
+                elif step_name in aborted_steps:
+                    status = "⛔ Aborted"
                 elif step_name in completed:
                     if avoid_error:
                         status = "⚠️ Completed (gate eval error)"
@@ -779,6 +799,10 @@ class Conductor:
                 if step_name in skipped_steps:
                     skip_reason = skipped_steps[step_name]
                     lines.append(f"**Skipped:** {skip_reason}\n")
+                elif step_name in aborted_steps:
+                    lines.append(
+                        f"**Aborted:** {aborted_steps[step_name]}\n"
+                    )
                 elif step_name in completed:
                     response = result.get("response", "No response recorded.")
                     lines.append(
@@ -1061,10 +1085,16 @@ class Conductor:
 
     def _abort_running_steps(
         self, running: Dict[str, str], log_prefix: str
-    ) -> None:
-        """Terminate all currently running steps for this plan."""
+    ) -> Dict[str, str]:
+        """Terminate all currently running steps for this plan.
+
+        Returns a mapping ``{step_name: reason}`` covering every step that
+        was still in flight when the plan aborted (i.e. steps that never
+        produced a harvested result).
+        """
         from ainara.bureau.server import _terminate_step
 
+        aborted: Dict[str, str] = {}
         for step_name, step_id in list(running.items()):
             task = self.step_registry.get(step_id)
             if task and task.get("status") == "RUNNING":
@@ -1078,6 +1108,19 @@ class Conductor:
                 task["status"] = "FAILED"
                 task["failure_reason"] = "Aborted due to plan failure"
                 task["error"] = "PlanAbort"
+                aborted[step_name] = "Terminated mid-run due to plan failure"
+            elif task and task.get("status") == "COMPLETED":
+                # Process finished but the poll loop broke before harvesting
+                aborted[step_name] = (
+                    "Finished, but its result was never collected "
+                    "(plan failed first)"
+                )
+            else:
+                aborted[step_name] = (
+                    (task or {}).get("failure_reason")
+                    or "Aborted due to plan failure"
+                )
+        return aborted
 
     # ------------------------------------------------------------------
     # Notifications

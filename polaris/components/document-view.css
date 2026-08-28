@@ -269,6 +269,7 @@ code {
     overflow: auto;
     /* padding: 16px; */
     margin: 20px;
+    flex-wrap: wrap;
 }
 
 .nexus-frame {
@@ -376,4 +377,38 @@ th[data-sort]:hover .tablesort__icon {
     content:'🛈';
     padding: 10px;
     cursor: pointer;
+}
+
+.streaming-indicator {
+    position: relative;
+    display: block;
+    width: fit-content;
+    align-items: center;
+    margin: 8px 0 0 4px;
+    padding: 4px 12px;
+    background-color: rgba(240, 240, 0, 0.8);
+    border: 1px solid rgba(240, 240, 0, 0.8);
+    border-radius: 5px;
+    color: #444;
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 12px;
+    font-style: italic;
+    letter-spacing: 0.5px;
+    user-select: none;
+}
+
+.streaming-indicator::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 8px;
+    border-radius: 50%;
+    background: #f0f000;
+    animation: streaming-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes streaming-pulse {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
 }

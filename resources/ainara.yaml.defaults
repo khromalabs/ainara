@@ -17,6 +17,8 @@ tts:
     kokoro:
       default_lang: en-us
       default_voice: af_heart
+      # "auto" = min(4, logical_cpus // 2); or set an explicit integer
+      num_threads: "auto"
 
 # LLM configuration
 llm:

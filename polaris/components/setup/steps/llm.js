@@ -255,6 +255,8 @@ async function loadExistingProviders(ctx) {
 
         if (!existingContainer) return;
 
+        renderTaskModelRoutingUI(ctx, backendConfig, existingProviders);
+
         existingContainer.innerHTML = '';
 
         if (existingProviders.length === 0) {
@@ -342,14 +344,7 @@ async function loadExistingProviders(ctx) {
             button.addEventListener('click', async (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-
-                const index = parseInt(button.dataset.index);
-                const provider = existingProviders[index];
-                const providerName = provider.model || `Provider ${index + 1}`;
-
-                if (confirm(`Are you sure you want to delete the provider "${providerName}"?`)) {
-                    await deleteProvider(ctx, index);
-                }
+                await deleteProvider(ctx, parseInt(button.dataset.index, 10));
             });
         });
     } catch (error) {
@@ -717,11 +712,46 @@ async function deleteProvider(ctx, index) {
         const backendConfig = await ctx.api.loadBackendConfig();
         let changedSelectedProvider = false;
 
-        if (!backendConfig.llm || !backendConfig.llm.providers || !backendConfig.llm.providers[index]) {
+        if (!backendConfig || !backendConfig.llm || !backendConfig.llm.providers || !backendConfig.llm.providers[index]) {
             throw new Error('Provider not found');
         }
 
         const deletedProvider = backendConfig.llm.providers[index];
+        const providerName = deletedProvider.model || `Provider ${index + 1}`;
+
+        // Warn if the provider is referenced by the task model routing lists
+        const inMemories = (backendConfig.llm.memories_processors || []).includes(deletedProvider.model);
+        const inOrakle = (backendConfig.orakle?.match_providers || []).includes(deletedProvider.model);
+
+        let confirmMsg = `Are you sure you want to delete the provider "${providerName}"?`;
+        if (inMemories || inOrakle) {
+            const affected = [
+                inMemories ? 'Memory Processing Models' : null,
+                inOrakle ? 'Orakle Skill Matching Models' : null
+            ].filter(Boolean).join(' and ');
+            confirmMsg = `Warning: "${providerName}" is currently used in ${affected}.\n\n` +
+                `Deleting this provider will also remove it from ${inMemories && inOrakle ? 'those lists' : 'that list'}.\n\n` +
+                `Do you want to proceed?`;
+        }
+        if (!confirm(confirmMsg)) return;
+
+        // Cascade: purge references from the task model routing lists
+        if (inMemories) {
+            const updated = backendConfig.llm.memories_processors.filter(m => m !== deletedProvider.model);
+            if (updated.length > 0) {
+                backendConfig.llm.memories_processors = updated;
+            } else {
+                delete backendConfig.llm.memories_processors;
+            }
+        }
+        if (inOrakle && backendConfig.orakle) {
+            const updated = backendConfig.orakle.match_providers.filter(m => m !== deletedProvider.model);
+            if (updated.length > 0) {
+                backendConfig.orakle.match_providers = updated;
+            } else {
+                delete backendConfig.orakle.match_providers;
+            }
+        }
 
         backendConfig.llm.providers.splice(index, 1);
 
@@ -764,6 +794,197 @@ async function deleteProvider(ctx, index) {
         testResult.classList.remove('hidden', 'success');
         testResult.classList.add('error');
     }
+}
+
+// --- Task Model Routing (llm.memories_processors / orakle.match_providers) ---
+
+const TASK_ROUTING_GROUPS = [
+    {
+        groupId: 'memories',
+        section: 'llm',
+        key: 'memories_processors',
+        title: 'Memory Processing Models',
+        description: 'Models used to process conversation memories, tried in priority order (top first). Config key: llm.memories_processors'
+    },
+    {
+        groupId: 'orakle',
+        section: 'orakle',
+        key: 'match_providers',
+        title: 'Orakle Skill Matching Models',
+        description: 'Models used to match your requests to Orakle skills, tried in priority order (top first). Config key: orakle.match_providers'
+    }
+];
+
+function escapeHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function ensureTaskRoutingContainer(ctx) {
+    let container = document.getElementById('task-model-routing');
+    if (container) return container;
+
+    const addProviderSection = document.querySelector('.add-provider-section');
+    if (!addProviderSection) return null;
+
+    addProviderSection.insertAdjacentHTML('beforebegin', `
+        <div class="task-routing-section" id="task-model-routing">
+            <h3>Task Model Routing (RECOMMENDED)</h3>
+            <p>Dedicated candidate models for background tasks, so your primary assistant model doesn't have to handle them. Top rated flash/quicker models are ideal here. Tried in the order shown (top = highest priority).</p>
+            <div class="task-routing-group" id="task-routing-memories" data-group-id="memories"></div>
+            <div class="task-routing-group" id="task-routing-orakle" data-group-id="orakle"></div>
+        </div>
+    `);
+    container = document.getElementById('task-model-routing');
+
+    // Delegated listeners: attached once here, they survive innerHTML re-renders
+    container.addEventListener('click', async (event) => {
+        const btn = event.target.closest('button');
+        if (!btn) return;
+
+        const groupEl = btn.closest('.task-routing-group');
+        if (!groupEl) return;
+        const groupId = groupEl.dataset.groupId;
+
+        if (btn.classList.contains('task-routing-add-btn')) {
+            await addTaskRoutingModel(ctx, groupId);
+            return;
+        }
+
+        const item = btn.closest('.task-routing-item');
+        if (!item) return;
+        const index = parseInt(item.dataset.index, 10);
+        if (isNaN(index)) return;
+
+        if (btn.classList.contains('task-routing-move-btn')) {
+            await moveTaskRoutingModel(ctx, groupId, index, btn.dataset.dir === 'up' ? -1 : 1);
+        } else if (btn.classList.contains('task-routing-remove-btn')) {
+            await removeTaskRoutingModel(ctx, groupId, index);
+        }
+    });
+
+    return container;
+}
+
+function renderTaskModelRoutingUI(ctx, backendConfig, existingProviders) {
+    const container = ensureTaskRoutingContainer(ctx);
+    if (!container) return;
+
+    for (const group of TASK_ROUTING_GROUPS) {
+        renderTaskRoutingGroup(group, backendConfig, existingProviders);
+    }
+}
+
+function renderTaskRoutingGroup(group, backendConfig, existingProviders) {
+    const container = document.getElementById(`task-routing-${group.groupId}`);
+    if (!container) return;
+
+    const models = (backendConfig?.[group.section]?.[group.key] || []).slice();
+    const configuredModels = (existingProviders || []).map(p => p.model);
+    const availableModels = configuredModels.filter(m => !models.includes(m));
+
+    let selectHtml;
+    if (availableModels.length > 0) {
+        selectHtml = '<option value="">Select a model…</option>' +
+            availableModels.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+    } else {
+        const msg = configuredModels.length === 0
+            ? 'No configured providers yet'
+            : 'No more configured models available';
+        selectHtml = `<option value="">${msg}</option>`;
+    }
+
+    const listHtml = models.length === 0
+        ? '<li class="task-routing-empty">No models configured; the primary assistant model will handle this task.</li>'
+        : models.map((m, i) => {
+            const isConfigured = configuredModels.includes(m);
+            return `
+                <li class="task-routing-item" data-model="${escapeHtml(m)}" data-index="${i}">
+                    <span class="task-routing-model-name">${escapeHtml(m)}${isConfigured ? '' : ' <span class="task-routing-warning" title="This model is not among your configured providers">&#9888; not configured</span>'}</span>
+                    <span class="task-routing-controls">
+                        <button type="button" class="task-routing-move-btn" data-dir="up" title="Increase priority" ${i === 0 ? 'disabled' : ''}>&#9650;</button>
+                        <button type="button" class="task-routing-move-btn" data-dir="down" title="Decrease priority" ${i === models.length - 1 ? 'disabled' : ''}>&#9660;</button>
+                        <button type="button" class="task-routing-remove-btn" title="Remove from list">&times;</button>
+                    </span>
+                </li>
+            `;
+        }).join('');
+
+    container.innerHTML = `
+        <h4>${group.title}</h4>
+        <p class="field-description">${group.description}</p>
+        <div class="task-routing-add-row">
+            <select id="task-routing-select-${group.groupId}" ${availableModels.length === 0 ? 'disabled' : ''}>${selectHtml}</select>
+            <button type="button" class="task-routing-add-btn" id="task-routing-add-${group.groupId}" ${availableModels.length === 0 ? 'disabled' : ''}>Add</button>
+        </div>
+        <ul class="task-routing-list" id="task-routing-list-${group.groupId}">${listHtml}</ul>
+    `;
+}
+
+function getTaskRoutingModelsFromDOM(groupId) {
+    const list = document.getElementById(`task-routing-list-${groupId}`);
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('.task-routing-item'))
+        .map(item => item.dataset.model);
+}
+
+async function updateTaskRoutingList(ctx, groupId, newModels) {
+    const group = TASK_ROUTING_GROUPS.find(g => g.groupId === groupId);
+    if (!group) return;
+
+    try {
+        const backendConfig = await ctx.api.loadBackendConfig();
+        if (!backendConfig) {
+            console.error('Task model routing: could not load backend config');
+            return;
+        }
+
+        if (newModels && newModels.length > 0) {
+            if (!backendConfig[group.section]) backendConfig[group.section] = {};
+            backendConfig[group.section][group.key] = newModels;
+        } else if (backendConfig[group.section]) {
+            // Empty list: remove the key entirely to keep the config clean
+            delete backendConfig[group.section][group.key];
+        }
+
+        await ctx.api.saveBackendConfig(backendConfig, ctx.config.get('pybridge.api_url'));
+
+        renderTaskModelRoutingUI(ctx, backendConfig, backendConfig?.llm?.providers || []);
+    } catch (error) {
+        console.error('Error updating task model routing list:', error);
+    }
+}
+
+async function addTaskRoutingModel(ctx, groupId) {
+    const select = document.getElementById(`task-routing-select-${groupId}`);
+    if (!select || !select.value) return;
+
+    const models = getTaskRoutingModelsFromDOM(groupId);
+    if (models.includes(select.value)) return;
+
+    models.push(select.value);
+    await updateTaskRoutingList(ctx, groupId, models);
+}
+
+async function removeTaskRoutingModel(ctx, groupId, index) {
+    const models = getTaskRoutingModelsFromDOM(groupId);
+    if (index < 0 || index >= models.length) return;
+
+    models.splice(index, 1);
+    await updateTaskRoutingList(ctx, groupId, models);
+}
+
+async function moveTaskRoutingModel(ctx, groupId, index, direction) {
+    const models = getTaskRoutingModelsFromDOM(groupId);
+    const target = index + direction;
+    if (index < 0 || index >= models.length || target < 0 || target >= models.length) return;
+
+    [models[index], models[target]] = [models[target], models[index]];
+    await updateTaskRoutingList(ctx, groupId, models);
 }
 
 module.exports = {

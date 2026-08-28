@@ -99,6 +99,7 @@ class ComRing extends BaseComponent {
             this.currentView = 'ring';
             this.docFormat = 'text';
             this.navigatingHistory = false;
+            this.isLLMStreaming = false;
 
             this.state = {
                 keyPressed: false,
@@ -801,6 +802,13 @@ class ComRing extends BaseComponent {
         }
         try {
             if (message) {
+                // TODO this is not working yet it should retrieve the users' message before the answer is available
+                // // Optimistically pull the just-persisted user message into chat-history.
+                // // Awaiting before the LLM request starts orders this fetch ahead of the
+                // // 'completed' fetch, preventing duplicate appends.
+                // if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                //     await this.fetchAndAppendNewChatMessages();
+                // }
                 await this.processAIResponse(message);
                 this.circle.classList.add('faded');
             }
@@ -1527,6 +1535,11 @@ Visit our project site at: https://ainara.app
     }
 
     async fetchAndAppendNewChatMessages() {
+        // TODO: This method is not safe against concurrent invocations.
+        // If a new exchange starts while one is already pending, two fetches can
+        // both append the same user message. Serialize calls by chaining on a
+        // this._appendChain promise; each queued call should read the freshest
+        // lastMessageTimestamp when its turn runs.
         if (!this.lastMessageTimestamp) {
             console.log('No last message timestamp, skipping append.');
             return;
@@ -1666,6 +1679,10 @@ Visit our project site at: https://ainara.app
         ipcRenderer.send('set-view-mode', { view: 'document' });
         this.ringContainer.classList.add('document-view');
         this.documentView.show();
+
+        if (format === 'chat-history' && this.isLLMStreaming) {
+            this.documentView.setStreamingActive(true);
+        }
     }
 
     switchToRingView() {
@@ -1725,6 +1742,11 @@ Visit our project site at: https://ainara.app
         // Keep isProcessingLLM true so processAIResponse() continues reading
         // the stream and lets the backend finish persisting the full message.
         this.state.isAwaitingResponse = false;
+
+        this.isLLMStreaming = false;
+        if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+            this.documentView.setStreamingActive(false);
+        }
 
         // Notify chat-display about the abort
         ipcRenderer.send('llm-aborted');
@@ -1984,6 +2006,10 @@ Visit our project site at: https://ainara.app
                         event.content.content.messageId = messageId;
                     }
 
+                    if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                        this.documentView.setStreamingActive(true);
+                    }
+
                     if (content.flags.audio && content.audio) {
                         const audioUrl = this.pybridgeEndpoint + content.audio.url;
                         try {
@@ -2107,6 +2133,10 @@ Visit our project site at: https://ainara.app
                 if (event.type === 'signal') {
                     const sttStatus = this.shadowRoot.querySelector('.stt-status');
                     if (event.content.state === 'start') {
+                        this.isLLMStreaming = true;
+                        if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                            this.documentView.setStreamingActive(true);
+                        }
                         this.circle.classList.add('loading');
                         // Also add loading state to container for border effect
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
@@ -2135,8 +2165,10 @@ Visit our project site at: https://ainara.app
             case 'completed':
                 if (event.type === 'signal') {
                     this.circle.classList.remove('skill-active');
+                    this.isLLMStreaming = false;
                     if (this.currentView === 'document' && this.docFormat === 'chat-history') {
                         await this.fetchAndAppendNewChatMessages();
+                        this.documentView.setStreamingActive(false);
                     }
                 }
                 break;
