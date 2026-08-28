@@ -47,11 +47,15 @@
                         <div id="auth-status-message" style="margin-top: 10px; font-weight: bold; min-height: 20px;"></div>
                     </div>
 
+                    <div id="tos-update-notice" class="warning-block hidden" style="max-width: 500px; margin-left: auto; margin-right: auto; margin-bottom: 15px;">
+                        <b>The Terms of Service have been updated (v0.11).</b> Please review the new terms and accept them again to continue.
+                    </div>
+
                     <!-- ToS Section -->
                     <div id="tos-container" style="margin-top: 20px; padding: 20px; background: rgba(0,0,0,0.05); border-radius: 8px; text-align: left; max-width: 500px; margin-left: auto; margin-right: auto;">
                         <div class="form-group" style="display:flex; align-items: center; justify-content: center; margin-bottom: 0;">
                             <input type="checkbox" id="terms-accept-btn" style="width: auto; margin-right: 10px;">
-                            <label for="terms-acept-btn" style="margin-bottom: 0;">I have read and agree to the <a href="#" id="open-tos-modal">Terms of Service and Privacy Policy</a>.</label>
+                            <label for="terms-accept-btn" style="margin-bottom: 0;">I have read and agree to the <a href="#" id="open-tos-modal">Terms of Service</a> (v0.11).</label>
                         </div>
                     </div>
                 </div>
@@ -267,17 +271,28 @@
     <div id="tos-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Terms of Service and Privacy (16/10/2025)</h2>
+                <h2>Ainara Polaris — Terms of Service (v0.11)</h2>
                 <button class="close-modal-btn" id="close-tos-modal">&times;</button>
             </div>
             <div class="modal-body">
-                <p>By activating Polaris, you confirm that you understand and accept our Data Sovereignty philosophy:</p>
-                <ol>
-                    <li><strong>Local Processing</strong>: By default, your conversations, memories, and personal data are processed and stored exclusively on your device. We do not send your data to our servers.</li>
-                    <li><strong>Third-Party Services and ORAKLE</strong>: When using your own API keys (OpenAI, Anthropic, etc.) or running search commands (ORAKLE), the minimum necessary data will be sent directly to these providers under their own privacy policies.</li>
-                    <li><strong>Responsibility</strong>: As a user, you are solely responsible for the actions performed by the AI and the use of the information generated. The software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. The user assumes the full responsibility of the decision of using this software and any possible consequences related to it.</li>
-                    <li><strong>Supporter License</strong>: This version is for personal use and to support independent development. Redistribution or reverse engineering is prohibited.</li>
-                </ol>
+                <p>By activating and using Polaris, you acknowledge and agree to the following terms:</p>
+                <h3>1. Data Sovereignty &amp; Local Architecture</h3>
+                <ul>
+                    <li><strong>Zero-Telemetry Policy</strong>: Polaris operates locally on your machine. Conversations, perpetual memory, configuration files, and local skills are stored and processed strictly on your device. No private data, telemetry, or conversational logs are collected, inspected, or stored on our servers.</li>
+                    <li><strong>Third-Party APIs and ORAKLE</strong>: When utilizing external AI model providers (e.g., Grok, DeepSeek, OpenAI) or API interfaces via ORAKLE, data sent is strictly limited to the operational payload required for that specific request. Interactions with third-party APIs are governed solely by your own credentials and the respective provider's terms and privacy policies.</li>
+                </ul>
+                <h3>2. Operational Responsibility &amp; Risk Assumption</h3>
+                <ul>
+                    <li><strong>Autonomous Local Operator</strong>: Polaris is an orchestration and execution interface. You, as the user, act as the sole operator of your environment. You maintain full responsibility for system actions, file modifications, script executions, and API consumption triggered via conversational commands.</li>
+                    <li><strong>No Financial Advice &amp; Trading Disclaimers</strong>: Tools or integrations interfacing with financial markets, trading bots, or algorithmic execution (including Sentinel or Ataria modules) are provided strictly for educational and automated workflow orchestration purposes. They do not constitute financial, investment, or legal advice. You assume total responsibility for market risks, execution parameters, order invalidations, slippage, and capital allocation.</li>
+                    <li><strong>"As Is" Disclaimer</strong>: The software is provided "as is" and "as available", without warranty of any kind, express or implied, to the maximum extent permitted by applicable law. In no event shall the authors be liable for direct, indirect, incidental, or consequential damages resulting from the use or inability to use this software.</li>
+                </ul>
+                <h3>3. Supporter License &amp; Intellectual Property</h3>
+                <ul>
+                    <li><strong>Grant of License</strong>: This build is granted under a personal, transferable supporter license (via the associated NFT) to aid independent development.</li>
+                    <li><strong>Integrity &amp; Reverse Engineering</strong>: Redistribution, resale, automated scraping, unauthorized cracking, unpacking, or reverse engineering of the protected binaries and runtime packages is strictly prohibited.</li>
+                    <li><strong>User-Defined Extensions</strong>: This restriction does not apply to custom user skills, configurations, or independent modules created within your local user environment.</li>
+                </ul>
             </div>
             <div class="modal-footer">
                 <button class="btn finish-btn" id="accept-tos-modal-btn">I Agree</button>

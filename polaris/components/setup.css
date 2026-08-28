@@ -1407,7 +1407,7 @@ input.capturing {
     background-color: white;
     border-radius: 8px;
     width: 80%;
-    max-width: 600px;
+    max-width: 700px;
     max-height: 80vh;
     display: flex;
     flex-direction: column;
@@ -1815,4 +1815,13 @@ input.capturing {
 
 .status-card.error::after {
     transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+div#tos-modal .modal-header {
+    justify-content: center;
+    alignment: center;
+}
+
+div#tos-modal .close-modal-btn {
+    margin-left: auto;
 }

@@ -54,6 +54,8 @@ const modifiedFields = {
     finish: new Set()
 };
 
+const { TOS_VERSION } = require('../framework/constants');
+
 async function refreshLLMStepButtonState() {
     const nextBtn = document.getElementById('main-next-btn');
     try {
@@ -214,7 +216,8 @@ const ctx = {
     updateButtonVisibility,
     handleInputChange,
     validateProviderForm,
-    loadAndDisplayCapabilities
+    loadAndDisplayCapabilities,
+    TOS_VERSION
 };
 
 function setupLLMFilterUI() {

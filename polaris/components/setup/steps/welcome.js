@@ -18,21 +18,29 @@
 
 let initialized = false;
 
-function setupTosListeners(config, updateButtonVisibility) {
+function setupTosListeners(config, updateButtonVisibility, tosVersion) {
     const tosCheckbox = document.getElementById('terms-accept-btn');
     const openModalLink = document.getElementById('open-tos-modal');
     const closeModalBtn = document.getElementById('close-tos-modal');
     const acceptModalBtn = document.getElementById('accept-tos-modal-btn');
     const tosModal = document.getElementById('tos-modal');
 
-    // Load saved state
-    if (config.get('setup.tosAccepted')) {
+    // Returning user who completed setup against older terms: show notice
+    if (config.get('setup.completed') && config.get('setup.tosAcceptedVersion') !== tosVersion) {
+        const notice = document.getElementById('tos-update-notice');
+        if (notice) notice.classList.remove('hidden');
+    }
+
+    // Load saved state: only pre-check the box when the stored acceptance
+    // matches the current ToS version, forcing active re-acceptance otherwise
+    if (config.get('setup.tosAccepted') && config.get('setup.tosAcceptedVersion') === tosVersion) {
         tosCheckbox.checked = true;
     }
 
     // Checkbox change listener
     tosCheckbox.addEventListener('change', () => {
         config.set('setup.tosAccepted', tosCheckbox.checked);
+        config.set('setup.tosAcceptedVersion', tosCheckbox.checked ? tosVersion : '');
         config.saveConfig();
         updateButtonVisibility();
     });
@@ -52,6 +60,7 @@ function setupTosListeners(config, updateButtonVisibility) {
     acceptModalBtn.addEventListener('click', () => {
         tosCheckbox.checked = true;
         config.set('setup.tosAccepted', true);
+        config.set('setup.tosAcceptedVersion', tosVersion);
         config.saveConfig();
         tosModal.classList.add('hidden');
         updateButtonVisibility();
@@ -146,7 +155,7 @@ module.exports = {
         if (initialized) return;
         initialized = true;
 
-        setupTosListeners(ctx.config, ctx.updateButtonVisibility);
+        setupTosListeners(ctx.config, ctx.updateButtonVisibility, ctx.TOS_VERSION);
         await setupAuthListeners(ctx.config, ctx.ipcRenderer, ctx.updateButtonVisibility);
     },
 

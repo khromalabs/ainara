@@ -32,6 +32,7 @@ const SplashWindow = require('./windows/SplashWindow');
 const UpdateProgressWindow = require('./windows/UpdateProgressWindow');
 const ServiceManager = require('./framework/ServiceManager');
 const ConfigHelper = require('./framework/ConfigHelper');
+const { TOS_VERSION } = require('./framework/constants');
 const Logger = require('./framework/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
@@ -92,6 +93,12 @@ let trayNotifications = null;
 // Check if this is the first run of the application
 function isFirstRun() {
     return !config.get('setup.completed', false);
+}
+
+// True when the stored ToS acceptance predates the current terms version,
+// meaning the setup wizard must be shown so the user can re-accept.
+function needsTosReacceptance() {
+    return config.get('setup.tosAcceptedVersion', '') !== TOS_VERSION;
 }
 
 var executingSetupComplete = false;
@@ -250,8 +257,8 @@ async function checkConfigAndProceed() {
         }
         const configStatus = await response.json();
 
-        // Show wizard if it's the first run or if the original config was invalid
-        if (isFirstRun() || !configStatus.initial_config_valid) {
+        // Show wizard if it's the first run, the ToS version changed, or the original config was invalid
+        if (isFirstRun() || needsTosReacceptance() || !configStatus.initial_config_valid) {
             if (splashWindow && !splashWindow.window.isDestroyed()) {
                 splashWindow.close();
             }
