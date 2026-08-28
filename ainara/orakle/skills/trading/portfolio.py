@@ -65,6 +65,34 @@ MIN_RELIABLE_HOLD_DAYS = 1.0
 # review window that simply does not reach back to the leg's opening fills.
 _FLAT_SIZE_EPS = 1e-9
 
+# The ledger's two stamps look like a trade's bounds and are not. Both are
+# recorded when a ROUTE completed rather than when a FILL happened, and they err
+# in OPPOSITE directions: `opened_at` is written after the two-leg open finished,
+# so the opening fills precede it, while `closed_at` is written when the closing
+# order was sent, so the closing fills follow it. Observed on a real BTC trade:
+# the Hyperliquid opening fill sits 3 seconds before its own `opened_at`.
+#
+# Since the price PnL IS the sum of signed fill cash, clipping either end drops a
+# whole leg's notional out of the sum — and clipping both does not look wrong,
+# because a window that catches no fills sums to $0.00, exactly what a healthy
+# hedge reports. So the window is extended at both ends to the fills that
+# actually opened and closed the position. Close is the looser of the two: a
+# close can be retried or filled in pieces.
+_OPEN_SETTLE_SECONDS = 300.0
+_CLOSE_SETTLE_SECONDS = 900.0
+
+# Beyond this, the two legs were not simultaneously in the market and the
+# position carried outright directional exposure. Any price PnL from that is a
+# REAL result — a broken hedge — not a measurement artifact, and it must be
+# counted rather than excluded. Observed live: two legs closing 8.01 hours apart
+# while BTC fell 2.54%, which the plausibility guard called a measurement fault.
+_MAX_HEDGED_LEG_GAP_SECONDS = 60.0
+
+# A benchmark window shorter than one intended hold cannot say anything about
+# timing: over a day, execution cost dwarfs carry and the annualized figures are
+# noise. Observed: a 1.02-day window reporting -212% annualized on $59 notional.
+MIN_BENCHMARK_WINDOW_DAYS = 14.0
+
 # `review`'s default window, derived from the hold it has to contain rather than
 # fixed. A 7-day default against a 14-day strategy could not see a completed
 # trade at all, and reported the half it could see as a live position.
@@ -523,7 +551,7 @@ class TradingPortfolio(Skill):
         """
         rows = _ledger.trades(coin=coin, status="closed")
         trades, captures, pred_spreads, real_funding_annuals = [], [], [], []
-        faults = []
+        faults, breaches = [], []
         net_total = 0.0
         for row in rows:
             lo, hi = _iso_ms(row["opened_at"]), _iso_ms(row["closed_at"])
@@ -555,6 +583,14 @@ class TradingPortfolio(Skill):
                                "closed_at": row["closed_at"]})
             else:
                 net_total += realized["net_usd"]
+            # A separate finding, and deliberately not a fault: the numbers are
+            # right and the money is real. It is the HEDGE that failed, so this
+            # trade still counts toward every total above.
+            integrity = _hedge_integrity(realized)
+            if integrity:
+                breaches.append({**integrity, "opened_at": row["opened_at"],
+                                 "closed_at": row["closed_at"],
+                                 "net_usd": realized.get("net_usd")})
 
             pred_spread = row.get("pred_smoothed_spread_annual_pct")
             if (reliable and pred_spread and r_funding_annual is not None
@@ -614,6 +650,9 @@ class TradingPortfolio(Skill):
                 # reader scanning for it finds nothing on a healthy trade.
                 "data_quality_ok": fault is None,
                 **({"data_quality_fault": fault} if fault else {}),
+                # Present and False only when the hedge actually broke, so a
+                # reader scanning a healthy trade finds nothing.
+                **({"hedge_integrity": integrity} if integrity else {}),
             })
 
         short_held = sum(1 for t in trades
@@ -630,6 +669,14 @@ class TradingPortfolio(Skill):
                 "trades_faulted": len(faults),
                 "excluded_from_totals_and_rates": len(faults),
                 "faults": faults,
+            },
+            # Counted IN the totals above, unlike a data-quality fault. The
+            # measurement is sound; the hedge is what failed, and the loss is
+            # real money that must not be quietly dropped.
+            "hedge_integrity": {
+                "trades_with_broken_hedge": len(breaches),
+                "counted_in_totals": True,
+                "breaches": breaches,
             },
             "mean_predicted_spread_annual_pct": _round(_mean(pred_spreads), 2),
             "mean_realized_funding_annual_pct": _round(_mean(real_funding_annuals), 2),
@@ -660,6 +707,14 @@ class TradingPortfolio(Skill):
                 " number: a faulted trade's net_usd measures something other than"
                 " that trade. See summary.data_quality.faults, and"
                 " data_quality_fault on the trade itself. "
+            ) + summary.get("note", "")
+        if breaches:
+            summary["note"] = (
+                f"{len(breaches)} trade(s) were NOT hedged for part of their"
+                " life — the legs opened or closed far enough apart to leave the"
+                " position outright. Those figures are correct and ARE counted:"
+                " the money is real, and what failed was the hedge, not the"
+                " measurement. See summary.hedge_integrity. "
             ) + summary.get("note", "")
         return {"action": "analytics", "coin": coin, "summary": summary,
                 "trades": trades,
@@ -865,6 +920,24 @@ class TradingPortfolio(Skill):
         if decomposition:
             out["gap_decomposition"] = decomposition
 
+        # Part of the rule's net may be outright P&L from a hedge that broke,
+        # which is not the timing decision this is judging. Reported beside the
+        # verdict rather than removed from it: the money was really made or lost,
+        # and dropping it would flatter the rule.
+        breaches = [t for t in scored if t.get("hedge_integrity")]
+        if breaches:
+            out["hedge_integrity"] = {
+                "trades_with_broken_hedge": len(breaches),
+                "note": ("part of the rule's net is outright P&L from intervals"
+                         " when the position was not hedged, not carry the timing"
+                         " rule earned. It is COUNTED — the money is real — but"
+                         " the gap below is not purely a timing result."),
+                "breaches": [
+                    {"opened_at": t["opened_at"], "closed_at": t["closed_at"],
+                     "net_usd": (t["realized"] or {}).get("net_usd"),
+                     **t["hedge_integrity"]} for t in breaches],
+            }
+
         # The verdict is withheld when its subject is absent. A rule positioned for
         # the whole window did not time anything, so `beat_holding` would be a
         # statement about execution and luck wearing the benchmark's clothes. Same
@@ -877,6 +950,18 @@ class TradingPortfolio(Skill):
                 f" it never chose to sit out — there is no timing decision here to"
                 f" judge, and carry forgone while flat is not merely small but"
                 f" absent")
+        # A window shorter than one intended hold cannot answer the question. Over
+        # a day, execution cost dwarfs the carry and the annualized figures are a
+        # short window amplified, not a return: a real 1.02-day window reported
+        # -212% annualized on $59 of notional, where the funding earned was 1.8
+        # cents against 18 cents of execution.
+        min_window = max(MIN_BENCHMARK_WINDOW_DAYS, _expected_hold_days())
+        if window_days < min_window:
+            withheld.append(
+                f"the recorded trades span {window_days:.2f} days, short of the"
+                f" {min_window:g}-day minimum this comparison needs. Over a window"
+                f" this brief, execution cost dominates the carry on both sides"
+                f" and the annualized figures are noise rather than a return")
         if withheld:
             out["verdict_withheld"] = withheld
             out["note"] = (
@@ -997,40 +1082,77 @@ class TradingPortfolio(Skill):
         Funding is bounded with a small tail so an hourly stamp landing right on
         the close is not dropped; a payment strictly after the close is excluded.
 
-        Also reports `coverage`: whether the fills it counted actually round-trip
-        the position. A window clipped at both ends counts nothing, sums to $0.00
-        and looks exactly like a healthy flat hedge, so every magnitude check
-        passes it. That is the one failure mode that cannot be caught by looking
-        at the numbers, which is why it is asserted here at the point the fills
-        are counted rather than inferred downstream.
+        The ledger's two stamps are not the trade's bounds — see
+        _OPEN_SETTLE_SECONDS. Both err, in opposite directions, and clipping
+        either end drops a whole leg's notional out of the price-PnL sum. So the
+        window is extended at both ends to the fills that ACTUALLY opened and
+        closed the position (`_leg_window`), and it reports which stamp each edge
+        ended up on so a reader can see whether either had to move. Deliberately
+        not done by correcting the ledger's columns: a walk fixes every row
+        already recorded, a column only fixes rows written after it.
+
+        Also reports `coverage` — whether the fills it counted actually
+        round-trip the position — and `leg_timing`, how far apart the two legs
+        opened and closed. A window clipped at both ends counts nothing, sums to
+        $0.00 and looks exactly like a healthy flat hedge, so every magnitude
+        check passes it; and a price gap between two fills that did not happen at
+        the same moment is not only a price gap.
         """
-        hi = hi_ms + 1000
-        funding = fees = price_pnl = 0.0
         _, addr_hl = self._target("hyperliquid")
         net_hl = self._target("hyperliquid")[0]
         _, addr_dy = self._target("dydx")
         indexer = _DYDX_INDEXER[self._target("dydx")[0]]
+        open_grace = int(_OPEN_SETTLE_SECONDS * 1000)
+        close_grace = int(_CLOSE_SETTLE_SECONDS * 1000)
+        # Fetched from BEFORE the ledger's opening stamp, or the opening fills are
+        # not merely outside the window — they are not in hand at all, and no
+        # amount of walking finds them.
+        fetch_from = lo_ms - open_grace
+        fills = {"hyperliquid": self._raw_fills_hl(coin, fetch_from),
+                 "dydx": self._raw_fills_dydx(coin, fetch_from)}
+        windows = {v: _leg_window(rows, lo_ms, hi_ms, open_grace, close_grace)
+                   for v, rows in fills.items()}
+        live = [w for w in windows.values() if w]
+
+        opened = min([w["open_ms"] for w in live], default=lo_ms)
+        lo = min(opened, lo_ms)
+        open_basis = "position_open" if lo < lo_ms else "opened_at"
+        closes = [w["close_ms"] for w in live if w["close_ms"] is not None]
+        settled = max([*closes, hi_ms])
+        close_basis = "position_flat" if settled > hi_ms else "closed_at"
+        hi = settled + 1000
+
+        funding = fees = price_pnl = 0.0
         legs = {}
-        for venue, fetch in (("hyperliquid", self._raw_fills_hl),
-                             ("dydx", self._raw_fills_dydx)):
+        for venue, rows in fills.items():
             agg = legs.setdefault(venue, {"fills": 0, "signed": 0.0, "gross": 0.0})
-            for r in fetch(coin, lo_ms):
-                if lo_ms <= r["t"] <= hi:
+            for r in rows:
+                if lo <= r["t"] <= hi:
                     fees += r["fee"]
                     # sell brings cash in (+), buy pays out (-); sum = price PnL.
                     price_pnl += r["px"] * r["sz"] * (1 if not r["buy"] else -1)
                     agg["fills"] += 1
                     agg["signed"] += r["signed"]
                     agg["gross"] += abs(r["signed"])
-        for t, amt in self._funding_hl(coin, lo_ms, addr_hl, net_hl):
-            if lo_ms <= t <= hi:
+        for t, amt in self._funding_hl(coin, fetch_from, addr_hl, net_hl):
+            if lo <= t <= hi:
                 funding += amt
-        for t, amt in self._funding_dydx(coin, lo_ms, addr_dy, indexer):
-            if lo_ms <= t <= hi:
+        for t, amt in self._funding_dydx(coin, fetch_from, addr_dy, indexer):
+            if lo <= t <= hi:
                 funding += amt
         return {"funding_usd": round(funding, 4), "fees_usd": round(fees, 4),
                 "price_pnl_usd": round(price_pnl, 4),
                 "net_usd": round(funding + price_pnl - fees, 4),
+                # What the window actually spanned, and on whose authority. A
+                # reader comparing these against the ledger's own two stamps can
+                # see at a glance whether either edge had to be moved.
+                "window_open_at": _iso_from_ms(lo),
+                "window_open_basis": open_basis,
+                "window_close_at": _iso_from_ms(settled),
+                "window_close_basis": close_basis,
+                "position_flat_at": (_iso_from_ms(max(closes))
+                                     if closes else None),
+                "leg_timing": _leg_timing(windows),
                 "coverage": _fill_coverage(legs)}
 
     def _funding_hl(self, coin, since_ms, addr, network):
@@ -1352,6 +1474,15 @@ def _now_iso():
     return datetime.datetime.now(datetime.UTC).isoformat()
 
 
+def _expected_hold_days():
+    """The hold the strategy is configured for, or the 14-day default."""
+    try:
+        return float(config.get("trading.carry_engine.expected_hold_days", 14.0)
+                     or 14.0)
+    except (TypeError, ValueError):
+        return 14.0
+
+
 def _default_lookback_days():
     """How far `review` looks back when the caller does not say.
 
@@ -1362,12 +1493,8 @@ def _default_lookback_days():
     Floored at MIN_REVIEW_LOOKBACK_DAYS so a misconfigured or tiny hold cannot
     reintroduce a window that cannot see a completed trade.
     """
-    try:
-        hold = float(config.get("trading.carry_engine.expected_hold_days", 14.0)
-                     or 14.0)
-    except (TypeError, ValueError):
-        hold = 14.0
-    return max(MIN_REVIEW_LOOKBACK_DAYS, round(hold * REVIEW_LOOKBACK_HOLDS))
+    return max(MIN_REVIEW_LOOKBACK_DAYS,
+               round(_expected_hold_days() * REVIEW_LOOKBACK_HOLDS))
 
 
 def _iso_ms(s):
@@ -1529,6 +1656,125 @@ def _benchmark_input_faults(trades):
     return faults
 
 
+def _leg_window(rows, lo_ms, hi_ms, open_grace_ms, close_grace_ms):
+    """When one venue's leg actually opened and closed, around the ledger's window.
+
+    `rows` are that venue's normalized fills (oldest first, `signed` carrying the
+    direction). Returns `{"open_ms", "close_ms", "fills"}` for the position
+    episode the ledger's `[lo_ms, hi_ms]` refers to, or None when this leg has no
+    fills near that window at all. `close_ms` is None for an episode that never
+    returned to flat.
+
+    Folds fills into episodes (flat -> ... -> flat) rather than walking outward
+    from each edge independently, and that is the point. Two independent walks
+    cannot tell a trade's own opening fills from the CLOSING fills of a position
+    that was shut minutes earlier and re-opened — the engine does re-enter when a
+    spread flips — and would silently glue the two together. Folding separates
+    them by construction, and the episode overlapping the ledger's own window is
+    the one the row is talking about.
+
+    It also keeps two different facts apart that a size-sum cannot: "this leg
+    round-tripped inside the window" and "this window contains no fills for this
+    leg" both sum to flat. Here they are an episode, or None.
+
+    Pure, and deliberately so: the defect it exists to fix is arithmetic, and it
+    should be testable without a network read.
+    """
+    lo_bound, hi_bound = lo_ms - open_grace_ms, hi_ms + close_grace_ms
+    episodes, cur, running = [], None, 0.0
+    for r in rows:
+        if not (lo_bound <= r["t"] <= hi_bound):
+            continue
+        if cur is None:
+            cur = {"open_ms": r["t"], "close_ms": None, "fills": 0}
+        cur["fills"] += 1
+        running += r["signed"]
+        if abs(running) <= _FLAT_SIZE_EPS:
+            cur["close_ms"] = r["t"]
+            episodes.append(cur)
+            cur, running = None, 0.0
+    if cur is not None:
+        episodes.append(cur)
+    if not episodes:
+        return None
+
+    def overlap(ep):
+        end = hi_bound if ep["close_ms"] is None else ep["close_ms"]
+        return min(end, hi_ms) - max(ep["open_ms"], lo_ms)
+
+    best = max(episodes, key=overlap)
+    if overlap(best) < 0:
+        # No episode reaches into the ledger's window. One that STRADDLES it still
+        # describes this trade — a hedge opened and closed either side of a window
+        # both of whose stamps are late — and anything else is a different trade's.
+        straddling = [e for e in episodes
+                      if e["open_ms"] <= lo_ms
+                      and (e["close_ms"] is None or e["close_ms"] >= hi_ms)]
+        if not straddling:
+            return None
+        best = straddling[0]
+    return best
+
+
+def _leg_timing(windows):
+    """How far apart the two legs opened and closed, in seconds.
+
+    A hedge is delta-neutral only while BOTH legs are in the market. Legs that
+    open or close far apart leave the position outright for that interval, and
+    any price move over it is real money — not the measurement artifact the
+    magnitude guard would otherwise call it.
+
+    None for a gap that cannot be formed (a leg missing, or an episode that never
+    closed), which means "not established", never "simultaneous".
+    """
+    hl, dy = windows.get("hyperliquid"), windows.get("dydx")
+    if not hl or not dy:
+        return None
+    out = {"open_gap_seconds": round(
+        abs(hl["open_ms"] - dy["open_ms"]) / 1000, 3)}
+    if hl["close_ms"] is not None and dy["close_ms"] is not None:
+        out["close_gap_seconds"] = round(
+            abs(hl["close_ms"] - dy["close_ms"]) / 1000, 3)
+    else:
+        out["close_gap_seconds"] = None
+    gaps = [g for g in (out["open_gap_seconds"], out["close_gap_seconds"])
+            if g is not None]
+    out["max_gap_seconds"] = max(gaps) if gaps else None
+    out["hedged_throughout"] = (
+        None if out["max_gap_seconds"] is None
+        else out["max_gap_seconds"] <= _MAX_HEDGED_LEG_GAP_SECONDS)
+    return out
+
+
+def _hedge_integrity(realized):
+    """A breach of delta-neutrality during the trade, or None.
+
+    Separate from `data_quality_fault` on purpose. A trade whose legs closed
+    hours apart has numbers that are entirely correct and an outcome that is
+    entirely real; what failed was the hedge, not the measurement. Calling it a
+    measurement fault would exclude a genuine loss from the realized total and
+    flatter the strategy — which is the exact direction of error this whole guard
+    layer exists to prevent.
+    """
+    timing = (realized or {}).get("leg_timing")
+    if not timing or timing.get("hedged_throughout") is not False:
+        return None
+    gap = timing["max_gap_seconds"]
+    which = ("closed" if (timing.get("close_gap_seconds") or 0) >= gap
+             else "opened")
+    return {
+        "hedged_throughout": False,
+        "max_gap_seconds": gap,
+        "open_gap_seconds": timing.get("open_gap_seconds"),
+        "close_gap_seconds": timing.get("close_gap_seconds"),
+        "detail": (
+            f"the two legs {which} {gap / 3600:.2f} hours apart, so the position"
+            f" was outright — not hedged — for that interval. Any price move over"
+            f" it landed on one leg alone. The realized figures are CORRECT and"
+            f" are counted; what failed here was the hedge, not the measurement."),
+    }
+
+
 def _fill_coverage(legs):
     """Did the counted fills actually round-trip the position on each leg?
 
@@ -1602,6 +1848,16 @@ def _price_pnl_fault(realized, notional, net_annual_pct, reliable):
                   " it is rather than as a flat result."),
         }
     if not notional or notional <= 0:
+        return None
+    # Both magnitude checks below rest on the same premise: the two legs move
+    # together and cancel, so what survives is small. A hedge whose legs were not
+    # simultaneously in the market had no such cancellation for that interval,
+    # and its price PnL is outright directional P&L — real money, correctly
+    # measured. Calling that a measurement fault would exclude a genuine loss
+    # from the realized total and flatter the strategy. The breach is reported
+    # instead, by _hedge_integrity.
+    timing = (realized or {}).get("leg_timing") or {}
+    if timing.get("hedged_throughout") is False:
         return None
     price_pnl = (realized or {}).get("price_pnl_usd")
     if price_pnl is not None:

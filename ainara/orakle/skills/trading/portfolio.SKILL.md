@@ -1,6 +1,6 @@
 ---
 name: "trading_portfolio"
-version: "1.1"
+version: "1.2"
 description: "Read-only status, closed-trade review and realized-vs-predicted analytics for the delta-neutral funding-carry book on Hyperliquid and dYdX"
 category: "trading"
 ---
@@ -90,13 +90,26 @@ the number. Realized rates name their own denominator
 (`funding_rate_denominator_usd`, `net_rate_denominator_usd`) and `notional_basis`
 states what the measurement cannot account for.
 
+A trade whose two legs opened or closed far apart carries `hedge_integrity`:
+the position was outright, not hedged, for that interval. Those figures are
+**correct and ARE counted** — the money is real and what failed was the hedge,
+not the measurement. That is deliberately not a `data_quality_fault`, because
+excluding a genuine loss would flatter the strategy.
+
+`realized` also reports which stamp each window edge landed on
+(`window_open_basis` / `window_close_basis`): the ledger's `opened_at` is written
+after the opening fills and `closed_at` before the closing ones, so both edges
+are extended to the fills that actually opened and closed the position.
+
 `benchmark` answers whether the timing rule beat holding. It is `{"requested":
 false, ...}` unless asked for. When computed it carries `held` vs `decision_rule`,
 `gap_usd` and a `gap_decomposition` that sums to it — and it **withholds**
 `beat_holding` rather than guessing when the inputs are not credible (`error` plus
 `data_quality`) or when the rule was positioned for essentially the whole window
-(`verdict_withheld`, because it never chose to sit out and so timed nothing).
-Do not synthesise a verdict from the remaining fields.
+(`verdict_withheld`, because it never chose to sit out and so timed nothing, or
+because the window is shorter than one intended hold and execution cost would
+dominate the carry on both sides). Do not synthesise a verdict from the remaining
+fields.
 
 ## Configuration
 

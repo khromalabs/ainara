@@ -436,6 +436,190 @@ class AnalyticsExcludesFaultedTrades(unittest.TestCase):
         self.assertIsNone(trade["mark_drift_pct"])
 
 
+class LegWindowGrace(unittest.TestCase):
+    """The ledger's two stamps are not the trade's bounds."""
+
+    # A clean round trip: open at t=1000s, close at t=2000s.
+    ROWS = [fill(1_000_000, 0.5, 100.0, buy=True),
+            fill(2_000_000, 0.5, 110.0, buy=False)]
+    GRACE = 300_000   # 5 minutes
+
+    def test_an_opening_fill_just_before_the_stamp_is_still_found(self):
+        # The real case: `opened_at` written 3 seconds AFTER the opening fill,
+        # because it records when the route completed, not when the fill landed.
+        w = P._leg_window(self.ROWS, 1_003_000, 2_000_000,
+                          self.GRACE, self.GRACE)
+        self.assertEqual(w["open_ms"], 1_000_000)
+        self.assertEqual(w["close_ms"], 2_000_000)
+        self.assertEqual(w["fills"], 2)
+
+    def test_a_closing_fill_just_after_the_stamp_is_still_found(self):
+        # `closed_at` is written when the closing order is SENT; the fill lands
+        # after it.
+        w = P._leg_window(self.ROWS, 1_000_000, 1_990_000,
+                          self.GRACE, self.GRACE)
+        self.assertEqual(w["close_ms"], 2_000_000)
+
+    def test_fills_beyond_the_grace_are_not_swept_in(self):
+        # Grace is a tolerance for stamp lag, not a licence to widen the window.
+        w = P._leg_window(self.ROWS, 1_000_000 + 10 * self.GRACE,
+                          2_000_000 + 10 * self.GRACE, self.GRACE, self.GRACE)
+        self.assertIsNone(w)
+
+    def test_a_re_entry_is_not_glued_onto_the_previous_trade(self):
+        # The engine re-enters when a spread flips. Two independent edge-walks
+        # cannot tell this trade's opening fills from the previous position's
+        # closing ones; folding into episodes separates them by construction.
+        rows = [fill(1_000_000, 0.5, 100.0, buy=True),
+                fill(1_100_000, 0.5, 101.0, buy=False),   # first trip closes
+                fill(1_200_000, 0.5, 102.0, buy=True),    # re-entry opens
+                fill(1_300_000, 0.5, 103.0, buy=False)]
+        w = P._leg_window(rows, 1_200_000, 1_300_000, self.GRACE, self.GRACE)
+        self.assertEqual(w["open_ms"], 1_200_000)
+        self.assertEqual(w["fills"], 2)
+
+    def test_no_fills_near_the_window_is_none_not_a_flat_episode(self):
+        # "This leg round-tripped inside the window" and "this window has no
+        # fills for this leg" both sum to flat, and must not answer alike.
+        self.assertIsNone(P._leg_window([], 1_000_000, 2_000_000,
+                                        self.GRACE, self.GRACE))
+
+    def test_an_episode_that_never_closed_reports_a_null_close(self):
+        w = P._leg_window([fill(1_000_000, 0.5, 100.0, buy=True)],
+                          1_000_000, 2_000_000, self.GRACE, self.GRACE)
+        self.assertEqual(w["open_ms"], 1_000_000)
+        self.assertIsNone(w["close_ms"])
+
+
+class HedgeIntegrity(unittest.TestCase):
+    """A broken hedge is a real result, not a measurement fault."""
+
+    def _timing(self, open_gap, close_gap):
+        gaps = [g for g in (open_gap, close_gap) if g is not None]
+        return {"open_gap_seconds": open_gap, "close_gap_seconds": close_gap,
+                "max_gap_seconds": max(gaps) if gaps else None,
+                "hedged_throughout": (
+                    None if not gaps
+                    else max(gaps) <= P._MAX_HEDGED_LEG_GAP_SECONDS)}
+
+    def test_legs_seconds_apart_are_hedged_throughout(self):
+        t = P._leg_timing({"hyperliquid": {"open_ms": 0, "close_ms": 10_000},
+                           "dydx": {"open_ms": 4_000, "close_ms": 15_000}})
+        self.assertEqual(t["open_gap_seconds"], 4.0)
+        self.assertEqual(t["close_gap_seconds"], 5.0)
+        self.assertTrue(t["hedged_throughout"])
+        self.assertIsNone(P._hedge_integrity({"leg_timing": t}))
+
+    def test_legs_hours_apart_are_a_breach(self):
+        # The real case: two legs closing 8.01 hours apart while BTC fell 2.54%.
+        t = P._leg_timing({"hyperliquid": {"open_ms": 0, "close_ms": 0},
+                           "dydx": {"open_ms": 3_000,
+                                    "close_ms": 8_010 * 3_600}})
+        self.assertFalse(t["hedged_throughout"])
+        b = P._hedge_integrity({"leg_timing": t})
+        self.assertIs(b["hedged_throughout"], False)
+        self.assertIn("outright", b["detail"])
+        self.assertIn("not the measurement", b["detail"])
+
+    def test_a_missing_leg_leaves_timing_unestablished_not_simultaneous(self):
+        self.assertIsNone(P._leg_timing({"hyperliquid": {"open_ms": 0,
+                                                         "close_ms": 1}}))
+
+    def test_an_unclosed_episode_gives_a_null_close_gap(self):
+        t = P._leg_timing({"hyperliquid": {"open_ms": 0, "close_ms": None},
+                           "dydx": {"open_ms": 1_000, "close_ms": 2_000}})
+        self.assertIsNone(t["close_gap_seconds"])
+        self.assertEqual(t["open_gap_seconds"], 1.0)
+
+    def test_a_breach_suppresses_the_magnitude_fault(self):
+        # The magnitude guards rest on the legs cancelling. They did not cancel,
+        # so the number is outright P&L — real money, correctly measured.
+        realized = {"price_pnl_usd": 63.03, "net_usd": 63.05, "fees_usd": 0.0,
+                    "leg_timing": self._timing(2.0, 28_800.0)}
+        self.assertIsNone(P._price_pnl_fault(realized, 1000.0, 500.0, True))
+
+    def test_without_a_breach_the_magnitude_fault_still_fires(self):
+        realized = {"price_pnl_usd": 63.03, "net_usd": 63.05, "fees_usd": 0.0,
+                    "leg_timing": self._timing(2.0, 5.0)}
+        f = P._price_pnl_fault(realized, 1000.0, 11.0, True)
+        self.assertIsNotNone(f)
+        self.assertEqual(f["field"], "price_pnl_usd")
+
+    def test_a_breach_does_not_suppress_a_coverage_fault(self):
+        # Incomplete coverage is a genuine measurement failure either way.
+        realized = {"price_pnl_usd": 0.0, "net_usd": 0.0, "fees_usd": 0.0,
+                    "leg_timing": self._timing(2.0, 28_800.0),
+                    "coverage": {"complete": False, "fills_counted": 0,
+                                 "legs": {}, "reasons": ["no dydx fills"]}}
+        f = P._price_pnl_fault(realized, 1000.0, 11.0, True)
+        self.assertIsNotNone(f)
+        self.assertEqual(f["field"], "coverage")
+
+
+class BrokenHedgeCountsTowardTotals(unittest.TestCase):
+    """The money was really lost, so it must not be quietly dropped."""
+
+    ROW = {"coin": "BTC", "opened_at": "2026-07-23T23:00:38+00:00",
+           "closed_at": "2026-07-28T02:35:02+00:00", "notional_usd": 52.12,
+           "short_venue": "hyperliquid", "size": 0.0008,
+           "pred_smoothed_spread_annual_pct": 9.38}
+
+    def setUp(self):
+        self.p = TradingPortfolio()
+        self._rows = P._ledger.trades
+        P._ledger.trades = lambda coin=None, status=None: [dict(self.ROW)]
+        # -1.284 is 2.46% of notional: over the magnitude limit, and entirely
+        # explained by the two legs closing 8 hours apart.
+        self.p._realized_in_window = lambda c, lo, hi: {
+            "funding_usd": 0.5, "fees_usd": 0.2, "price_pnl_usd": -1.284,
+            "net_usd": -0.984,
+            "leg_timing": {"open_gap_seconds": 5.0,
+                           "close_gap_seconds": 28_845.0,
+                           "max_gap_seconds": 28_845.0,
+                           "hedged_throughout": False},
+            "coverage": {"complete": True, "fills_counted": 4, "legs": {},
+                         "reasons": []}}
+
+    def tearDown(self):
+        P._ledger.trades = self._rows
+
+    def test_the_trade_is_not_faulted(self):
+        t = self.p._analytics("BTC")["trades"][0]
+        self.assertTrue(t["data_quality_ok"])
+        self.assertNotIn("data_quality_fault", t)
+
+    def test_the_loss_is_counted_in_the_realized_total(self):
+        s = self.p._analytics("BTC")["summary"]
+        self.assertAlmostEqual(s["total_realized_net_usd"], -0.984)
+        self.assertEqual(s["data_quality"]["trades_faulted"], 0)
+
+    def test_the_breach_is_reported_on_the_trade_and_in_the_summary(self):
+        out = self.p._analytics("BTC")
+        self.assertIs(out["trades"][0]["hedge_integrity"]["hedged_throughout"],
+                      False)
+        hi = out["summary"]["hedge_integrity"]
+        self.assertEqual(hi["trades_with_broken_hedge"], 1)
+        self.assertTrue(hi["counted_in_totals"])
+
+    def test_the_note_says_the_money_is_real(self):
+        note = self.p._analytics("BTC")["summary"]["note"]
+        self.assertIn("NOT hedged", note)
+        self.assertIn("ARE counted", note)
+
+    def test_a_healthy_trade_carries_no_integrity_key(self):
+        self.p._realized_in_window = lambda c, lo, hi: {
+            "funding_usd": 0.5, "fees_usd": 0.2, "price_pnl_usd": -0.05,
+            "net_usd": 0.25,
+            "leg_timing": {"open_gap_seconds": 5.0, "close_gap_seconds": 6.0,
+                           "max_gap_seconds": 6.0, "hedged_throughout": True},
+            "coverage": {"complete": True, "fills_counted": 4, "legs": {},
+                         "reasons": []}}
+        out = self.p._analytics("BTC")
+        self.assertNotIn("hedge_integrity", out["trades"][0])
+        self.assertEqual(
+            out["summary"]["hedge_integrity"]["trades_with_broken_hedge"], 0)
+
+
 class HyperliquidLiquidationNote(unittest.TestCase):
     """No null liquidation distance may render as 'safe'."""
 

@@ -54,11 +54,12 @@ def _iso(ms):
 
 
 class BenchmarkBase(unittest.TestCase):
-    """A 10-day window with a flat, positive funding spread.
+    """A 30-day window with a flat, positive funding spread.
 
     Hyperliquid pays 0.0001/hour, dYdX pays nothing, so a hedge short on
-    Hyperliquid collects the difference. The default fixture is two 2-day trades
-    inside that window, which is 40% occupancy — low enough for a verdict.
+    Hyperliquid collects the difference. The default fixture is two 6-day trades
+    inside that window: 40% occupancy, low enough for a verdict, over a window
+    long enough to clear the minimum this comparison needs.
     """
 
     T0 = 1_750_000_000_000 // HOUR_MS * HOUR_MS
@@ -67,9 +68,9 @@ class BenchmarkBase(unittest.TestCase):
 
     def setUp(self):
         self.lo = self.T0
-        self.hi = self.T0 + 240 * HOUR_MS
-        self.hl = {self.T0 + i * HOUR_MS: 0.0001 for i in range(241)}
-        self.dy = {self.T0 + i * HOUR_MS: 0.0 for i in range(241)}
+        self.hi = self.T0 + 720 * HOUR_MS
+        self.hl = {self.T0 + i * HOUR_MS: 0.0001 for i in range(721)}
+        self.dy = {self.T0 + i * HOUR_MS: 0.0 for i in range(721)}
         self.p = TradingPortfolio()
 
     def trade(self, open_ms, close_ms, hold_days, *, net=5.0, fees=1.0,
@@ -109,24 +110,24 @@ class BenchmarkBase(unittest.TestCase):
             return self.p._benchmark("BTC", trades)
 
     def two_trades(self, **kw):
-        """Two 2-day trades inside the 10-day window -> 40% occupancy."""
-        return [self.trade(self.lo, self.lo + 48 * HOUR_MS, 2.0, **kw),
-                self.trade(self.lo + 100 * HOUR_MS, self.hi, 2.0, **kw)]
+        """Two 6-day trades inside the 30-day window -> 40% occupancy."""
+        return [self.trade(self.lo, self.lo + 144 * HOUR_MS, 6.0, **kw),
+                self.trade(self.lo + 400 * HOUR_MS, self.hi, 6.0, **kw)]
 
 
 class BenchmarkComparison(BenchmarkBase):
     """The arithmetic, checked against hand-computed values."""
 
     def test_held_hedge_accrues_the_public_spread_over_the_whole_window(self):
-        # 241 inclusive hourly stamps * 0.0001 * $1000 notional.
+        # 721 inclusive hourly stamps * 0.0001 * $1000 notional.
         b = self.bench(self.two_trades())
-        self.assertEqual(b["window"]["funding_hours"], 241)
-        self.assertAlmostEqual(b["held"]["gross_funding_usd"], 24.1, places=4)
+        self.assertEqual(b["window"]["funding_hours"], 721)
+        self.assertAlmostEqual(b["held"]["gross_funding_usd"], 72.1, places=4)
 
     def test_funding_comes_from_the_public_series_not_account_payments(self):
         # The account has no funding rows for the hours it sat flat, which are
-        # exactly the hours the benchmark is being paid for. 241 hours of public
-        # history against 96 hours positioned.
+        # exactly the hours the benchmark is being paid for. 721 hours of public
+        # history against 288 hours positioned.
         b = self.bench(self.two_trades())
         self.assertGreater(b["window"]["funding_hours"],
                            b["decision_rule"]["hours_positioned"])
@@ -145,9 +146,9 @@ class BenchmarkComparison(BenchmarkBase):
 
     def test_the_gap_is_the_difference_between_the_two_nets(self):
         b = self.bench(self.two_trades())
-        self.assertAlmostEqual(b["held"]["net_usd"], 22.6, places=4)
+        self.assertAlmostEqual(b["held"]["net_usd"], 70.6, places=4)
         self.assertAlmostEqual(b["decision_rule"]["net_usd"], 10.0, places=4)
-        self.assertAlmostEqual(b["gap_usd"], -12.6, places=4)
+        self.assertAlmostEqual(b["gap_usd"], -60.6, places=4)
 
     def test_the_decomposition_sums_exactly_to_the_gap(self):
         # A decomposition that does not add up invites the reader to trust
@@ -211,14 +212,14 @@ class BenchmarkOccupancy(BenchmarkBase):
 
     def test_denominator_is_the_whole_window_not_the_time_positioned(self):
         b = self.bench(self.two_trades())
-        self.assertAlmostEqual(b["decision_rule"]["hours_positioned"], 96.0)
-        self.assertAlmostEqual(b["decision_rule"]["window_hours"], 240.0)
+        self.assertAlmostEqual(b["decision_rule"]["hours_positioned"], 288.0)
+        self.assertAlmostEqual(b["decision_rule"]["window_hours"], 720.0)
         self.assertAlmostEqual(b["decision_rule"]["occupancy_pct"], 40.0)
 
     def test_occupancy_never_exceeds_one_hundred_percent(self):
         # hold_days is measured over fills and the window over the ledger's two
         # stamps; mixing them once let occupancy round above 100%.
-        b = self.bench([self.trade(self.lo, self.hi, 99.0)])
+        b = self.bench([self.trade(self.lo, self.hi, 999.0)])
         self.assertLessEqual(b["decision_rule"]["occupancy_pct"], 100.0)
 
 
@@ -233,7 +234,7 @@ class BenchmarkVerdict(BenchmarkBase):
         self.assertNotIn("verdict_withheld", b)
 
     def test_beat_holding_is_true_when_the_rule_wins(self):
-        b = self.bench(self.two_trades(net=500.0))
+        b = self.bench(self.two_trades(net=5000.0))
         self.assertTrue(b["beat_holding"])
         self.assertIn("BEAT", b["verdict"])
 
@@ -242,15 +243,46 @@ class BenchmarkVerdict(BenchmarkBase):
         # `beat_holding` would be a claim about execution wearing the
         # benchmark's clothes. One trade spans its own window exactly, which is
         # why this is judged on occupancy rather than by counting trades.
-        b = self.bench([self.trade(self.lo, self.hi, 10.0)])
+        b = self.bench([self.trade(self.lo, self.hi, 30.0)])
         self.assertEqual(b["decision_rule"]["occupancy_pct"], 100.0)
         self.assertNotIn("beat_holding", b)
         self.assertNotIn("verdict", b)
         self.assertIn("never chose to sit out", b["verdict_withheld"][0])
 
+    def test_verdict_withheld_when_the_window_is_too_short_to_mean_anything(self):
+        # Observed live: a 1.02-day window reported -212% annualized on $59 of
+        # notional, where the funding earned was 1.8 cents against 18 cents of
+        # execution. Over a window that brief the comparison is about execution
+        # cost, not carry, and the annualization is a short window amplified.
+        short_hi = self.lo + 24 * HOUR_MS
+        b = self.bench([self.trade(self.lo, self.lo + 12 * HOUR_MS, 0.5),
+                        self.trade(self.lo + 18 * HOUR_MS, short_hi, 0.25)])
+        self.assertNotIn("beat_holding", b)
+        self.assertNotIn("verdict", b)
+        self.assertTrue(any("short of the" in w for w in b["verdict_withheld"]))
+
+    def test_a_long_enough_window_clears_the_minimum(self):
+        b = self.bench(self.two_trades())
+        self.assertNotIn("verdict_withheld", b)
+        self.assertIn("beat_holding", b)
+
+    def test_the_minimum_follows_a_longer_configured_hold(self):
+        # A desk configured for 60-day holds needs a longer window before the
+        # comparison means anything, without anyone remembering to widen it.
+        real = P.config.get
+        P.config.get = lambda k, d=None: (
+            60.0 if k == "trading.carry_engine.expected_hold_days" else d)
+        try:
+            b = self.bench(self.two_trades())   # a 30-day window
+            self.assertNotIn("beat_holding", b)
+            self.assertTrue(any("60-day minimum" in w
+                                for w in b["verdict_withheld"]))
+        finally:
+            P.config.get = real
+
     def test_a_withheld_verdict_still_reports_the_comparison(self):
         # Refusing the conclusion is not refusing the evidence.
-        b = self.bench([self.trade(self.lo, self.hi, 10.0)])
+        b = self.bench([self.trade(self.lo, self.hi, 30.0)])
         self.assertIn("held", b)
         self.assertIn("gap_usd", b)
         self.assertIn("deliberately ABSENT", b["note"])
