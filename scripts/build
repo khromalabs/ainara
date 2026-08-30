@@ -7,6 +7,7 @@ cd "$(git rev-parse --show-toplevel)"
 usage() {
     echo "Usage: `basename $0` [options]"
     echo "Options:"
+    echo "  -e, --edition <public|supporters>  Distribution edition (required)"
     echo "  --skip-pyinstaller    Skip the PyInstaller Python build step"
     echo "  --skip-npm-build      Skip the npm build step"
     echo "  --skip-git-tag        Skip the Git tag creation and push step"
@@ -22,6 +23,7 @@ SKIP_NPM_BUILD=false
 SKIP_GIT_TAG=false
 FORCE_BUILD=false
 RELEASE_TAG=false
+EDITION=""
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
@@ -30,6 +32,7 @@ while [[ "$#" -gt 0 ]]; do
         --skip-git-tag) SKIP_GIT_TAG=true ;;
         --release) RELEASE_TAG=true ;;
         --force) FORCE_BUILD=true ;;
+        -e|--edition) EDITION="$2"; shift ;;
         --help) usage ;;
         *) echo "Unknown parameter passed: $1"; usage ;;
     esac
@@ -42,13 +45,19 @@ if [ -e venv/bin/activate ]; then
     source venv/bin/activate
 fi
 
+# Require edition
+if [ -z "$EDITION" ]; then
+    echo "Error: --edition is required (public|supporters)." >&2
+    usage
+fi
+
 # Run Python build with optional force flag unless skipped
 if [ "$SKIP_PYINSTALLER" = false ]; then
     echo "Running Python build..."
     if [ "$FORCE_BUILD" = true ]; then
-        scripts/_build.py --force
+        scripts/_build.py --force --edition "$EDITION"
     else
-        scripts/_build.py
+        scripts/_build.py --edition "$EDITION"
     fi
     # Check if Python build was successful
     if [ $? -ne 0 ]; then

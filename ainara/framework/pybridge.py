@@ -666,7 +666,7 @@ def create_app():
     # --- Initialize Wake Word Backend ---
     try:
         logger.info("Initializing Wake Word backend...")
-        app.wakeword = create_wakeword_backend(config.config)
+        app.wakeword = create_wakeword_backend(config)
         app.wakeword.load_model()
         logger.info(f"Wake Word backend initialized. Models: {app.wakeword.get_loaded_models()}")
     except Exception as e:

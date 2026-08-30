@@ -65,6 +65,8 @@ let shortcutRegistered = false;
 let splashWindow = null;
 let setupWindow = null;
 let wizardActive = false;
+let reauthMode = false;
+let reauthResolve = null;
 let updateProgressWindow = null;
 let ollamaClient = null;
 let appReady = false;
@@ -147,13 +149,15 @@ async function setupComplete() {
 
 
 // Show the setup wizard for first-time users
-function showSetupWizard(validationErrors = []) {
-    // console.trace();
+function showSetupWizard(validationErrors = [], options = {}) {
+    const { reauth = false } = options;
+    reauthMode = reauth;
+
     if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
         Logger.warn('Configuration validation failed, invalidating setup.complete because of these errors:', validationErrors);
         config.set("setup.completed", false);
     } else {
-        Logger.info('Showing setup wizard');
+        Logger.info(reauth ? 'Showing re-auth wizard' : 'Showing setup wizard');
     }
 
     // Notify com-ring wizard active
@@ -163,86 +167,63 @@ function showSetupWizard(validationErrors = []) {
         }
     });
 
-   // Disable tray icon
-    if (tray) {
-        tray.destroy();
-        tray = null;
+    // Only full setup tears down tray/shortcuts/config
+    if (!reauth) {
+        if (tray) { tray.destroy(); tray = null; }
+        config.set('setup.completed', false);
+        globalShortcut.unregisterAll();
+        shortcutRegistered = false;
     }
 
-    config.set('setup.completed', false)
+    wizardActive = true;
 
-    // Get the appropriate icon based on theme
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
-
-    wizardActive = true;
-    console.log("showSetupWizard: Disabled shortcutKey")
-    globalShortcut.unregisterAll();
-    shortcutRegistered = false;
-
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    Logger.info("Screen X:" + screenWidth + " Screen Y:" + screenWidth)
 
-    // Create setup window
+    const winWidth = reauth ? 480 : Math.floor(screenWidth * 0.7);
+    const winHeight = reauth ? 520 : Math.floor(screenHeight * 0.95);
+
     setupWindow = new BrowserWindow({
-        width: Math.floor(screenWidth * 0.7),
-        height: Math.floor(screenHeight * 0.95),
+        width: winWidth,
+        height: winHeight,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
         },
-        title: 'Polaris Setup',
+        title: reauth ? 'License Verification' : 'Polaris Setup',
         show: false,
         center: true,
         resizable: false,
         frame: false,
-        skipTaskbar: false, // Show taskbar icon for setup window
+        skipTaskbar: false,
         transparent: true,
         iconPath: iconPath,
         hasShadow: false
     });
-    // setupWindow.webContents.openDevTools();
 
     setupWindow.setIcon(iconPath);
-    // updateTrayIcon();
-
-    // Load the setup page
-    setupWindow.loadFile(path.join(__dirname, 'components', 'setup.html'));
+    setupWindow.loadFile(
+        path.join(__dirname, 'components', 'setup.html'),
+        { query: { mode: reauth ? 'reauth' : 'full' } }
+    );
 
     setupWindow.once('ready-to-show', () => {
         if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
             dialog.showErrorBox(
                 'Configuration Error',
-                'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors,
-                // 'The configuration file contains the following errors:\n\n' + validationErrors + "\n\nThe setup wizard will be opened now."
+                'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors
             );
         }
         setupWindow.show();
-        // // Pass validation errors to the wizard window
-        // if (validationErrors && validationErrors.length > 0) {
-        //     setupWindow.webContents.send('config-validation-errors', validationErrors);
-        // }
     });
+}
 
-
-    // If the user closes the setup window without completing setup
-    ipcMain.on('close-setup-window', async () => {
-        Logger.info('close-setup-window event');
-        setupWindow?.close();
-        if (config.get('setup.completed', false)) {
-            // TODO: Don't know what this means, setupComplete is needed here
-            // Correction: Prevented re-entrant call to setupComplete.
-            Logger.info('Setup complete, window closed by user. Main flow will continue.');
-            setupComplete();
-        } else {
-            Logger.info('Setup incomplete - forcing immediate exit');
-            await ServiceManager.stopServices();
-            app.quit(); // Hard exit without cleanup
-        }
+function showReauthWizard() {
+    return new Promise((resolve) => {
+        reauthResolve = resolve;
+        showSetupWizard([], { reauth: true });
     });
-
-    // Handle setup completion
-    ipcMain.on('setup-complete', setupComplete);
 }
 
 async function checkConfigAndProceed() {
@@ -548,7 +529,8 @@ async function appInitialization(firstInitialization = true) {
         // }
 
         if (!await checkBackendAuth(splashWindow)) {
-            return; // Stop initialization, Setup Wizard has been triggered
+            app.quit(); // User closed the wizard or auth failed → exit
+            return;
         }
 
         // Services are ready, check config and initialize the rest of the app
@@ -630,8 +612,7 @@ async function appInitialization(firstInitialization = true) {
 
             // If we get here, we are not authorized
             splash.close();
-            showSetupWizard();
-            return false;
+            return await showReauthWizard();
         }
 
         checkFirstRunTasks();
@@ -1374,6 +1355,45 @@ function appSetupEventHandlers() {
     ipcMain.on('open-auth-portal', () => {
         const pybridgeUrl = config.get('pybridge.api_url', 'http://127.0.0.1:8101');
         shell.openExternal(`${pybridgeUrl}/auth/portal`);
+    });
+
+    // Handle closing the setup wizard (full or re-auth)
+    ipcMain.on('close-setup-window', async () => {
+        Logger.info('close-setup-window event');
+        setupWindow?.close();
+
+        if (reauthMode) {
+            reauthMode = false;
+            reauthResolve?.(false);
+            reauthResolve = null;
+            app.quit(); // User closed re-auth without completing → quit
+            return;
+        }
+
+        if (config.get('setup.completed', false)) {
+            setupComplete();
+        } else {
+            Logger.info('Setup incomplete - forcing immediate exit');
+            await ServiceManager.stopServices();
+            app.quit();
+        }
+    });
+
+    // Handle successful re-verification (reauth mode)
+    ipcMain.on('license-verified', () => {
+        if (reauthMode) {
+            wizardActive = false;
+            BrowserWindow.getAllWindows().forEach(window => {
+                if (!window.isDestroyed()) {
+                    window.webContents.send('wizard-status', false);
+                }
+            });
+            reauthMode = false;
+            setupWindow?.close();
+            setupWindow?.destroy();
+            reauthResolve?.(true);
+            reauthResolve = null;
+        }
     });
 
 }

@@ -57,7 +57,7 @@ def check_dependencies():
     try:
         with open('requirements.txt', 'r') as f:
             lines = f.readlines()
-        
+
         required_packages = []
         for line in lines:
             line = line.strip()
@@ -145,6 +145,25 @@ if __name__ == "__main__":
         action="store_true",
         help="Force rebuild even if executables already exist",
     )
+    parser.add_argument(
+        "-e",
+        "--edition",
+        choices=["public", "supporters"],
+        default=None,
+        help=(
+            "Distribution edition (public|supporters). "
+            "Required unless POLARIS_EDITION is set."
+        ),
+    )
     args = parser.parse_args()
+
+    edition = args.edition or os.environ.get("POLARIS_EDITION")
+    if edition not in ("public", "supporters"):
+        if args.edition is None and "POLARIS_EDITION" not in os.environ:
+            parser.error(
+                "edition is required (use -e/--edition or set POLARIS_EDITION)"
+            )
+        parser.error(f"Invalid edition: {edition!r} (expected 'public' or 'supporters')")
+    os.environ["POLARIS_EDITION"] = edition
 
     build_executables(force=args.force)
