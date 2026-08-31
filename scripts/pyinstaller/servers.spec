@@ -89,7 +89,7 @@ if os.path.exists(nexus_src):
                 'regenerate — NOTE: this invalidates all existing tokens.'
             )
 
-    # Stage the nexus tree (so public edition can strip premium domains)
+    # Stage the nexus tree (so public edition can strip supporters domains)
     os.makedirs(nexus_staged_root)
     shutil.copytree(nexus_src, nexus_staged, symlinks=False)
 
@@ -468,6 +468,7 @@ common_imports = [
     'tiktoken',
     'ccxt',
     'ccxt.async_support',
+    'sympy',
 
     # Framework modules
     'ainara.framework',
@@ -485,25 +486,11 @@ common_imports = [
 # Add all the transformers models to common imports
 # common_imports += collect_submodules('transformers')
 common_imports += collect_submodules('chromadb')
-# Add all opentelemetry modules, a complex dependency of chromadb
-common_imports += collect_submodules('opentelemetry')
+# # Add all opentelemetry modules, a complex dependency of chromadb
+# common_imports += collect_submodules('opentelemetry')
 # collect_submodules('sentence_transformers')
-
-# numpy.random's compiled C extensions are dynamically imported by numpy's
-# __init__/C code and are often missed by PyInstaller's static analysis,
-# especially when imported from obfuscated (invisible) nexus modules.
-common_imports += [
-    'numpy.random',
-    'numpy.random.common',
-    'numpy.random.bit_generator',
-    'numpy.random._bounded_integers',
-    'numpy.random._mt19937',
-    'numpy.random.mtrand',
-    'numpy.random._philox',
-    'numpy.random._pcg64',
-    'numpy.random._sfc64',
-    'numpy.random._generator',
-]
+# common_imports += collect_submodules('numpy')
+# common_imports += collect_submodules('litellm')
 
 # Orakle-specific data and imports
 orakle_datas = [
@@ -512,15 +499,15 @@ orakle_datas = [
 
 orakle_imports = [
     'ainara.orakle.skills',
-    'ainara.orakle.skills.crypto',
     'ainara.orakle.skills.finance',
     'ainara.orakle.skills.html',
     'ainara.orakle.skills.inference',
     'ainara.orakle.skills.messaging',
     'ainara.orakle.skills.search',
-    'ainara.orakle.skills.sentiment',
     'ainara.orakle.skills.system',
     'ainara.orakle.skills.tools',
+    # 'ainara.orakle.skills.sentiment',
+    # 'ainara.orakle.skills.crypto',
 ]
 
 # PyBridge-specific data and imports

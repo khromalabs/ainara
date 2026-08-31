@@ -30,8 +30,8 @@ class AuthManager:
         self.storage = storage_backend
         self._core = None
         try:
-            from supporters.auth_core import PremiumAuthCore
-            self._core = PremiumAuthCore(storage_backend)
+            from supporters.auth_core import SupportersAuthCore
+            self._core = SupportersAuthCore(storage_backend)
         except Exception as e:
             logger.info(f"Premium module unavailable ({e}); running in public mode.")
 
