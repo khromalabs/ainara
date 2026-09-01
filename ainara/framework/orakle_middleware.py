@@ -757,6 +757,22 @@ class OrakleMiddleware:
             Processed results as a stream
         """
 
+        # TODO: [Refactor] Split this long method into focused helper methods
+        # to follow DRY and keep `_process_orakle_request` as a short
+        # orchestrator.
+        #
+        # Suggested helpers:
+        # - `_build_candidate_skills_text(matches)`
+        # - `_select_skill(prompt, valid_skill_ids, select_prompt)`
+        # - `_extract_selection_metadata(selection_data)`
+        # - `_handle_requires_agent(...)`
+        # - `_parse_skill_result(result, skill_id)`
+        # - `_yield_skill_interpretation(...)`
+        # - `_execute_and_interpret_skill(...)`
+        #
+        # Current duplication to remove includes JSON parsing, interpretation
+        # streaming, and the system/regular skill execution flow.
+
         # Pre-filter matching skills using the embeddings matcher
         matches = self.matcher.match(
             query, threshold=self.matcher_threshold, top_k=self.matcher_top_k
@@ -1002,146 +1018,164 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     )
                     self._blacklisted_match_providers.add(provider_name)
 
-        try:
-            frustration_level = selection_data.get("frustration_level", 0.0)
-            frustration_reason = selection_data.get("frustration_reason", "")
-            if frustration_level > 0:
-                logger.info(
-                    "ORAKLE: Detected frustration level:"
-                    f" {frustration_level:.2f}. Reason:"
-                    f" '{frustration_reason}'. Query: '{query}'"
-                )
-
-            # Prioritize reasoning level from Orakle, fall back to heuristic
-            orakle_reasoning_level = selection_data.get("reasoning_level")
-            if orakle_reasoning_level is not None:
-                reasoning_level = orakle_reasoning_level
-                logger.info(
-                    "ORAKLE: Reasoning level from skill selection:"
-                    f" {reasoning_level}"
-                )
-            else:
-                reasoning_level = reasoning_level_heuristic
-                logger.info(
-                    "ORAKLE: Reasoning level from heuristic:"
-                    f" {reasoning_level}"
-                )
-            # Apply the global reasoning effort limit
-            final_reasoning_level = min(
-                reasoning_level, self.reasoning_effort_limit
-            )
-            if final_reasoning_level < reasoning_level:
-                logger.info(
-                    "ORAKLE: Capping reasoning level from"
-                    f" {reasoning_level} to {final_reasoning_level} due to"
-                    " global limit."
-                )
-
-            skill_intention = selection_data.get("skill_intention", "")
-
-            # Handle agent requirement
-            if selection_data.get("requires_agent", False):
-                logger.info(
-                    f"ORAKLE: Query requires agent processing: '{query}'"
-                )
-                if skill_intention:
-                    yield f"\n{skill_intention}\n\n"
-                yield "\n_orakle_loading_signal_|spawn_agent\n"
-
-                # Spawn ephemeral agent via Bureau
-                agent_result = self._spawn_ephemeral_agent(
-                    query=query,
-                    chat_history=chat_history,
-                    reasoning_level=final_reasoning_level,
-                )
-
-                if agent_result:
-                    yield agent_result
-                else:
-                    yield (
-                        "\nI encountered an issue processing that request."
-                        " Please try again.\n\n"
-                    )
-                return
-
-            # Use the data from the retry loop
-            # If retries failed (e.g. persistent hallucination),
-            # we force invalid ID to None
-            selected_skill_id = selection_data.get("skill_id")
-            if selected_skill_id and selected_skill_id not in valid_skill_ids:
-                logger.error(
-                    "ORAKLE: Persistent hallucination of skill_id"
-                    f" '{selected_skill_id}' after retries."
-                )
-                selected_skill_id = None
-                selection_data["skill_id"] = None
-
-            if selected_skill_id:
-                parameters = selection_data.get("parameters", {})
-
-            if not selected_skill_id:
-                if selection_data.get("error_msg"):
-                    error_msg = selection_data.get("error_msg")
-                else:
-                    error_msg = "couldn't find a skill matching the query"
-                logger.error(
-                    f"ORAKLE: {error_msg} LLM response: {selection_response}"
-                )
-                if agentic_mode:
-                    yield f"\nOrakle error: {error_msg}\n\n"
-                else:
-                    yield f"\nI'm sorry, {error_msg}\n\n"
-                return
-
+        frustration_level = selection_data.get("frustration_level", 0.0)
+        frustration_reason = selection_data.get("frustration_reason", "")
+        if frustration_level > 0:
             logger.info(
-                f"ORAKLE Selected skill: {selected_skill_id} with parameters:"
-                f" {parameters}"
+                "ORAKLE: Detected frustration level:"
+                f" {frustration_level:.2f}. Reason:"
+                f" '{frustration_reason}'. Query: '{query}'"
             )
 
-            # --- Handle System Skills ---
-            if selected_skill_id in self.system_skills:
-                logger.info(
-                    f"ORAKLE: Executing system skill: {selected_skill_id}"
+        # Prioritize reasoning level from Orakle, fall back to heuristic
+        orakle_reasoning_level = selection_data.get("reasoning_level")
+        if orakle_reasoning_level is not None:
+            reasoning_level = orakle_reasoning_level
+            logger.info(
+                "ORAKLE: Reasoning level from skill selection:"
+                f" {reasoning_level}"
+            )
+        else:
+            reasoning_level = reasoning_level_heuristic
+            logger.info(
+                "ORAKLE: Reasoning level from heuristic:"
+                f" {reasoning_level}"
+            )
+        # Apply the global reasoning effort limit
+        final_reasoning_level = min(
+            reasoning_level, self.reasoning_effort_limit
+        )
+        if final_reasoning_level < reasoning_level:
+            logger.info(
+                "ORAKLE: Capping reasoning level from"
+                f" {reasoning_level} to {final_reasoning_level} due to"
+                " global limit."
+            )
+
+        skill_intention = selection_data.get("skill_intention", "")
+
+        # Handle agent requirement
+        if selection_data.get("requires_agent", False):
+            logger.info(
+                f"ORAKLE: Query requires agent processing: '{query}'"
+            )
+            if skill_intention:
+                yield f"\n{skill_intention}\n\n"
+            yield "\n_orakle_loading_signal_|spawn_agent\n"
+
+            # Spawn ephemeral agent via Bureau
+            agent_result = self._spawn_ephemeral_agent(
+                query=query,
+                chat_history=chat_history,
+                reasoning_level=final_reasoning_level,
+            )
+
+            if agent_result:
+                yield agent_result
+            else:
+                yield (
+                    "\nI encountered an issue processing that request."
+                    " Please try again.\n\n"
                 )
-                if skill_intention and not agentic_mode:
-                    yield f"\n{skill_intention}\n\n"
-                yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
+            return
 
-                skill_instance = self.system_skills[selected_skill_id]
-                result = skill_instance.run(query, parameters, chat_history)
+        # Use the data from the retry loop
+        # If retries failed (e.g. persistent hallucination),
+        # we force invalid ID to None
+        selected_skill_id = selection_data.get("skill_id")
+        if selected_skill_id and selected_skill_id not in valid_skill_ids:
+            logger.error(
+                "ORAKLE: Persistent hallucination of skill_id"
+                f" '{selected_skill_id}' after retries."
+            )
+            selected_skill_id = None
+            selection_data["skill_id"] = None
 
-                chat_context = self._get_chat_context(chat_history)
-                for chunk in self.stream_command_interpretation(
-                    result,
-                    query,
-                    chat_context=chat_context,
-                    reasoning_level=final_reasoning_level,
-                    agentic_mode=agentic_mode,
-                ):
-                    yield chunk
-                return  # Stop processing, as we've handled this system skill
+        if selected_skill_id:
+            parameters = selection_data.get("parameters", {})
 
-            # --- Handle Regular Skills ---
-            # Yield processing message
+        if not selected_skill_id:
+            if selection_data.get("error_msg"):
+                error_msg = selection_data.get("error_msg")
+            else:
+                error_msg = "couldn't find a skill matching the query"
+            logger.error(
+                f"ORAKLE: {error_msg} LLM response: {selection_response}"
+            )
+            if agentic_mode:
+                yield f"\nOrakle error: {error_msg}\n\n"
+            else:
+                yield f"\nI'm sorry, {error_msg}\n\n"
+            return
+
+        logger.info(
+            f"ORAKLE Selected skill: {selected_skill_id} with parameters:"
+            f" {parameters}"
+        )
+
+        # --- Handle System Skills ---
+        if selected_skill_id in self.system_skills:
+            logger.info(
+                f"ORAKLE: Executing system skill: {selected_skill_id}"
+            )
             if skill_intention and not agentic_mode:
                 yield f"\n{skill_intention}\n\n"
-            # Needed so agent class recognizes skill execution
             yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
 
-            # Get skill info to check its type
-            skill_info = self._get_skill_info(selected_skill_id)
+            skill_instance = self.system_skills[selected_skill_id]
+            result = skill_instance.run(query, parameters, chat_history)
 
-            # Execute the selected skill with parameters
-            result = self.execute_orakle_command(
-                selected_skill_id, parameters, chat_history
-            )
+            chat_context = self._get_chat_context(chat_history)
+            for chunk in self.stream_command_interpretation(
+                result,
+                query,
+                chat_context=chat_context,
+                reasoning_level=final_reasoning_level,
+                agentic_mode=agentic_mode,
+            ):
+                yield chunk
+            return  # Stop processing, as we've handled this system skill
 
-            # If the skill is a nexus skill with a UI, yield the component data directly
+        # --- Handle Regular Skills ---
+        if skill_intention and not agentic_mode:
+            # Yield introduction message
+            yield f"\n{skill_intention}\n\n"
+
+        # Needed so agent class recognizes skill execution
+        yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
+
+        # Get skill info to check its type
+        skill_info = self._get_skill_info(selected_skill_id)
+
+        # Execute the selected skill with parameters
+        result = self.execute_orakle_command(
+            selected_skill_id, parameters, chat_history
+        )
+
+        if agentic_mode:
+            # In agentic_mode don't interpret data, don't generate nexus NDJSON object
+            # just yield result_data and return
+            try:
+                result_data = json.loads(result)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(
+                    "ORAKLE: skill '%s' returned invalid JSON: %s",
+                    selected_skill_id,
+                    e,
+                )
+                yield "\nError: Orakle returned an invalid JSON result.\n\n"
+                return
+
+            yield f"\nOrakle query '{query}' result:\n{result_data}\n"
+            return
+
+        else:
             if (
                 skill_info
                 and (skill_info.get("type") == "nexus" or skill_info.get("type") == "user_skill")
                 and skill_info.get("ui")
             ):
+                # If the skill is a nexus skill with a UI, yield nexus NDJSON
                 component_name = skill_info.get("ui", {}).get("component")
                 try:
                     result_data = json.loads(result)
@@ -1156,39 +1190,24 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     }
                 except json.JSONDecodeError:
                     error_msg = (
-                        f"Nexus or user skill '{selected_skill_id}' did not return"
+                        f"Nexus/user skill '{selected_skill_id}' did not return"
                         " valid JSON data."
                     )
                     logger.error(f"ORAKLE: {error_msg} Data: {result}")
                     yield f"\nError: {error_msg}\n\n"
                     return
-            # In agentic_mode don't interpret data
-            elif agentic_mode:
-                result_data = json.loads(result)
-                yield f"\nOrakle query '{query}' result:\n{result_data}\n"
-            else:
-                chat_context = self._get_chat_context(chat_history, memories)
-                # Get interpretation as a stream for regular skills
-                for interpretation_chunk in self.stream_command_interpretation(
-                    [result],
-                    query,
-                    chat_context=chat_context,
-                    reasoning_level=final_reasoning_level,
-                    agentic_mode=agentic_mode,
-                ):
-                    yield interpretation_chunk
 
-        except json.JSONDecodeError:
-            error_msg = "Failed to parse skill selection response."
-            logger.error(
-                f"ORAKLE: {error_msg} LLM response: {selection_response}"
-            )
-            if provider_name is not None:
-                logger.warning(
-                    f"ORAKLE: Blacklisting provider: {provider_name} (p3)"
-                )
-                self._blacklisted_match_providers.add(provider_name)
-            yield f"\nError: {error_msg}\n\n"
+            # Interpret data
+            chat_context = self._get_chat_context(chat_history, memories)
+            # Get interpretation as a stream for regular skills
+            for interpretation_chunk in self.stream_command_interpretation(
+                [result],
+                query,
+                chat_context=chat_context,
+                reasoning_level=final_reasoning_level,
+                agentic_mode=agentic_mode,
+            ):
+                yield interpretation_chunk
 
     # def ndjson(event_type: str, event_name: str, content: Any = None) -> str:
     #     """Create a standardized NDJSON event string.
