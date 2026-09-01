@@ -17,35 +17,34 @@
 # Lesser General Public License for more details.
 
 
+import logging
 from typing import Annotated, Any, Dict, Literal
 
 import trafilatura
 import validators
-import logging
-
 from ainara.framework.skill import Skill
 
 logger = logging.getLogger(__name__)
 
 try:
     from playwright.async_api import async_playwright
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
 
 class HtmlWebpage(Skill):
-    """Download read or check the text of a website or webpage article or site represented by a URL."""
+    """Download the content of a web page from its URL."""
 
     matcher_info = (
-        "Use ONLY when the user explicitly asks to download, fetch, get,"
-        " retrieve, summarize, or analyze the CONTENT of a specific webpage or"
-        " URL. DO NOT use this skill if the user only asks FOR the URL itself"
-        " (e.g., 'What is the website for X?'). Use ONLY if a specific URL is"
-        " provided or clearly implied in the request for its content.\n\n"
-        " Keywords: download webpage, get website text, fetch URL content,"
-        " extract text from page, summarize website, analyze page content,"
-        " read page content."
+        " Downloads, fetchs, gets or retrieves the content of a web page or"
+        " website. DO NOT use this skill if the user only asks for the URL"
+        " itself (e.g., 'What is the Google's website?'). Use it only, and"
+        " particularly if the intention is to retrieve or access the content"
+        " of an specific website.\n\n Keywords: download webpage, get website"
+        " text, fetch URL content, extract text from page, summarize website,"
+        " analyze page content, read page content."
     )
 
     def __init__(self):
@@ -106,7 +105,9 @@ class HtmlWebpage(Skill):
                     await browser.close()
             else:
                 if render_js:
-                    logger.warning("render_js required but no PLAYWRIGHT_AVAILABLE")
+                    logger.warning(
+                        "render_js required but no PLAYWRIGHT_AVAILABLE"
+                    )
                 # Use trafilatura for fast static extraction
                 downloaded = trafilatura.fetch_url(url)
                 if not downloaded:

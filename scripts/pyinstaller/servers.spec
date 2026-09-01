@@ -206,7 +206,7 @@ packages_to_collect_data_from = [
     'onnxruntime',
     'tokenizers',
     'chroma-hnswlib',
-    'numpy',
+    # 'numpy',
     'litellm',
     'kokoro_onnx',
     'language_tags',
@@ -370,7 +370,7 @@ common_imports = [
     'tiktoken_ext',
     'PyYAML', # The package name for 'yaml'
     'json',
-    'numpy',
+    # 'numpy',
     'pyperclip',
     'fastembed'
 

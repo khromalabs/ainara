@@ -5,9 +5,9 @@ async function compile() {
   const destPath = path.join(__dirname, 'main.protected.jsc');
   try {
     await bytenode.compileFile({
-      filename: filePath,
-      output: destPath,
-	  electron: true
+        filename: filePath,
+        output: destPath,
+        electronMain: true
     });
     console.log('✅ Bytecode generado con éxito: main.protected.jsc');
   } catch (err) {

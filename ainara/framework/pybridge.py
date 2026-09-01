@@ -51,14 +51,14 @@ from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.notifications import NotificationManager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
-from ainara.framework.secrets import (
+from ainara.framework.vault import (
     SENSITIVE_KEY_MARKERS,
     VAULT_PREFIXES,
     SecretVaultUnavailable,
     get_vault,
 )
-from ainara.framework.secrets.keystore import KeystoreProvider
-from ainara.framework.secrets.wallet import WalletKeyDerivation
+from ainara.framework.vault.keystore import KeystoreProvider
+from ainara.framework.vault.wallet import WalletKeyDerivation
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts import create_tts_backend
@@ -1852,7 +1852,6 @@ def create_app():
             "markers": list(SENSITIVE_KEY_MARKERS),
         })
 
-
     @app.route("/vault/setup", methods=["POST"])
     def vault_setup():
         """Verify a wallet signature and derive/store the master key."""
@@ -1904,7 +1903,6 @@ def create_app():
             logger.error(f"Vault setup failed: {e}", exc_info=True)
             return jsonify({"success": False, "error": str(e)}), 500
 
-
     @app.route("/vault/encrypt", methods=["POST"])
     def vault_encrypt():
         """Return an encrypted blob for a path without writing config."""
@@ -1927,7 +1925,6 @@ def create_app():
         except Exception as e:
             logger.error(f"Vault encrypt failed: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
-
 
     @app.route("/vault/reveal", methods=["POST"])
     def vault_reveal():
@@ -1953,7 +1950,6 @@ def create_app():
                 errors[path] = str(e)
 
         return jsonify({"success": True, "values": values, "errors": errors})
-
 
     @app.route("/vault/scrub-backup", methods=["POST"])
     def vault_scrub_backup():

@@ -79,7 +79,8 @@ python scripts/other/test_cuda.py
 ## Building Standalone Executables
 
 ```bash
-# Build Python backend executables via PyInstaller
+scripts/build
+# or alternatively:
 python scripts/_build.py
 # or directly:
 pyinstaller scripts/pyinstaller/servers.spec
@@ -89,7 +90,8 @@ pyinstaller scripts/pyinstaller/servers.spec
 
 ### Request Flow
 
-1. **Polaris** (Electron) sends user input → **Orakle** REST API
+1. **Polaris** (Electron) sends user input → **Pybridge** REST API
+1. **Pybridge** via `OrakleMiddleware` → **Orakle** REST API
 2. **Orakle** routes via `CapabilitiesManager` → selects skill(s) and LLM(s)
 3. Skills execute and return structured results → Orakle synthesizes response
 4. Response is sent back to Polaris for display
@@ -134,9 +136,13 @@ Also via **Ollama** for local LLM support.
 
 Config lives at `~/.config/ainara/ainara.yaml` (Linux) with platform-specific equivalents on macOS/Windows. Managed via `ainara/framework/config.py` — supports deep-merging, schema validation, and sensitive-key masking. Never commit the user config file.
 
-### Adding a New Skill
+### Adding a New Core Skill
 
 1. Create a new `.py` file in the appropriate `ainara/orakle/skills/<category>/` subdirectory.
 2. Subclass `ainara.framework.skill.Skill` and implement the `run()` method.
 3. Declare `required_data` for any dependencies and optionally set `default_schedule`.
 4. The `CapabilitiesManager` auto-discovers skills at server startup.
+
+### Adding a New User Skill
+
+Skills can be added in `users_skills > directory` (as per ainara.yaml config) without needing to touch the core skills, skills there will be prefixed in the Orakle `/capabilities` endpoint with `user_`. Nexus interfaces (web components) are available for user skills as well.
