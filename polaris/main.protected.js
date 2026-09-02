@@ -121,8 +121,9 @@ async function setupComplete() {
 
     // Close setup window
     try {
-        setupWindow?.close();
-        setupWindow?.destroy();
+        if (setupWindow && !setupWindow.isDestroyed()) {
+            setupWindow.destroy();
+        }
     } catch (error) {
         Logger.error('Error closing setupWindow:' + error);
         app.quit();
@@ -182,7 +183,7 @@ function showSetupWizard(validationErrors = [], options = {}) {
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
 
     const winWidth = reauth ? 480 : Math.floor(screenWidth * 0.7);
-    const winHeight = reauth ? 520 : Math.floor(screenHeight * 0.95);
+    const winHeight = reauth ? 620 : Math.floor(screenHeight * 0.95);
 
     setupWindow = new BrowserWindow({
         width: winWidth,
@@ -202,6 +203,16 @@ function showSetupWizard(validationErrors = [], options = {}) {
         hasShadow: false
     });
     // setupWindow.openDevTools();
+
+    // If the user closes the setup wizard from the taskbar/Alt+F4,
+    // quit the whole app so hidden services are not left running.
+    let setupQuitRequested = false;
+    setupWindow.on('close', (event) => {
+        if (setupQuitRequested) return;
+        event.preventDefault();
+        setupQuitRequested = true;
+        app.quit();
+    });
 
     setupWindow.setIcon(iconPath);
     setupWindow.loadFile(
@@ -1361,7 +1372,9 @@ function appSetupEventHandlers() {
     // Handle closing the setup wizard (full or re-auth)
     ipcMain.on('close-setup-window', async () => {
         Logger.info('close-setup-window event');
-        setupWindow?.close();
+        if (setupWindow && !setupWindow.isDestroyed()) {
+            setupWindow.destroy();
+        }
 
         if (reauthMode) {
             reauthMode = false;
@@ -1393,8 +1406,9 @@ function appSetupEventHandlers() {
                 }
             });
             reauthMode = false;
-            setupWindow?.close();
-            setupWindow?.destroy();
+            if (setupWindow && !setupWindow.isDestroyed()) {
+                setupWindow.destroy();
+            }
             reauthResolve?.(true);
             reauthResolve = null;
         }

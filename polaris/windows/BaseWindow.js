@@ -52,7 +52,7 @@ class BaseWindow {
             vibrancy: config.get(`${prefix}.vibrancy`, 'blur'),
             visualEffectState: config.get(`${prefix}.visualEffectState`, 'active'),
             opacity: 1, // config.get(`${prefix}.opacity`, 0.8),
-            resizable: false
+            resizable: false,
         };
 
         this.windowOptions = { ...this.defaultOptions, ...options };
