@@ -201,6 +201,7 @@ function showSetupWizard(validationErrors = [], options = {}) {
         iconPath: iconPath,
         hasShadow: false
     });
+    // setupWindow.openDevTools();
 
     setupWindow.setIcon(iconPath);
     setupWindow.loadFile(
@@ -1378,6 +1379,9 @@ function appSetupEventHandlers() {
             app.quit();
         }
     });
+
+    // Handle setup completion
+    ipcMain.on('setup-complete', setupComplete);
 
     // Handle successful re-verification (reauth mode)
     ipcMain.on('license-verified', () => {
