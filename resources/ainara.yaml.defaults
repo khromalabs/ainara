@@ -103,7 +103,7 @@ apis:
     searxng:
       # Self-hosted instance URL; leave empty to disable SearXNG entirely.
       base_url: ""
-      api_key: ""
+      # api_key: ""
     tavily:
       api_key: ""
   # twitter:

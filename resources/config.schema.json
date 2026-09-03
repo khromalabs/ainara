@@ -59,6 +59,7 @@
                             "description": "Self-hosted SearXNG metasearch instance (keyless). Opt-in: leave base_url empty to disable SearXNG; set it (e.g. http://127.0.0.1:8888) to enable. The instance must allow JSON output ('json' in its search.formats setting). api_key is optional.",
                             "properties": {
                                 "base_url": {"type": "string", "format": "uri", "default": "http://127.0.0.1:8888"},
+                                "api_key": {"type": "string"},
                                 "category_map": {
                                     "type": "object",
                                     "description": "Optional mapping from SearchWeb search types (e.g. 'news', 'academic') to SearXNG categories.",

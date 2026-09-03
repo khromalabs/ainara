@@ -111,7 +111,7 @@ function getKeyDescription(pathArray) {
         },
         'searxng': {
             url: null,
-            description: "Paste your instance URL (e.g. http://127.0.0.1:8888) to enable it; leave empty to disable. The instance must allow JSON output ('json' in settings.yml > search > formats), `api_key` is optional."
+            description: "Paste your instance URL (e.g. http://127.0.0.1:8888) to enable it; leave empty to disable. The instance must allow JSON output ('json' in settings.yml > search > formats).",  // , `api_key` is optional."
         },
         'twitter': {
             url: 'https://developer.twitter.com/en/portal/dashboard',
