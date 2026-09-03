@@ -105,6 +105,14 @@ function getKeyDescription(pathArray) {
             url: 'https://metaphor.systems/',
             description: 'Used for neural search capabilities'
         },
+        'brave': {
+            url: 'https://brave.com/search/api/',
+            description: 'Used for web search capabilities (free tier available)'
+        },
+        'searxng': {
+            url: null,
+            description: "Paste your instance URL (e.g. http://127.0.0.1:8888) to enable it; leave empty to disable. The instance must allow JSON output ('json' in settings.yml > search > formats), `api_key` is optional."
+        },
         'twitter': {
             url: 'https://developer.twitter.com/en/portal/dashboard',
             description: 'Used for Twitter/X integration'
@@ -133,7 +141,7 @@ function getKeyDescription(pathArray) {
         // same in ainara.yaml.defaults
         'hyperliquid': {
             url: 'https://app.hyperliquid.xyz/join/AINARA',
-            description: 'Hyperliquid DEX: Trade crypto, commodities, indices, and more (AINARA referral)'
+            description: 'Hyperliquid DEX: Trade crypto, commodities, indices, and more (AINARA referral). All three fields are required: api_key (agent address), secret (agent private key) and wallet_address (master account).'
         }
     };
     if (descriptions[parentPart]) {

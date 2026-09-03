@@ -49,12 +49,23 @@
                 "search": {
                     "type": "object",
                     "properties": {
-                        "google": {"type": "object", "properties": {"api_key": {"type": "string"}, "cx": {"type": "string"}}},
-                        "metaphor": {"type": "object", "properties": {"api_key": {"type": "string"}}},
                         "newsapi": {"type": "object", "properties": {"api_key": {"type": "string"}}},
                         "perplexity": {"type": "object", "properties": {"api_key": {"type": "string"}}},
+                        "brave": {"type": "object", "description": "Brave Search API (https://brave.com/search/api/).", "properties": {"api_key": {"type": "string"}}},
                         "tavily": {"type": "object", "properties": {"api_key": {"type": "string"}}},
-                        "guavy": {"type": "object", "properties": {"api_key": {"type": "string"}}}
+                        "guavy": {"type": "object", "properties": {"api_key": {"type": "string"}}},
+                        "searxng": {
+                            "type": "object",
+                            "description": "Self-hosted SearXNG metasearch instance (keyless). Opt-in: leave base_url empty to disable SearXNG; set it (e.g. http://127.0.0.1:8888) to enable. The instance must allow JSON output ('json' in its search.formats setting). api_key is optional.",
+                            "properties": {
+                                "base_url": {"type": "string", "format": "uri", "default": "http://127.0.0.1:8888"},
+                                "category_map": {
+                                    "type": "object",
+                                    "description": "Optional mapping from SearchWeb search types (e.g. 'news', 'academic') to SearXNG categories.",
+                                    "additionalProperties": {"type": "string"}
+                                }
+                            }
+                        }
                     }
                 },
                 "weather": {

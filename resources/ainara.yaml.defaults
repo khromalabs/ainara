@@ -89,6 +89,8 @@ apis:
   #   client_id: ""
   #   client_secret: ""
   search:
+    brave:
+      api_key: ""
     # google:
     #   api_key: ""
     #   cx: ""
@@ -97,6 +99,10 @@ apis:
     newsapi:
       api_key: ""
     perplexity:
+      api_key: ""
+    searxng:
+      # Self-hosted instance URL; leave empty to disable SearXNG entirely.
+      base_url: ""
       api_key: ""
     tavily:
       api_key: ""
