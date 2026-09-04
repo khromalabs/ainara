@@ -147,8 +147,44 @@ class Conductor:
         logger.info("Conductor started with %d plan(s)", len(self.plans))
 
     def shutdown(self) -> None:
-        """Gracefully shut down"""
+        """
+        Gracefully shut down: terminate any running steps registered by
+        this conductor, mark their plans as stopped, and release plan
+        locks. Idempotent; safe to call multiple times.
+        """
         logger.info("Conductor shutting down...")
+
+        # Local import to avoid a circular import at module load time,
+        # matching the pattern used in _abort_running_steps.
+        from ainara.bureau.server import _terminate_step
+
+        for step_id, task in list(self.step_registry.items()):
+            if not step_id.startswith("conductor-"):
+                continue
+            if task.get("status") != "RUNNING":
+                continue
+            proc = task.get("process")
+            if proc and proc.is_alive():
+                logger.warning(
+                    "Terminating step '%s' during shutdown", step_id
+                )
+                _terminate_step(step_id, task, reason="server shutdown")
+            task["status"] = "FAILED"
+            task["failure_reason"] = "Aborted due to server shutdown"
+            task["error"] = "Shutdown"
+
+        for plan_name, lock in self._locks.items():
+            if not lock.locked():
+                continue
+            self.plan_status[plan_name]["state"] = "stopped"
+            logger.info("Releasing lock for plan '%s'", plan_name)
+            try:
+                lock.release()
+            except RuntimeError:
+                # Executor thread released it first; harmless during exit.
+                pass
+
+        logger.info("Conductor shutdown complete")
 
     # ------------------------------------------------------------------
     # Plan loading

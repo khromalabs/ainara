@@ -49,7 +49,11 @@ class Service extends EventEmitter {
                 this.isStarting = true;
                 this.process = spawn(this.executablePath, this.args, {
                     stdio: 'pipe',
-                    shell: false
+                    shell: false,
+                    // Own process group on POSIX so a negative-PID kill
+                    // reaches the whole tree (server-spawned agent/skill
+                    // children included).
+                    detached: process.platform !== 'win32'
                 });
 
                 this.process.stdout.on('data', (data) => {
@@ -137,8 +141,34 @@ class Service extends EventEmitter {
         return this.healthy;
     }
 
+    /**
+     * Sends a signal to the service's whole process tree.
+     * On POSIX the child was spawned detached, i.e. as a process-group
+     * leader, so a negative PID reaches its children too. Falls back to
+     * signalling only the direct child if the group kill fails or on
+     * Windows.
+     */
+    _signalTree(signalName) {
+        if (!this.process) return;
+        const pid = this.process.pid;
+        if (pid && process.platform !== 'win32') {
+            try {
+                process.kill(-pid, signalName);
+                return;
+            } catch (err) {
+                Logger.warn(
+                    `Process-group ${signalName} failed for ${this.name}` +
+                    ` (${err.message}); signalling direct child only`
+                );
+            }
+        }
+        this.process.kill(signalName);
+    }
+
     stop({ force = false } = {}) {
-        if (!this.process || this.process.killed) {
+        // exitCode !== null covers processes that already exited (a second
+        // stopServices call must not wait 20s on a dead child).
+        if (!this.process || this.process.killed || this.process.exitCode !== null) {
             return Promise.resolve();
         }
 
@@ -147,20 +177,20 @@ class Service extends EventEmitter {
         return new Promise((resolve, reject) => {
             if (force) {
                 Logger.log(`Force killing ${this.name} immediately (SIGKILL)`);
-                this.process.kill('SIGKILL');
+                this._signalTree('SIGKILL');
                 this.healthy = false;
                 this.isStopping = false;
                 return resolve();
             }
 
             Logger.log(`Gracefully stopping ${this.name} (SIGINT)`);
-            this.process.kill('SIGINT');
+            this._signalTree('SIGINT');
 
             const maxWaitTime = 20000; // 20 seconds
             const timeout = setTimeout(() => {
                 Logger.error(`Timeout: ${this.name} (PID: ${this.process.pid}) did not terminate within ${maxWaitTime / 1000} seconds after SIGINT.`);
                 if (this.process && !this.process.killed) {
-                    this.process.kill('SIGKILL'); // Force kill
+                    this._signalTree('SIGKILL'); // Force kill
                 }
                 this.errorMsg = "Failed";
                 reject(new Error(`${this.name} failed to terminate gracefully`));

@@ -27,7 +27,7 @@ from ainara.framework.skill import Skill
 
 
 class SystemProperties(Skill):
-    """Inspect and change configuration properties of skills, Nexus Apps, and modules"""
+    """Lists configuration properties of Nexus Skills, Nexus Apps, and modules. Updates properties to change values."""
 
     matcher_info = (
         "Use this skill when the user wants to inspect or modify configuration"

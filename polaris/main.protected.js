@@ -1310,26 +1310,6 @@ function appSetupEventHandlers() {
         }
     });
 
-    // Cleanup before quit
-    app.on('before-quit', async () => {
-        globalShortcut.unregisterAll();
-        shortcutRegistered = false;
-
-        if (!app.isRefreshing) {
-            // Stop services
-            try {
-                await ServiceManager.stopServices();
-                Logger.info('Services stopped successfully');
-            } catch (error) {
-                Logger.error('Error stopping services:', error);
-            }
-        }
-
-        if (windowManager) {
-            windowManager.cleanup();
-        }
-    });
-
     // Remove browser-window-focus handler as it conflicts with hide/show logic
     app.removeAllListeners('browser-window-focus');
 
@@ -1485,37 +1465,52 @@ function appHandleCriticalError(error) {
     app.quit();
 }
 
-let isForceShutdown = false;
+let isShuttingDown = false;
 
-process.on('SIGINT', async () => {
-  if (isForceShutdown) return;
+/**
+ * Single owner of the exit path. Every quit entry point (tray Quit,
+ * window close, SIGINT, critical errors) funnels through here.
+ */
+async function performShutdown(force = false) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
 
-  isForceShutdown = true;
-  Logger.info('Ctrl+C detected - initiating forced shutdown');
+    // Safety net: never let a hung cleanup block the exit
+    setTimeout(() => app.exit(0), 30000).unref();
 
-  try {
-    await ServiceManager.stopServices({ force: true });
-    app.exit(0);
-  } catch (err) {
-    Logger.error('Forced shutdown failed:', err);
-    app.quit();
-  }
+    try {
+        if (!app.isRefreshing) {
+            try {
+                await ServiceManager.stopServices({ force });
+            } catch (err) {
+                Logger.error('Graceful shutdown failed:', err);
+                if (!force) {
+                    await ServiceManager.stopServices({ force: true });
+                }
+            }
+        }
+    } finally {
+        globalShortcut.unregisterAll();
+        shortcutRegistered = false;
+        if (windowManager) {
+            windowManager.cleanup();
+        }
+        Logger.info('Shutdown complete, exiting');
+        app.exit(0);
+    }
+}
+
+app.on('before-quit', (event) => {
+    // We own the exit: pause Electron's quit sequence until services are
+    // stopped, then exit explicitly. Fixes the old race where a concurrent
+    // handler called app.exit() mid-cleanup and orphaned child servers.
+    event.preventDefault();
+    performShutdown(false);
 });
 
-app.on('before-quit', async (event) => {
-  if (isForceShutdown) {
-      event.preventDefault();
-      return;
-  }
-  try {
-      if (!app.isRefreshing) {
-          await ServiceManager.stopServices();
-      }
-      // force
-      app.exit(0);
-  } catch (err) {
-      Logger.error('Graceful shutdown failed:', err);
-  }
+process.on('SIGINT', () => {
+    Logger.info('SIGINT received - initiating forced shutdown');
+    performShutdown(true);
 });
 
 

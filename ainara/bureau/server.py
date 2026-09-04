@@ -88,6 +88,60 @@ def _terminate_step(step_id: str, task: Dict[str, Any], reason: str) -> None:
     # once the grace period (GRACE_PERIOD) expires.
 
 
+def _graceful_shutdown() -> None:
+    """
+    Terminate all running step processes, stop the conductor, and exit.
+    Safe to call multiple times; only the first call does work.
+    """
+    if _shutting_down.is_set():
+        return
+    _shutting_down.set()
+    logger.info("Graceful shutdown initiated")
+
+    # 1. Stop the timeout monitor loop
+    _shutdown_event.set()
+
+    # 2. Terminate every RUNNING step (agents and skills, conductor or not)
+    for step_id, task in list(step_registry.items()):
+        if task.get("status") != "RUNNING":
+            continue
+        proc = task.get("process")
+        if proc and proc.is_alive():
+            logger.warning("Terminating step %s during shutdown", step_id)
+            _terminate_step(step_id, task, reason="server shutdown")
+        task["status"] = "FAILED"
+        task["failure_reason"] = "Aborted due to server shutdown"
+        task["error"] = "Shutdown"
+
+    # 3. Give children a short window to exit, then hard-kill survivors
+    deadline = time.time() + GRACE_PERIOD
+    for step_id, task in list(step_registry.items()):
+        proc = task.get("process")
+        if not proc:
+            continue
+        while proc.is_alive() and time.time() < deadline:
+            time.sleep(0.2)
+        if proc.is_alive():
+            logger.warning("Force-killing step %s after grace period", step_id)
+            try:
+                proc.kill()
+            except Exception as e:  # pragma: no cover – defensive
+                logger.error(f"Error force-killing step {step_id}: {e}")
+
+    # 4. Stop the conductor (releases plan locks, marks plan status)
+    if conductor is not None:
+        conductor.shutdown()
+
+    logger.info("Shutdown complete, exiting")
+    os._exit(0)
+
+
+def _request_shutdown(signum, frame) -> None:
+    """Signal handler: run the graceful shutdown in a helper thread."""
+    logger.info("Received signal %s, initiating shutdown", signum)
+    threading.Thread(target=_graceful_shutdown, daemon=True).start()
+
+
 # Process pool for running agents in the background
 # We limit the number of concurrent agents to prevent resource exhaustion
 # Using processes instead of threads to allow true termination on timeout
@@ -103,6 +157,11 @@ config_manager: Optional[ConfigManager] = None
 llm_backend = None
 global_capabilities: list = []
 conductor: Optional[Conductor] = None
+
+# Set when a shutdown has been requested; stops the timeout_monitor loop.
+_shutdown_event = threading.Event()
+# Ensures the graceful-shutdown routine runs exactly once.
+_shutting_down = threading.Event()
 
 
 def parse_args():
@@ -136,7 +195,7 @@ def timeout_monitor():
     """
     logger.info("Timeout monitor thread started")
 
-    while True:
+    while not _shutdown_event.is_set():
         try:
             current_time = time.time()
 
@@ -236,6 +295,8 @@ def timeout_monitor():
         except Exception as e:
             logger.error(f"Error in timeout monitor: {e}", exc_info=True)
             time.sleep(1)
+
+    logger.info("Timeout monitor exiting")
 
 
 def initialize_components():
@@ -723,12 +784,20 @@ if __name__ == "__main__":
     initialize_components()
     logging_manager.setup(log_level=args.log_level, log_name="bureau.log")
 
+    # Graceful shutdown on SIGINT (Ctrl+C / Service.stop()) and SIGTERM
+    signal.signal(signal.SIGINT, _request_shutdown)
+    signal.signal(signal.SIGTERM, _request_shutdown)
+
     # Get port from config or default to 8001 (distinct from Orakle's 8000)
     config = config_manager.get_safe_config()
     port = config.get("bureau", {}).get("port", 8010)
     host = config.get("bureau", {}).get("host", "0.0.0.0")
 
     logger.info(f"Starting Bureau Server on {host}:{port}")
+    # TODO: The Werkzeug dev server has no clean programmatic shutdown API
+    # (its `werkzeug.server.shutdown` environ hook is dev-only and slated
+    # for removal). When migrating to a production WSGI server, replace
+    # the os._exit(0) in _graceful_shutdown with a proper server stop.
     try:
         app.run(host=host, port=port, debug=False, use_reloader=False)
     finally:
