@@ -1503,7 +1503,7 @@ class ComRing extends BaseComponent {
 - **Escape**: Abort current action, hide Polaris, in document view exit view."
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
-- **Typing mode**: Type any letter/number key to bring up the text input control, press <Esc> to close it.
+- **Typing mode**: Type any letter/number key to bring up the text input control, press **Escape** to close it.
 ### Commands
 - **/help**: Shows this help message.
 - **/history**: View your chat history.
