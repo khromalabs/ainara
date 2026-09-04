@@ -32,11 +32,12 @@ class SystemProperties(Skill):
     matcher_info = (
         "Use this skill when the user wants to inspect or modify configuration"
         " properties/settings of skills, Nexus Apps, or library modules."
-        " Supports listing properties (optionally filtered by app or keywords)"
-        " and updating one or more values. Examples: 'list properties', 'show"
-        " my screener settings', 'set risk.max_leverage to 3.5', 'update these"
-        " properties'.\n\nKeywords: properties, settings, config, configure,"
-        " adjust, customize, setup, preferences."
+        " Supports listing properties (optionally filtered by app or keywords,"
+        " matches using criteria 'any') and updating one or more values."
+        " Examples: 'list properties', 'show my screener settings', 'set"
+        " risk.max_leverage to 3.5', 'update these properties'.\n\nKeywords:"
+        " properties, settings, config, configure, adjust, customize, setup,"
+        " preferences."
     )
 
     def _get_capabilities_manager(self):
@@ -73,7 +74,7 @@ class SystemProperties(Skill):
     def _matches_keywords(
         self, full_key: str, prop: Dict[str, Any], keywords: str
     ) -> bool:
-        """Check whether a property matches the provided keywords."""
+        """Check whether a property matches any the provided keywords."""
         kws = [k.strip().lower() for k in keywords.split() if k.strip()]
         if not kws:
             return True
@@ -92,7 +93,7 @@ class SystemProperties(Skill):
             if part is not None
         ).lower()
 
-        return all(kw in haystack for kw in kws)
+        return any(kw in haystack for kw in kws)
 
     def _property_group(self, full_key: str, prop: Dict[str, Any]) -> str:
         """Return a human-friendly group name for the inventory view."""
@@ -113,9 +114,7 @@ class SystemProperties(Skill):
         )
         return skill
 
-    def _build_group_breakdown(
-        self, properties: list
-    ) -> list:
+    def _build_group_breakdown(self, properties: list) -> list:
         """Build a count-per-group breakdown from filtered properties."""
         groups = {}
         for full_key, prop in properties:
@@ -145,7 +144,9 @@ class SystemProperties(Skill):
         """Build a JSON-friendly summary for a single property."""
         schema = prop.get("schema", {})
         current_value = config.get_exact(full_key, schema.get("default"))
-        vendor, bundle, module = self._derive_vendor_bundle_module(full_key, prop)
+        vendor, bundle, module = self._derive_vendor_bundle_module(
+            full_key, prop
+        )
         return {
             "full_key": full_key,
             "title": schema.get("title"),
@@ -212,7 +213,10 @@ class SystemProperties(Skill):
                 "mode": "too_many",
                 "total_matches": total,
                 "limit": limit,
-                "message": "Too many results. Please narrow down with more specific keywords or app.",
+                "message": (
+                    "Too many results. Please narrow down with more specific"
+                    " keywords or app."
+                ),
                 "groups": self._build_group_breakdown(filtered),
             }
 
@@ -329,7 +333,8 @@ class SystemProperties(Skill):
             " its new value."
             " All keys must already exist in the property catalog and be"
             " compliant with the property's JSON schema. Example:"
-            " {'skills.nexus.khromalabs.ataria.crypto.tradingaccount.breakeven_buffer_pct': 0.15}."
+            " {'skills.nexus.khromalabs.ataria.crypto.tradingaccount.breakeven_buffer_pct':"
+            " 0.15}."
             " Use dry_run=true to validate without saving.",
         ] = None,
         dry_run: Annotated[
@@ -339,7 +344,8 @@ class SystemProperties(Skill):
         limit: Annotated[
             int,
             "Maximum number of properties to return. "
-            "If more than this many match, returns a too_many response with group counts.",
+            "If more than this many match, returns a too_many response with"
+            " group counts.",
         ] = 25,
     ) -> Dict[str, Any]:
         """List or update configuration properties of skills and Nexus Apps.
