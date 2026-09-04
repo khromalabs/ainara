@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const Pikaday = require('pikaday');
+const electronModule = require('electron');
 const pikadayCSS = fs.readFileSync(
     require.resolve('pikaday/css/pikaday.css'), 'utf8'
 );
@@ -197,6 +198,25 @@ class DocumentView extends BaseComponent {
             this.container = this.shadowRoot.querySelector('.document-container');
 
             this.hide(); // Initially hidden
+
+            // Capture the last text selection made anywhere in the component.
+            // CLIPBOARD is NOT touched here (explicit actions only). We mirror
+            // to PRIMARY (Linux) so middle-click paste always matches the
+            // visible selection, even under Wayland/XWayland.
+            this.shadowRoot.addEventListener('mouseup', (e) => {
+                // Ignore mouseups on controls so clicking buttons doesn't
+                // clobber the captured selection
+                if (e.composedPath().some(
+                    n => n.closest && n.closest('button, a, input, .date-picker-trigger')
+                )) {
+                    return;
+                }
+                const text = this.getSelectedText();
+                this.selectedText = text;
+                if (text && process.platform === 'linux') {
+                    electronModule.clipboard.writeText(text, 'selection');
+                }
+            });
         } catch (error) {
             this.showError(error);
         }
@@ -317,10 +337,6 @@ class DocumentView extends BaseComponent {
             //     contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
             // });
             // controls.appendChild(scrollBottomButton);
-            // documentElement.addEventListener('mouseup', () => {
-            //     this.selectedText = window.getSelection().toString();
-            //     navigator.clipboard.writeText(this.selectedText);
-            // })
         }
 
         if (format !== 'nexus') {
@@ -443,7 +459,11 @@ class DocumentView extends BaseComponent {
             copyButton.className = 'copy-button';
             copyButton.textContent = 'Copy';
             let text = content;
-            copyButton.addEventListener('click', () => this.copyToClipboard(text));
+            copyButton.addEventListener('click', () => {
+                this.copyToClipboard(text);
+                copyButton.textContent = 'Done!';
+                setTimeout(() => (copyButton.textContent = 'Copy'), 1200);
+            });
             controls.appendChild(copyButton);
         }
 
@@ -559,11 +579,30 @@ class DocumentView extends BaseComponent {
         contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'smooth' });
     }
 
+    getSelectedText() {
+        // window.getSelection() is unreliable inside shadow roots; prefer
+        // ShadowRoot.getSelection() when available (Chromium >= 111)
+        const sel = typeof this.shadowRoot.getSelection === 'function'
+            ? this.shadowRoot.getSelection()
+            : window.getSelection();
+        return sel ? sel.toString().trim() : '';
+    }
+
     copyToClipboard(content) {
-        // Copy selectedText or the whole document if not
+        // Selection captured at mouseup wins; otherwise copy the whole document.
+        // Uses Electron's synchronous clipboard API: unlike navigator.clipboard,
+        // it cannot silently fail with NotAllowedError when focus is lost.
+        const text = this.selectedText || content;
+        if (text) {
+            electronModule.clipboard.writeText(text);
+        }
+        this.selectedText = '';
+        // Clear both the shadow-root and document selections
+        if (typeof this.shadowRoot.getSelection === 'function') {
+            const sel = this.shadowRoot.getSelection();
+            if (sel) sel.removeAllRanges();
+        }
         window.getSelection().removeAllRanges();
-        // console.log("selectedText: " + this.selectedText);
-        navigator.clipboard.writeText(this.selectedText || content);
     }
 
     show() {
