@@ -603,6 +603,7 @@ class UserSkillProvider(BasePythonSkillProvider):
     def discover(self) -> Dict[str, Dict[str, Any]]:
         """Discover user skills, prefixing with 'user_' and scanning for UI components."""
         self.capabilities = {}
+        discovered = {}
 
         if not self.user_skills_dir:
             logger.warning(
@@ -646,11 +647,11 @@ class UserSkillProvider(BasePythonSkillProvider):
                         cap_data["ui_path"] = str(ui_components_path)
                         logger.info(f"Associated user skill '{new_cap_id}' with component '{component_name}'")
 
-                self.capabilities[new_cap_id] = cap_data
-                if cap_id in self.capabilities:
-                    del self.capabilities[cap_id]
+                discovered[new_cap_id] = cap_data
 
-        logger.info(f"Loaded {len(self.capabilities)} user skills.")
+        self.capabilities = discovered
+
+        logger.info(f"Loaded {len(discovered)} user skills.")
         return self.capabilities
 
     def serve_component(self, component_path: str) -> Any:
