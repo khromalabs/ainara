@@ -574,6 +574,11 @@ class Conductor:
         # --- avoid_report_if ---
         # Only evaluated on success; if truthy (possibly negated) the
         # forensic report is suppressed to reduce noise.
+        # TODO: Not validated at plan load time and resolved leniently here
+        # (eval error → warning, report generated anyway), so a typo in the
+        # condition path degrades silently by design. If stricter behaviour
+        # is ever wanted, validate the path's first segment against step
+        # names in Plan._validate and/or fail the run on eval errors.
         if not failed and plan.avoid_report_if:
             condition = plan.avoid_report_if
             invert = False
@@ -1162,6 +1167,11 @@ class Conductor:
         result_queue = multiprocessing.Queue()
 
         # Resolve any scratchpad templates in params
+        # TODO: Only top-level string params are resolved. Templates inside
+        # nested dicts/lists are passed to the skill verbatim and were never
+        # scanned by iter_static_refs (see matching TODO there); fix both
+        # together with a recursive walk, reusing scratchpad.resolve_template
+        # on nested strings so whole-placeholder native typing is preserved.
         resolved_params = {}
         for key, value in (step_node.params or {}).items():
             if isinstance(value, str):

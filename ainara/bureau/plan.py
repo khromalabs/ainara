@@ -105,6 +105,12 @@ def iter_static_refs(steps: Dict[str, StepNode]) -> List[Tuple[str, str]]:
             if isinstance(system_message, str):
                 texts.append(system_message)
         elif step.type == "skill":
+            # TODO: Only top-level string params are scanned. Static refs
+            # inside nested dicts/lists (e.g.
+            # params: {filters: {min: "{{$x}}"}}) escape both this
+            # load-time validation and the Conductor preflight, and are
+            # sent to the skill verbatim. See the matching TODO in
+            # Conductor._spawn_skill; fix both together.
             for param_value in (step.params or {}).values():
                 if isinstance(param_value, str):
                     texts.append(param_value)
