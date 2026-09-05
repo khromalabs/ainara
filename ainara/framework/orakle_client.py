@@ -45,7 +45,7 @@ def call_skill(
     orakle_servers: List[str],
     skill_id: str,
     params: dict,
-    timeout: int = 30,
+    timeout: int = 300,
     max_retries: int = 3,
 ) -> str:
     import time
