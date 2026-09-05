@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 import asyncio
+import copy
 import json
 import logging
 import multiprocessing
@@ -28,11 +29,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional  # List,
 
-from ainara.bureau.plan import Plan, PlanValidationError, StepNode
-from ainara.bureau.scratchpad import Scratchpad
+from ainara.bureau.plan import (
+    Plan,
+    PlanValidationError,
+    StepNode,
+    iter_static_refs,
+)
+from ainara.bureau.scratchpad import (
+    Scratchpad,
+    StaticBindings,
+    walk_dotted_path,
+)
 from ainara.framework.orakle_client import call_skill
 
 logger = logging.getLogger(__name__)
+
+
+def _format_binding_value(value: Any, limit: int = 160) -> str:
+    """Compact, markdown-table-safe repr of a resolved binding value."""
+    text = repr(value)
+    if len(text) > limit:
+        text = text[:limit] + f"...[repr len={len(text)}]"
+    return text.replace("|", "\\|")
 
 
 def _run_skill_in_process(
@@ -285,7 +303,13 @@ class Conductor:
         """
         log_prefix = f"[conductor:{plan_name}:{run_id}]"
         plan = self.plans[plan_name]
-        scratchpad = Scratchpad(max_chars=plan.scratchpad_max_chars)
+
+        # --- Static bindings snapshot (variables + config aliases) ---
+        # Resolved once per run; mid-run config reloads do not affect it.
+        bindings, bindings_error = self._build_static_bindings(plan, log_prefix)
+        scratchpad = Scratchpad(
+            max_chars=plan.scratchpad_max_chars, static_bindings=bindings
+        )
 
         # Create a shared list for blacklisted providers in this specific plan run
         manager = multiprocessing.Manager()
@@ -314,8 +338,25 @@ class Conductor:
         # Track avoid_if evaluation errors for reporting
         avoid_if_errors: Dict[str, Optional[str]] = {}
 
+        # --- Preflight: resolve every static ref before launching steps ---
+        resolved_refs: Dict[str, Any] = {}
+        binding_failures: list = []
+        if bindings_error is None:
+            resolved_refs, binding_failures = self._preflight_static_refs(
+                plan, scratchpad, log_prefix
+            )
+        else:
+            binding_failures = [bindings_error]
+
+        if binding_failures:
+            failed = True
+            failure_reason = (
+                "Static binding resolution failed: "
+                + "; ".join(binding_failures)
+            )
+
         try:
-            while len(completed) < len(plan.steps):
+            while not failed and len(completed) < len(plan.steps):
                 ready = plan.get_ready_steps(completed)
                 # Filter out steps already running
                 ready = [s for s in ready if s not in running_step_ids]
@@ -380,6 +421,8 @@ class Conductor:
                         resolved_goal = scratchpad.resolve_template(
                             step_node.goal_template
                         )
+                        if not isinstance(resolved_goal, str):
+                            resolved_goal = str(resolved_goal)
                         step_id = self._spawn_agent(
                             plan_name=plan_name,
                             run_id=run_id,
@@ -387,6 +430,7 @@ class Conductor:
                             step_node=step_node,
                             goal=resolved_goal,
                             blacklisted_providers=blacklisted_providers,
+                            scratchpad=scratchpad,
                         )
                     elif step_node.type == "skill":
                         step_id = self._spawn_skill(
@@ -562,10 +606,95 @@ class Conductor:
             skipped_steps=skipped_steps,
             aborted_steps=aborted_steps,
             log_prefix=log_prefix,
+            bindings=bindings,
+            resolved_refs=resolved_refs,
+            binding_failures=binding_failures,
         )
 
         self.plan_status[plan_name].pop("current_run_id", None)
         lock.release()
+
+    def _build_static_bindings(
+        self, plan: Plan, log_prefix: str
+    ) -> tuple:
+        """
+        Snapshot plan variables and resolve config aliases once per run.
+
+        Returns ``(StaticBindings, error_or_None)``. Aliases are resolved
+        immediately so a broken alias aborts the run before any step runs.
+        """
+        config_root: dict = {}
+        if self.config_manager is not None:
+            try:
+                if self.config_manager.needs_load():
+                    self.config_manager.load_config()
+                config_root = copy.deepcopy(self.config_manager.config) or {}
+            except Exception as e:
+                logger.error(
+                    "%s Failed to snapshot configuration for bindings: %s",
+                    log_prefix,
+                    e,
+                    exc_info=True,
+                )
+                return None, f"Failed to snapshot configuration: {e}"
+
+        aliases: Dict[str, Any] = {}
+        for name, target in plan.config_aliases.items():
+            value, error = walk_dotted_path(
+                config_root, target.split("."), f"${name}"
+            )
+            if error is not None or value is None:
+                message = (
+                    f"Config alias '{name}' -> '{target}' could not be"
+                    f" resolved: {error or 'null value'}"
+                )
+                logger.error("%s %s", log_prefix, message)
+                return None, message
+            aliases[name] = value
+
+        bindings = StaticBindings(
+            variables=dict(plan.variables),
+            aliases=aliases,
+            alias_targets=dict(plan.config_aliases),
+            config_root=config_root,
+        )
+        logger.info(
+            "%s Static bindings ready: %d variable(s), %d config alias(es)",
+            log_prefix,
+            len(bindings.variables),
+            len(bindings.aliases),
+        )
+        return bindings, None
+
+    def _preflight_static_refs(
+        self, plan: Plan, scratchpad: Scratchpad, log_prefix: str
+    ) -> tuple:
+        """
+        Resolve every static ``{{$...}}`` reference used across agent goals,
+        agent system messages and skill params. Returns
+        ``(resolved_refs, failures)``: *resolved_refs* maps each distinct ref
+        body to its resolved value (for the forensic report); *failures* is a
+        list of error strings (empty when everything resolves).
+        """
+        resolved: Dict[str, Any] = {}
+        failed_bodies: set = set()
+        failures: list = []
+        for _, body in iter_static_refs(plan.steps):
+            if body in resolved or body in failed_bodies:
+                continue
+            value, error = scratchpad.resolve_dotted_path(f"${body}")
+            if error is not None or value is None:
+                failed_bodies.add(body)
+                failures.append(f"${body}: {error or 'resolved to null'}")
+            else:
+                resolved[body] = value
+        if failures:
+            logger.error(
+                "%s Static binding preflight failed: %s",
+                log_prefix,
+                "; ".join(failures),
+            )
+        return resolved, failures
 
     @staticmethod
     def _format_response(response: str) -> str:
@@ -701,6 +830,10 @@ class Conductor:
         aborted_steps = kwargs.get("aborted_steps", {})
         log_prefix = kwargs.get("log_prefix", "")
 
+        bindings = kwargs.get("bindings")
+        resolved_refs = kwargs.get("resolved_refs", {})
+        binding_failures = kwargs.get("binding_failures", [])
+
         try:
             end_time = datetime.now(timezone.utc)
             duration = end_time - start_time
@@ -763,6 +896,42 @@ class Conductor:
                     f"| `{step_name}` | {step_node.type} | {status} | {turns}"
                     f" | {skills} |"
                 )
+
+            # --- Resolved static bindings (audit trail) ---
+            lines.append("\n## Resolved Bindings\n")
+            if bindings is None:
+                lines.append(
+                    "_Static bindings could not be built (see failure"
+                    " reason)._\n"
+                )
+            elif (
+                not bindings.variables
+                and not bindings.aliases
+                and not resolved_refs
+            ):
+                lines.append("_No static bindings used by this plan._\n")
+            else:
+                lines.append("| Binding | Source | Resolved Value |")
+                lines.append("|---|---|---|")
+                for name, value in bindings.variables.items():
+                    lines.append(
+                        f"| `${name}` | plan variable |"
+                        f" {_format_binding_value(value)} |"
+                    )
+                for name, target in bindings.alias_targets.items():
+                    lines.append(
+                        f"| `${name}` | config alias `{target}` |"
+                        f" {_format_binding_value(bindings.aliases.get(name))}"
+                        " |"
+                    )
+                for body, value in sorted(resolved_refs.items()):
+                    lines.append(
+                        f"| `${body}` | template reference |"
+                        f" {_format_binding_value(value)} |"
+                    )
+                lines.append("")
+            for failure in binding_failures:
+                lines.append(f"\n> ⚠️ **Binding failure:** {failure}")
 
             lines.append("\n## Step Details\n")
             for step_name in attempted_steps:
@@ -911,12 +1080,25 @@ class Conductor:
         step_node: StepNode,
         goal: str,
         blacklisted_providers: Any = None,
+        scratchpad: Optional[Scratchpad] = None,
     ) -> str:
         """Spawn an agent process, reusing the Bureau infrastructure."""
         from ainara.bureau.server import run_agent_in_process
 
         step_id = f"conductor-{plan_name}-{run_id}-{step_name}"
         result_queue = multiprocessing.Queue()
+
+        # Render placeholders in the blueprint's system message (static $refs
+        # and dynamic {{step.*}} refs) before it crosses the process
+        # boundary. The worker receives final text; server.py is untouched.
+        blueprint = copy.deepcopy(step_node.blueprint)
+        if scratchpad is not None and isinstance(
+            blueprint.get("system_message"), str
+        ):
+            rendered = scratchpad.resolve_template(blueprint["system_message"])
+            blueprint["system_message"] = (
+                rendered if isinstance(rendered, str) else str(rendered)
+            )
 
         plan = self.plans[plan_name]
         user_context = {"language": plan.raw.get("language", "en")}
@@ -926,7 +1108,7 @@ class Conductor:
             args=(
                 self.llm_config,
                 self.orakle_servers,
-                step_node.blueprint,
+                blueprint,
                 user_context,
                 goal,
                 step_node.max_turns,

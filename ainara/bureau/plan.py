@@ -20,11 +20,22 @@ import logging
 import re
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# Binding names must be simple identifiers (no dots) so that the first
+# segment of a static reference unambiguously identifies the binding.
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Static template references: {{$name}} or {{$name.path.to.key}}. The first
+# segment is a binding name (variables / config_aliases) or a config root
+# ('skills'); remaining segments are config keys (kept permissive).
+STATIC_PLACEHOLDER_RE = re.compile(
+    r"\{\{\s*\$([A-Za-z_][A-Za-z0-9_]*(?:\.[^\s.${}]+)*)\s*\}\}"
+)
 
 
 class PlanValidationError(Exception):
@@ -79,6 +90,30 @@ class StepNode:
             )
 
 
+def iter_static_refs(steps: Dict[str, StepNode]) -> List[Tuple[str, str]]:
+    """
+    Collect ``(step_name, ref_body)`` pairs for every static ``{{$...}}``
+    reference used in agent goals, agent blueprint system messages and
+    skill string params. *ref_body* excludes the leading ``$``.
+    """
+    found: List[Tuple[str, str]] = []
+    for step in steps.values():
+        texts: List[str] = []
+        if step.type == "agent":
+            texts.append(step.goal_template)
+            system_message = step.blueprint.get("system_message")
+            if isinstance(system_message, str):
+                texts.append(system_message)
+        elif step.type == "skill":
+            for param_value in (step.params or {}).values():
+                if isinstance(param_value, str):
+                    texts.append(param_value)
+        for text in texts:
+            for match in STATIC_PLACEHOLDER_RE.finditer(text):
+                found.append((step.name, match.group(1)))
+    return found
+
+
 class Plan:
     """
     A conductor plan loaded from a YAML file.
@@ -96,6 +131,8 @@ class Plan:
         self.scratchpad_max_chars: int = 10000
         self.defaults: Dict[str, Any] = {}
         self.steps: Dict[str, StepNode] = {}
+        self.variables: Dict[str, Any] = {}
+        self.config_aliases: Dict[str, str] = {}
 
         self._load()
         self._validate()
@@ -144,6 +181,22 @@ class Plan:
         self.defaults = self.raw.get("defaults", {})
         # avoid_report_if (optional) – a single condition string
         self.avoid_report_if = self.raw.get("avoid_report_if")
+
+        # Optional static bindings
+        variables_raw = self.raw.get("variables") or {}
+        aliases_raw = self.raw.get("config_aliases") or {}
+        if not isinstance(variables_raw, dict):
+            raise PlanValidationError(
+                f"Plan '{self.name}': 'variables' must be a mapping of"
+                " name -> scalar"
+            )
+        if not isinstance(aliases_raw, dict):
+            raise PlanValidationError(
+                f"Plan '{self.name}': 'config_aliases' must be a mapping of"
+                " name -> config path"
+            )
+        self.variables = variables_raw
+        self.config_aliases = aliases_raw
 
         # Steps (required)
         steps_raw = self.raw.get("steps")
@@ -254,6 +307,62 @@ class Plan:
                         f" '{referenced_step}' to depends_on (directly or"
                         " transitively)."
                     )
+
+        # --- Static bindings (variables / config_aliases) validation ---
+        var_names = set(self.variables.keys())
+        alias_names = set(self.config_aliases.keys())
+
+        for name in var_names | alias_names:
+            if not IDENTIFIER_RE.match(str(name)):
+                raise PlanValidationError(
+                    f"Plan '{self.name}': binding name '{name}' is invalid; "
+                    "use simple identifiers (letters, digits, underscores; "
+                    "no dots)"
+                )
+
+        duplicates = var_names & alias_names
+        if duplicates:
+            raise PlanValidationError(
+                f"Plan '{self.name}': names defined in both 'variables' and "
+                f"'config_aliases': {sorted(duplicates)}"
+            )
+
+        for name, value in self.variables.items():
+            if value is None or isinstance(value, (dict, list)):
+                raise PlanValidationError(
+                    f"Plan '{self.name}': variable '{name}' must be a scalar"
+                    f" (str/int/float/bool), got {type(value).__name__}"
+                )
+            if isinstance(value, str) and STATIC_PLACEHOLDER_RE.search(value):
+                raise PlanValidationError(
+                    f"Plan '{self.name}': variable '{name}' contains a"
+                    " {{$...}} reference; chained definitions are not"
+                    " supported"
+                )
+
+        for name, target in self.config_aliases.items():
+            if not isinstance(target, str) or not target.strip():
+                raise PlanValidationError(
+                    f"Plan '{self.name}': config alias '{name}' must map to"
+                    " a non-empty config path string"
+                )
+            if target.strip().startswith("$"):
+                raise PlanValidationError(
+                    f"Plan '{self.name}': config alias '{name}' target must"
+                    " be a raw config path without the leading '$'"
+                )
+
+        # --- Static reference scan: catch unknown names at load time ---
+        allowed_roots = var_names | alias_names | {"skills"}
+        for step_name, body in iter_static_refs(self.steps):
+            root = body.split(".")[0]
+            if root not in allowed_roots:
+                raise PlanValidationError(
+                    f"Plan '{self.name}': step '{step_name}' uses unknown"
+                    f" static reference '${body}'. It must start with a"
+                    " 'variables' name, a 'config_aliases' name, or"
+                    " 'skills' (full config path)"
+                )
 
     def _is_transitive_dependency(
         self, step_name: str, potential_dep: str
