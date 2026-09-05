@@ -156,6 +156,7 @@ step_registry: Dict[str, Dict[str, Any]] = {}
 config_manager: Optional[ConfigManager] = None
 llm_backend = None
 global_capabilities: list = []
+global_property_registry: dict = {}
 conductor: Optional[Conductor] = None
 
 # Set when a shutdown has been requested; stops the timeout_monitor loop.
@@ -301,7 +302,7 @@ def timeout_monitor():
 
 def initialize_components():
     """Initialize configuration, LLM, and Middleware."""
-    global config_manager, llm_backend, global_capabilities
+    global config_manager, llm_backend, global_capabilities, global_property_registry
 
     logger.info("Initializing Bureau components...")
 
@@ -321,6 +322,20 @@ def initialize_components():
     orakle_servers = config.get("orakle.servers", ["http://127.0.0.1:8100"])
     fetcher = OrakleCapabilityFetcher(orakle_servers)
     global_capabilities = fetcher.fetch_capabilities()
+
+    # Flat skill-property registry (full_key -> descriptor) used by the
+    # Conductor to resolve config_aliases / $skills.* references against
+    # declared property defaults.
+    # TODO: Skill properties are assumed static for the process lifetime.
+    # If hot-swapping of skill properties is ever supported, refresh this
+    # registry (e.g. per plan run) instead of fetching it once at startup.
+    global_property_registry = fetcher.fetch_config_properties() or {}
+    if not global_property_registry:
+        logger.warning(
+            "No skill property registry available from Orakle"
+            " (view=properties). Conductor config_aliases will only resolve"
+            " against literal config values."
+        )
 
     # 4. Start timeout monitor thread
     monitor_thread = threading.Thread(target=timeout_monitor, daemon=True)
@@ -357,6 +372,7 @@ def initialize_components():
             step_registry=step_registry,
             router=router,
             config_manager=config_manager,
+            property_registry=global_property_registry,
         )
         conductor.start()
         logger.info(

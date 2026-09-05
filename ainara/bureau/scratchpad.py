@@ -16,6 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import copy
 import json
 import logging
 import re
@@ -50,6 +51,91 @@ def walk_dotted_path(data: Any, parts: List[str], ref: str) -> tuple:
     return current, None
 
 
+def _set_nested_if_absent(data: dict, parts: List[str], value: Any) -> None:
+    """Set *value* at dotted *parts* inside *data* without overwriting
+    existing (explicitly configured) values."""
+    current = data
+    for part in parts[:-1]:
+        node = current.get(part)
+        if not isinstance(node, dict):
+            node = {}
+            current[part] = node
+        current = node
+    if parts[-1] not in current:
+        current[parts[-1]] = value
+
+
+def resolve_property_aware(
+    config_root: Dict[str, Any],
+    path: str,
+    ref: str,
+    property_registry: Optional[Dict[str, Any]],
+) -> tuple:
+    """Resolve a dotted config *path* with skill-property awareness.
+
+    Resolution order:
+      1. Literal config value at *path* (present and non-null).
+      2. Registry leaf: schema default for that exact full_key.
+      3. Registry scope: synthesize a nested object from every registry
+         full_key under ``path.`` (schema defaults), deep-merged over any
+         configured subtree found at *path* (config wins).
+         Strict: any property in the scope that is neither configured nor
+         declares a default is an error.
+
+    Returns ``(value, error_message_or_None)``.
+    """
+    registry = property_registry or {}
+
+    config_value, config_error = walk_dotted_path(
+        config_root, path.split("."), ref
+    )
+
+    # --- 2. Exact leaf property -------------------------------------------
+    if path in registry:
+        if config_error is None and config_value is not None:
+            return config_value, None
+        schema = registry[path].get("schema") or {}
+        if "default" in schema:
+            return schema["default"], None
+        return None, (
+            f"skill property '{path}' is not configured and has no"
+            " declared default"
+        )
+
+    # --- 3. Scope prefix: synthesize object from registry ------------------
+    scope_keys = [k for k in registry if k.startswith(path + ".")]
+    if scope_keys:
+        synthesized: Dict[str, Any] = {}
+        if config_error is None and isinstance(config_value, dict):
+            synthesized = copy.deepcopy(config_value)
+
+        unresolved: List[str] = []
+        for full_key in sorted(scope_keys):
+            schema = registry[full_key].get("schema") or {}
+            parts = full_key[len(path) + 1:].split(".")
+            if "default" in schema:
+                _set_nested_if_absent(synthesized, parts, schema["default"])
+            else:
+                val, err = walk_dotted_path(
+                    synthesized, parts, f"${full_key}"
+                )
+                if err is not None or val is None:
+                    unresolved.append(full_key)
+
+        if unresolved:
+            return None, (
+                "the following skill properties under"
+                f" '{path}' are neither configured nor declare defaults:"
+                f" {', '.join(unresolved)}"
+            )
+        return synthesized, None
+
+    # --- 4. Plain config path (previous behaviour) -------------------------
+    if config_error is None and config_value is not None:
+        return config_value, None
+    return None, (config_error or f"config path '{path}' resolved to null")
+
+
 class StaticBindings:
     """Per-run snapshot of plan variables and resolved config aliases.
 
@@ -63,12 +149,14 @@ class StaticBindings:
         aliases: Optional[Dict[str, Any]] = None,
         alias_targets: Optional[Dict[str, str]] = None,
         config_root: Optional[Dict[str, Any]] = None,
+        property_registry: Optional[Dict[str, Any]] = None,
     ):
         self.variables: Dict[str, Any] = variables or {}
         self.aliases: Dict[str, Any] = aliases or {}
         # Original config path each alias points to (for forensic reports).
         self.alias_targets: Dict[str, str] = alias_targets or {}
         self.config_root: Dict[str, Any] = config_root or {}
+        self.property_registry: Dict[str, Any] = property_registry or {}
 
     def resolve(self, name: str, rest: List[str], ref: str) -> tuple:
         """Resolve ``$name.rest...`` against variables, aliases or config."""
@@ -83,8 +171,12 @@ class StaticBindings:
             if not rest:
                 return self.aliases[name], None
             return walk_dotted_path(self.aliases[name], rest, ref)
-        # Fallback: treat the whole ref as a full config path (e.g. $skills.…)
-        return walk_dotted_path(self.config_root, [name] + rest, ref)
+        # Fallback: treat the whole ref as a full config path (e.g. $skills.…),
+        # with skill-property awareness (declared defaults / scopes).
+        full_path = ".".join([name] + rest)
+        return resolve_property_aware(
+            self.config_root, full_path, ref, self.property_registry
+        )
 
 
 class Scratchpad:

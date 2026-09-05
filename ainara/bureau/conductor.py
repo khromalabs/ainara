@@ -38,7 +38,7 @@ from ainara.bureau.plan import (
 from ainara.bureau.scratchpad import (
     Scratchpad,
     StaticBindings,
-    walk_dotted_path,
+    resolve_property_aware,
 )
 from ainara.framework.orakle_client import call_skill
 
@@ -142,6 +142,7 @@ class Conductor:
         step_registry: dict,
         router=None,
         config_manager=None,
+        property_registry: Optional[Dict[str, Any]] = None,
     ):
         self.plans_dir = Path(plans_dir)
         self.llm_config = llm_config
@@ -150,6 +151,14 @@ class Conductor:
         self.step_registry = step_registry  # shared with server.py
         self.router = router
         self.config_manager = config_manager
+        # Flat full_key -> property descriptor map fetched from the Orakle
+        # server (view=properties). Lets config_aliases and $skills.* refs
+        # resolve against declared skill property defaults.
+        # TODO: Skill properties are assumed static for the process lifetime.
+        # If hot-swapping of skill properties is ever supported, refresh this
+        # snapshot (e.g. at the start of each plan run) instead of capturing
+        # it once at Bureau startup.
+        self.property_registry = property_registry or {}
 
         self.plans: Dict[str, Plan] = {}
         self.plan_status: Dict[str, Dict[str, Any]] = {}
@@ -640,8 +649,8 @@ class Conductor:
 
         aliases: Dict[str, Any] = {}
         for name, target in plan.config_aliases.items():
-            value, error = walk_dotted_path(
-                config_root, target.split("."), f"${name}"
+            value, error = resolve_property_aware(
+                config_root, target, target, self.property_registry
             )
             if error is not None or value is None:
                 message = (
@@ -657,6 +666,7 @@ class Conductor:
             aliases=aliases,
             alias_targets=dict(plan.config_aliases),
             config_root=config_root,
+            property_registry=self.property_registry,
         )
         logger.info(
             "%s Static bindings ready: %d variable(s), %d config alias(es)",
