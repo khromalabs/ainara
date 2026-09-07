@@ -362,22 +362,30 @@ def initialize_components():
     )
 
     if plans_dir:
-        conductor = Conductor(
-            plans_dir=plans_dir,
-            llm_config=config.get("llm", {}),
-            orakle_servers=config.get(
-                "orakle.servers", ["http://127.0.0.1:8100"]
-            ),
-            global_capabilities=global_capabilities,
-            step_registry=step_registry,
-            router=router,
-            config_manager=config_manager,
-            property_registry=global_property_registry,
-        )
-        conductor.start()
-        logger.info(
-            "Conductor initialized%s."
-        )
+        try:
+            plans_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error(
+                f"Could not create/access plans directory {plans_dir}: {e}. "
+                "Conductor will not be initialized."
+            )
+        else:
+            conductor = Conductor(
+                plans_dir=plans_dir,
+                llm_config=config.get("llm", {}),
+                orakle_servers=config.get(
+                    "orakle.servers", ["http://127.0.0.1:8100"]
+                ),
+                global_capabilities=global_capabilities,
+                step_registry=step_registry,
+                router=router,
+                config_manager=config_manager,
+                property_registry=global_property_registry,
+            )
+            conductor.start()
+            logger.info(
+                "Conductor initialized%s."
+            )
     else:
         logger.warning(
             "Could not determine config path for Conductor plans"
