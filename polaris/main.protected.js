@@ -17,6 +17,7 @@
 // Lesser General Public License for more details.
 
 const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification, net } = require('electron');
+const fs = require('fs');
 // const { autoUpdater } = require('electron-updater');
 const { EventEmitter } = require('events');
 const semver = require('semver');
@@ -1278,6 +1279,70 @@ function appSetupEventHandlers() {
                 event.sender.send('backup-directory-selected', result.filePaths[0]);
             }
         }
+    });
+
+    // Copy bundled examples into a user-chosen folder (Setup wizard, finish step)
+    ipcMain.handle('examples:copy', async (event) => {
+        const source = config.getBundledExamplesSource();
+        if (!source) {
+            dialog.showErrorBox(
+                'Examples not found',
+                'The bundled examples folder is missing from this installation.'
+            );
+            return { status: 'error', message: 'source-missing' };
+        }
+
+        const parentWindow = BrowserWindow.fromWebContents(event.sender);
+        const picked = await dialog.showOpenDialog(parentWindow, {
+            title: 'Choose where to copy the examples',
+            defaultPath: app.getPath('desktop'),
+            properties: ['openDirectory', 'createDirectory']
+        });
+        if (picked.canceled || !picked.filePaths.length) {
+            return { status: 'canceled' };
+        }
+
+        const destination = path.join(picked.filePaths[0], 'Ainara Examples');
+
+        // Conflict check: does any bundled example file already exist at destination?
+        let hasConflict = false;
+        if (fs.existsSync(destination)) {
+            const collectRelativeFiles = (dir, base, acc) => {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                    const rel = base ? `${base}/${entry.name}` : entry.name;
+                    if (entry.isDirectory()) {
+                        collectRelativeFiles(path.join(dir, entry.name), rel, acc);
+                    } else {
+                        acc.push(rel);
+                    }
+                }
+                return acc;
+            };
+            const sourceFiles = collectRelativeFiles(source, '', []);
+            hasConflict = sourceFiles.some(rel => fs.existsSync(path.join(destination, rel)));
+        }
+
+        if (hasConflict) {
+            const answer = await dialog.showMessageBox(parentWindow, {
+                type: 'warning',
+                buttons: ['Overwrite', 'Cancel'],
+                defaultId: 0,
+                cancelId: 1,
+                title: 'Overwrite existing examples?',
+                message: `"Ainara Examples" already contains files with the same names.`,
+                detail: 'Your existing example files will be replaced. Any other files in the folder will not be touched.'
+            });
+            if (answer.response !== 0) {
+                return { status: 'canceled' };
+            }
+        }
+
+        // Recursive copy; force overwrites matching files only, never deletes extras.
+        fs.mkdirSync(destination, { recursive: true });
+        fs.cpSync(source, destination, { recursive: true, force: true, errorOnExist: false });
+
+        shell.openPath(destination);
+        return { status: 'copied', path: destination };
     });
 
     // Handle user skills directory selection from setup wizard

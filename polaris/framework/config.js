@@ -86,6 +86,28 @@ class ConfigManager {
         return ConfigManager._cachedSavedGamesPath;
     }
 
+    /**
+     * Resolve the bundled examples folder shipped with the app.
+     * Packaged: <resources>/bin/servers/_internal/resources/examples
+     * Dev:      <project_root>/resources/examples
+     * Returns null when not found (broken install).
+     */
+    getBundledExamplesSource() {
+        const candidates = [];
+        if (process.resourcesPath) {
+            candidates.push(
+                path.join(process.resourcesPath, 'bin', 'servers', '_internal', 'resources', 'examples')
+            );
+        }
+        // config.js lives in polaris/framework/ → project root is two levels up
+        candidates.push(path.join(__dirname, '..', '..', 'resources', 'examples'));
+
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) return candidate;
+        }
+        return null;
+    }
+
     _deepMerge(target, ...sources) {
         sources.forEach(source => {
             for (const key in source) {

@@ -83,6 +83,47 @@ async function init(ctx) {
         }
     });
 
+    // --- Examples section (injected here so it stays contained in this step) ---
+    const finishPanelForExamples = document.getElementById('finish-panel');
+    const capabilitiesSection = document.getElementById('capabilities-section');
+    if (finishPanelForExamples && !document.getElementById('examples-copy-btn')) {
+        const examplesBlock = document.createElement('div');
+        examplesBlock.className = 'form-group';
+        examplesBlock.innerHTML = `
+            <h3>Example files</h3>
+            <p class="field-description">Ainara ships ready-to-use example files. Copy them to a folder of your choice (your Desktop by default) to explore and reuse them.</p>
+            <button type="button" id="examples-copy-btn" class="btn">Copy examples to a folder…</button>
+            <div id="examples-copy-status" class="field-description" style="margin-top: 6px; min-height: 18px;"></div>
+        `;
+        if (capabilitiesSection) {
+            finishPanelForExamples.insertBefore(examplesBlock, capabilitiesSection);
+        } else {
+            finishPanelForExamples.appendChild(examplesBlock);
+        }
+
+        const copyButton = examplesBlock.querySelector('#examples-copy-btn');
+        const statusEl = examplesBlock.querySelector('#examples-copy-status');
+        copyButton.addEventListener('click', async () => {
+            copyButton.disabled = true;
+            if (statusEl) statusEl.textContent = 'Choose a destination folder in the dialog…';
+            try {
+                const result = await ipcRenderer.invoke('examples:copy');
+                if (result && result.status === 'copied') {
+                    if (statusEl) statusEl.textContent = `Examples copied to: ${result.path}`;
+                } else if (result && result.status === 'canceled') {
+                    if (statusEl) statusEl.textContent = '';
+                } else if (statusEl) {
+                    statusEl.textContent = 'Could not copy the examples.';
+                }
+            } catch (error) {
+                console.error('Error copying examples:', error);
+                if (statusEl) statusEl.textContent = 'Error copying examples. Check the logs for details.';
+            } finally {
+                copyButton.disabled = false;
+            }
+        });
+    }
+
     const finishPanel = document.getElementById('finish-panel');
     if (finishPanel && finishPanel.classList.contains('active')) {
         loadAndDisplayCapabilities(ctx).catch(err => {
