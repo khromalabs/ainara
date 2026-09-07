@@ -80,12 +80,14 @@ def _find_venv_python():
     return None
 
 
-if not _running_in_venv():
+_IS_BUNDLED = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
+
+if not _IS_BUNDLED and not _running_in_venv():
     _venv_python = _find_venv_python()
     if _venv_python:
-        # Re-exec the same script under the venv interpreter
+        # Re-exec the same script under the venv interpreter.
         os.execv(_venv_python, [_venv_python] + sys.argv)
-    elif not getattr(sys, "frozen", False) and not hasattr(sys, "_MEIPASS"):
+    else:
         print(
             "WARNING: No virtual environment found and not running inside one. "
             "Third-party dependencies may be missing.",
@@ -118,6 +120,48 @@ from ainara.framework.config import ConfigManager  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
+# Helpers for bundled/source server commands
+# ---------------------------------------------------------------------------
+def _server_command(server_name):
+    """Return the command list used to launch a bundled/source server.
+
+    When running inside a PyInstaller bundle the server executables are
+    expected to be siblings of the current executable.  When running from a
+    source checkout, the server is started as ``python -m
+    ainara.<server>.server``.
+
+    TODO: sentinel is currently always shipped together with orakle, bureau
+    and pybridge.  If this changes in the future, allow the paths to be
+    overridden through scheduler.yaml / environment variables.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        exe_dir = Path(sys.executable).resolve().parent
+        exe_name = f"{server_name}.exe" if os.name == "nt" else server_name
+        bundled = exe_dir / exe_name
+        if bundled.exists():
+            return [str(bundled)]
+        raise FileNotFoundError(
+            f"Bundled executable '{exe_name}' was not found next to sentinel "
+            f"(looked in '{exe_dir}'). sentinel must be distributed together "
+            "with the other server executables."
+        )
+
+    # Source checkout.
+    return [sys.executable, "-m", f"ainara.{server_name}.server"]
+
+
+def _server_identifier(cmd):
+    """Return a stable substring that identifies a service process in psutil."""
+    if isinstance(cmd, str):
+        cmd = cmd.split()
+
+    if "-m" in cmd:
+        return cmd[cmd.index("-m") + 1]
+
+    return os.path.basename(cmd[0])
+
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 LOG_DIR = "/tmp"
@@ -125,8 +169,8 @@ PID_FILE = os.path.join(LOG_DIR, "ainara-scheduler.pid")
 ORAKLE_LOG = os.path.join(LOG_DIR, "orakle.log")
 BUREAU_LOG = os.path.join(LOG_DIR, "bureau.log")
 
-ORAKLE_CMD = "python -m ainara.orakle.server"
-BUREAU_CMD = "python -m ainara.bureau.server"
+ORAKLE_CMD = _server_command("orakle")
+BUREAU_CMD = _server_command("bureau")
 
 # Default scheduler settings (overridden by ainara.yaml scheduler: section)
 DEFAULT_BUREAU_URL = "http://127.0.0.1:8010"
@@ -334,19 +378,17 @@ def check_service_health(url, timeout=None):
 # ---------------------------------------------------------------------------
 # Process management
 # ---------------------------------------------------------------------------
-def is_service_running(command):
+def is_service_running(cmd):
     """Check if a service is running using psutil."""
-    module_name = ""
-    if " -m " in command:
-        module_name = command.split(" -m ")[-1]
+    identifier = _server_identifier(cmd)
 
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmdline = proc.info["cmdline"]
-            if not cmdline or len(cmdline) < 2:
+            if not cmdline:
                 continue
             cmdline_str = " ".join(cmdline)
-            if module_name and module_name in cmdline_str:
+            if identifier in cmdline_str:
                 return True
         except (
             psutil.NoSuchProcess,
@@ -387,18 +429,14 @@ def start_service(service_name, cmd, log_file):
 
     try:
         with open(log_file, "w") as log:
-            module = cmd.split(" -m ")[1]
-            full_cmd = f"{sys.executable} -m {module}"
-
             if os.name == "nt":
-                subprocess.Popen(full_cmd, stdout=log, stderr=log, shell=True)
+                subprocess.Popen(cmd, stdout=log, stderr=log)
             else:
                 subprocess.Popen(
-                    full_cmd,
+                    cmd,
                     stdout=log,
                     stderr=log,
-                    shell=True,
-                    executable="/bin/bash",
+                    start_new_session=True,
                 )
 
         time.sleep(2)
@@ -414,8 +452,8 @@ def start_service(service_name, cmd, log_file):
 def stop_services():
     """Stop Bureau and Orakle."""
     log_info("Stopping services...")
-    stop_process("ainara.bureau.server")
-    stop_process("ainara.orakle.server")
+    stop_process(_server_identifier(BUREAU_CMD))
+    stop_process(_server_identifier(ORAKLE_CMD))
 
     for log_file in [ORAKLE_LOG, BUREAU_LOG]:
         if os.path.exists(log_file):
@@ -426,7 +464,7 @@ def stop_services():
 
 def restart_service(service_name, cmd, log_file, health_url, sched_config):
     """Stop and restart a service, waiting for it to become healthy."""
-    identifier = cmd.split(" -m ")[1] if " -m " in cmd else cmd
+    identifier = _server_identifier(cmd)
     log_info(f"Restarting {service_name}...")
 
     stop_process(identifier)

@@ -824,5 +824,6 @@ yarl==1.23.0
 zipp==3.23.0
     # via importlib-metadata
 
-# The following packages are considered to be unsafe in a requirements file:
-# setuptools
+# The following packages are considered to be unsafe in a requirements file
+# (forced because LiteLLM needs this)
+setuptools<82

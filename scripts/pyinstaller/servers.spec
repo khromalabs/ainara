@@ -7,11 +7,14 @@ import compileall
 import shutil
 import subprocess
 import secrets
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import (
+    collect_submodules,
+    collect_data_files,
+    collect_dynamic_libs,
+)
 
-# Fast track to test a server:
-# POLARIS_EDITION=supporters POLARIS_TARGET=orakle   pyinstaller scripts/pyinstaller/servers.spec --clean   --workpath build/work   --distpath build/dist
-# cd build/dist/orakle/ && orakle
+# Fast track to test a server (dist output):
+# POLARIS_EDITION=supporters POLARIS_TARGET=orakle   pyinstaller scripts/pyinstaller/servers.spec
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -372,7 +375,7 @@ common_imports = [
     'json',
     # 'numpy',
     'pyperclip',
-    'fastembed'
+    'fastembed',
 
     # LLM Backends
     'litellm',
@@ -486,6 +489,15 @@ common_imports = [
 # Add all the transformers models to common imports
 # common_imports += collect_submodules('transformers')
 common_imports += collect_submodules('chromadb')
+
+if SUPPORTERS:
+    # The supporters.auth_core module is shipped as data/obfuscated and is
+    # never analyzed by PyInstaller, so its imports are not discovered.
+    # Force-include the Solana stack (including the native solders binary).
+    common_imports += collect_submodules('solana')
+    common_imports += collect_submodules('solders')
+    binaries += collect_dynamic_libs('solana')
+    binaries += collect_dynamic_libs('solders')
 # # Add all opentelemetry modules, a complex dependency of chromadb
 # common_imports += collect_submodules('opentelemetry')
 # collect_submodules('sentence_transformers')
