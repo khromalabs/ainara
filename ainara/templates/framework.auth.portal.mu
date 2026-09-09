@@ -37,7 +37,7 @@
             const btn = document.getElementById('connectBtn');
 
             if (!window.solana || !window.solana.isPhantom) {
-                status.innerHTML = "Phantom wallet not found. Please install it.";
+                status.innerHTML = "Phantom wallet not found. Please install it or log in if already installed. If installed in another browser you can simply copy this URL there to validate.";
                 status.className = "status error";
                 return;
             }
