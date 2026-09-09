@@ -32,6 +32,8 @@ const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const SplashWindow = require('./windows/SplashWindow');
 const UpdateProgressWindow = require('./windows/UpdateProgressWindow');
 const ServiceManager = require('./framework/ServiceManager');
+const SentinelRunner = require('./framework/SentinelRunner');
+const SentinelWindow = require('./windows/SentinelWindow');
 const ConfigHelper = require('./framework/ConfigHelper');
 const { TOS_VERSION } = require('./framework/constants');
 const Logger = require('./framework/logger');
@@ -59,6 +61,25 @@ const ollama = require('ollama');
 
 
 const config = new ConfigManager();
+
+function detectSentinelRequest() {
+    if (process.argv.includes('--sentinel')) {
+        return { sentinel: true, invalidEnvValue: null };
+    }
+    const raw = (process.env.AINARA_SENTINEL_MODE || '').trim().toLowerCase();
+    if (!raw) return { sentinel: false, invalidEnvValue: null };
+    if (['1', 'true', 'yes', 'on'].includes(raw)) {
+        return { sentinel: true, invalidEnvValue: null };
+    }
+    if (['0', 'false', 'no', 'off'].includes(raw)) {
+        return { sentinel: false, invalidEnvValue: null };
+    }
+    return { sentinel: false, invalidEnvValue: raw };
+}
+
+const requestedSentinel = detectSentinelRequest();
+let activeMode = 'polaris'; // 'polaris' | 'sentinel'
+
 let updateAvailable = null;
 let windowManager = null;
 let tray = null;
@@ -145,7 +166,12 @@ async function setupComplete() {
 
     // Restart application
     Logger.info('Reinitializing application (firstInitialization=false)');
-    await appInitialization(false);
+    if (requestedSentinel.sentinel) {
+        activeMode = 'sentinel';
+        await startSentinelMode();
+    } else {
+        await appInitialization(false);
+    }
     executingSetupComplete = false;
 }
 
@@ -301,6 +327,32 @@ async function appFirstInitializationTasks() {
     app.commandLine.appendSwitch('ozone-platform', 'x11');
     await app.whenReady();
 
+    // --- Sentinel mode fork (before any Polaris-only initialization) ---
+    if (requestedSentinel.invalidEnvValue) {
+        dialog.showErrorBox(
+            'Ainara Polaris',
+            `Unrecognized value "${requestedSentinel.invalidEnvValue}" for the ` +
+            'AINARA_SENTINEL_MODE environment variable.\n\n' +
+            'Starting in normal live assistant mode.'
+        );
+    }
+
+    if (requestedSentinel.sentinel) {
+        if (process.env.AINARA_ONLY_POLARIS) {
+            Logger.warning(
+                'AINARA_ONLY_POLARIS is set but Sentinel mode was requested; ' +
+                'Sentinel mode takes precedence'
+            );
+        }
+        if (config.get('setup.completed', false)) {
+            Logger.info('Sentinel mode requested and setup completed, entering Sentinel');
+            activeMode = 'sentinel';
+            await startSentinelMode();
+            return true;
+        }
+        Logger.info('Sentinel mode requested but setup incomplete, running setup first');
+    }
+
     // // Apply auto-start setting on launch
     // applyAutoStartSetting();
 
@@ -380,7 +432,8 @@ async function appInitialization(firstInitialization = true) {
         trayNotifications = null;
 
         if (firstInitialization) {
-            await appFirstInitializationTasks();
+            const sentinelEntered = await appFirstInitializationTasks();
+            if (sentinelEntered) return;
         }
         // app.commandLine.appendSwitch('disable-gpu');
 
@@ -1536,6 +1589,48 @@ let isShuttingDown = false;
  * Single owner of the exit path. Every quit entry point (tray Quit,
  * window close, SIGINT, critical errors) funnels through here.
  */
+async function startSentinelMode() {
+    Logger.info('Entering Sentinel mode');
+
+    ipcMain.on('sentinel-stop', () => {
+        Logger.info('SentinelWindow: stop requested by user');
+        app.isQuitting = true;
+        app.quit(); // funnels through before-quit -> performShutdown
+    });
+
+    if (splashWindow) {
+        splashWindow.close();
+    }
+
+    const sentinelWindow = new SentinelWindow(config, null, __dirname);
+
+    SentinelRunner.on('output', (line) => sentinelWindow.appendOutput(line));
+    SentinelRunner.on('exit', (code) => {
+        // Keep the window open so the user can see why Sentinel stopped
+        sentinelWindow.showExited(code);
+    });
+
+    try {
+        await SentinelRunner.start();
+    } catch (error) {
+        Logger.error('Failed to start Sentinel process:', error);
+        sentinelWindow.appendOutput(
+            `ERROR: Failed to start Sentinel: ${error.message}`
+        );
+        sentinelWindow.showExited(null);
+    }
+
+    appReady = true;
+}
+
+async function stopActiveModeServices({ force = false } = {}) {
+    if (activeMode === 'sentinel') {
+        await SentinelRunner.stop({ force });
+    } else {
+        await ServiceManager.stopServices({ force });
+    }
+}
+
 async function performShutdown(force = false) {
     if (isShuttingDown) return;
     isShuttingDown = true;
@@ -1546,11 +1641,11 @@ async function performShutdown(force = false) {
     try {
         if (!app.isRefreshing) {
             try {
-                await ServiceManager.stopServices({ force });
+                await stopActiveModeServices({ force });
             } catch (err) {
                 Logger.error('Graceful shutdown failed:', err);
                 if (!force) {
-                    await ServiceManager.stopServices({ force: true });
+                    await stopActiveModeServices({ force: true });
                 }
             }
         }

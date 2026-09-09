@@ -27,7 +27,7 @@ npm install
 
 ```bash
 # Run from source (set env var to bypass compiled bytecode)
-AINARA_USE_SOURCE=1 npm start
+export AINARA_USE_SOURCE=1 && node_modules/electron/dist/electron .
 
 # Build for current platform
 npm run build
@@ -42,7 +42,8 @@ Ideally the services are managed straight from the Electron frontend, which inte
 
 To start the whole application using source:
 ```
-export AINARA_USE_SOURCE=1 && npm run start
+export AINARA_USE_SOURCE=1 && node_modules/electron/dist/electron .
+
 ```
 
 Otherwise the application attempts to use the packaged service executables with PyInstaller (see below).

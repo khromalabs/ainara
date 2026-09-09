@@ -44,6 +44,7 @@ plans:
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -164,7 +165,9 @@ def _server_identifier(cmd):
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-LOG_DIR = "/tmp"
+_logs_env = os.environ.get("AINARA_LOGS")
+LOG_DIR = os.path.expanduser(_logs_env) if _logs_env else tempfile.gettempdir()
+os.makedirs(LOG_DIR, exist_ok=True)
 PID_FILE = os.path.join(LOG_DIR, "ainara-scheduler.pid")
 ORAKLE_LOG = os.path.join(LOG_DIR, "orakle.log")
 BUREAU_LOG = os.path.join(LOG_DIR, "bureau.log")
@@ -579,19 +582,29 @@ def stream_logs(stop_event=None):
     event is set.  If stop_event is None, runs in the foreground until
     interrupted with Ctrl+C.
     """
+    # Only emit ANSI codes when stdout is a real terminal (e.g. --logs
+    # attach mode or a foreground daemon run). When stdout is piped
+    # (Electron Sentinel window, file redirect) the codes would show up
+    # as literal garbage.
+    use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     colors = {
-        "orakle": "\033[31m",  # Red
-        "bureau": "\033[34m",  # Blue
+        "orakle": "\033[31m" if use_color else "",  # Red
+        "bureau": "\033[34m" if use_color else "",  # Blue
     }
-    reset = "\033[0m"
+    reset = "\033[0m" if use_color else ""
 
-    # Enable ANSI on Windows
-    if os.name == "nt":
+    # Enable ANSI on Windows (only meaningful for a real console)
+    if os.name == "nt" and use_color:
         try:
             import ctypes
 
             kernel32 = ctypes.windll.kernel32
-            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+            # SetConsoleMode returns 0 on failure instead of raising
+            # (legacy conhost); fall back to plain text in that case.
+            if not kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7):
+                for key in colors:
+                    colors[key] = ""
+                reset = ""
         except (ImportError, AttributeError):
             for key in colors:
                 colors[key] = ""
