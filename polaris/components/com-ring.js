@@ -1161,9 +1161,28 @@ class ComRing extends BaseComponent {
     // NEW: Helper to stop only the TTS output without killing input resources
     stopTTSPlayback() {
         if (this.currentAudio) {
+            this.closeTTSAudioContext(this.currentAudio);
             this.currentAudio.pause();
             this.currentAudio.src = '';
             this.currentAudio = null;
+        }
+    }
+
+    // Each streamed TTS message gets its own AudioContext (for the ring visualization).
+    // These were never being closed, so every spoken message during a conversation
+    // leaked one open AudioContext (and its OS-level audio stream) for the life of the
+    // renderer. In long conversations this eventually exhausts the audio device/
+    // WebAudio renderer's concurrent stream limit and playback silently fails
+    // ("The AudioContext encountered an error from the audio device or the WebAudio
+    // renderer"). Call this whenever a given audio element is done being used
+    // (ended, errored, timed out, replaced, or discarded unplayed).
+    closeTTSAudioContext(audio) {
+        if (audio && audio._ttsAudioContext) {
+            const ctx = audio._ttsAudioContext;
+            audio._ttsAudioContext = null;
+            if (ctx.state !== 'closed') {
+                ctx.close().catch(err => console.error('Error closing TTS AudioContext:', err));
+            }
         }
     }
 
@@ -1698,6 +1717,16 @@ Visit our project site at: https://ainara.app
         // Set flag to ignore incoming events
         this.ignoreIncomingEvents = true;
 
+        // Release AudioContexts for any messages still sitting in the queue -
+        // they were created up front when the message streamed in, so an
+        // unplayed queued message still holds an open context that would
+        // otherwise leak here.
+        this.messageQueue.forEach(queued => {
+            if (queued && queued.audio) {
+                this.closeTTSAudioContext(queued.audio);
+            }
+        });
+
         // Clear message queue and mark no message is currently being processed
         this.messageQueue = [];
         this.isProcessingMessage = false;
@@ -1719,6 +1748,7 @@ Visit our project site at: https://ainara.app
 
         // Stop any playing audio
         if (this.currentAudio) {
+            this.closeTTSAudioContext(this.currentAudio);
             this.currentAudio.pause();
             this.currentAudio.src = '';
             this.currentAudio = null;
@@ -1861,6 +1891,9 @@ Visit our project site at: https://ainara.app
                             this.audioTimeouts.delete(messageId);
                         }
 
+                        // Release this message's AudioContext now that it's done playing
+                        this.closeTTSAudioContext(audio);
+
                         // Call resolve
                         resolve();
                     };
@@ -1874,6 +1907,9 @@ Visit our project site at: https://ainara.app
                             clearTimeout(this.audioTimeouts.get(messageId));
                             this.audioTimeouts.delete(messageId);
                         }
+
+                        // Release this message's AudioContext even on error
+                        this.closeTTSAudioContext(audio);
 
                         // Still resolve to continue processing
                         resolve();
@@ -1896,6 +1932,11 @@ Visit our project site at: https://ainara.app
                             audio.pause();
                             audio.currentTime = 0;
                         }
+
+                        // Release this message's AudioContext - onended/onerror won't
+                        // fire once we've forced a stop here, so this is the only
+                        // place that would otherwise clean it up.
+                        this.closeTTSAudioContext(audio);
 
                         resolve();
                     }, timeoutDuration);
@@ -2031,6 +2072,10 @@ Visit our project site at: https://ainara.app
                             analyser.fftSize = 256;
                             source.connect(analyser);
                             source.connect(audioContext.destination);
+
+                            // Tag the audio element with its context so it can be closed
+                            // later (see closeTTSAudioContext) instead of leaking it.
+                            audio._ttsAudioContext = audioContext;
 
                             const bufferLength = analyser.frequencyBinCount;
                             const dataArray = new Uint8Array(bufferLength);
