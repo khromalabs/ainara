@@ -575,24 +575,24 @@ logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"sys.path: {sys.path}")
 logger.info(f"Log directory: {log_dir}")
 
-# --- Set up a reliable cache directory for transformers ---
-# Priority: TRANSFORMERS_CACHE > AINARA_CACHE > Ainara platform default.
-# If TRANSFORMERS_CACHE is already set, we respect it and do nothing.
-if 'TRANSFORMERS_CACHE' not in os.environ:
-    cache_dir_str = os.environ.get("AINARA_CACHE")
-    if cache_dir_str:
-        cache_dir = Path(os.path.expanduser(cache_dir_str))
-    else:
-        cache_dir = config.get_default_cache_dir()
-
-    transformers_cache_dir = cache_dir / 'transformers'
-    os.makedirs(transformers_cache_dir, exist_ok=True)
-
-    # Set the environment variable for huggingface libraries
-    os.environ['TRANSFORMERS_CACHE'] = str(transformers_cache_dir)
-    logger.info(f"Set TRANSFORMERS_CACHE to: {os.environ['TRANSFORMERS_CACHE']}")
-else:
-    logger.info(f"TRANSFORMERS_CACHE already set to: {os.environ['TRANSFORMERS_CACHE']}. Hook will not override it.")
+## --- Set up a reliable cache directory for transformers ---
+## Priority: TRANSFORMERS_CACHE > AINARA_CACHE > Ainara platform default.
+## If TRANSFORMERS_CACHE is already set, we respect it and do nothing.
+#if 'TRANSFORMERS_CACHE' not in os.environ:
+#    cache_dir_str = os.environ.get("AINARA_CACHE")
+#    if cache_dir_str:
+#        cache_dir = Path(os.path.expanduser(cache_dir_str))
+#    else:
+#        cache_dir = config.get_default_cache_dir()
+#
+#    transformers_cache_dir = cache_dir / 'transformers'
+#    os.makedirs(transformers_cache_dir, exist_ok=True)
+#
+#    # Set the environment variable for huggingface libraries
+#    os.environ['TRANSFORMERS_CACHE'] = str(transformers_cache_dir)
+#    logger.info(f"Set TRANSFORMERS_CACHE to: {os.environ['TRANSFORMERS_CACHE']}")
+#else:
+#    logger.info(f"TRANSFORMERS_CACHE already set to: {os.environ['TRANSFORMERS_CACHE']}. Hook will not override it.")
 
 logger.info("--- PyInstaller Runtime Hook End ---")
 """)
