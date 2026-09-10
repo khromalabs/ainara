@@ -95,6 +95,19 @@ if not _IS_BUNDLED and not _running_in_venv():
             file=sys.stderr,
         )
 
+# When this script is spawned as a child of the Electron app (Sentinel UI)
+# its stdout/stderr are pipes, which makes Python pick a 4-8 KB block
+# buffer. That is what produces the "silence then a big blob" output in
+# the Sentinel window. Force line buffering so the relay streams.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except (AttributeError, ValueError):
+    # An interpreter too old to expose reconfigure, or an odd stream
+    # wrapper. Not fatal — the explicit flush=True calls elsewhere still
+    # work, and stderr is line-buffered by default in modern Python.
+    pass
+
 # ---------------------------------------------------------------------------
 # Now safe to import third-party packages
 # ---------------------------------------------------------------------------
@@ -430,15 +443,24 @@ def start_service(service_name, cmd, log_file):
     if is_service_running(cmd):
         return True, f"{service_name} is already running"
 
+    # Force child processes to flush their stdout/stderr line-by-line so
+    # Sentinel's log tail sees messages as they are produced instead of in
+    # 4-8 KB bursts. PYTHONUNBUFFERED is honoured both by a plain python
+    # interpreter and by a PyInstaller-frozen executable.
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+
     try:
         with open(log_file, "w") as log:
             if os.name == "nt":
-                subprocess.Popen(cmd, stdout=log, stderr=log)
+                subprocess.Popen(cmd, stdout=log, stderr=log, env=env)
             else:
                 subprocess.Popen(
                     cmd,
                     stdout=log,
                     stderr=log,
+                    env=env,
                     start_new_session=True,
                 )
 

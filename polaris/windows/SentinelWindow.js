@@ -30,6 +30,7 @@ class SentinelWindow extends BaseWindow {
             resizable: true,
             center: true,
             skipTaskbar: false,
+            type: 'normal',
             alwaysOnTop: false,
             focusable: true,
             title: 'Ainara Sentinel',

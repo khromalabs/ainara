@@ -38,6 +38,9 @@ class SentinelRunner extends EventEmitter {
         }
         SentinelRunner.instance = this;
         this.child = null;
+        // Per-stream leftover buffers so we only emit complete lines even
+        // when a line arrives split across two 'data' events.
+        this._buf = { out: '', err: '' };
     }
 
     // Mirrors ServiceManager's packaged/dev/source conventions.
@@ -83,17 +86,26 @@ class SentinelRunner extends EventEmitter {
             Logger.info(`Starting Sentinel: ${command} ${args.join(' ')}`);
             this.child = spawn(command, args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                windowsHide: true
+                windowsHide: true,
+                env: {
+                    ...process.env,
+                    // Belt-and-braces: dev mode passes `-u`; in packaged
+                    // mode the frozen exe needs this to stream line-by-line
+                    // into Sentinel's UI.
+                    PYTHONUNBUFFERED: '1',
+                    PYTHONIOENCODING: 'utf-8'
+                }
             });
 
-            this.child.stdout.on('data', (d) => this._emitLines(d.toString()));
-            this.child.stderr.on('data', (d) => this._emitLines(d.toString()));
+            this.child.stdout.on('data', (d) => this._onData('out', d));
+            this.child.stderr.on('data', (d) => this._onData('err', d));
             this.child.on('error', (err) => {
                 Logger.error('Sentinel process error:', err);
                 reject(err);
             });
             this.child.on('exit', (code, signal) => {
                 Logger.info(`Sentinel process exited (code=${code}, signal=${signal})`);
+                this._flushBuffers();
                 this.emit('exit', code);
             });
 
@@ -101,10 +113,23 @@ class SentinelRunner extends EventEmitter {
         });
     }
 
-    _emitLines(text) {
-        for (const line of text.split(/\r?\n/)) {
-            const clean = line.replace(ANSI_RE, '');
-            if (clean.trim()) this.emit('output', clean);
+    _onData(stream, chunk) {
+        const text = this._buf[stream] + chunk.toString();
+        const parts = text.split('\n');
+        this._buf[stream] = parts.pop();  // keep the trailing partial line
+        for (const part of parts) {
+            const line = part.replace(ANSI_RE, '').replace(/\r$/, '');
+            if (line.trim()) this.emit('output', line);
+        }
+    }
+
+    _flushBuffers() {
+        for (const stream of ['out', 'err']) {
+            const line = (this._buf[stream] || '')
+                .replace(ANSI_RE, '')
+                .replace(/\r$/, '');
+            if (line.trim()) this.emit('output', line);
+            this._buf[stream] = '';
         }
     }
 
