@@ -28,7 +28,28 @@ const Logger = require('./logger');
 
 const config = new ConfigManager();
 const GRACEFUL_STOP_TIMEOUT_MS = 8000;
-const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+// Belt-and-braces control-code scrubbers. The old single regex only
+// matched numeric CSI SGR sequences (\x1b[31m etc.); it silently left
+// behind ?/>/= -prefixed CSI, OSC strings, DCS/APC/PM/SOS payloads,
+// short ESC forms, and every C0 byte that is not \t or \n — any of
+// which the browser renders as literal glyphs or, for \r, a hard
+// line break inside `white-space: pre-wrap`.
+const ANSI_OSC_RE = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
+const ANSI_DCS_RE = /\u001B[P^_X][^\u001B]*(?:\u001B\\|\u0007)?/g;
+const ANSI_CSI_RE = /\u001B\[[0-?]*[ -\/]*[@-~]/g;
+const ANSI_ESC_RE = /\u001B[@-Z\\-_]/g;
+// C0 (except \t, \n) + DEL + C1 range.
+const CTRL_RE     = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
+
+function sanitizeLine(s) {
+    return s
+        .replace(ANSI_OSC_RE, '')
+        .replace(ANSI_DCS_RE, '')
+        .replace(ANSI_CSI_RE, '')
+        .replace(ANSI_ESC_RE, '')
+        .replace(CTRL_RE, '');
+}
 
 class SentinelRunner extends EventEmitter {
     constructor() {
@@ -117,19 +138,22 @@ class SentinelRunner extends EventEmitter {
 
     _makeLineEmitter() {
         let buf = '';
-        const strip = (s) => s.replace(ANSI_RE, '').replace(/\r$/, '');
         return {
             push: (chunk) => {
-                const text = buf + chunk.toString();
+                // Normalise CR/CRLF to LF *before* splitting. A bare \r is
+                // what werkzeug emits for in-place rewrites, and pre-wrap
+                // renders it as a hard line break, which is what produced
+                // the "blank run then dented line" artefact.
+                const text = (buf + chunk.toString()).replace(/\r\n?/g, '\n');
                 const parts = text.split('\n');
                 buf = parts.pop();
                 for (const part of parts) {
-                    const line = strip(part);
+                    const line = sanitizeLine(part);
                     if (line.trim()) this.emit('output', line);
                 }
             },
             flush: () => {
-                const line = strip(buf || '');
+                const line = sanitizeLine(buf || '');
                 if (line.trim()) this.emit('output', line);
                 buf = '';
             },
