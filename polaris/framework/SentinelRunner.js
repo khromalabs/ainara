@@ -210,15 +210,40 @@ class SentinelRunner extends EventEmitter {
             const finish = () => {
                 if (!settled) { settled = true; resolve(true); }
             };
-            child.once('exit', finish);
+            // On Windows the tree-kill must run while the root PID is still
+            // alive (taskkill /T walks downward from it), so taskkill's
+            // completion — not the root's exit — is what resolves stop().
+            // Guard the exit listener so the root's exit does not resolve the
+            // promise early during a tree kill.
+            let treeKilling = false;
+            const onExit = () => { if (!treeKilling) finish(); };
+            child.once('exit', onExit);
 
             const hardKill = () => {
-                if (process.platform === 'win32') {
-                    try { exec(`taskkill /PID ${child.pid} /T /F`); }
-                    catch (e) { Logger.error('taskkill failed for Sentinel:', e); }
+                const finalKill = () => {
+                    // Backstop: ensure the root itself is gone even if
+                    // taskkill failed or was partial.
+                    try { child.kill('SIGKILL'); } catch (e) { /* already gone */ }
+                    finish();
+                };
+
+                if (process.platform === 'win32' && child.pid) {
+                    treeKilling = true;
+                    exec(
+                        `taskkill /PID ${child.pid} /T /F`,
+                        { windowsHide: true, timeout: 5000 },
+                        (err) => {
+                            if (err) {
+                                Logger.error(`taskkill for Sentinel tree failed: ${err.message}`);
+                            }
+                            finalKill();
+                        }
+                    );
+                    // Safety net in case exec never invokes its callback.
+                    setTimeout(finalKill, 6000);
+                    return;
                 }
-                try { child.kill('SIGKILL'); } catch (e) { /* already gone */ }
-                setTimeout(finish, 2000);
+                finalKill();
             };
 
             if (force || process.platform === 'win32') {
