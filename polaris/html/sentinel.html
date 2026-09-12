@@ -17,19 +17,36 @@
         .log-orakle { color: #e06c75; }
         .log-bureau { color: #569cd6; }
         footer { padding: 8px 16px; background: #2d2d2d;
-                 display: flex; justify-content: flex-end; }
+                 display: flex; gap: 8px; justify-content: flex-end; }
         button { padding: 6px 18px; background: #c0392b; color: white;
                  border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
         button:hover { background: #e74c3c; }
+        button.secondary { background: #3c3c3c; }
+        button.secondary:hover { background: #4a4a4a; }
+        #controls { display: flex; gap: 8px; align-items: center; }
+        #controls select { padding: 4px 6px; background: #3c3c3c; color: #d4d4d4;
+                           border: 1px solid #555; border-radius: 4px;
+                           font-size: 12px; min-width: 240px; }
+        #controls #run-plan { padding: 6px 14px; background: #0e639c;
+                              color: white; border: none; border-radius: 4px;
+                              cursor: pointer; font-size: 13px; }
+        #controls #run-plan:hover:not(:disabled) { background: #1177bb; }
+        #controls #run-plan:disabled { opacity: 0.5; cursor: default; }
     </style>
 </head>
 <body>
     <header>
         <h1>Ainara Sentinel</h1>
+        <div id="controls">
+            <select id="plan-select" disabled><option>Loading…</option></select>
+            <button id="run-plan" disabled
+                    title="Trigger this plan immediately, regardless of its schedule">Trigger Plan</button>
+        </div>
         <span id="status">Starting…</span>
     </header>
     <div id="log"></div>
     <footer>
+        <button id="copy-log" class="secondary">Copy Log</button>
         <button id="stop">Stop Sentinel</button>
     </footer>
     <script>
@@ -37,14 +54,32 @@
         const log = document.getElementById('log');
         const status = document.getElementById('status');
 
+        // Only auto-scroll when the user is already pinned to the bottom.
+        // If they have scrolled up to read history, leave the viewport
+        // alone so incoming /health pings don't yank them away.
+        const PIN_THRESHOLD_PX = 40;
+        function isPinnedToBottom() {
+            return (log.scrollHeight - log.scrollTop - log.clientHeight)
+                < PIN_THRESHOLD_PX;
+        }
+
+        // Jump to the bottom and, because we land within PIN_THRESHOLD_PX,
+        // re-pin the auto-scroll for whatever new lines arrive next. Used
+        // when the user performs an action whose consequences they want
+        // to see.
+        function scrollToBottom() {
+            log.scrollTop = log.scrollHeight;
+        }
+
         ipcRenderer.on('sentinel-output', (event, data) => {
+            const pinned = isPinnedToBottom();
             const lineEl = document.createElement('div');
             lineEl.className = 'log-line';
             if (data.line.startsWith('orakle:')) lineEl.classList.add('log-orakle');
             else if (data.line.startsWith('bureau:')) lineEl.classList.add('log-bureau');
             lineEl.textContent = data.line;
             log.appendChild(lineEl);
-            log.scrollTop = log.scrollHeight;
+            if (pinned) log.scrollTop = log.scrollHeight;
         });
 
         ipcRenderer.on('sentinel-exited', (event, data) => {
@@ -55,8 +90,70 @@
         });
 
         document.getElementById('stop').addEventListener('click', () => {
+            scrollToBottom();
             ipcRenderer.send('sentinel-stop');
         });
+
+        document.getElementById('copy-log').addEventListener('click', () => {
+            const { clipboard } = require('electron');
+            const lines = Array.from(log.querySelectorAll('.log-line'))
+                .map(el => el.textContent);
+            clipboard.writeText(lines.join('\n'));
+            const btn = document.getElementById('copy-log');
+            const prev = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = prev; }, 1200);
+        });
+
+        const sel = document.getElementById('plan-select');
+        const runBtn = document.getElementById('run-plan');
+
+        // Plans listed here are available on disk and always triggerable.
+        // "scheduled: false" and "enabled: false" are scheduling hints
+        // only — they describe whether the cron fires, not whether the
+        // user may trigger the plan manually.
+        async function loadPlans() {
+            try {
+                const plans = await ipcRenderer.invoke('sentinel-list-plans');
+                sel.innerHTML = '';
+                if (!Array.isArray(plans) || plans.length === 0) {
+                    sel.appendChild(new Option('(no plans configured)', ''));
+                    sel.disabled = true;
+                    runBtn.disabled = true;
+                    return;
+                }
+                for (const p of plans) {
+                    const suffix = p.scheduled
+                        ? `${p.enabled ? '' : ' (disabled)'} — ${p.cron || '?'}`
+                        : ' — not scheduled';
+                    sel.appendChild(new Option(`${p.name}${suffix}`, p.name));
+                }
+                sel.disabled = false;
+                runBtn.disabled = false;
+            } catch (e) {
+                sel.innerHTML = '';
+                sel.appendChild(new Option('(failed to load plans)', ''));
+                sel.disabled = true;
+                runBtn.disabled = true;
+            }
+        }
+
+        runBtn.addEventListener('click', async () => {
+            const name = sel.value;
+            if (!name) return;
+            scrollToBottom();
+            runBtn.disabled = true;
+            const prev = runBtn.textContent;
+            runBtn.textContent = 'Triggering…';
+            try {
+                await ipcRenderer.invoke('sentinel-run-plan', name);
+            } finally {
+                runBtn.textContent = prev;
+                runBtn.disabled = false;
+            }
+        });
+
+        loadPlans();
     </script>
 </body>
 </html>

@@ -1602,6 +1602,31 @@ async function startSentinelMode() {
         splashWindow.close();
     }
 
+    ipcMain.handle('sentinel-list-plans', async () => {
+        const { ok, stdout } = await SentinelRunner.runOnce(
+            ['--list-plans'], { collect: true }
+        );
+        if (!ok) return [];
+        const marker = 'PLANS_JSON:';
+        const line = (stdout || '')
+            .split('\n')
+            .find((l) => l.startsWith(marker));
+        if (!line) return [];
+        try {
+            return JSON.parse(line.slice(marker.length));
+        } catch (e) {
+            Logger.error('Failed to parse plans JSON:', e);
+            return [];
+        }
+    });
+
+    ipcMain.handle('sentinel-run-plan', (_e, name) => {
+        if (typeof name !== 'string' || !name.trim()) {
+            return { ok: false, message: 'invalid plan name' };
+        }
+        return SentinelRunner.runOnce(['--run-plan', name.trim()]);
+    });
+
     const sentinelWindow = new SentinelWindow(config, null, __dirname);
 
     SentinelRunner.on('output', (line) => sentinelWindow.appendOutput(line));

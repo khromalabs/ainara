@@ -258,6 +258,24 @@ def find_scheduler_yaml(config_manager):
     return None
 
 
+def discover_plans(config_manager):
+    """Return the sorted plan names available for execution.
+
+    Mirrors the plans-dir derivation used by Bureau's
+    initialize_components(): parent of the first config path, plus
+    "bureau". The two derivations must stay in sync; if this ever
+    grows beyond a single glob, switch to querying Bureau's
+    /v1/conductor/plans endpoint instead.
+    """
+    config_paths = config_manager.get_default_config_paths()
+    if not config_paths:
+        return []
+    plans_dir = Path(config_paths[0]).parent / "bureau"
+    if not plans_dir.is_dir():
+        return []
+    return sorted(p.stem for p in plans_dir.glob("*.yaml"))
+
+
 def load_scheduler_yaml(config_manager):
     """Load and parse the scheduler.yaml file.
 
@@ -778,6 +796,11 @@ def parse_args():
         help="Show service and schedule status",
     )
     parser.add_argument(
+        "--list-plans",
+        action="store_true",
+        help="Print plans found in the plans directory as JSON and exit",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress log streaming in main mode (run as silent daemon)",
@@ -822,6 +845,29 @@ def main():
         print_status(sched_config, schedules)
         return
 
+    # Handle --list-plans (machine-readable plan list)
+    #
+    # Availability comes from the plans directory on disk (same
+    # derivation Bureau uses). scheduler.yaml only *annotates*: a plan
+    # present in scheduler.yaml but missing from disk is not listed, and
+    # a plan on disk but absent from scheduler.yaml is listed as
+    # scheduled=False. Either way, everything listed is triggerable via
+    # --run-plan / the Sentinel UI; the enabled flag is a scheduling
+    # concept and does not gate manual triggering.
+    if args.list_plans:
+        schedules_map = schedules or {}
+        payload = []
+        for name in discover_plans(config_manager):
+            sched = schedules_map.get(name)
+            payload.append({
+                "name": name,
+                "scheduled": sched is not None,
+                "enabled": bool(sched.get("enabled", False)) if sched else False,
+                "cron": sched.get("cron") if sched else None,
+            })
+        print("PLANS_JSON:" + json.dumps(payload))
+        return
+
     # Handle --logs (attach to running instance)
     if args.logs:
         if not os.path.exists(ORAKLE_LOG) and not os.path.exists(BUREAU_LOG):
@@ -844,11 +890,10 @@ def main():
         if not bureau_healthy:
             log_error("Bureau is not running. Start the scheduler first.")
             sys.exit(1)
-        avoid_if = (
-            [p.strip() for p in args.avoid_if.split(",")]
-            if args.avoid_if
-            else None
-        )
+        if args.avoid_if:
+            avoid_if = [p.strip() for p in args.avoid_if.split(",")]
+        else:
+            avoid_if = (schedules.get(args.run_plan) or {}).get("avoid_if")
         success = trigger_plan(
             args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if
         )

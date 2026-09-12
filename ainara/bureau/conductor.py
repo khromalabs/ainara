@@ -226,6 +226,8 @@ class Conductor:
             )
             return
 
+        logger.info("Loading plans in %s", self.plans_dir)
+
         for filepath in sorted(self.plans_dir.glob("*.yaml")):
             try:
                 plan = Plan(filepath)

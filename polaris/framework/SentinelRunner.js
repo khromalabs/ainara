@@ -38,9 +38,11 @@ class SentinelRunner extends EventEmitter {
         }
         SentinelRunner.instance = this;
         this.child = null;
-        // Per-stream leftover buffers so we only emit complete lines even
-        // when a line arrives split across two 'data' events.
-        this._buf = { out: '', err: '' };
+        // Dedicated line emitters, one per process, so a one-shot child's
+        // partial lines can never merge with the daemon's.
+        this._emitOut = this._makeLineEmitter();
+        this._emitErr = this._makeLineEmitter();
+        this._ephemeral = new Set();
     }
 
     // Mirrors ServiceManager's packaged/dev/source conventions.
@@ -113,30 +115,93 @@ class SentinelRunner extends EventEmitter {
         });
     }
 
+    _makeLineEmitter() {
+        let buf = '';
+        const strip = (s) => s.replace(ANSI_RE, '').replace(/\r$/, '');
+        return {
+            push: (chunk) => {
+                const text = buf + chunk.toString();
+                const parts = text.split('\n');
+                buf = parts.pop();
+                for (const part of parts) {
+                    const line = strip(part);
+                    if (line.trim()) this.emit('output', line);
+                }
+            },
+            flush: () => {
+                const line = strip(buf || '');
+                if (line.trim()) this.emit('output', line);
+                buf = '';
+            },
+        };
+    }
+
     _onData(stream, chunk) {
-        const text = this._buf[stream] + chunk.toString();
-        const parts = text.split('\n');
-        this._buf[stream] = parts.pop();  // keep the trailing partial line
-        for (const part of parts) {
-            const line = part.replace(ANSI_RE, '').replace(/\r$/, '');
-            if (line.trim()) this.emit('output', line);
-        }
+        (stream === 'out' ? this._emitOut : this._emitErr).push(chunk);
     }
 
     _flushBuffers() {
-        for (const stream of ['out', 'err']) {
-            const line = (this._buf[stream] || '')
-                .replace(ANSI_RE, '')
-                .replace(/\r$/, '');
-            if (line.trim()) this.emit('output', line);
-            this._buf[stream] = '';
-        }
+        this._emitOut.flush();
+        this._emitErr.flush();
+    }
+
+    // Spawn a short-lived scheduler.py invocation. With { collect: true }
+    // stdout/stderr are returned as strings and NOT emitted as log lines
+    // (used for --list-plans); otherwise the output streams into the pane.
+    runOnce(extraArgs, { collect = false } = {}) {
+        const { command, args } = this.resolveCommand();
+        return new Promise((resolve) => {
+            if (!fs.existsSync(command)) {
+                return resolve({
+                    ok: false,
+                    message: `Sentinel executable not found: ${command}`,
+                });
+            }
+            const child = spawn(command, [...args, ...extraArgs], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+                env: {
+                    ...process.env,
+                    PYTHONUNBUFFERED: '1',
+                    PYTHONIOENCODING: 'utf-8',
+                },
+            });
+            this._ephemeral.add(child);
+
+            let stdout = '';
+            let stderr = '';
+            if (collect) {
+                child.stdout.on('data', (d) => { stdout += d.toString(); });
+                child.stderr.on('data', (d) => { stderr += d.toString(); });
+            } else {
+                const emit = this._makeLineEmitter();
+                child.stdout.on('data', emit.push);
+                child.stderr.on('data', emit.push);
+            }
+
+            child.on('exit', (code) => {
+                this._ephemeral.delete(child);
+                resolve({ ok: code === 0, code, stdout, stderr });
+            });
+            child.on('error', (err) => {
+                this._ephemeral.delete(child);
+                resolve({ ok: false, message: err.message, stdout, stderr });
+            });
+        });
     }
 
     // scheduler.py only handles SIGINT (KeyboardInterrupt) and then stops
     // orakle/bureau itself; SIGTERM would orphan them. On Windows signals
     // are hard kills, so use taskkill /T to take the whole tree down.
     async stop({ force = false } = {}) {
+        // Reap any one-shot children first so app exit can't orphan them.
+        for (const child of [...this._ephemeral]) {
+            try {
+                child.kill(force ? 'SIGKILL' : 'SIGTERM');
+            } catch (e) { /* already gone */ }
+        }
+        this._ephemeral.clear();
+
         const child = this.child;
         if (!child || child.exitCode !== null) return true;
 
