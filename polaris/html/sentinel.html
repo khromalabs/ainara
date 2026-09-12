@@ -17,7 +17,11 @@
         .log-orakle { color: #e06c75; }
         .log-bureau { color: #569cd6; }
         footer { padding: 8px 16px; background: #2d2d2d;
-                 display: flex; gap: 8px; justify-content: flex-end; }
+                 display: flex; gap: 8px; justify-content: space-between;
+                 align-items: center; }
+        #font-controls { display: flex; gap: 4px; }
+        #font-controls button { padding: 6px 12px; min-width: 36px; font-weight: 700; }
+        #footer-actions { display: flex; gap: 8px; }
         button { padding: 6px 18px; background: #c0392b; color: white;
                  border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
         button:hover { background: #e74c3c; }
@@ -46,13 +50,51 @@
     </header>
     <div id="log"></div>
     <footer>
-        <button id="copy-log" class="secondary">Copy Log</button>
-        <button id="stop">Stop Sentinel</button>
+        <div id="font-controls">
+            <button id="font-decrease" class="secondary" title="Decrease log font size">A−</button>
+            <button id="font-increase" class="secondary" title="Increase log font size">A+</button>
+        </div>
+        <div id="footer-actions">
+            <button id="copy-log" class="secondary">Copy Log</button>
+            <button id="stop">Stop Sentinel</button>
+        </div>
     </footer>
     <script>
         const { ipcRenderer } = require('electron');
         const log = document.getElementById('log');
         const status = document.getElementById('status');
+
+        const MIN_FONT = 9;
+        const MAX_FONT = 24;
+        const DEFAULT_FONT = 12;
+        let fontSize = DEFAULT_FONT;
+
+        function applyFontSize() {
+            log.style.fontSize = fontSize + 'px';
+        }
+
+        async function changeFont(delta) {
+            const next = Math.min(MAX_FONT, Math.max(MIN_FONT, fontSize + delta));
+            if (next === fontSize) return;
+            fontSize = next;
+            applyFontSize();
+            try {
+                await ipcRenderer.invoke('sentinel-set-font-size', fontSize);
+            } catch (e) {
+                Logger && Logger.warn && Logger.warn('Failed to persist font size:', e);
+            }
+        }
+
+        document.getElementById('font-decrease').addEventListener('click', () => changeFont(-1));
+        document.getElementById('font-increase').addEventListener('click', () => changeFont(1));
+
+        (async () => {
+            try {
+                const saved = await ipcRenderer.invoke('sentinel-get-font-size');
+                if (Number.isFinite(saved)) fontSize = saved;
+            } catch (e) { /* fall back to default */ }
+            applyFontSize();
+        })();
 
         // Only auto-scroll when the user is already pinned to the bottom.
         // If they have scrolled up to read history, leave the viewport

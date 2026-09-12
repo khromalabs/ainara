@@ -1627,6 +1627,16 @@ async function startSentinelMode() {
         return SentinelRunner.runOnce(['--run-plan', name.trim()]);
     });
 
+    ipcMain.handle('sentinel-get-font-size', () => {
+        return config.get('sentinel.fontSize', 12);
+    });
+
+    ipcMain.handle('sentinel-set-font-size', (_e, size) => {
+        const n = Math.min(24, Math.max(9, Number(size) || 12));
+        config.set('sentinel.fontSize', n);
+        return n;
+    });
+
     const sentinelWindow = new SentinelWindow(config, null, __dirname);
 
     SentinelRunner.on('output', (line) => sentinelWindow.appendOutput(line));

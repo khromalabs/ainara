@@ -103,5 +103,8 @@ module.exports = {
     },
     wakeword: {
         enabled: false
+    },
+    sentinel: {
+        fontSize: 12
     }
 };
