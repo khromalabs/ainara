@@ -483,8 +483,8 @@ class ConfigManager:
                     # Set up user skills configuration with defaults
                     if "user_skills" not in self.config:
                         self.config["user_skills"] = {}
-                    if "enabled" not in self.config["user_skills"]:
-                        self.config["user_skills"]["enabled"] = False
+                    #if "enabled" not in self.config["user_skills"]:
+                    #    self.config["user_skills"]["enabled"] = False
 
                     # Force correct orakle server URL (temporary enforcement)
                     if "orakle" in self.config and "servers" in self.config["orakle"]:

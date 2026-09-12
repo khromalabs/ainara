@@ -163,7 +163,7 @@ class CapabilitiesManager:
             logger.info("Initialized MCPToolProvider.")
 
         # User Skill Provider
-        if self.config.get("user_skills.enabled", False):
+        if self.config.get("user_skills.directory", None):
             try:
                 self.user_provider = UserSkillProvider(
                     self.config, self.mcp_client_manager, self.router, self.startup_time
