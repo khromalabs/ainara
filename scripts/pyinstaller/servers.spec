@@ -1,12 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-import sys
 import importlib
 import platform
-import compileall
-import shutil
-import subprocess
-import secrets
 from PyInstaller.utils.hooks import (
     collect_submodules,
     collect_data_files,
@@ -14,7 +9,10 @@ from PyInstaller.utils.hooks import (
 )
 
 # Fast track to test a server (dist output):
-# POLARIS_EDITION=supporters POLARIS_TARGET=orakle   pyinstaller scripts/pyinstaller/servers.spec
+#   1) scripts/_obfuscate.py    (host, licensed PyArmor)
+#   2) POLARIS_EDITION=supporters POLARIS_TARGET=orakle \
+#          pyinstaller --distpath dist --workpath build/pyi scripts/pyinstaller/servers.spec
+# or simply:  scripts/_build.py -e supporters -t orakle
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -23,21 +21,13 @@ project_root = os.path.abspath(os.getcwd())
 if not os.path.exists(os.path.join(project_root, 'ainara')):
     raise ValueError(f"Calculated project_root {project_root} does not contain 'ainara' directory. Ensure the build is run from the project root.")
 
-nexus_src = os.path.join(project_root, 'ainara', 'nexus')
-nexus_staged_root = os.path.join(project_root, 'build', 'nexus_staged')
-nexus_staged = os.path.join(nexus_staged_root, 'ainara', 'nexus')
 nexus_obfuscated_root = os.path.join(project_root, 'build', 'nexus_obfuscated')
-nexus_obfuscated = os.path.join(nexus_obfuscated_root, 'nexus')
-nexus_compiled = os.path.join(project_root, 'build', 'nexus_compiled', 'ainara', 'nexus')
-
-supporters_src = os.path.join(project_root, 'supporters')
-supporters_rendered_root = os.path.join(project_root, 'build', 'supporters_rendered')
-supporters_rendered = os.path.join(supporters_rendered_root, 'supporters')
 supporters_obfuscated_root = os.path.join(project_root, 'build', 'supporters_obfuscated')
-supporters_obfuscated = os.path.join(supporters_obfuscated_root, 'supporters')
 supporters_compiled_root = os.path.join(project_root, 'build', 'supporters_compiled')
 supporters_compiled = os.path.join(supporters_compiled_root, 'supporters')
-build_secret_path = os.path.join(project_root, 'build', 'build_secret.key')
+ataria_compiled = os.path.join(
+    project_root, 'build', 'ataria_compiled', 'ainara', 'nexus', 'khromalabs', 'ataria'
+)
 
 # Optional single-server build mode.
 # Set POLARIS_TARGET=orakle|pybridge|bureau|sentinel to build only that server.
@@ -46,123 +36,30 @@ if BUILD_TARGET not in ("all", "orakle", "pybridge", "bureau", "sentinel"):
     raise SystemExit(f"Unknown POLARIS_TARGET: {BUILD_TARGET!r}")
 print(f"[servers.spec] Build target(s): {BUILD_TARGET}")
 
-if os.path.exists(nexus_src):
-    # Locate PyArmor console-script entry point
-    pyarmor_bin = os.path.join(os.path.dirname(sys.executable), 'pyarmor')
-    if sys.platform == 'win32':
-        pyarmor_bin += '.exe'
+# --- Edition & pre-obfuscated artifacts ----------------------------------
+# Obfuscation (staging, license-guard injection, PyArmor) runs on the HOST
+# via scripts/_obfuscate.py: the licensed PyArmor install and the build
+# secret never enter the build container. This spec only consumes that
+# output, so it can run inside the manylinux_2_28 container that pins our
+# glibc floor.
+EDITION = os.environ.get("POLARIS_EDITION", "public").strip().lower()
+if EDITION not in ("public", "supporters"):
+    raise SystemExit(f"Unknown POLARIS_EDITION: {EDITION!r}")
+SUPPORTERS = EDITION == "supporters"
+print(f"[servers.spec] Building '{EDITION}' edition")
 
-    pyarmor_common_args = [
-        'gen',
-        '--recursive',
-        '--obf-code', '2',
-        '--mix-str',
-        '--exclude', '*/test*',
-        '--exclude', '*/conftest.py',
-        '--exclude', '*/__pycache__',
-        '--exclude', '*/generate_',
-        '--exclude', '*/.*',
-    ]
-
-    # Edition is already validated by scripts/_build.py, but keep this as a safety net.
-    EDITION = os.environ.get("POLARIS_EDITION", "public").strip().lower()
-    if EDITION not in ("public", "supporters"):
-        raise SystemExit(f"Unknown POLARIS_EDITION: {EDITION!r}")
-    SUPPORTERS = EDITION == "supporters"
-    print(f"[servers.spec] Building '{EDITION}' edition")
-
-    # Clean previous artifacts
-    for d in [nexus_staged_root, nexus_obfuscated_root,
-              supporters_rendered_root, supporters_obfuscated_root,
-              supporters_compiled_root]:
-        if os.path.exists(d):
-            shutil.rmtree(d)
-
-    # Build secret is only needed for supporters edition
-    if SUPPORTERS:
-        os.makedirs(os.path.dirname(build_secret_path), exist_ok=True)
-        if not os.path.exists(build_secret_path):
-            with open(build_secret_path, 'wb') as f:
-                f.write(secrets.token_bytes(32))
-        with open(build_secret_path, 'rb') as f:
-            build_secret = f.read()
-        if len(build_secret) < 32:
-            raise ValueError(
-                f'{build_secret_path} is corrupt (<32 bytes). Delete it to '
-                'regenerate — NOTE: this invalidates all existing tokens.'
-            )
-
-    # Stage the nexus tree (so public edition can strip supporters domains)
-    os.makedirs(nexus_staged_root)
-    shutil.copytree(nexus_src, nexus_staged, symlinks=False)
-
-    if not SUPPORTERS:
-        ataria_staged = os.path.join(nexus_staged, 'khromalabs', 'ataria')
-        if os.path.islink(ataria_staged) or os.path.exists(ataria_staged):
-            if os.path.islink(ataria_staged):
-                os.remove(ataria_staged)
-            else:
-                shutil.rmtree(ataria_staged)
-
-    # Render the closed-source supporters package with the real build secret,
-    # then inject license guards into the staged nexus tree.
-    if SUPPORTERS:
-        os.makedirs(supporters_rendered_root)
-        shutil.copytree(supporters_src, supporters_rendered, symlinks=False)
-        auth_core_path = os.path.join(supporters_rendered, 'auth_core.py')
-        with open(auth_core_path, encoding='utf-8') as f:
-            rendered = f.read()
-        if '__BUILD_SECRET__' not in rendered:
-            raise ValueError('auth_core.py: __BUILD_SECRET__ placeholder not found')
-        rendered = rendered.replace('__BUILD_SECRET__', repr(build_secret))
-        with open(auth_core_path, 'w', encoding='utf-8') as f:
-            f.write(rendered)
-
-        subprocess.run([
-            sys.executable,
-            os.path.join(project_root, 'supporters', 'inject_license_guards.py'),
-            '--tree', nexus_staged_root,
-            '--auth-core', os.path.join(supporters_src, 'auth_core.py'),
-            '--secret-file', build_secret_path,
-        ], check=True, cwd=project_root)
-
-    # Obfuscate the staged nexus tree
-    subprocess.run(
-        [pyarmor_bin, *pyarmor_common_args,
-         '-O', nexus_obfuscated_root, nexus_staged],
-        check=True, cwd=project_root
-    )
-
-    nexus_obfuscated = os.path.join(nexus_obfuscated_root, 'nexus')
-    if not os.path.isdir(nexus_obfuscated):
-        raise FileNotFoundError(f"PyArmor output not found at {nexus_obfuscated}")
-
-    # Obfuscate the rendered supporters package
-    supporters_obfuscated_dir = None
-    if SUPPORTERS:
-        subprocess.run(
-            [pyarmor_bin, *pyarmor_common_args,
-             '-O', supporters_obfuscated_root, supporters_rendered],
-            check=True, cwd=project_root
+_required_trees = [
+    os.path.join(supporters_compiled_root, 'ainara', 'nexus'),
+    ataria_compiled,
+]
+if SUPPORTERS:
+    _required_trees.append(supporters_compiled)
+for _tree in _required_trees:
+    if not os.path.isdir(_tree):
+        raise FileNotFoundError(
+            f"{_tree} not found — run scripts/_obfuscate.py first "
+            f"(scripts/_build.py runs it automatically)."
         )
-        supporters_obfuscated_dir = os.path.join(supporters_obfuscated_root, 'supporters')
-        if not os.path.isdir(supporters_obfuscated_dir):
-            raise FileNotFoundError(f"Supporters obfuscation output missing: {supporters_obfuscated_dir}")
-
-    # Assemble the final compiled tree used by the PyInstaller datas
-    os.makedirs(supporters_compiled_root, exist_ok=True)
-    nexus_dest = os.path.join(supporters_compiled_root, 'ainara', 'nexus')
-    os.makedirs(os.path.dirname(nexus_dest), exist_ok=True)
-    shutil.copytree(nexus_obfuscated, nexus_dest)
-
-    if SUPPORTERS:
-        shutil.copytree(supporters_obfuscated_dir, supporters_compiled)
-
-else:
-    # Keep variables defined even if nexus_src is absent (should not happen)
-    EDITION = os.environ.get("POLARIS_EDITION", "public").strip().lower()
-    SUPPORTERS = EDITION == "supporters"
-    print(f"[servers.spec] Building '{EDITION}' edition (no nexus_src found)")
 
 block_cipher = None
 
@@ -263,41 +160,15 @@ if os.path.exists(tts_models_dir):
     datas.append((tts_models_dir, 'resources/tts/models'))
 
 # Add STT wakeword models
-tts_models_dir = os.path.join(project_root, 'resources/stt/wakeword')
-if os.path.exists(tts_models_dir):
-    datas.append((tts_models_dir, 'resources/stt/wakeword'))
+wakeword_models_dir = os.path.join(project_root, 'resources/stt/wakeword')
+if os.path.exists(wakeword_models_dir):
+    datas.append((wakeword_models_dir, 'resources/stt/wakeword'))
 
-# Add platform-specific binaries
 system = platform.system()
-arch = platform.machine().lower()
 
-if system == "Windows":
-    # Add Windows-specific binaries
-    piper_bin_dir = os.path.join(project_root, 'resources/bin/windows')
-    if os.path.exists(piper_bin_dir):
-        binaries.append((piper_bin_dir, 'resources/bin/windows'))
-elif system == "Darwin":  # macOS
-    # Add macOS-specific binaries with architecture awareness
-    if arch == "arm64":
-        # ARM64 (Apple Silicon) binaries
-        piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/aarch64')
-        if os.path.exists(piper_bin_dir):
-            binaries.append((piper_bin_dir, 'resources/bin/macos/aarch64'))
-        else:
-            raise ValueError(f"Expected Piper bin dir {piper_bin_dir} not found")
-    else:
-        # Intel binaries
-        piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/x64')
-        if os.path.exists(piper_bin_dir):
-            binaries.append((piper_bin_dir, 'resources/bin/macos/x64'))
-        else:
-            raise ValueError(f"Expected Piper bin dir {piper_bin_dir} not found")
-else:  # Linux
-    # Add Linux-specific binaries
-    piper_bin_dir = os.path.join(project_root, 'resources/bin/linux')
-    if os.path.exists(piper_bin_dir):
-        binaries.append((piper_bin_dir, 'resources/bin/linux'))
-
+# Piper binaries are no longer bundled (the app uses Kokoro); only the
+# espeakng fix below remains platform-specific.
+if system == "Linux":
     # Fix for kokoro-onnx/espeakng_loader on Linux: ensure libespeak-ng.so is bundled
     try:
         spec = importlib.util.find_spec('espeakng_loader')
@@ -327,10 +198,10 @@ common_datas = [
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
-    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria/nexus.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria/providers_registry.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria/skills_metadata.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(project_root, 'ainara/nexus/khromalabs/ataria/site'), 'ainara/nexus/khromalabs/ataria/site'),
+    (os.path.join(ataria_compiled, 'nexus.json'), 'ainara/nexus/khromalabs/ataria'),
+    (os.path.join(ataria_compiled, 'providers_registry.json'), 'ainara/nexus/khromalabs/ataria'),
+    (os.path.join(ataria_compiled, 'skills_metadata.json'), 'ainara/nexus/khromalabs/ataria'),
+    (os.path.join(ataria_compiled, 'site'), 'ainara/nexus/khromalabs/ataria/site'),
     *datas,
     *package_datas,
     *datas_from_hooks
@@ -346,16 +217,11 @@ for _root in (nexus_obfuscated_root, supporters_obfuscated_root):
         if _entry.startswith("pyarmor_runtime") and os.path.isdir(os.path.join(_root, _entry)):
             common_datas.append((os.path.join(_root, _entry), _entry))
 
-# Obfuscated nexus tree ships to ALL servers (replaces the old plain-text
-# ataria entry, which leaked unobfuscated supporters source into every
-# bundle). In the public edition the tree simply lacks the supporters domains.
-_obfuscated_nexus = os.path.join(project_root, 'build', 'supporters_compiled', 'ainara', 'nexus')
-if os.path.isdir(_obfuscated_nexus):
-    common_datas.append((_obfuscated_nexus, 'ainara/nexus'))
-elif SUPPORTERS:
-    raise FileNotFoundError("Supporters build requires the obfuscated nexus tree")
-else:
-    print("Warning: no obfuscated nexus tree; building without nexus apps")
+# Obfuscated nexus tree ships to ALL servers (validated above). In the
+# public edition the tree simply lacks the supporters domains.
+common_datas.append(
+    (os.path.join(supporters_compiled_root, 'ainara', 'nexus'), 'ainara/nexus')
+)
 
 if SUPPORTERS:
     if not os.path.isdir(supporters_compiled):

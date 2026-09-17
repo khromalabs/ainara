@@ -1,0 +1,62 @@
+# Build sandbox for the Linux server bundles.
+# The base image pins our glibc floor: anything built here runs on
+# glibc >= 2.35 (Ubuntu 22.04 jammy and newer, Debian 12+, RHEL 9+).
+# There is no official python:*-jammy image (the python images are
+# Debian-only), and manylinux interpreters ship no shared libpython
+# (manylinux policy forbids DT_NEEDED libpython) which PyInstaller
+# requires — so we start from ubuntu:22.04 and take CPython 3.12 from
+# the deadsnakes PPA. python3.12-dev pulls libpython3.12.so.1.0.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# software-properties-common + gnupg: needed by add-apt-repository to fetch
+# and trust the deadsnakes PPA key.
+# python3.12-dev: provides the shared libpython that PyInstaller requires.
+# git: openwakeword is a git+https requirement (pip needs git at install time).
+# build-essential: gcc/make/libc headers — simpleaudio and speexdsp-ns are
+#   sdist-only and compile a C extension at install time (`x86_64-linux-gnu-gcc`
+#   comes from the gcc package; -dev packages give headers, not a compiler).
+# pkg-config: simpleaudio's build probes ALSA via `pkg-config --libs alsa`.
+# libasound2-dev: ALSA headers for simpleaudio (sdist-only wheel).
+# libspeexdsp-dev: headers for speexdsp-ns (sdist-only wheel).
+# Extend the second apt-get list if pip ever falls back to an sdist that
+# needs other -dev packages.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        software-properties-common \
+        gnupg \
+        ca-certificates \
+ && add-apt-repository -y ppa:deadsnakes/ppa \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+        python3.12 \
+        python3.12-venv \
+        python3.12-dev \
+        git \
+        build-essential \
+        pkg-config \
+        libasound2-dev \
+        libspeexdsp-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# deadsnakes/Debian strip ensurepip, so pip comes from a venv instead.
+# PyInstaller is invoked against this venv's interpreter (see the PY= line
+# in scripts/_build.py's CONTAINER_BUILD_SCRIPT).
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Bake the Python environment: repeated builds don't re-resolve or
+# re-download wheels, and docker's layer cache reuses everything while
+# requirements.txt is unchanged. NOTE: must stay on the same CPython minor
+# version as the host interpreter that runs scripts/_obfuscate.py (PyArmor
+# output is minor-version specific) — currently cp312 on both sides.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r /tmp/requirements.txt \
+ && pip install --no-cache-dir pyinstaller
+
+# The container runs as the invoking user's UID (see scripts/_build.py),
+# which has no passwd entry — give PyInstaller a writable HOME.
+ENV HOME=/tmp
+WORKDIR /work
