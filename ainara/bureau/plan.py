@@ -24,6 +24,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
+from ainara.bureau.scratchpad import map_strings
+from ainara.framework.template_manager import default_template_context
+
 logger = logging.getLogger(__name__)
 
 # Binding names must be simple identifiers (no dots) so that the first
@@ -36,6 +39,19 @@ IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 STATIC_PLACEHOLDER_RE = re.compile(
     r"\{\{\s*\$([A-Za-z_][A-Za-z0-9_]*(?:\.[^\s.${}]+)*)\s*\}\}"
 )
+
+# Dynamic template references: {{step_name.field.path}} (no leading '$' —
+# those are STATIC_PLACEHOLDER_RE's domain). Only the root is validated;
+# deeper segments address runtime result data and can't be checked statically.
+DYNAMIC_PLACEHOLDER_RE = re.compile(
+    r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[^\s{}]+)*)\s*\}\}"
+)
+
+# Built-in static bindings injected by the Conductor at run start, derived
+# from default_template_context() so new built-ins require no edit here.
+# Referenced as {{$current_date}} / {{$current_time}} / {{$language}};
+# overridable per-plan via 'variables'.
+BUILTIN_STATIC_ROOTS = frozenset(default_template_context())
 
 
 class PlanValidationError(Exception):
@@ -94,7 +110,8 @@ def iter_static_refs(steps: Dict[str, StepNode]) -> List[Tuple[str, str]]:
     """
     Collect ``(step_name, ref_body)`` pairs for every static ``{{$...}}``
     reference used in agent goals, agent blueprint system messages and
-    skill string params. *ref_body* excludes the leading ``$``.
+    skill params (scanned recursively through nested dicts/lists).
+    *ref_body* excludes the leading ``$``.
     """
     found: List[Tuple[str, str]] = []
     for step in steps.values():
@@ -105,17 +122,35 @@ def iter_static_refs(steps: Dict[str, StepNode]) -> List[Tuple[str, str]]:
             if isinstance(system_message, str):
                 texts.append(system_message)
         elif step.type == "skill":
-            # TODO: Only top-level string params are scanned. Static refs
-            # inside nested dicts/lists (e.g.
-            # params: {filters: {min: "{{$x}}"}}) escape both this
-            # load-time validation and the Conductor preflight, and are
-            # sent to the skill verbatim. See the matching TODO in
-            # Conductor._spawn_skill; fix both together.
-            for param_value in (step.params or {}).values():
-                if isinstance(param_value, str):
-                    texts.append(param_value)
+            # Nested params too: collect every string in the params tree
+            # so load-time validation and the Conductor preflight cover
+            # refs anywhere in the structure.
+            map_strings(step.params or {}, texts.append)
         for text in texts:
             for match in STATIC_PLACEHOLDER_RE.finditer(text):
+                found.append((step.name, match.group(1)))
+    return found
+
+
+def iter_dynamic_refs(steps: Dict[str, StepNode]) -> List[Tuple[str, str]]:
+    """
+    Collect ``(step_name, ref_body)`` pairs for every dynamic ``{{...}}``
+    reference (no leading ``$``) used in agent goals, agent blueprint system
+    messages and skill params (scanned recursively through nested
+    dicts/lists). *ref_body* is the dotted path without braces.
+    """
+    found: List[Tuple[str, str]] = []
+    for step in steps.values():
+        texts: List[str] = []
+        if step.type == "agent":
+            texts.append(step.goal_template)
+            system_message = step.blueprint.get("system_message")
+            if isinstance(system_message, str):
+                texts.append(system_message)
+        elif step.type == "skill":
+            map_strings(step.params or {}, texts.append)
+        for text in texts:
+            for match in DYNAMIC_PLACEHOLDER_RE.finditer(text):
                 found.append((step.name, match.group(1)))
     return found
 
@@ -359,7 +394,9 @@ class Plan:
                 )
 
         # --- Static reference scan: catch unknown names at load time ---
-        allowed_roots = var_names | alias_names | {"skills"}
+        allowed_roots = (
+            var_names | alias_names | BUILTIN_STATIC_ROOTS | {"skills"}
+        )
         for step_name, body in iter_static_refs(self.steps):
             root = body.split(".")[0]
             if root not in allowed_roots:
@@ -368,6 +405,33 @@ class Plan:
                     f" static reference '${body}'. It must start with a"
                     " 'variables' name, a 'config_aliases' name, or"
                     " 'skills' (full config path)"
+                )
+
+        # --- Dynamic reference scan: existence + dependency chain ---
+        # Catches typos ({{screenr...}}) and out-of-order refs at load time
+        # instead of failing (or silently no-op'ing) at spawn time.
+        for step_name, body in iter_dynamic_refs(self.steps):
+            parts = body.split(".")
+            root = parts[0]
+            if root not in step_names:
+                raise PlanValidationError(
+                    f"Plan '{self.name}': step '{step_name}' uses dynamic"
+                    f" reference '{{{{{body}}}}}', but '{root}' is not a"
+                    " step of this plan (built-in values such as the date"
+                    " use the {{$name}} static syntax)"
+                )
+            if len(parts) < 2:
+                raise PlanValidationError(
+                    f"Plan '{self.name}': step '{step_name}' dynamic"
+                    f" reference '{{{{{body}}}}}' needs at least one field"
+                    f" after the step name (e.g. '{{{{{body}}}}}.response')"
+                )
+            if not self._is_transitive_dependency(step_name, root):
+                raise PlanValidationError(
+                    f"Plan '{self.name}': step '{step_name}' references"
+                    f" '{root}' in a dynamic template, but that step is not"
+                    f" in its dependency chain. Add '{root}' to depends_on"
+                    " (directly or transitively)."
                 )
 
     def _is_transitive_dependency(

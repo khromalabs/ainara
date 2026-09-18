@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional  # List,
 
 from ainara.bureau.plan import (
+    BUILTIN_STATIC_ROOTS,
     Plan,
     PlanValidationError,
     StepNode,
@@ -38,9 +39,11 @@ from ainara.bureau.plan import (
 from ainara.bureau.scratchpad import (
     Scratchpad,
     StaticBindings,
+    map_strings,
     resolve_property_aware,
 )
 from ainara.framework.orakle_client import call_skill
+from ainara.framework.template_manager import default_template_context
 
 logger = logging.getLogger(__name__)
 
@@ -668,8 +671,14 @@ class Conductor:
                 return None, message
             aliases[name] = value
 
+        # Built-in time/language bindings come from the shared
+        # default_template_context() — the same values .mu templates get.
+        # Plan variables win on collision (same precedence as render()).
         bindings = StaticBindings(
-            variables=dict(plan.variables),
+            variables={
+                **default_template_context(),
+                **plan.variables,
+            },
             aliases=aliases,
             alias_targets=dict(plan.config_aliases),
             config_root=config_root,
@@ -922,7 +931,7 @@ class Conductor:
                     " reason)._\n"
                 )
             elif (
-                not bindings.variables
+                set(bindings.variables) <= BUILTIN_STATIC_ROOTS
                 and not bindings.aliases
                 and not resolved_refs
             ):
@@ -931,8 +940,15 @@ class Conductor:
                 lines.append("| Binding | Source | Resolved Value |")
                 lines.append("|---|---|---|")
                 for name, value in bindings.variables.items():
+                    if (
+                        name in BUILTIN_STATIC_ROOTS
+                        and name not in plan.variables
+                    ):
+                        source = "built-in"
+                    else:
+                        source = "plan variable"
                     lines.append(
-                        f"| `${name}` | plan variable |"
+                        f"| `${name}` | {source} |"
                         f" {_format_binding_value(value)} |"
                     )
                 for name, target in bindings.alias_targets.items():
@@ -1168,18 +1184,16 @@ class Conductor:
         step_id = f"conductor-{plan_name}-{run_id}-{step_name}"
         result_queue = multiprocessing.Queue()
 
-        # Resolve any scratchpad templates in params
-        # TODO: Only top-level string params are resolved. Templates inside
-        # nested dicts/lists are passed to the skill verbatim and were never
-        # scanned by iter_static_refs (see matching TODO there); fix both
-        # together with a recursive walk, reusing scratchpad.resolve_template
-        # on nested strings so whole-placeholder native typing is preserved.
-        resolved_params = {}
-        for key, value in (step_node.params or {}).items():
-            if isinstance(value, str):
-                resolved_params[key] = scratchpad.resolve_template(value)
-            else:
-                resolved_params[key] = value
+        # Resolve any scratchpad templates in params, recursing through
+        # nested dicts/lists. Every string goes through
+        # scratchpad.resolve_template; whole placeholders — static and
+        # dynamic — keep their native type (int/float/bool/dict/list...)
+        # via native_whole=True. Values must remain JSON-serializable for
+        # call_skill (they originate from YAML scalars or JSON results).
+        resolved_params = map_strings(
+            step_node.params or {},
+            lambda text: scratchpad.resolve_template(text, native_whole=True),
+        )
 
         process = multiprocessing.Process(
             target=_run_skill_in_process,

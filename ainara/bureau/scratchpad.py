@@ -20,17 +20,37 @@ import copy
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CHARS = 10000
 
-# Matches a string that is exactly one static placeholder, e.g.
-# "{{$max_open_positions}}". Used to preserve the native value type for
-# whole-placeholder skill params. Keep the inner pattern in sync with
-# plan.STATIC_PLACEHOLDER_RE.
-WHOLE_STATIC_PLACEHOLDER_RE = re.compile(r"^\{\{\s*\$([^{}\s]+)\s*\}\}$")
+# Matches a string that is exactly one placeholder — static
+# ({{$name.path}}) or dynamic ({{step_name.field.path}}). Whole
+# placeholders may keep the resolved value's native type (see
+# Scratchpad.resolve_template). Keep the static inner pattern in sync
+# with plan.STATIC_PLACEHOLDER_RE.
+WHOLE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*([^{}\s]+)\s*\}\}$")
+
+
+def map_strings(obj: Any, fn: Callable[[str], Any]) -> Any:
+    """Recursively apply *fn* to every string found in *obj* and rebuild
+    the structure with the results.
+
+    Dicts and lists are rebuilt (inputs are never mutated); dict **keys**
+    are left untouched; non-string scalars pass through unchanged. Used to
+    resolve ``{{...}}`` templates inside nested skill params while letting
+    *fn* decide the output type (e.g. ``Scratchpad.resolve_template``
+    preserves native types for whole placeholders).
+    """
+    if isinstance(obj, str):
+        return fn(obj)
+    if isinstance(obj, dict):
+        return {key: map_strings(value, fn) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [map_strings(item, fn) for item in obj]
+    return obj
 
 
 def walk_dotted_path(data: Any, parts: List[str], ref: str) -> tuple:
@@ -304,28 +324,43 @@ class Scratchpad:
             )
         return text
 
-    def resolve_template(self, template: str) -> Any:
+    def resolve_template(
+        self, template: str, *, native_whole: bool = False
+    ) -> Any:
         """
-        Replace ``{{agent_name.field}}`` placeholders in *template* with
-        values from the scratchpad, truncating to ``self.max_chars``.
+        Replace ``{{step_name.field.path}}`` placeholders in *template*
+        with values from the scratchpad, truncating to ``self.max_chars``.
 
-        ``{{$name}}`` / ``{{$name.path}}`` references are resolved against the
-        run's static bindings (plan variables + config aliases). When the
-        whole string is exactly one static placeholder, the resolved value
-        keeps its native type (int/float/bool/...) instead of being
-        stringified — used for skill params.
+        ``{{$name}}`` / ``{{$name.path}}`` references are resolved against
+        the run's static bindings (plan variables + config aliases);
+        ``{{step_name.field.path}}`` references against stored step results.
+        When the whole string is exactly one placeholder, the resolved value
+        keeps its native type (int/float/bool/dict/list...) — always for
+        static refs, and for dynamic refs when *native_whole* is True
+        (opt-in used for skill params). Otherwise non-string values are
+        stringified and truncated (agent goals / system messages).
         """
         if not isinstance(template, str):
             return template
 
-        whole = WHOLE_STATIC_PLACEHOLDER_RE.match(template.strip())
+        whole = WHOLE_PLACEHOLDER_RE.match(template.strip())
         if whole:
-            ref = "$" + whole.group(1)
-            value, error = self._resolve_static_ref(ref)
+            ref = whole.group(1)
+            is_static = ref.startswith("$")
+            if is_static:
+                value, error = self._resolve_static_ref(ref)
+            else:
+                value, error = self.resolve_dotted_path(ref)
             if error is None and value is not None:
                 if isinstance(value, str):
                     return self._truncate_str(ref, value)
-                return value
+                # Static refs stay native everywhere (existing behaviour);
+                # dynamic refs opt in via native_whole=True (skill params).
+                # Goals/system messages keep the old stringified+truncated
+                # behaviour for dynamic refs.
+                if is_static or native_whole:
+                    return value
+                return self._truncate_str(ref, str(value))
             # Lenient fallback: leave the placeholder untouched.
             return template
 
