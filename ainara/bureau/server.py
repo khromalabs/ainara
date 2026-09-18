@@ -209,6 +209,39 @@ def timeout_monitor():
                 if not proc:
                     continue
 
+                # Drain the result queue even while the child is alive.
+                # A child whose result payload exceeds the OS pipe buffer
+                # (~64 KiB) blocks forever in its exit flush until the
+                # parent reads the item — waiting for exit first
+                # deadlocks until the execution timeout, and the result
+                # is destroyed at SIGTERM time (classic
+                # multiprocessing.Queue trap).
+                result_queue = task.get("result_queue")
+                if result_queue is not None:
+                    result = None
+                    try:
+                        result = result_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    except Exception as e:
+                        logger.error(
+                            f"Error reading queue for step {step_id}: {e}"
+                        )
+                    if result is not None:
+                        task["status"] = "COMPLETED"
+                        task["response"] = result
+                        # The child can now finish its exit flush; reap it.
+                        try:
+                            proc.join(timeout=2)
+                            if proc.is_alive():
+                                proc.terminate()
+                                proc.join(timeout=1)
+                        except Exception as e:
+                            logger.error(f"Error reaping step {step_id}: {e}")
+                        task["process"] = None
+                        task["result_queue"] = None
+                        continue
+
                 # Check if process has finished
                 if not proc.is_alive():
                     result_queue = task.get("result_queue")

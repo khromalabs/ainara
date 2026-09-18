@@ -68,8 +68,13 @@ def _run_skill_in_process(
     Calls the Orakle skill directly and puts the result on the queue.
     """
     try:
+        # Finish slightly before the parent's execution timeout so a
+        # network-level hang surfaces as an informative "Skill execution
+        # error: Read timed out" result instead of racing the monitor's
+        # SIGTERM (which reports an uninformative ProcessCrash).
         result_str = call_skill(
-            orakle_servers, skill_id, params, timeout=timeout
+            orakle_servers, skill_id, params,
+            timeout=max(timeout - 30, 1),
         )
 
         # Check if the result indicates an application-level error
@@ -351,6 +356,8 @@ class Conductor:
         aborted_steps: Dict[str, str] = {}  # step_name -> abort reason
         # Track avoid_if evaluation errors for reporting
         avoid_if_errors: Dict[str, Optional[str]] = {}
+        # Heartbeat state for the "still running" watchdog log
+        last_heartbeat = time.time()
 
         # --- Preflight: resolve every static ref before launching steps ---
         resolved_refs: Dict[str, Any] = {}
@@ -538,6 +545,21 @@ class Conductor:
                 # Small sleep to avoid busy-waiting
                 if running_step_ids:
                     time.sleep(2)
+                    now = time.time()
+                    if now - last_heartbeat >= 60:
+                        for hb_name, hb_id in running_step_ids.items():
+                            hb_task = self.step_registry.get(hb_id) or {}
+                            hb_start = hb_task.get("start_time")
+                            hb_elapsed = (
+                                int(now - hb_start) if hb_start else "?"
+                            )
+                            logger.info(
+                                "%s Step '%s' still running (%ss elapsed)",
+                                log_prefix,
+                                hb_name,
+                                hb_elapsed,
+                            )
+                        last_heartbeat = now
 
         except Exception as e:
             failed = True
@@ -567,9 +589,23 @@ class Conductor:
             )
 
             if plan.on_failure == "notify":
-                self._send_failure_notification(
-                    plan_name, run_id, failed_step, failure_reason
+                # Fire-and-forget with a hard join timeout: a wedged
+                # connector must never hold the plan lock hostage (the
+                # lock is only released after this returns).
+                notifier = threading.Thread(
+                    target=self._send_failure_notification,
+                    args=(plan_name, run_id, failed_step, failure_reason),
+                    daemon=True,
+                    name=f"notify-{plan_name}-{run_id}",
                 )
+                notifier.start()
+                notifier.join(timeout=10)
+                if notifier.is_alive():
+                    logger.warning(
+                        "%s Failure notification still pending after 10s;"
+                        " continuing (report and lock release not blocked)",
+                        log_prefix,
+                    )
         else:
             self.plan_status[plan_name]["state"] = "idle"
             self.plan_status[plan_name]["last_result"] = "success"
