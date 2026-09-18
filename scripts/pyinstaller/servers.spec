@@ -2,11 +2,19 @@
 import os
 import importlib
 import platform
+import sys
 from PyInstaller.utils.hooks import (
     collect_submodules,
     collect_data_files,
     collect_dynamic_libs,
 )
+
+# SPECPATH is injected by PyInstaller and points at scripts/pyinstaller/.
+# Reuse it to import the shared exclusion list (scripts/pyinstaller/
+# _shadowed_libs.py), so the strip here and the _build.py verifier
+# read from a single source.
+sys.path.insert(0, SPECPATH)
+from _shadowed_libs import SHADOWED_RUNTIME_LIBS
 
 # Fast track to test a server (dist output):
 #   1) scripts/_obfuscate.py    (host, licensed PyArmor)
@@ -507,6 +515,16 @@ for target in build_targets:
         cipher=block_cipher,
         noarchive=True,
     )
+
+# Strip toolchain runtimes on Linux before MERGE propagates the TOC.
+# They would shadow the host's (usually newer) libstdc++/libgcc_s and
+# break system libs the app pulls in at runtime (libjack, libportaudio).
+if system == "Linux":
+    for target in build_targets:
+        analyses[target].binaries = [
+            b for b in analyses[target].binaries
+            if os.path.basename(b[0]) not in SHADOWED_RUNTIME_LIBS
+        ]
 
 if BUILD_TARGET == "all":
     MERGE(

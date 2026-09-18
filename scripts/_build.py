@@ -24,6 +24,12 @@ import subprocess
 import sys
 import tempfile
 
+# Same list used by servers.spec to strip the TOC. Imported here so the
+# post-COLLECT verifier below cannot drift from the filter.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "pyinstaller"))
+from _shadowed_libs import SHADOWED_RUNTIME_LIBS
+
 try:
     import pkg_resources
     HAVE_PKG_RESOURCES = True
@@ -134,14 +140,50 @@ def run_smoke_test(target):
         script += (
             f"timeout -k 5 30 /d/{exe} > /tmp/smoke.log 2>&1\n"
             "rc=$?\n"
-            'if grep -Eq "GLIBC_[0-9]|ImportError|ModuleNotFoundError|'
-            'cannot open shared object file|error while loading shared libs" /tmp/smoke.log; then\n'
+            'if grep -Eq "GLIBC(X)?_[0-9]|ImportError|ModuleNotFoundError|'
+            'cannot (open shared object file|load library)|error while loading shared libs" /tmp/smoke.log; then\n'
             f'  echo "SMOKE FAIL: {exe}"; cat /tmp/smoke.log; exit 1\n'
             "fi\n"
             f'echo "smoke ok: {exe} (exit code $rc)"\n'
         )
     run_command(["docker", "run", "--rm", "-v", f"{base}:/d",
                  SMOKE_IMAGE, "/bin/bash", "-c", script])
+
+
+def check_bundle_integrity(dist_name):
+    """Fail if a shadowed runtime library leaked into the bundle.
+
+    servers.spec is supposed to strip these before COLLECT; this walks
+    the produced tree to confirm it did. Runs on every build (not only
+    under --smoke-test) because it is a cheap filename scan, and because
+    _build.py can short-circuit with "already exists", in which case the
+    spec never ran at all.
+    """
+    root = os.path.join("dist", dist_name)
+    if not os.path.isdir(root):
+        return  # nothing produced; the caller already failed elsewhere
+
+    hits = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for fn in filenames:
+            if fn in SHADOWED_RUNTIME_LIBS:
+                hits.append(os.path.join(dirpath, fn))
+
+    if not hits:
+        return
+
+    print("\nBundle integrity check FAILED — shadowed runtime libraries "
+          "found in the built tree:")
+    for h in hits:
+        print(f"  - {h}")
+    print(
+        "These precede the host's copies on the loader search path and "
+        "break system libraries (libjack, libportaudio, ...) that look "
+        "for newer GLIBCXX symbols. servers.spec's SHADOWED_RUNTIME_LIBS "
+        "strip did not take effect — check Analysis.binaries, or whether "
+        "a pyinstaller hook re-added them after the filter."
+    )
+    sys.exit(1)
 
 
 def run_command(cmd):
@@ -279,6 +321,12 @@ def build_executables(force=False, target="all", use_container=False, smoke=Fals
             "pyinstaller", servers_spec, "--clean", "--noconfirm",
             "--distpath", "dist", "--workpath", "build/pyi",
         ])
+
+    # Independent verifier for the servers.spec strip. Runs on every
+    # invocation (not only --smoke-test): cheap, and the only guard on
+    # the "dist/ already existed" short-circuit path.
+    if sys.platform != "win32":
+        check_bundle_integrity(dist_name)
 
     if smoke:
         print(f"\n=== Smoke test ({SMOKE_IMAGE}, glibc 2.35) ===\n")
