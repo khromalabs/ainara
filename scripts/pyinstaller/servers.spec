@@ -56,6 +56,13 @@ if EDITION not in ("public", "supporters"):
 SUPPORTERS = EDITION == "supporters"
 print(f"[servers.spec] Building '{EDITION}' edition")
 
+# Runtime marker read by the Polaris UI to decide whether the wallet/NFT
+# gate applies. Written once per build; ships at the root of _internal.
+_edition_marker = os.path.join(project_root, 'build', '.edition')
+os.makedirs(os.path.dirname(_edition_marker), exist_ok=True)
+with open(_edition_marker, 'w') as _f:
+    _f.write(EDITION + "\n")
+
 _required_trees = [
     os.path.join(supporters_compiled_root, 'ainara', 'nexus'),
     ataria_compiled,
@@ -202,6 +209,7 @@ if system == "Windows":
 
 # Common data files for both executables
 common_datas = [
+    (_edition_marker, '.'),
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),

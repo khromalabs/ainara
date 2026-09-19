@@ -62,6 +62,32 @@ const ollama = require('ollama');
 
 const config = new ConfigManager();
 
+// Edition of this bundle: 'public' (no wallet/NFT gate) or 'supporters'.
+// Resolution order: AINARA_EDITION env override → '.edition' marker shipped
+// inside the servers bundle → default 'public'. Real entitlement enforcement
+// lives inside the protected skills, so a missing marker only means the UI
+// does not ask for a wallet.
+function resolveAppEdition() {
+    const envEdition = (process.env.AINARA_EDITION || '').trim().toLowerCase();
+    if (envEdition === 'public' || envEdition === 'supporters') {
+        return envEdition;
+    }
+    const baseDir = ServiceManager.executablesDir;
+    for (const rel of [path.join('_internal', '.edition'), '.edition']) {
+        try {
+            const value = fs.readFileSync(path.join(baseDir, rel), 'utf8').trim().toLowerCase();
+            if (value === 'public' || value === 'supporters') {
+                return value;
+            }
+        } catch (e) { /* marker not at this path — try next candidate */ }
+    }
+    if (app.isPackaged) {
+        Logger.warn(`Edition marker not found under ${baseDir}; defaulting to 'public'`);
+    }
+    return 'public';
+}
+const appEdition = resolveAppEdition();
+
 function detectSentinelRequest() {
     if (process.argv.includes('--sentinel')) {
         return { sentinel: true, invalidEnvValue: null };
@@ -244,7 +270,7 @@ function showSetupWizard(validationErrors = [], options = {}) {
     setupWindow.setIcon(iconPath);
     setupWindow.loadFile(
         path.join(__dirname, 'components', 'setup.html'),
-        { query: { mode: reauth ? 'reauth' : 'full' } }
+        { query: { mode: reauth ? 'reauth' : 'full', edition: appEdition } }
     );
 
     setupWindow.once('ready-to-show', () => {
@@ -577,7 +603,9 @@ async function appInitialization(firstInitialization = true) {
         }
 
         // AUTHENTICATION CHECK
-        splashWindow.updateProgress('Verifying Access...', 70);
+        if (appEdition !== 'public') {
+            splashWindow.updateProgress('Verifying Access...', 70);
+        }
 
         // // Check Internet Connection before Auth
         // while (!await checkInternetConnection()) {
@@ -594,7 +622,9 @@ async function appInitialization(firstInitialization = true) {
         //     }
         // }
 
-        if (!await checkBackendAuth(splashWindow)) {
+        if (appEdition === 'public') {
+            Logger.info('Public edition: skipping wallet/NFT authorization gate');
+        } else if (!await checkBackendAuth(splashWindow)) {
             app.quit(); // User closed the wizard or auth failed → exit
             return;
         }

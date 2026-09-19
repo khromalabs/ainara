@@ -57,6 +57,10 @@ class ServiceManager {
             executablesDir = path.join(process.resourcesPath, 'bin', 'servers');
         }
 
+        // Exposed so main can locate bundled assets (e.g. the .edition marker)
+        // that ship inside the servers bundle.
+        this.executablesDir = executablesDir;
+
         // Define services with their executables and health endpoints
         if (useSourcePythonModules) {
             Logger.info('Using Python modules for services (dev-source mode)');

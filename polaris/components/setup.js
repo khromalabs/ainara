@@ -58,6 +58,7 @@ const { TOS_VERSION } = require('../framework/constants');
 
 const urlParams = new URLSearchParams(window.location.search);
 const isReauthMode = urlParams.get('mode') === 'reauth';
+const isPublicEdition = urlParams.get('edition') === 'public';
 
 async function refreshLLMStepButtonState() {
     const nextBtn = document.getElementById('main-next-btn');
@@ -88,7 +89,8 @@ function updateButtonVisibility() {
     const currentStep = steps[currentStepIndex];
 
     if (currentStep === 'welcome') {
-        const isWalletVerified = document.getElementById('auth-container').classList.contains('verified');
+        const isWalletVerified = isPublicEdition ||
+            document.getElementById('auth-container').classList.contains('verified');
         const isTosAccepted = document.getElementById('terms-accept-btn').checked;
         nextBtn.disabled = !(isWalletVerified && isTosAccepted);
     } else if (currentStep === 'llm') {
@@ -453,6 +455,10 @@ function updateLLMStepTitle() {
 
 // Initialize the UI
 document.addEventListener('DOMContentLoaded', async () => {
+    if (isPublicEdition) {
+        // Public edition: no wallet/NFT gate; hide the verification UI.
+        document.getElementById('auth-container').style.display = 'none';
+    }
     setupEventListeners();
     updateLLMStepTitle();
     await stepModules.welcome.init(ctx);

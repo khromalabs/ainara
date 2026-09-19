@@ -18,6 +18,9 @@
 
 let initialized = false;
 
+const isPublicEdition =
+    new URLSearchParams(window.location.search).get('edition') === 'public';
+
 function setupTosListeners(config, updateButtonVisibility, tosVersion) {
     const tosCheckbox = document.getElementById('terms-accept-btn');
     const openModalLink = document.getElementById('open-tos-modal');
@@ -156,12 +159,15 @@ module.exports = {
         initialized = true;
 
         setupTosListeners(ctx.config, ctx.updateButtonVisibility, ctx.TOS_VERSION);
-        await setupAuthListeners(ctx.config, ctx.ipcRenderer, ctx.updateButtonVisibility);
+        if (!isPublicEdition) {
+            await setupAuthListeners(ctx.config, ctx.ipcRenderer, ctx.updateButtonVisibility);
+        }
     },
 
     validate(ctx) {
         const authContainer = document.getElementById('auth-container');
         const tosCheckbox = document.getElementById('terms-accept-btn');
-        return authContainer?.classList.contains('verified') && tosCheckbox?.checked;
+        return (isPublicEdition || authContainer?.classList.contains('verified'))
+            && !!tosCheckbox?.checked;
     }
 };
