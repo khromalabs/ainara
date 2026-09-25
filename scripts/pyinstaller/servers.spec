@@ -33,9 +33,9 @@ nexus_obfuscated_root = os.path.join(project_root, 'build', 'nexus_obfuscated')
 supporters_obfuscated_root = os.path.join(project_root, 'build', 'supporters_obfuscated')
 supporters_compiled_root = os.path.join(project_root, 'build', 'supporters_compiled')
 supporters_compiled = os.path.join(supporters_compiled_root, 'supporters')
-ataria_compiled = os.path.join(
-    project_root, 'build', 'ataria_compiled', 'ainara', 'nexus', 'khromalabs', 'ataria'
-)
+# ataria_compiled = os.path.join(
+#     project_root, 'build', 'ataria_compiled', 'ainara', 'nexus', 'khromalabs', 'ataria'
+# )
 
 # Optional single-server build mode.
 # Set POLARIS_TARGET=orakle|pybridge|bureau|sentinel to build only that server.
@@ -65,7 +65,7 @@ with open(_edition_marker, 'w') as _f:
 
 _required_trees = [
     os.path.join(supporters_compiled_root, 'ainara', 'nexus'),
-    ataria_compiled,
+    # ataria_compiled,
 ]
 if SUPPORTERS:
     _required_trees.append(supporters_compiled)
@@ -214,10 +214,10 @@ common_datas = [
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
-    (os.path.join(ataria_compiled, 'nexus.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(ataria_compiled, 'providers_registry.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(ataria_compiled, 'skills_metadata.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(ataria_compiled, 'site'), 'ainara/nexus/khromalabs/ataria/site'),
+#    (os.path.join(ataria_compiled, 'nexus.json'), 'ainara/nexus/khromalabs/ataria'),
+#    (os.path.join(ataria_compiled, 'providers_registry.json'), 'ainara/nexus/khromalabs/ataria'),
+#    (os.path.join(ataria_compiled, 'skills_metadata.json'), 'ainara/nexus/khromalabs/ataria'),
+#    (os.path.join(ataria_compiled, 'site'), 'ainara/nexus/khromalabs/ataria/site'),
     *datas,
     *package_datas,
     *datas_from_hooks

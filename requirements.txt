@@ -664,8 +664,8 @@ spacy-legacy==3.0.12
     # via spacy
 spacy-loggers==1.0.5
     # via spacy
-speexdsp-ns==0.1.2
-    # via -r requirements.in
+#speexdsp-ns==0.1.2
+#    # via -r requirements.in
 sqlalchemy==2.0.46
     # via -r requirements.in
 srsly==2.5.2
