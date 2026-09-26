@@ -134,8 +134,9 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 
 ### Environment Variables
 
-- `AINARA_USE_SOURCE`: Use source to boot backend services.
-- `AINARA_LOG_ELECTRON`: Capture all Electron output into /tmp/electron.log
+- `AINARA_USE_SOURCE=1`: Use source to boot backend services.
+- `AINARA_LOG_ELECTRON=1`: Capture all Electron output into /tmp/electron.log
+- `AINARA_SENTINEL_MODE=1`: Start Polaris in alternative Sentinel-only mode, runs Bureau+Orakle for scheduled agents orchestrated plans execution.
 
 ## Running the Sentinel scheduler script
 
