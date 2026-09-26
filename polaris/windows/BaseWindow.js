@@ -51,8 +51,8 @@ class BaseWindow {
             hasShadow: config.get(`${prefix}.hasShadow`, false),
             vibrancy: config.get(`${prefix}.vibrancy`, 'blur'),
             visualEffectState: config.get(`${prefix}.visualEffectState`, 'active'),
-            opacity: config.get(`${prefix}.opacity`, 0.8),
-            resizable: false
+            opacity: 1, // config.get(`${prefix}.opacity`, 0.8),
+            resizable: false,
         };
 
         this.windowOptions = { ...this.defaultOptions, ...options };

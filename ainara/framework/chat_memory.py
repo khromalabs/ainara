@@ -19,6 +19,7 @@
 
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -34,8 +35,8 @@ class ChatMemory:
 
     def __init__(
         self,
+        storage_backend: StorageBackend,
         context: Optional[Dict[str, str]] = None,
-        storage_backend: Optional[StorageBackend] = None,
     ):
         """
         Initialize memory with context-aware storage
@@ -63,28 +64,8 @@ class ChatMemory:
             self.storage = storage_backend
             logger.info("Using provided storage backend")
         else:
-            # Get text storage configuration
-            text_type = config.get("memory.text_storage.type", "sqlite")
-            text_path = config.get(
-                "memory.text_storage.storage_path",
-                os.path.join(config.get("data.directory"), "chat_memory.db"),
-            )
-
-            # Ensure path is expanded
-            text_path = os.path.expanduser(text_path)
-
-            # Create text backend
-            try:
-                self.storage = get_text_backend(
-                    text_type, db_path=text_path, context_id=context_id
-                )
-                logger.info(
-                    f"Using {text_type} storage backend with context"
-                    f" {context_id}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to initialize {text_type} backend: {e}")
-                raise
+            logger.error("Missing required storage backend")
+            raise
 
         # Initialize vector storage if configured
         vector_type = config.get("memory.vector_storage.type", "chroma")
@@ -94,7 +75,7 @@ class ChatMemory:
         )
         embedding_model = config.get(
             "memory.vector_storage.embedding_model",
-            "sentence-transformers/all-mpnet-base-v2",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         )
 
         # Ensure path is expanded
@@ -194,6 +175,7 @@ class ChatMemory:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
+        sort: str = "ASC"
     ) -> List[Dict[str, Any]]:
         """Get paginated chat history"""
         return self.storage.get_messages(
@@ -202,55 +184,102 @@ class ChatMemory:
             start_date=start_date,
             end_date=end_date,
             users=users,
+            sort=sort
         )
+
+    def format_messages_to_markdown(
+        self, messages: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Formats a list of message dictionaries into a Markdown string.
+
+        Args:
+            messages: A list of message dictionaries.
+
+        Returns:
+            A formatted Markdown string.
+        """
+        markdown_lines = []
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            role_prefix = "U" if role == "user" else "A"
+            content = msg.get("content", "")
+            content = re.sub(r"\n+", "\n", content)
+            timestamp = msg.get("timestamp")
+
+            dt_object = datetime.fromisoformat(timestamp)
+            if dt_object.tzinfo is None:
+                dt_object = dt_object.replace(tzinfo=timezone.utc)
+
+            time_str = dt_object.astimezone().strftime("%H:%M:%S")
+            markdown_lines.append(
+                f"`{time_str}` **{role_prefix}:** {content}"
+            )
+        return "\n".join(markdown_lines)
 
     def search_entries(
         self,
         query: str,
-        limit: int = 5,
-        use_vector: bool = True,
+        limit: int = 10,
+        offset: int = 0,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Search entries using vector search if available, fallback to text search"""
-        # Try vector search first if requested and available
-        if use_vector and self.vector_storage:
-            try:
-                # Build the filter dictionary for the vector search
-                where_filter = {}
-                where_clauses = []
+        """
+        Search entries using text search with syntax support, or vector search if prefixed with ~.
+        Syntax:
+          "phrase" : Exact match
+          -word    : Exclude word
+          word     : Include word
+          ~query   : Semantic search (ignores syntax)
+        """
+        if not query:
+            return []
 
-                if start_date or end_date:
-                    date_filter = {}
-                    if start_date:
-                        date_filter["$gte"] = start_date
-                    if end_date:
-                        date_filter["$lte"] = end_date
-                    where_clauses.append({"timestamp": date_filter})
-
-                if users:
-                    where_clauses.append({"user": {"$in": users}})
-
-                if where_clauses:
-                    if len(where_clauses) > 1:
-                        where_filter["$and"] = where_clauses
-                    else:
-                        where_filter.update(where_clauses[0])
-
+        # 1. Vector Search Route (Semantic)
+        if query.startswith("~"):
+            search_query = query[1:].strip()
+            if self.vector_storage:
+                # Note: Vector storage typically doesn't support offset pagination efficiently
+                # We pass the limit.
                 return self.vector_storage.search(
-                    query,
+                    search_query,
                     limit=limit,
-                    filter_dict=where_filter if where_filter else None,
+                    # We could add date filters here if the vector backend supports it
                 )
-            except Exception as e:
-                logger.error(
-                    f"Vector search failed, falling back to text search: {e}"
-                )
+            # Fallback to text search if no vector storage, treating query as literal
+            query = search_query
 
-        # Fallback to basic text search
+        # 2. Text Search Parsing (Relational)
+        include_terms = []
+        exclude_terms = []
+
+        # Extract quoted phrases first
+        phrase_pattern = re.compile(r'"([^"]*)"')
+        phrases = phrase_pattern.findall(query)
+        include_terms.extend(phrases)
+
+        # Remove phrases from query to process individual words
+        remaining_query = phrase_pattern.sub(' ', query)
+
+        # Process words
+        words = remaining_query.split()
+        for word in words:
+            if word.startswith("-") and len(word) > 1:
+                exclude_terms.append(word[1:])
+            else:
+                include_terms.append(word)
+
+        # 3. Execute Search
         return self.storage.search_text(
-            query, limit, start_date=start_date, end_date=end_date, users=users
+            limit=limit,
+            offset=offset,
+            include_terms=include_terms,
+            exclude_terms=exclude_terms,
+            start_date=start_date,
+            end_date=end_date,
+            users=users
         )
 
     def get_total_messages(self) -> int:
@@ -301,7 +330,7 @@ class ChatMemory:
             )
             embedding_model = config.get(
                 "memory.vector_storage.embedding_model",
-                "sentence-transformers/all-mpnet-base-v2",
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             )
 
             # Create new vector backend with new context

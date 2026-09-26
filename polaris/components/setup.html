@@ -10,7 +10,6 @@
         <div class="setup-header">
             <button title="Close setup wizard" class="close-btn">&times;</button>
             <h1>Welcome to Ainara Polaris</h1>
-            <p>Let's get everything set up for you</p>
         </div>
 
         <div class="setup-content">
@@ -19,24 +18,48 @@
                 <div class="step active" data-step="welcome">Welcome</div>
                 <div class="step" data-step="ollama">Ollama Setup</div>
                 <div class="step" data-step="llm">LLM Providers</div>
-                <div class="step" data-step="stt">Speech2Text</div>
-                <div class="step" data-step="skills">Native Skills</div>
+                <div class="step" data-step="stt">Voice Setup</div>
+                <div class="step" data-step="api">API Setup</div>
+                <div class="step" data-step="skills">Skills</div>
                 <div class="step" data-step="mcp">MCP Servers</div>
                 <div class="step" data-step="shortcuts">Shortcuts</div>
                 <div class="step" data-step="finish">Finish</div>
             </div>
 
             <!-- Step content -->
-            <div class="step-content">
+            <div class="step-content" style="justify-content: center; display:flex;">
                 <!-- Welcome step -->
                 <div class="step-panel active" id="welcome-panel">
                     <div style="width: 100%; text-align: center">
                     <img width="300px" src="../assets/logo3.png" alt="Ainara Polaris Logo" class="logo">
-                    <h2>Welcome to Ainara Polaris Setup</h2>
-                    <p>This wizard will help you configure Ainara Polaris for its first use. Ainara Polaris is a friendly conversational AI assistant capable of generating memories about the user, with MCP support and many useful skills available by default (see a full list in the last step of this assistant). </p>
-                    <p>We'll help you to set up your LLM provider and configure API keys for various skills, among other options.</p>
+                    <h2>Welcome to the Ainara Polaris Setup</h2>
+                    <p>This wizard will help you configure Ainara Polaris for its first use. Ainara Polaris is a next-gen friendly, powerful conversational AI assistant featuring evolutive memories, agents orchestration and the Orakle skills execution engine. Ainara can seamlessly use either local or commercial LLM models.</p>
+                    <p>This wizard will help you to set up your LLM provider and configure API keys for various skills, among other options.</p>
+
+                    <!-- Auth Section -->
+                    <div id="auth-container" style="margin-top: 30px; padding: 20px; background: rgba(0,0,0,0.05); border-radius: 8px; text-align: left; max-width: 500px; margin-left: auto; margin-right: auto; margin-top: 60px;">
+                        <h3 style="margin-top: 0; text-align: center;">Community Access Verification</h3>
+                        <p style="font-size: 0.9em;">Access to Polaris "Supporters Edition" requires holding a NFT "Polaris Pass", Collection: <b></b>GhDd7CvvM4vMzJ3FpWkitUpwQwTj8XUn3KvdENyxHYiX</b>.</p>
+                        <div class="form-group" style="display:flex; justify-content: center;">
+                            <input type="text" id="wallet-address-input" placeholder="Paste your Solana Wallet Address" style="width: 100%; padding: 10px; margin-bottom: 10px; background-color: #007bff;">
+                            <button id="verify-wallet-btn" class="btn" style="width: 100%;background-color: #007bff;color:white;width:200px;">Verify Access</button>
+                        </div>
+                        <div id="auth-status-message" style="margin-top: 10px; font-weight: bold; min-height: 20px;"></div>
+                    </div>
+
+                    <div id="tos-update-notice" class="warning-block hidden" style="max-width: 500px; margin-left: auto; margin-right: auto; margin-bottom: 15px;">
+                        <b>The Terms of Service have been updated (v0.11).</b> Please review the new terms and accept them again to continue.
+                    </div>
+
+                    <!-- ToS Section -->
+                    <div id="tos-container" style="margin-top: 20px; padding: 20px; background: rgba(0,0,0,0.05); border-radius: 8px; text-align: left; max-width: 500px; margin-left: auto; margin-right: auto;">
+                        <div class="form-group" style="display:flex; align-items: center; justify-content: center; margin-bottom: 0;">
+                            <input type="checkbox" id="terms-accept-btn" style="width: auto; margin-right: 10px;">
+                            <label for="terms-accept-btn" style="margin-bottom: 0;">I have read and agree to the <a href="#" id="open-tos-modal">Terms of Service</a> (v0.11).</label>
+                        </div>
                     </div>
                 </div>
+              </div>
 
                 <!-- Ollama setup step -->
                 <div class="step-panel" id="ollama-panel">
@@ -49,7 +72,7 @@
                 <!-- LLM setup step -->
                 <div class="step-panel" id="llm-panel">
                     <h2>LLM Provider Setup</h2>
-                    <p><b>At least one provider, local (via Ollama) or remote, must be correctly configured and selected</b>. In order to use any commercial LLM provider <b>an API key must be obtained</b>. Some providers offer free access, most require purchasing some credit.</p>
+                    <p><b>At least one provider (local or remote) must be correctly configured and selected</b>. In order to use any commercial LLM provider <b>an API key must be obtained</b>. Some offer free access, most require purchasing some credit.</p>
 
                     <div id="api-key-info-container"></div>
 
@@ -74,52 +97,53 @@
 
                 <!-- STT setup step -->
                 <div class="step-panel" id="stt-panel">
-                    <h2>Speech-to-Text Setup</h2>
-                    <p><b><span class="note-signal">&nbsp;</span>User configuration temporally disabled, will use the embedded Faster-Whisper engine.</b><br><br>Configure how Polaris will convert your voice to text.</p>
+                    <h2>Voice Setup</h2>
+                    <p>Configure the language for speaking to Ainara and the voice she will use to reply.</p>
+                    <p><b><span class="note-signal">&nbsp;</span>Using Faster-Whisper (STT) and Kokoro (TTS) engines.</b></p>
+
+                    <!-- Placeholder for hardware info (injected via JS) -->
+                    <!-- <div id="hardware-acceleration-info" class="hardware-info"></div> -->
 
                     <div class="stt-options">
-                        <div class="stt-option">
-                            <!-- TODO disabled -->
-                            <input type="radio" name="stt-backend" id="stt-faster-whisper" value="faster_whisper" checked disabled>
-                            <label for="stt-faster-whisper">Use built-in Whisper (recommended)</label>
-                            <p class="option-description">Uses the local Faster Whisper engine for speech recognition. Works offline and provides good accuracy.</p>
+                        <div class="form-group">
+                            <label for="stt-language-select">User's Language:</label>
+                            <select id="stt-language-select" style="width: 100%; padding: 10px; font-size: 1.1em;">
+                                <!-- Populated by JS -->
+                            </select>
+                            <p class="field-description">Select the primary language you will use to speak to Ainara.</p>
                         </div>
 
-                        <div class="stt-option">
-                            <!-- TODO disabled -->
-                            <input type="radio" name="stt-backend" id="stt-custom" value="custom" disabled>
-                            <label for="stt-custom">Use custom Whisper API</label>
-                            <p class="option-description">Connect to a custom Whisper API endpoint.</p>
-
-                            <div class="stt-details" id="custom-stt-details" style="display: none;">
-                                <div class="form-group">
-                                    <label for="custom-api-url">API URL:</label>
-                                    <input type="text" id="custom-api-url" placeholder="http://example.com/api/whisper">
-                                </div>
-                                <div class="form-group">
-                                    <label for="custom-api-key">API Key (if required):</label>
-                                    <input type="password" id="custom-api-key" placeholder="Optional API key">
-                                </div>
-                            </div>
+                        <div class="form-group">
+                            <label for="tts-voice-select">Ainara's Voice:</label>
+                            <select id="tts-voice-select" style="width: 100%; padding: 10px; font-size: 1.1em;">
+                                <!-- Populated by JS based on language -->
+                            </select>
+                            <p class="field-description">Select the voice model for text-to-speech output.</p>
                         </div>
+
+                        <div id="stt-ram-warning" class="warning-block hidden"></div>
                     </div>
 
                     <div id="stt-test-result" class="hidden"></div>
+                </div>
 
+                <!-- API Setup step -->
+                <div class="step-panel" id="api-panel">
+                    <h2>API Setup</h2>
+                    <p>Configure optional API keys and email accounts.</p>
+                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b><br><br>
+                    <div id="api-list" class="api-list">
+                        <p>Loading API configuration...</p>
+                    </div>
                 </div>
 
                 <!-- Skills setup step -->
                 <div class="step-panel" id="skills-panel">
-                    <h2>Skills API Keys</h2>
-                    <b><span class="note-signal">&nbsp;</span>Modified keys must be validated before continuing.</b></br></br>
-                    <b><span class="tip-signal">&nbsp;</span>To get a complete list about Ainara's capabilities at any moment, simply ask her.</b></br></br>
-                    <p>The following skills require API keys. All are optional, but especially the search services are highly recommended.</p>
-
+                    <h2>Skills</h2>
+                    <p>Configure available Nexus skills properties, users skills directory and scheduled skills.</p>
                     <div class="skills-list">
-                        <!-- This will be populated dynamically -->
                         <p>Loading available skills...</p>
                     </div>
-
                 </div>
 
                 <!-- MCP Servers setup step -->
@@ -171,7 +195,7 @@
                                 <li><strong>Talk to Ainara</strong>: Hold down the Push-to-Talk key (<span id="trigger-key-display">Space</span>) while speaking.</li>
                                 <li><strong>Release to send</strong>: Release the Push-to-Talk key when you're done speaking to process your request.</li>
                                 <li><strong>Hide the interface</strong>: Press the Hide UI key (<span id="hide-key-display">Escape</span>) or click outside the interface to hide it.</li>
-				<li><strong>Type input</strong>: Just type any letter or number and the input control will show up.</li>
+				<li><strong>Type input</strong>: while Ainara's window is focused, just type any letter or number and the input control will show up.</li>
                             </ol>
                         </div>
                     </div>
@@ -187,15 +211,30 @@
                         <input type="checkbox" id="start-minimized-checkbox" style="width: auto; margin-right: 8px;">
                         <label for="start-minimized-checkbox" style="display: inline; font-weight: normal;">Start minimized in the system tray on launch</label>
                         <br>
-                        <input type="checkbox" id="review-stt-checkbox" style="width: auto; margin-right: 8px;">
-                        <label for="review-stt-checkbox" style="display: inline; font-weight: normal;">Review speech-to-text before sending it to conversation</label>
-                        <br>
                         <input type="checkbox" id="background-notifications-checkbox" style="width: auto; margin-right: 8px;">
                         <label for="background-notifications-checkbox" style="display: inline; font-weight: normal;">Show Ainara's answers as system notifications in background mode</label>
+                        <br>
+                        <input type="checkbox" id="lower-volume-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="lower-volume-checkbox" style="display: inline; font-weight: normal;">Mute audio while talking to Ainara</label>
+                        <br>
+                        <input type="checkbox" id="wakeword-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="wakeword-checkbox" style="display: inline; font-weight: normal;">Enable wake-word functionality ("aye-nah-rah") [BETA]</label>
+                        <br>
+                        <input type="checkbox" id="comring-notifications-checkbox" style="width: auto; margin-right: 8px;">
+                        <label for="comring-notifications-checkbox" style="display: inline; font-weight: normal;">Enable notifications visual hints</label>
+                        <br>
+                        <br>
+                        <label for="review-stt-select" style="display: inline; font-weight: normal;">Review speech-to-text before sending it to conversation:</label>
+                        <select id="review-stt-select" style="width: 100%; padding: 10px; font-size: 1.1em;">
+                            <option value="off">Never</option>
+                            <option value="auto">Automatic</option>
+                            <option value="on" selected>Always</option>
+                        </select>
+                        <br>
                         <!-- TODO delayed for v0.10 -->
                         <!-- <br> -->
                         <!-- <input type="checkbox" id="auto-start-checkbox" style="width: auto; margin-right: 8px;"> -->
-                        <!-- <label for="auto-start-checkbox" style="display: inline; font-weight: normal;">Launch Ainara automatically on system startup</label> -->
+                        <!-- <label for="auto-start-checkbox" style="display: inline; font-weight: normal;">Launch Ainara automatically on systelm startup</label> -->
                     </div>
                     <div class="form-group">
                         <label for="backup-directory-input">Backup Directory:</label>
@@ -222,8 +261,48 @@
                 <button class="back-btn" id="main-back-btn">Back</button>
             </div>
             <div>
-                <button class="next-btn" id="main-next-btn">Next</button>
+                <button class="next-btn" id="main-next-btn" disabled  onchange="console.log('change');console.trace()">Next</button>
                 <button class="finish-btn" id="main-finish-btn">Start Polaris</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ToS Modal -->
+    <div id="tos-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Ainara Polaris — Terms of Service (v0.11)</h2>
+                <button class="close-modal-btn" id="close-tos-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>By activating and using Polaris, you acknowledge and agree to the following terms:</p>
+                <h3>1. Data Sovereignty &amp; Local Architecture</h3>
+                <ul>
+                    <li><strong>Zero-Telemetry Policy</strong>: Polaris operates locally on your machine. Conversations, perpetual memory, configuration files, and local skills are stored and processed strictly on your device. No private data, telemetry, or conversational logs are collected, inspected, or stored on our servers. Where applicable, license verification for proprietary components is performed locally against public blockchain state; no activation server, callback, or additional data collection is involved.</li>
+                    <li><strong>Third-Party APIs and ORAKLE</strong>: When utilizing external AI model providers (e.g., Grok, DeepSeek, OpenAI) or API interfaces via ORAKLE, data sent is strictly limited to the operational payload required for that specific request. Interactions with third-party APIs are governed solely by your own credentials and the respective provider's terms and privacy policies.</li>
+                </ul>
+                <h3>2. Operational Responsibility &amp; Risk Assumption</h3>
+                <ul>
+                    <li><strong>Autonomous Local Operator</strong>: Polaris is an orchestration and execution interface. You, as the user, act as the sole operator of your environment. You maintain full responsibility for system actions, file modifications, script executions, and API consumption triggered via conversational commands.</li>
+                    <li><strong>No Financial Advice &amp; Trading Disclaimers</strong>: Tools or integrations interfacing with financial markets, trading bots, or algorithmic execution (including Ataria skills) are provided strictly for educational and automated workflow orchestration purposes. They do not constitute financial, investment, or legal advice. You assume total responsibility for market risks, execution parameters, order invalidations, slippage, and capital allocation.</li>
+                    <li><strong>"As Is" Disclaimer</strong>: The software is provided "as is" and "as available", without warranty of any kind, express or implied, to the maximum extent permitted by applicable law. In no event shall the authors be liable for direct, indirect, incidental, or consequential damages resulting from the use or inability to use this software.</li>
+                </ul>
+                <h3>3. Component Structure &amp; Licensing</h3>
+                <ul>
+                    <li><strong>Free Software Core</strong>: The Ainara Polaris framework, orchestrator, and every component not explicitly marked as proprietary are free software licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0). Nothing in these terms restricts the rights that the LGPL grants over those components, including their study, modification, relinking, and redistribution, and their corresponding source code remains publicly available.</li>
+                    <li><strong>Ataria Proprietary Nexus App</strong>: The Ataria trading suite and any related skill and inner framework component, which are explicitly marked as proprietary — are distributed as closed-source, protected binaries. These components are licensed, not sold, under the terms of this document, and are clearly identified as proprietary in the documentation and distribution materials.</li>
+                    <li><strong>License Notices</strong>: Every distribution includes the license notices of all bundled components, free and proprietary.</li>
+                    <li><strong>User-Defined Extensions</strong>: Nothing in sections 3 and 4 applies to custom user skills, configurations, or independent modules created within your local user environment.</li>
+                </ul>
+                <h3>4. Supporter License &amp; Genesis Pass</h3>
+                <ul>
+                    <li><strong>Grant of License</strong>: Proprietary components are granted under a personal, transferable supporter license, evidenced by ownership of the associated NFT (Genesis Pass/Supporter Pass). License status is verified locally by reading public on-chain ownership data.</li>
+                    <li><strong>Transfer</strong>: The supporter license travels with the pass: transferring the NFT transfers the license, with no additional registration required.</li>
+                    <li><strong>Integrity of Proprietary Binaries</strong>: Redistribution, resale, automated scraping, unauthorized cracking, unpacking, circumvention of technical protection, or reverse engineering of proprietary components is prohibited. These restrictions apply exclusively to proprietary components and shall not be construed to limit any right granted by the LGPL-3.0 over free components.</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button class="btn finish-btn" id="accept-tos-modal-btn">I Agree</button>
             </div>
         </div>
     </div>

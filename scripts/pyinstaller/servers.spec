@@ -1,9 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
-import sys
 import importlib
 import platform
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+import sys
+from PyInstaller.utils.hooks import (
+    collect_submodules,
+    collect_data_files,
+    collect_dynamic_libs,
+)
+
+# SPECPATH is injected by PyInstaller and points at scripts/pyinstaller/.
+# Reuse it to import the shared exclusion list (scripts/pyinstaller/
+# _shadowed_libs.py), so the strip here and the _build.py verifier
+# read from a single source.
+sys.path.insert(0, SPECPATH)
+from _shadowed_libs import SHADOWED_RUNTIME_LIBS
+
+# Fast track to test a server (dist output):
+#   1) scripts/_obfuscate.py    (host, licensed PyArmor)
+#   2) POLARIS_EDITION=supporters POLARIS_TARGET=orakle \
+#          pyinstaller --distpath dist --workpath build/pyi scripts/pyinstaller/servers.spec
+# or simply:  scripts/_build.py -e supporters -t orakle
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -12,19 +29,68 @@ project_root = os.path.abspath(os.getcwd())
 if not os.path.exists(os.path.join(project_root, 'ainara')):
     raise ValueError(f"Calculated project_root {project_root} does not contain 'ainara' directory. Ensure the build is run from the project root.")
 
+nexus_obfuscated_root = os.path.join(project_root, 'build', 'nexus_obfuscated')
+supporters_obfuscated_root = os.path.join(project_root, 'build', 'supporters_obfuscated')
+supporters_compiled_root = os.path.join(project_root, 'build', 'supporters_compiled')
+supporters_compiled = os.path.join(supporters_compiled_root, 'supporters')
+ataria_compiled = os.path.join(
+    project_root, 'build', 'ataria_compiled', 'ainara', 'nexus', 'khromalabs', 'ataria'
+)
+
+# Optional single-server build mode.
+# Set POLARIS_TARGET=orakle|pybridge|bureau|sentinel to build only that server.
+BUILD_TARGET = os.environ.get("POLARIS_TARGET", "all").strip().lower()
+if BUILD_TARGET not in ("all", "orakle", "pybridge", "bureau", "sentinel"):
+    raise SystemExit(f"Unknown POLARIS_TARGET: {BUILD_TARGET!r}")
+print(f"[servers.spec] Build target(s): {BUILD_TARGET}")
+
+# --- Edition & pre-obfuscated artifacts ----------------------------------
+# Obfuscation (staging, license-guard injection, PyArmor) runs on the HOST
+# via scripts/_obfuscate.py: the licensed PyArmor install and the build
+# secret never enter the build container. This spec only consumes that
+# output, so it can run inside the manylinux_2_28 container that pins our
+# glibc floor.
+EDITION = os.environ.get("POLARIS_EDITION", "public").strip().lower()
+if EDITION not in ("public", "supporters"):
+    raise SystemExit(f"Unknown POLARIS_EDITION: {EDITION!r}")
+SUPPORTERS = EDITION == "supporters"
+print(f"[servers.spec] Building '{EDITION}' edition")
+
+# Runtime marker read by the Polaris UI to decide whether the wallet/NFT
+# gate applies. Written once per build; ships at the root of _internal.
+_edition_marker = os.path.join(project_root, 'build', '.edition')
+os.makedirs(os.path.dirname(_edition_marker), exist_ok=True)
+with open(_edition_marker, 'w') as _f:
+    _f.write(EDITION + "\n")
+
+_required_trees = [
+    os.path.join(supporters_compiled_root, 'ainara', 'nexus'),
+    ataria_compiled,
+]
+if SUPPORTERS:
+    _required_trees.append(supporters_compiled)
+for _tree in _required_trees:
+    if not os.path.isdir(_tree):
+        raise FileNotFoundError(
+            f"{_tree} not found — run scripts/_obfuscate.py first "
+            f"(scripts/_build.py runs it automatically)."
+        )
+
 block_cipher = None
 
 # Create array of package data entries
 package_data_entries = [
     ('emoji', ['unicode_codes']),
-    ('normalise', ['data']),
+    # ('normalise', ['data']),
     ('faster_whisper', ['assets']),
-    ('litellm', [
-        'litellm_core_utils/tokenizers',
-        'model_prices_and_context_window_backup.json'
-    ]),
+    # ('litellm', [
+    #     'litellm_core_utils/tokenizers',
+    #     'model_prices_and_context_window_backup.json'
+    #     'containers/endpoints.json'
+    # ]),
     ('en_core_web_sm', ['.']),
-    ('newspaper', ['.']),
+    ('openwakeword', ['.']),
+    ('trafilatura', ['.'])
 ]
 
 # Generate datas array from package data directories
@@ -54,7 +120,13 @@ packages_to_collect_data_from = [
     'chromadb',
     'onnxruntime',
     'tokenizers',
-    'chroma-hnswlib'
+    'chroma-hnswlib',
+    # 'numpy',
+    'litellm',
+    'kokoro_onnx',
+    'language_tags',
+    'espeakng_loader',
+    'pyarmor_runtime',
 ]
 
 # Define rules for platform-specific data files that need special handling.
@@ -102,71 +174,90 @@ tts_models_dir = os.path.join(project_root, 'resources/tts/models')
 if os.path.exists(tts_models_dir):
     datas.append((tts_models_dir, 'resources/tts/models'))
 
-# Add platform-specific binaries
-system = platform.system()
-arch = platform.machine().lower()
+# Add STT wakeword models
+wakeword_models_dir = os.path.join(project_root, 'resources/stt/wakeword')
+if os.path.exists(wakeword_models_dir):
+    datas.append((wakeword_models_dir, 'resources/stt/wakeword'))
 
-if system == "Windows":
-    # Add Windows-specific binaries
-    piper_bin_dir = os.path.join(project_root, 'resources/bin/windows')
-    if os.path.exists(piper_bin_dir):
-        binaries.append((piper_bin_dir, 'resources/bin/windows'))
-elif system == "Darwin":  # macOS
-    # Add macOS-specific binaries with architecture awareness
-    if arch == "arm64":
-        # ARM64 (Apple Silicon) binaries
-        piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/aarch64')
-        if os.path.exists(piper_bin_dir):
-            binaries.append((piper_bin_dir, 'resources/bin/macos/aarch64'))
-        else:
-            raise ValueError(f"Expected Piper bin dir {piper_bin_dir} not found")
-    else:
-        # Intel binaries
-        piper_bin_dir = os.path.join(project_root, 'resources/bin/macos/x64')
-        if os.path.exists(piper_bin_dir):
-            binaries.append((piper_bin_dir, 'resources/bin/macos/x64'))
-        else:
-            raise ValueError(f"Expected Piper bin dir {piper_bin_dir} not found")
-else:  # Linux
-    # Add Linux-specific binaries
-    piper_bin_dir = os.path.join(project_root, 'resources/bin/linux')
-    if os.path.exists(piper_bin_dir):
-        binaries.append((piper_bin_dir, 'resources/bin/linux'))
+system = platform.system()
+
+# Piper binaries are no longer bundled (the app uses Kokoro); only the
+# espeakng fix below remains platform-specific.
+if system == "Linux":
+    # Fix for kokoro-onnx/espeakng_loader on Linux: ensure libespeak-ng.so is bundled
+    try:
+        spec = importlib.util.find_spec('espeakng_loader')
+        if spec and spec.origin:
+            pkg_dir = os.path.dirname(spec.origin)
+            so_path = os.path.join(pkg_dir, 'libespeak-ng.so')
+            if os.path.exists(so_path):
+                datas.append((so_path, 'espeakng_loader'))
+    except Exception as e:
+        print(f"Warning: Could not add libespeak-ng.so: {e}")
 
 # Define platform-specific excludes for packages that should not be bundled
 # on certain operating systems, even if they are present in the environment.
 platform_excludes = []
+# Never let modulegraph collect the PLAIN supporters source (it lives at
+# <root>/supporters with the __BUILD_SECRET__ placeholder). Supporters
+# ships the obfuscated tree via datas; public ships nothing.
+platform_excludes.append('supporters')
 if system == "Windows":
     platform_excludes.append('uvloop')
     platform_excludes.append('triton')
 
+
 # Common data files for both executables
 common_datas = [
+    (_edition_marker, '.'),
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
     (os.path.join(project_root, 'ainara/__init__.py'), 'ainara/__init__.py'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
+    (os.path.join(ataria_compiled, 'nexus.json'), 'ainara/nexus/khromalabs/ataria'),
+    (os.path.join(ataria_compiled, 'providers_registry.json'), 'ainara/nexus/khromalabs/ataria'),
+    (os.path.join(ataria_compiled, 'skills_metadata.json'), 'ainara/nexus/khromalabs/ataria'),
+    (os.path.join(ataria_compiled, 'site'), 'ainara/nexus/khromalabs/ataria/site'),
     *datas,
     *package_datas,
     *datas_from_hooks
 ]
+
+# The obfuscated trees contain a per-build runtime like pyarmor_runtime_*
+# PyInstaller must ship that directory at the top level of _internal so 
+#`from pyarmor_runtime_XXXX import ...` can resolve.
+for _root in (nexus_obfuscated_root, supporters_obfuscated_root):
+    if not os.path.isdir(_root):
+        continue
+    for _entry in os.listdir(_root):
+        if _entry.startswith("pyarmor_runtime") and os.path.isdir(os.path.join(_root, _entry)):
+            common_datas.append((os.path.join(_root, _entry), _entry))
+
+# Obfuscated nexus tree ships to ALL servers (validated above). In the
+# public edition the tree simply lacks the supporters domains.
+common_datas.append(
+    (os.path.join(supporters_compiled_root, 'ainara', 'nexus'), 'ainara/nexus')
+)
+
+if SUPPORTERS:
+    if not os.path.isdir(supporters_compiled):
+        raise FileNotFoundError("Supporters build requires the obfuscated supporters package")
+    common_datas.append((supporters_compiled, 'supporters'))
 
 # Common hidden imports for both executables
 common_imports = [
     # Core functionality
     'flask',
     'flask_cors',
-    'requests',
     'aiohttp',
     'asgiref',
     'tiktoken_ext.openai_public',
     'tiktoken_ext',
     'PyYAML', # The package name for 'yaml'
     'json',
-    'numpy',
+    # 'numpy',
     'pyperclip',
-    'feedparser',
-    'tldextract',
+    'fastembed',
 
     # LLM Backends
     'litellm',
@@ -178,20 +269,15 @@ common_imports = [
     'sounddevice',
     'soundfile',
     'pygame',
-    'elevenlabs',
-
-    # Additional dependencies
-    'telegram',
-    'validators',
-    'googleapiclient',
-    'googleapiclient.discovery',
-    'tiktoken',
+    'kokoro_onnx',
+    'misaki',
+    'language_tags',
+    'espeakng_loader',
+    'openwakeword'
 
     # ML/AI related
-    'transformers',
+    # 'transformers',
     'tokenizers',
-    'sentence_transformers',
-    'torch',
     # ChromaDB and its full set of dependencies.
     # Even for local/in-process usage, it can dynamically import many of these.
     'chromadb',
@@ -230,30 +316,47 @@ common_imports = [
     'tree_sitter',
     'tree_sitter_javascript',
     'tree_sitter_python',
+    'pyarmor_runtime',
 
     # Dependencies for MCP
     'mcp',
 
     # Search engines
     'newsapi_python',
-    'newspaper3k', # The package name for 'newspaper'
     'tweepy',
+    'trafilatura',
 
     # Text processing
     'lxml_html_clean',
     'nltk',
     'textblob',
     'emoji',
-    'normalise', # Text normalization
+    # 'normalise', # Text normalization
     'spacy', # NLTK and Spacy for text processing
     'en_core_web_sm', # Default English model for Spacy
 
-    # Framework modules
-    'ainara.framework',
     # System utilities
     'psutil',
     'setproctitle',
+    'apscheduler',
+    'keyring',
 
+    # Communications
+    'aioimaplib',
+    'aiosmtplib',
+    # 'telethon',
+
+    # Additional dependencies
+    'validators',
+    'googleapiclient',
+    'googleapiclient.discovery',
+    'tiktoken',
+    'ccxt',
+    'ccxt.async_support',
+    'sympy',
+
+    # Framework modules
+    'ainara.framework',
     'ainara.framework.llm',
     'ainara.framework.matcher',
     'ainara.framework.storage',
@@ -263,15 +366,25 @@ common_imports = [
     'ainara.framework.stt.whisper',
     'ainara.framework.tts',
 
-    'ainara.nexus',
 ]
 
 # Add all the transformers models to common imports
-common_imports += collect_submodules('transformers')
+# common_imports += collect_submodules('transformers')
 common_imports += collect_submodules('chromadb')
-# Add all opentelemetry modules, a complex dependency of chromadb
-common_imports += collect_submodules('opentelemetry')
-collect_submodules('sentence_transformers')
+
+if SUPPORTERS:
+    # The supporters.auth_core module is shipped as data/obfuscated and is
+    # never analyzed by PyInstaller, so its imports are not discovered.
+    # Force-include the Solana stack (including the native solders binary).
+    common_imports += collect_submodules('solana')
+    common_imports += collect_submodules('solders')
+    binaries += collect_dynamic_libs('solana')
+    binaries += collect_dynamic_libs('solders')
+# # Add all opentelemetry modules, a complex dependency of chromadb
+# common_imports += collect_submodules('opentelemetry')
+# collect_submodules('sentence_transformers')
+# common_imports += collect_submodules('numpy')
+# common_imports += collect_submodules('litellm')
 
 # Orakle-specific data and imports
 orakle_datas = [
@@ -280,21 +393,28 @@ orakle_datas = [
 
 orakle_imports = [
     'ainara.orakle.skills',
-    'ainara.orakle.skills.crypto',
     'ainara.orakle.skills.finance',
     'ainara.orakle.skills.html',
     'ainara.orakle.skills.inference',
     'ainara.orakle.skills.messaging',
     'ainara.orakle.skills.search',
-    'ainara.orakle.skills.sentiment',
     'ainara.orakle.skills.system',
     'ainara.orakle.skills.tools',
+    # 'ainara.orakle.skills.sentiment',
+    # 'ainara.orakle.skills.crypto',
 ]
 
 # PyBridge-specific data and imports
 pybridge_datas = []
-
 pybridge_imports = []
+
+# Bureau-specific data and imports
+bureau_datas = []
+bureau_imports = []
+
+# Sentinel data and imports
+sentinel_datas = []
+sentinel_imports = []
 
 # Create a runtime hook to help with imports
 with open(os.path.join(SPECPATH, 'runtime_hook.py'), 'w') as f:
@@ -310,7 +430,7 @@ from pathlib import Path
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     sys.path.insert(0, sys._MEIPASS)
 
-from ainara.framework.platform_utils import get_default_log_dir, get_default_cache_dir
+from ainara.framework.config import config
 
 # --- Set up logging to a file ---
 # Use a writable location for logs, respecting environment variables first.
@@ -318,7 +438,7 @@ log_dir_str = os.environ.get("AINARA_LOGS")
 if log_dir_str:
     log_dir = Path(os.path.expanduser(log_dir_str))
 else:
-    log_dir = get_default_log_dir()
+    log_dir = config.get_default_log_dir()
 
 os.makedirs(log_dir, exist_ok=True)
 log_file = log_dir / 'pyinstaller_debug.log'
@@ -337,120 +457,130 @@ logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"sys.path: {sys.path}")
 logger.info(f"Log directory: {log_dir}")
 
-# --- Set up a reliable cache directory for transformers ---
-# Priority: TRANSFORMERS_CACHE > AINARA_CACHE > Ainara platform default.
-# If TRANSFORMERS_CACHE is already set, we respect it and do nothing.
-if 'TRANSFORMERS_CACHE' not in os.environ:
-    cache_dir_str = os.environ.get("AINARA_CACHE")
-    if cache_dir_str:
-        cache_dir = Path(os.path.expanduser(cache_dir_str))
-    else:
-        cache_dir = get_default_cache_dir()
-
-    transformers_cache_dir = cache_dir / 'transformers'
-    os.makedirs(transformers_cache_dir, exist_ok=True)
-
-    # Set the environment variable for huggingface libraries
-    os.environ['TRANSFORMERS_CACHE'] = str(transformers_cache_dir)
-    logger.info(f"Set TRANSFORMERS_CACHE to: {os.environ['TRANSFORMERS_CACHE']}")
-else:
-    logger.info(f"TRANSFORMERS_CACHE already set to: {os.environ['TRANSFORMERS_CACHE']}. Hook will not override it.")
+## --- Set up a reliable cache directory for transformers ---
+## Priority: TRANSFORMERS_CACHE > AINARA_CACHE > Ainara platform default.
+## If TRANSFORMERS_CACHE is already set, we respect it and do nothing.
+#if 'TRANSFORMERS_CACHE' not in os.environ:
+#    cache_dir_str = os.environ.get("AINARA_CACHE")
+#    if cache_dir_str:
+#        cache_dir = Path(os.path.expanduser(cache_dir_str))
+#    else:
+#        cache_dir = config.get_default_cache_dir()
+#
+#    transformers_cache_dir = cache_dir / 'transformers'
+#    os.makedirs(transformers_cache_dir, exist_ok=True)
+#
+#    # Set the environment variable for huggingface libraries
+#    os.environ['TRANSFORMERS_CACHE'] = str(transformers_cache_dir)
+#    logger.info(f"Set TRANSFORMERS_CACHE to: {os.environ['TRANSFORMERS_CACHE']}")
+#else:
+#    logger.info(f"TRANSFORMERS_CACHE already set to: {os.environ['TRANSFORMERS_CACHE']}. Hook will not override it.")
 
 logger.info("--- PyInstaller Runtime Hook End ---")
 """)
 
-# Analysis for Orakle
-a_orakle = Analysis(
-    [os.path.join(project_root, 'ainara/orakle', 'server.py')],
-    pathex=[project_root],
-    binaries=binaries,
-    datas=[*common_datas, *orakle_datas],
-    hiddenimports=[*common_imports, *orakle_imports],
-    hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
-    hooksconfig={},
-    runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
-    #module_collection_mode={
-    #    'transformers': 'py',
-    #},
-    excludes=platform_excludes,
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=True,
-)
+_target_configs = {
+    "orakle": {
+        "entry": os.path.join(project_root, 'ainara/orakle', 'server.py'),
+        "datas": [*common_datas, *orakle_datas],
+        "imports": [*common_imports, *orakle_imports],
+    },
+    "pybridge": {
+        "entry": os.path.join(project_root, 'ainara/framework', 'pybridge.py'),
+        "datas": [*common_datas, *pybridge_datas],
+        "imports": [*common_imports, *pybridge_imports],
+    },
+    "bureau": {
+        "entry": os.path.join(project_root, 'ainara/bureau', 'server.py'),
+        "datas": [*common_datas, *bureau_datas],
+        "imports": [*common_imports, *bureau_imports],
+    },
+    "sentinel": {
+        "entry": os.path.join(project_root, 'scripts', 'scheduler.py'),
+        "datas": [*common_datas, *sentinel_datas],
+        "imports": [*common_imports, *sentinel_imports],
+    },
+}
 
-# Analysis for PyBridge
-a_pybridge = Analysis(
-    [os.path.join(project_root, 'ainara/framework', 'pybridge.py')],
-    pathex=[project_root],
-    binaries=binaries,
-    datas=[*common_datas, *pybridge_datas],
-    hiddenimports=[*common_imports, *pybridge_imports],
-    hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
-    hooksconfig={},
-    runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
-    #module_collection_mode={
-    #    'transformers': 'py',
-    #},
-    excludes=platform_excludes,
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=True,
-)
+build_targets = ["orakle", "pybridge", "bureau", "sentinel"] if BUILD_TARGET == "all" else [BUILD_TARGET]
 
-# MERGE statement to combine the analyses
-MERGE(
-    (a_orakle, 'orakle', 'orakle'),
-    (a_pybridge, 'pybridge', 'pybridge')
-)
+# First pass: create all Analysis objects so MERGE can run before PYZ.
+analyses = {}
+for target in build_targets:
+    cfg = _target_configs[target]
+    analyses[target] = Analysis(
+        [cfg["entry"]],
+        pathex=[project_root],
+        binaries=binaries,
+        datas=cfg["datas"],
+        hiddenimports=cfg["imports"],
+        hookspath=[os.path.join(project_root, 'scripts', 'pyinstaller', 'hooks')],
+        hooksconfig={},
+        runtime_hooks=[os.path.join(SPECPATH, 'runtime_hook.py')],
+        excludes=platform_excludes,
+        win_no_prefer_redirects=False,
+        win_private_assemblies=False,
+        cipher=block_cipher,
+        noarchive=True,
+    )
 
-# PYZ for Orakle
-pyz_orakle = PYZ(a_orakle.pure, a_orakle.zipped_data, cipher=block_cipher)
+# Strip toolchain runtimes on Linux before MERGE propagates the TOC.
+# They would shadow the host's (usually newer) libstdc++/libgcc_s and
+# break system libs the app pulls in at runtime (libjack, libportaudio).
+if system == "Linux":
+    for target in build_targets:
+        analyses[target].binaries = [
+            b for b in analyses[target].binaries
+            if os.path.basename(b[0]) not in SHADOWED_RUNTIME_LIBS
+        ]
 
-# PYZ for PyBridge
-pyz_pybridge = PYZ(a_pybridge.pure, a_pybridge.zipped_data, cipher=block_cipher)
+if BUILD_TARGET == "all":
+    MERGE(
+        (analyses["orakle"], "orakle", "orakle"),
+        (analyses["pybridge"], "pybridge", "pybridge"),
+        (analyses["bureau"], "bureau", "bureau"),
+        (analyses["sentinel"], "sentinel", "sentinel"),
+    )
 
-# EXE for Orakle
-exe_orakle = EXE(
-    pyz_orakle,
-    a_orakle.scripts,
-    [],
-    exclude_binaries=True,
-    name='orakle',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=True,
-)
+# Second pass: PYZ/EXE after merge.
+pyzs = {}
+exes = {}
+for target in build_targets:
+    pyzs[target] = PYZ(analyses[target].pure, analyses[target].zipped_data, cipher=block_cipher)
+    exes[target] = EXE(
+        pyzs[target],
+        analyses[target].scripts,
+        [],
+        exclude_binaries=True,
+        name=target,
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=True,
+    )
 
-# EXE for PyBridge
-exe_pybridge = EXE(
-    pyz_pybridge,
-    a_pybridge.scripts,
-    [],
-    exclude_binaries=True,
-    name='pybridge',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=True,
-)
-
-# COLLECT to create the final bundle with both executables
-coll = COLLECT(
-    exe_orakle,
-    a_orakle.binaries,
-    a_orakle.zipfiles,
-    a_orakle.datas,
-    exe_pybridge,
-    a_pybridge.binaries,
-    a_pybridge.zipfiles,
-    a_pybridge.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='servers',
-)
+# Final collect: one combined bundle for "all", otherwise a single-server bundle.
+if BUILD_TARGET == "all":
+    coll = COLLECT(
+        exes["orakle"], analyses["orakle"].binaries, analyses["orakle"].zipfiles, analyses["orakle"].datas,
+        exes["pybridge"], analyses["pybridge"].binaries, analyses["pybridge"].zipfiles, analyses["pybridge"].datas,
+        exes["bureau"], analyses["bureau"].binaries, analyses["bureau"].zipfiles, analyses["bureau"].datas,
+        exes["sentinel"], analyses["sentinel"].binaries, analyses["sentinel"].zipfiles, analyses["sentinel"].datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='servers',
+    )
+else:
+    target = BUILD_TARGET
+    coll = COLLECT(
+        exes[target],
+        analyses[target].binaries,
+        analyses[target].zipfiles,
+        analyses[target].datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name=target,
+    )

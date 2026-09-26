@@ -5,7 +5,7 @@
     left: 40px;
     right: 40px;
     bottom: 170px; /* Leave space for the ring at the bottom */
-    /* background-color: rgba(30, 30, 30, 0.9); /* Slightly transparent to blend */ */
+    /* background-color: rgba(30, 30, 30, 0.9); */
     color: #d4d4d4;
     font-family: 'Menlo', 'Consolas', monospace;
     border-radius: 12px; /* Match the inner frame's radius */
@@ -22,6 +22,10 @@ a {
     color: rgb(80,214,219);
 }
 
+a:hover {
+    color: rgb(120,254,255);
+}
+
 :host(.visible) {
     /* Final state for animation: visible */
     opacity: 1;
@@ -35,6 +39,16 @@ a {
     gap: 16px;
     height: 99%;
     overflow: auto;
+}
+
+.document-content::selection,
+.document-content  *::selection {
+  color: black;
+  background-color: #f0f000;
+}
+
+.document-content:focus {
+    outline: none;
 }
 
 .document-item {
@@ -82,9 +96,10 @@ a {
 }
 
 .format-badge {
-    background-color: #3c3c3c;
+    background-color: #343434;
+    color: #aaa;
     padding: 2px 6px;
-    border-radius: 3px;
+    border-radius: 2px;
     font-weight: bold;
     text-transform: uppercase;
     flex-shrink: 0;
@@ -98,6 +113,7 @@ a {
     border-radius: 4px;
     cursor: pointer;
     font-size: 12px;
+    width: 55px;
 }
 
 .copy-button:hover {
@@ -106,8 +122,70 @@ a {
 
 .copy-btn:active,
 .copy-button:active {
-    border: 2px solid yellow;
+    border: 2px solid #f0f000;
 }
+
+.nav-button:hover:active:enabled {
+    background: #555;
+}
+
+.nav-button:hover:enabled {
+    background: #666;
+}
+
+.nav-button:disabled {
+    background: #343434;
+    color: #888;
+}
+
+.nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  /* background: transparent; */
+  border: none;
+  border-radius: 3px;
+  color: #fff;
+  background: #444;
+  cursor: pointer;
+  /* transition: all 0.2s ease; */
+}
+
+.nav-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.today-button {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.date-picker-trigger {
+    position: relative;
+    font-weight: bold;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-left: 4px;
+    margin-right: 4px;
+    user-select: none;
+}
+
+.date-picker-text {
+    display: inline-block;
+    /* width: 85px; */
+    text-align: center;
+}
+
+.date-picker-trigger:hover .date-picker-text {
+    text-decoration: underline;
+}
+
 
 .close-button {
     background: transparent;
@@ -126,7 +204,7 @@ a {
 }
 
 .close-button:active {
-    border: 2px solid yellow;
+    border: 2px solid #f0f000;
 }
 
 pre {
@@ -192,6 +270,7 @@ code {
     overflow: auto;
     /* padding: 16px; */
     margin: 20px;
+    flex-wrap: wrap;
 }
 
 .nexus-frame {
@@ -286,6 +365,51 @@ th[data-sort]:hover .tablesort__icon {
 .code-block-wrapper-inline {
     display: inline-block;
     position: relative;
-    margin: 4px 4px 4px -4px;
+    margin: 0px;
     padding: 0;
+    /* padding: 2px 2px 2px -2px; */
+}
+
+.tipInfo {
+    position: relative;
+    top: 2px;
+}
+.tipInfo:before {
+    content:'🛈';
+    padding: 10px;
+    cursor: pointer;
+}
+
+.streaming-indicator {
+    position: relative;
+    display: block;
+    width: fit-content;
+    align-items: center;
+    margin: 8px 0 0 4px;
+    padding: 4px 12px;
+    background-color: rgba(240, 240, 0, 0.8);
+    border: 1px solid rgba(240, 240, 0, 0.8);
+    border-radius: 5px;
+    color: #444;
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 12px;
+    font-style: italic;
+    letter-spacing: 0.5px;
+    user-select: none;
+}
+
+.streaming-indicator::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 8px;
+    border-radius: 50%;
+    background: #f0f000;
+    animation: streaming-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes streaming-pulse {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
 }

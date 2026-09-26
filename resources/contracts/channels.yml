@@ -1,0 +1,67 @@
+openapi: 3.0.0
+info:
+  title: Ainara Messaging Capability Contract
+  version: "1.0"
+  description: Messaging Capability Contract Layer (Discord, Telegram, Email).
+paths:
+  /channels/messages:
+    get:
+      summary: Get global channel history
+      description: Retrieve latest messages from all accessible channels.
+      operationId: getGlobalChannelHistory
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: after
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: History retrieved.
+  /channels/{id}/messages:
+    get:
+      summary: Get channel history
+      description: See history of a specific conversation context.
+      operationId: getChannelHistory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: History retrieved.
+    post:
+      summary: Send to channel
+      description: Send a message to a specific thread or channel.
+      operationId: sendToChannel
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+              required:
+                - content
+      responses:
+        '200':
+          description: Message posted to channel.

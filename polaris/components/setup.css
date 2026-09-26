@@ -18,6 +18,7 @@
  * Lesser General Public License for more details.
  */
 
+
 html {
     height: 100%;
 }
@@ -145,6 +146,15 @@ body {
     height: 1px;
     background-color: #eee;
     z-index: -1;
+}
+
+#welcome-panel {
+    max-width: 80%;
+    line-height: 1.5;
+}
+
+#welcome-panel p {
+    text-align: justify;
 }
 
 .step-content {
@@ -278,6 +288,109 @@ button {
     /* max-height: 400px; */
     /* overflow-y: auto; */
     padding-right: 10px;
+    height: 100%; /* Ensure full height for the layout */
+}
+
+/* New Horizontal Layout Styles */
+.skills-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+}
+
+#skills-panel {
+    width: calc(100% - 60px);
+    margin-left: auto;
+    margin-right: auto;
+}
+
+#skills-panel .skills-list {
+    width: 100%;
+    padding-right: 0;
+}
+
+#skills-panel .skills-layout {
+    width: 100%;
+}
+
+#api-list {
+    width: 100%;
+}
+
+.api-category {
+    margin-bottom: 30px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 15px;
+}
+
+.api-category h3 {
+    margin-top: 0;
+    color: #444;
+    font-size: 18px;
+}
+
+.api-category.Messaging {
+    width: calc(100% - 30px);
+}
+
+.api-category.Apis > .api-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 20px;
+}
+
+.api-group {
+    background-color: #f9f9f9;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    transition: background-color 0.2s, box-shadow 0.2s;
+    border: 1px solid transparent;
+}
+
+.api-group:hover {
+    background-color: #f4f4f4;
+    border: 1px solid #ddd;
+}
+
+.api-group h4 {
+    margin-top: 0;
+    font-size: 16px;
+    color: #1a2530;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 8px;
+}
+
+.api-validation-status {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 8px;
+    vertical-align: middle;
+    font-size: 16px;
+    line-height: 1;
+    background-color: transparent;
+}
+
+.api-validation-status.success::after { content: '✔'; color: #28a745; }
+.api-validation-status.error::after { content: '✖'; color: #dc3545; }
+.api-validation-status.pending::after { content: '...'; color: #6c757d; }
+
+.api-validation-message {
+    margin-top: 5px;
+    font-size: 0.9em;
+}
+
+.api-validation-message.success { color: #28a745; }
+.api-validation-message.error { color: #dc3545; font-weight: bold; }
+
+.api-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
 }
 
 .skill-category {
@@ -286,13 +399,17 @@ button {
     padding-bottom: 15px;
 }
 
+.skill-category.Messaging {
+    width: calc(100% - 30px);
+}
+
 .skill-category h3 {
     margin-top: 0;
     color: #444;
     font-size: 18px;
 }
 
-.skill-items {
+.skill-category.Apis > .skill-items {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
     gap: 20px;
@@ -425,6 +542,7 @@ button {
     margin-bottom: 10px;
     display: flex;
     align-items: center;
+    display: none;
 }
 
 .default-filter-option input[type="checkbox"] {
@@ -569,6 +687,21 @@ input:disabled, button:disabled {
     background-color: #f9f9f9;
 }
 
+.existing-providers-section #existing-providers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.existing-providers-section #existing-providers > p {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.existing-providers-section .existing-provider {
+    margin-bottom: 0;
+}
+
 .existing-provider {
     background-color: #e9f7fe;
     border: 1px solid #c5e8f7;
@@ -579,8 +712,9 @@ input:disabled, button:disabled {
 }
 
 .existing-provider.selected {
-    background-color: #d4edda;
-    border-color: #c3e6cb;
+    border: 3px solid #007bff;
+    border-radius: 5px;
+    /* background-color: #e9f7fe; */
 }
 
 .existing-provider label {
@@ -849,4 +983,845 @@ input:disabled, button:disabled {
     font-weight: bold;
     color: white;
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.hardware-info {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    /* border-left: 4px solid #6c757d; */
+}
+
+.success-message {
+    color: #28a745;
+    font-weight: bold;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.warning-message {
+    color: #ffc107;
+    font-weight: bold;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.info-message {
+    color: #17a2b8;
+    font-weight: bold;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.success-message .icon,
+.warning-message .icon,
+.info-message .icon {
+    margin-right: 8px;
+    font-size: 1.2em;
+}
+
+.hardware-info p {
+    margin: 8px 0;
+}
+
+.hardware-info a {
+    color: #007bff;
+    text-decoration: underline;
+}
+
+.gpu-details {
+    background-color: #f0f0f0;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+.gpu-details ul {
+    margin: 5px 0 0 20px;
+    padding: 0;
+}
+
+.gpu-details li {
+    margin-bottom: 5px;
+}
+
+.hardware-info ul {
+    margin: 5px 0 0 20px;
+    padding: 0;
+}
+
+.hardware-info li {
+    margin-bottom: 5px;
+}
+
+#ollama-models-container {
+    margin-top: 20px;
+}
+
+#ollama-models-container ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+#ollama-models-container li {
+    background-color: #f9f9f9;
+    padding: 10px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#ollama-models-container select {
+    padding: 8px;
+    margin-right: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    width: 300px;
+}
+
+#download-model-btn {
+    background-color: #28a745;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+#download-model-btn:hover {
+    background-color: #218838;
+}
+
+#download-model-btn:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+#download-progress {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+#download-progress p {
+    margin: 0;
+}
+
+.delete-model-btn {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.delete-model-btn:hover {
+    background-color: #c82333;
+}
+
+.field-description {
+    font-size: 0.8em;
+    color: #6c757d;
+    margin-top: 4px;
+}
+
+.skill-test-container {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.skill-test-status.success {
+    color: #28a745;
+    font-weight: bold;
+}
+.skill-test-status.error {
+    color: #dc3545;
+    font-weight: bold;
+    background-color: #00000000 !important;
+}
+.skill-validation-status {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 8px;
+    vertical-align: middle;
+    font-size: 16px;
+    line-height: 1;
+    background-color: transparent;
+}
+.skill-validation-status.success::after {
+    content: '✔';
+    color: #28a745;
+}
+.skill-validation-status.error::after {
+    content: '✖';
+    color: #dc3545;
+}
+.skill-validation-status.pending::after {
+    content: '...';
+    color: #6c757d;
+}
+
+.skill-validation-message {
+    margin-top: 5px;
+    font-size: 0.9em;
+}
+
+.skill-validation-message.success {
+    color: #28a745;
+}
+
+.skill-validation-message.error {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+/* Shortcuts panel styles */
+.shortcuts-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.shortcut-group {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    /* border-left: 4px solid #007bff; */
+}
+
+.shortcut-group h3 {
+    margin-top: 0;
+    color: #007bff;
+}
+
+.shortcut-description {
+    font-size: 0.9em;
+    color: #6c757d;
+    margin-top: 5px;
+}
+
+.usage-instructions {
+    background-color: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    /* border-left: 4px solid #28a745; */
+}
+
+.usage-instructions h3 {
+    margin-top: 0;
+    color: #28a745;
+}
+
+.usage-instructions ol {
+    padding-left: 20px;
+}
+
+.usage-instructions li {
+    margin-bottom: 10px;
+}
+
+#show-key-display,
+#hide-key-display,
+#trigger-key-display {
+    background-color: #e9ecef;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-weight: bold;
+}
+
+input.capturing {
+    background-color: #ffe8e8;
+    border-color: #dc3545;
+}
+
+/* Email Configuration Table Styles */
+.email-config-section {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    width: 100%;
+    overflow-x: auto;
+}
+
+.email-config-header {
+    margin-bottom: 10px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+}
+
+.email-config-header h4 {
+    margin: 0;
+    color: #1a2530;
+}
+
+.email-config-table {
+    display: grid;
+    /* ID, Host, Port, Username, Password, Actions */
+    grid-template-columns: 1fr 1.5fr 0.5fr 1.5fr 1.5fr 40px;
+    gap: 10px;
+    align-items: center;
+    min-width: 800px; /* Ensure it doesn't squish too much */
+}
+
+.email-col-header {
+    font-weight: bold;
+    font-size: 0.85em;
+    color: #666;
+    padding-bottom: 5px;
+    border-bottom: 2px solid #eee;
+}
+
+.email-row {
+    display: contents; /* Allows children to participate in the parent grid */
+}
+
+.email-cell {
+    position: relative;
+}
+
+.email-cell input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 0.9em;
+}
+
+.email-row.ghost input {
+    opacity: 0.6;
+    border-style: dashed;
+}
+
+.password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 8px;
+    cursor: pointer;
+    color: #999;
+    font-size: 12px;
+    user-select: none;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+.password-toggle:hover {
+    color: #007bff;
+}
+
+.remove-email-btn {
+    background: none;
+    border: none;
+    color: #dc3545;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+}
+
+.remove-email-btn:hover {
+    color: #a71d2a;
+    background-color: #ffe8e8;
+    border-radius: 4px;
+}
+
+/* Schedule Configuration Styles */
+.schedule-config-section {
+    margin-top: 30px;
+    margin-bottom: 20px;
+    border-top: 1px solid #eee;
+    padding-top: 20px;
+}
+
+.schedule-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    background-color: #f9f9f9;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.schedule-table th, .schedule-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.schedule-table th {
+    background-color: #f1f1f1;
+    font-weight: bold;
+    color: #555;
+}
+
+.schedule-interval-input {
+    width: 60px;
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-right: 5px;
+}
+
+/* Modal Styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.modal-content {
+    background-color: white;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 700px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.close-modal-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #666;
+    padding: 0;
+}
+
+.close-modal-btn:hover {
+    color: #dc3545;
+}
+
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    line-height: 1.6;
+}
+
+.modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid #eee;
+    text-align: right;
+}
+
+/* Capability Grouping Styles */
+.capability-group {
+    margin-bottom: 20px;
+}
+
+.capability-group h3 {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+    color: #17a2b8;
+}
+
+.capability-group ul {
+    padding-left: 20px;
+    margin: 8px 0;
+}
+
+.capability-group li {
+    margin-bottom: 5px;
+    font-size: 0.9em;
+}
+
+.capability-group code {
+    background: #f1f1f1;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.95em;
+}
+
+/* ===== Task Model Routing (LLM step) ===== */
+.task-routing-section {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+
+.task-routing-section h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.task-routing-group {
+    margin-top: 20px;
+}
+
+.task-routing-group h4 {
+    margin: 0 0 5px 0;
+}
+
+.task-routing-add-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.task-routing-add-row select {
+    flex: 1;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #fff;
+    font-size: 0.95em;
+}
+
+.task-routing-add-btn {
+    background-color: #007bff;
+    color: white;
+    padding: 8px 16px;
+    white-space: nowrap;
+}
+
+.task-routing-add-btn:hover:not(:disabled) {
+    background-color: #0056b3;
+}
+
+.task-routing-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0 0;
+}
+
+.task-routing-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 5px;
+}
+
+.task-routing-model-name {
+    font-family: monospace;
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}
+
+.task-routing-warning {
+    color: #dc3545;
+    font-weight: bold;
+    font-size: 0.85em;
+}
+
+.task-routing-controls {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.task-routing-move-btn {
+    padding: 2px 8px;
+    font-size: 0.75em;
+    background-color: #e9ecef;
+    color: #343a40;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.task-routing-move-btn:hover:not(:disabled) {
+    background-color: #dae0e5;
+}
+
+.task-routing-remove-btn {
+    padding: 2px 10px;
+    font-size: 1em;
+    line-height: 1.2;
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+}
+
+.task-routing-remove-btn:hover {
+    background-color: #f5c6cb;
+}
+
+.task-routing-empty {
+    color: #6c757d;
+    font-style: italic;
+    font-size: 0.9em;
+    padding: 4px 0;
+}
+
+/* ===== Ollama setup status cards ===== */
+.status-card {
+    position: relative;
+    background: #fff;
+    border: 1px solid #e3e6ea;
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.status-card h4 {
+    margin: 0 0 10px;
+    font-size: 1em;
+    color: #1a2530;
+}
+
+.status-card p {
+    margin: 6px 0;
+    color: #555;
+    line-height: 1.5;
+}
+
+.status-card ul {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.status-card .requirement-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #6c757d;
+}
+
+.status-card .requirement-option.met {
+    border-left-color: #28a745;
+}
+
+.status-card .requirement-option.unmet {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 36px;
+}
+
+/* CSS-drawn red cross for unmet requirement rows */
+.status-card .requirement-option.unmet::before,
+.status-card .requirement-option.unmet::after {
+    content: '';
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    width: 4px;
+    height: 18px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card .requirement-option.unmet::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card .requirement-option.unmet::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.status-card .requirement-result {
+    font-weight: bold;
+    white-space: nowrap;
+    color: #333;
+}
+
+.status-card .or-divider {
+    background: transparent;
+    text-align: center;
+    font-weight: bold;
+    color: #6c757d;
+    padding: 6px 0;
+    border-left: none;
+}
+
+.status-card .card-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.status-card.hardware-details {
+    padding-left: 60px; /* make room for the icon */
+}
+
+.hardware-icon::before {
+    content: '🔧';
+    background-color: #f8f9fa;
+}
+
+.status-badge {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.85em;
+}
+
+.status-badge.good {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-badge.warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-badge.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.hardware-details details {
+    margin-top: 8px;
+}
+
+.hardware-details summary {
+    cursor: pointer;
+    color: #007bff;
+    font-size: 0.9em;
+    user-select: none;
+}
+
+.hardware-details ul {
+    margin: 8px 0 0;
+    padding-left: 20px;
+    list-style: disc;
+}
+
+.status-card.ollama-availability.unavailable {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 60px;
+}
+
+/* CSS-drawn red cross for the "Ollama is not running" card */
+.status-card.ollama-availability.unavailable::before,
+.status-card.ollama-availability.unavailable::after {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card.ollama-availability.unavailable::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card.ollama-availability.unavailable::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.status-card.ollama-availability a {
+    color: #007bff;
+    font-weight: bold;
+}
+
+.status-card.error {
+    position: relative;
+    background: #ffe6e6;
+    border-left: none;
+    padding-left: 60px;
+}
+
+/* CSS-drawn red cross for full-width error cards */
+.status-card.error::before,
+.status-card.error::after {
+    content: '';
+    position: absolute;
+    left: 30px;
+    top: 50%;
+    width: 6px;
+    height: 28px;
+    background: #dc3545;
+    border-radius: 2px;
+}
+
+.status-card.error::before {
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.status-card.error::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+div#tos-modal .modal-header {
+    justify-content: center;
+    alignment: center;
+}
+
+div#tos-modal .close-modal-btn {
+    margin-left: auto;
 }

@@ -25,14 +25,14 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
+import numpy as np
 
 try:
-    from sentence_transformers import SentenceTransformer
-    from sentence_transformers.util import cos_sim
+    from fastembed import TextEmbedding
 
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
+    FASTEMBED_AVAILABLE = True
 except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    FASTEMBED_AVAILABLE = False
 
 from ainara.framework.config import config
 from ainara.framework.llm import create_llm_backend
@@ -198,19 +198,28 @@ Output JSON in this format:
         filtered_candidates = candidates
         if self.embedding_model:
             try:
-                top_k = 6  # Limit to top 10 semantically similar candidates
+                top_k = 6  # Limit to top 6 semantically similar candidates
                 logger.info(f"Pre-filtering {len(candidates)} candidates to top {top_k} using embeddings")
 
-                # Encode query and all candidate names
-                query_embedding = self.embedding_model.encode(query, convert_to_tensor=True)
-                candidate_names = [app["name"] for app in candidates]
-                candidate_embeddings = self.embedding_model.encode(candidate_names, convert_to_tensor=True)
+                # Generate embeddings (fastembed returns generators)
+                query_gen = self.embedding_model.embed([query])
+                query_vec = next(query_gen)
 
-                # Compute cosine similarities
-                similarities = cos_sim(query_embedding, candidate_embeddings)[0]
+                candidate_names = [app["name"] for app in candidates]
+                candidate_gen = self.embedding_model.embed(candidate_names)
+                candidate_vecs = np.array(list(candidate_gen))
+
+                # Calculate Cosine Similarity
+                norm_query = np.linalg.norm(query_vec)
+                norm_candidates = np.linalg.norm(candidate_vecs, axis=1)
+
+                dot_products = np.dot(candidate_vecs, query_vec)
+
+                # Calculate scores (add epsilon to avoid division by zero)
+                similarities = dot_products / (norm_candidates * norm_query + 1e-9)
 
                 # Get top_k indices sorted by similarity (descending)
-                top_indices = similarities.argsort(descending=True)[:top_k].tolist()
+                top_indices = np.argsort(similarities)[::-1][:top_k]
 
                 # Filter candidates
                 filtered_candidates = [candidates[i] for i in top_indices]
@@ -310,22 +319,22 @@ Output JSON in this format:
             "open the browser" → {"success": False, "status": "multiple", "candidates": [...], ...}
         """
 
-        # Lazy initialization of SentenceTransformer
-        if not self.embedding_model and SENTENCE_TRANSFORMERS_AVAILABLE:
+        # Lazy initialization of FastEmbed
+        if not self.embedding_model and FASTEMBED_AVAILABLE:
             embedding_model_name = config.get(
                 "memory.vector_storage.embedding_model"
             )
             try:
-                self.embedding_model = SentenceTransformer(
-                    embedding_model_name,
-                    cache_folder=config.get("cache.directory")
+                self.embedding_model = TextEmbedding(
+                    model_name=embedding_model_name,
+                    cache_dir=config.get("cache.directory"),
                 )
                 logger.info(f"Loaded embedding model for app analysis: {embedding_model_name}")
             except Exception as e:
                 logger.error(f"Failed to load embedding model: {e}")
-        else:
+        elif not self.embedding_model and not FASTEMBED_AVAILABLE:
             logger.warning(
-                "sentence_transformers not available. App candidate filtering will use all discovered apps."
+                "fastembed not available. App candidate filtering will use all discovered apps."
             )
 
         params = await self.parse_query(query)

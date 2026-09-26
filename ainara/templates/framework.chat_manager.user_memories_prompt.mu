@@ -8,6 +8,10 @@ well-being.
 IMPORTANT: If memories conflict over a certain concept, the one with the most
 recent 'Last updated' timestamp is the correct one.
 
+Never assume extra knowledge about the user, based on these memories, if
+the information would be incomplete or confusing. Instead, ask questions to
+clarify.
+
 **User Context Memories:**
 {{#memories}}
 - {{{memory}}} (Created: {{created_at_formatted}}, Last updated: {{last_updated_formatted}})

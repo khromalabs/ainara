@@ -42,8 +42,12 @@ class ElevenLabsTTS(TTSBackend):
             raise ValueError("Eleven Labs API key is required")
 
         self.client = ElevenLabs(api_key=api_key)
-        self.voice = self.config.get("tts.modules.elevenlabs.voice", "uYXf8XasLslADfZ2MB4u")
-        self.model = self.config.get("tts.modules.elevenlabs.model", "eleven_multilingual_v2")
+        self.voice = self.config.get(
+            "tts.modules.elevenlabs.voice", None
+        )
+        self.model = self.config.get(
+            "tts.modules.elevenlabs.model", None
+        )
         self.temp_dir = tempfile.mkdtemp(prefix="elevenlabs_tts_")
         self.playback_object = None
         self.logger.info(f"Initialized ElevenLabsTTS with voice: {self.voice}")
@@ -61,6 +65,9 @@ class ElevenLabsTTS(TTSBackend):
             return "", 0.0
 
         try:
+            if not self.voice or not self.model:
+                raise Exception("Missing required configuration")
+
             audio_content = self.client.text_to_speech.convert(
                 text=cleaned_text, voice_id=self.voice, model_id=self.model
             )

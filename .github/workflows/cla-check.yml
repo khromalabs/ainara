@@ -10,7 +10,7 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          if echo "$PR_BODY" | grep -qi "\-\s*\[x\]\s*I accept the terms of the dual license"; then
+          if echo "$PR_BODY" | grep -qi "\-\s*\[x\]\s*I accept the terms above."; then
             echo "Acceptance confirmed. Thank you for your contribution!"
             exit 0
           else

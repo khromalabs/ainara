@@ -48,30 +48,49 @@ class SQLiteStorage(StorageBackend):
             context_id: Context identifier for the conversation
             **kwargs: Additional parameters
         """
+        if not db_path or not db_path.strip():
+            raise ValueError(
+                "SQLiteStorage initialized with invalid db_path (None or empty)."
+                " Check ConfigManager or initialization arguments."
+            )
 
         self.db_path = db_path
         self.context_id = context_id
-        db_dir = os.path.dirname(os.path.abspath(db_path))
-        os.makedirs(db_dir, exist_ok=True)
 
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self._create_table()
+        try:
+            db_dir = os.path.dirname(os.path.abspath(db_path))
+            os.makedirs(db_dir, exist_ok=True)
 
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT value FROM db_metadata WHERE key = 'memory_id'")
-        row = cursor.fetchone()
-        if row is None:
-            memory_id = str(uuid.uuid4())
-            with self.conn:
-                self.conn.execute(
-                    "INSERT INTO db_metadata (key, value) VALUES (?, ?)",
-                    ("memory_id", memory_id),
-                )
-            self.memory_id = memory_id
-        else:
-            self.memory_id = row[0]
+            self.conn = sqlite3.connect(
+                db_path, check_same_thread=False, isolation_level=None
+            )
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.execute("PRAGMA synchronous=FULL;")
+            # Force WAL sync
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            self._create_table()
+
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT value FROM db_metadata WHERE key = 'memory_id'"
+            )
+            row = cursor.fetchone()
+            if row is None:
+                memory_id = str(uuid.uuid4())
+                with self.conn:
+                    self.conn.execute(
+                        "INSERT INTO db_metadata (key, value) VALUES (?, ?)",
+                        ("memory_id", memory_id),
+                    )
+                self.memory_id = memory_id
+            else:
+                self.memory_id = row[0]
+
+        except (OSError, sqlite3.Error) as e:
+            raise ValueError(
+                f"Failed to initialize SQLite storage at '{db_path}': {str(e)}"
+            ) from e
 
     def _create_table(self):
         """Create tables and set schema version if they don't exist."""
@@ -126,7 +145,57 @@ class SQLiteStorage(StorageBackend):
                 """
             )
             self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cache_provider ON api_cache (provider);"
+                "CREATE INDEX IF NOT EXISTS idx_cache_provider ON api_cache"
+                " (provider);"
+            )
+
+            # Add table for background events (Notification System)
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS background_events (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    external_id TEXT,
+                    content_hash TEXT,
+                    data TEXT,
+                    timestamp TEXT NOT NULL
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_source_extid ON"
+                " background_events (source, external_id);"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_hash ON"
+                " background_events (content_hash);"
+            )
+
+            # Check if 'processed' column exists in background_events (Migration)
+            cursor = self.conn.cursor()
+            cursor.execute("PRAGMA table_info(background_events)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if "processed" not in columns:
+                self.conn.execute(
+                    "ALTER TABLE background_events ADD COLUMN processed"
+                    " INTEGER DEFAULT 0"
+                )
+
+            # Add table for User-Facing Notifications (Consolidated)
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    injected INTEGER DEFAULT 0
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_notif_injected ON"
+                " notifications (injected);"
             )
 
     def add_message(
@@ -166,6 +235,7 @@ class SQLiteStorage(StorageBackend):
         self,
         limit: int = 100,
         offset: int = 0,
+        sort: str = "DESC",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
@@ -184,7 +254,7 @@ class SQLiteStorage(StorageBackend):
             query += f" AND user IN ({','.join('?' for _ in users)})"
             params.extend(users)
 
-        query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        query += f" ORDER BY timestamp {sort} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
         cursor = self.conn.cursor()
@@ -211,17 +281,43 @@ class SQLiteStorage(StorageBackend):
 
     def search_text(
         self,
-        query: str,
+        query: str = None,
         limit: int = 10,
+        offset: int = 0,
+        include_terms: List[str] = None,
+        exclude_terms: List[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Basic text search with filtering."""
-        sql_query = (
-            "SELECT * FROM messages WHERE context_id = ? AND content LIKE ?"
-        )
-        params = [self.context_id, f"%{query}%"]
+        """
+        Search text with advanced filtering.
+
+        Args:
+            query: Legacy simple query string (treated as an include term)
+            limit: Max results
+            offset: Pagination offset
+            include_terms: List of substrings that MUST be present (AND logic)
+            exclude_terms: List of substrings that MUST NOT be present (NOT logic)
+        """
+        sql_query = "SELECT * FROM messages WHERE context_id = ?"
+        params = [self.context_id]
+
+        # Handle legacy query param or simple usage
+        if query and not include_terms:
+            include_terms = [query]
+
+        # Add inclusions (AND LIKE)
+        if include_terms:
+            for term in include_terms:
+                sql_query += " AND content LIKE ?"
+                params.append(f"%{term}%")
+
+        # Add exclusions (AND NOT LIKE)
+        if exclude_terms:
+            for term in exclude_terms:
+                sql_query += " AND content NOT LIKE ?"
+                params.append(f"%{term}%")
 
         if start_date:
             sql_query += " AND timestamp >= ?"
@@ -233,8 +329,8 @@ class SQLiteStorage(StorageBackend):
             sql_query += f" AND user IN ({','.join('?' for _ in users)})"
             params.extend(users)
 
-        sql_query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
+        sql_query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
         cursor = self.conn.cursor()
         cursor.execute(sql_query, params)
@@ -326,7 +422,8 @@ class SQLiteStorage(StorageBackend):
         """Set a value in the metadata table."""
         with self.conn:
             self.conn.execute(
-                "INSERT OR REPLACE INTO db_metadata (key, value) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO db_metadata (key, value) VALUES"
+                " (?, ?)",
                 (key, value),
             )
 
@@ -401,15 +498,137 @@ class SQLiteStorage(StorageBackend):
             json_metadata = json.dumps(metadata) if metadata else "{}"
 
             messages_to_insert.append(
-                (message_id, context_id, timestamp, role, content, user, json_metadata)
+                (
+                    message_id,
+                    context_id,
+                    timestamp,
+                    role,
+                    content,
+                    user,
+                    json_metadata,
+                )
             )
 
         if messages_to_insert:
             with self.conn:
                 self.conn.executemany(
-                    "INSERT INTO messages (id, context_id, timestamp, role, content, user, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO messages (id, context_id, timestamp, role,"
+                    " content, user, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     messages_to_insert,
                 )
             logger.info(
-                f"Inserted {len(messages_to_insert)} historical messages into the database."
+                f"Inserted {len(messages_to_insert)} historical messages into"
+                " the database."
+            )
+
+    def is_event_processed(
+        self, source: str, external_id: str = None, content_hash: str = None
+    ) -> bool:
+        """Check if a background event has already been processed."""
+        cursor = self.conn.cursor()
+        if external_id:
+            cursor.execute(
+                "SELECT 1 FROM background_events WHERE source = ? AND"
+                " external_id = ?",
+                (source, external_id),
+            )
+        elif content_hash:
+            cursor.execute(
+                "SELECT 1 FROM background_events WHERE source = ? AND"
+                " content_hash = ?",
+                (source, content_hash),
+            )
+        else:
+            return False
+
+        return cursor.fetchone() is not None
+
+    def add_event(
+        self,
+        source: str,
+        data: Any,
+        external_id: str = None,
+        content_hash: str = None,
+    ):
+        """Record a raw background event."""
+        event_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+        json_data = json.dumps(data) if not isinstance(data, str) else data
+
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO background_events (id, source, external_id, content_hash, data, timestamp, processed)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+                """,
+                (
+                    event_id,
+                    source,
+                    external_id,
+                    content_hash,
+                    json_data,
+                    timestamp,
+                ),
+            )
+
+    def get_unprocessed_events(self) -> List[Dict[str, Any]]:
+        """Get all raw events that haven't been consolidated yet."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM background_events WHERE processed = 0 ORDER BY"
+            " timestamp ASC"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_events_processed(self, event_ids: List[str]):
+        """
+        Mark events as processed and PRUNE the data to save space.
+        We keep the row (id/hash) for deduplication but remove the heavy JSON payload.
+        """
+        if not event_ids:
+            return
+
+        placeholders = ",".join("?" for _ in event_ids)
+        with self.conn:
+            # Set processed=1 AND wipe the data column (Pruning)
+            self.conn.execute(
+                "UPDATE background_events SET processed = 1, data = NULL"
+                f" WHERE id IN ({placeholders})",
+                event_ids,
+            )
+
+    def add_notification(self, source: str, content: str):
+        """Add a consolidated user-facing notification."""
+        notif_id = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat()
+
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO notifications (id, source, content, timestamp, injected)
+                VALUES (?, ?, ?, ?, 0)
+                """,
+                (notif_id, source, content, timestamp),
+            )
+
+    def get_pending_notifications(self) -> List[Dict[str, Any]]:
+        """Get notifications that haven't been shown to the user yet."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM notifications WHERE injected = 0 ORDER BY"
+            " timestamp ASC"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_notifications_injected(self, notification_ids: List[str]):
+        """Mark notifications as injected into the chat context."""
+        if not notification_ids:
+            return
+
+        placeholders = ",".join("?" for _ in notification_ids)
+        with self.conn:
+            self.conn.execute(
+                "UPDATE notifications SET injected = 1 WHERE id IN"
+                f" ({placeholders})",
+                notification_ids,
             )

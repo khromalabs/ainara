@@ -74,7 +74,7 @@ class LoggingManager:
 
         # Initialize logger with combined filters
         filter_string = "|".join(self._filters) if self._filters else ""
-        self._logger = logging.getLogger(filter_string)
+        self._logger = logging.getLogger(filter_string if filter_string else None)
         logger = self._logger
         log_level = getattr(logging, log_level.upper())
         logger.setLevel(log_level)
@@ -85,7 +85,9 @@ class LoggingManager:
         # Console handler - INFO and above
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
-        console_formatter = logging.Formatter("%(levelname)s: %(message)s")
+        console_formatter = logging.Formatter(
+            "%(levelname)s [%(module)s.%(funcName)s]: %(message)s"
+        )
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
 
@@ -103,7 +105,7 @@ class LoggingManager:
             )
             file_handler.setLevel(log_level)
             file_formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                "%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s"
             )
             file_handler.setFormatter(file_formatter)
             logger.addHandler(file_handler)

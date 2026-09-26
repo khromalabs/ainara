@@ -38,6 +38,7 @@ class ServiceManager {
         }
         ServiceManager.instance = this;
         this.externalProgressReceived = false;
+        this.serviceRestartCounters = {};
 
 
         // Determine executable paths based on platform
@@ -55,6 +56,10 @@ class ServiceManager {
             // In production, look in the resources directory
             executablesDir = path.join(process.resourcesPath, 'bin', 'servers');
         }
+
+        // Exposed so main can locate bundled assets (e.g. the .edition marker)
+        // that ship inside the servers bundle.
+        this.executablesDir = executablesDir;
 
         // Define services with their executables and health endpoints
         if (useSourcePythonModules) {
@@ -75,6 +80,12 @@ class ServiceManager {
                     name: 'Pybridge',
                     executablePath: pythonExecutable,
                     args: ['-u', '-m', 'ainara.framework.pybridge']
+                }),
+                bureau: new Service('bureau', {
+                    url: config.get('bureau.api_url') + '/health',
+                    name: 'bureau',
+                    executablePath: pythonExecutable,
+                    args: ['-u', '-m', 'ainara.bureau.server']
                 })
             };
         } else {
@@ -90,7 +101,13 @@ class ServiceManager {
                     name: 'Pybridge',
                     executablePath: path.join(executablesDir, platform === 'win32' ? 'pybridge.exe' : 'pybridge'),
                     args: []
-                })
+                }),
+                bureau: new Service('bureau', {
+                    url: config.get('bureau.api_url') + '/health',
+                    name: 'bureau',
+                    executablePath: path.join(executablesDir, platform === 'win32' ? 'bureau.exe' : 'bureau'),
+                    args: []
+                }),
             };
         }
 
@@ -265,26 +282,57 @@ class ServiceManager {
         monitor();
     }
 
-    async checkServicesHealth() {
-        let healthyCount = 0;
-        const totalServices = Object.keys(this.services).length;
+    async restartService(service) {
+        const serviceId = service.id;
+        this.serviceRestartCounters[serviceId] = (
+            this.serviceRestartCounters[serviceId] || 0
+        ) + 1;
 
+        if (this.serviceRestartCounters[serviceId] > 2) {
+            if (this.windowManager && this.windowManager.mainWindow) {
+                const { dialog } = require('electron');
+                dialog.showErrorBox(
+                    'Critical Service Failure',
+                    `The "${service.name}" background service has failed repeatedly and could not be restarted. Please restart the application.`
+                );
+            }
+            return;
+        }
+
+        Logger.info(`Attempting to restart service ${service.name} (Attempt ${this.serviceRestartCounters[serviceId]})...`);
+        try {
+            await service.stop({ force: true });
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await service.start(600000);
+            Logger.info(`Service ${service.name} restarted successfully.`);
+        } catch (error) {
+            Logger.error(`Failed to restart service ${service.name}: ${error.message}`);
+            if (this.serviceRestartCounters[serviceId] > 2) {
+                Logger.error(`Service ${service.name} has failed to restart multiple times. Giving up.`);
+            }
+        }
+    }
+
+    async checkServicesHealth() {
+        // Logger.info(`totalServices: ${Object.keys(this.services).length}`);
         for (const service of Object.values(this.services)) {
-            const wasHealthy = service.healthy;
-            service.healthy = await service.checkHealth();
-            if (service.healthy) {
-                healthyCount++;
-            }
-            if (!wasHealthy && service.healthy) {
-                Logger.log(`${service.name} is now healthy`);
-            }
-            else if (wasHealthy && !service.healthy) {
-                // Only log error if it wasn't already unhealthy
-                Logger.error(`${service.name} is no longer healthy`);
+            // Logger.info(`------------------------`);
+            // Logger.info(`SERVICE: ${service.name}`);
+            if (await service.checkHealth()) {
+                // is healthy
+                // Logger.info(`Service ${service.id} is healthy`);
+                this.serviceRestartCounters[service.id] = 0;
+            } else {
+                // is NOT healthy
+                if (!service.isStarting) {
+                    this.restartService(service);
+                    this.serviceRestartCounters[service.id]++;
+                }
             }
         }
 
-        return healthyCount == totalServices;
+        // All restart counters are zero = all services are healthy
+        return Object.values(this.serviceRestartCounters).every(el => el === 0);
     }
 
     async stopServices({ force = false } = {}) {

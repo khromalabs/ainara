@@ -25,7 +25,7 @@ import signal
 import socket
 # import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -35,6 +35,7 @@ from ainara.framework.capabilities.manager import CapabilitiesManager
 from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.logging_setup import logging_manager
 from ainara.orakle import __version__
+from ainara.orakle.scheduler import OrakleScheduler
 
 config.load_config()
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ CORS(app)
 
 
 # Add at module level
-startup_time = datetime.utcnow()
+startup_time = datetime.now(timezone.utc)
 
 
 def check_internet_connection(logger_instance, timeout=3):
@@ -113,8 +114,9 @@ def health_check():
     status = {
         "status": "ok",
         "version": __version__,
-        "uptime_seconds": (datetime.utcnow() - startup_time).total_seconds(),
+        "uptime_seconds": (datetime.now(timezone.utc) - startup_time).total_seconds(),
         "internet_available": getattr(app, "internet_available", False),
+        "load_errors": getattr(app.capabilities_manager, 'load_errors', []),
         "services": {
             "capabilities_manager": app.capabilities_manager is not None,
             "config": config is not None,
@@ -155,7 +157,15 @@ def create_app(internet_available: bool):
     app.internet_available = internet_available
 
     # Store reference to capabilities manager, passing the global config
-    app.capabilities_manager = CapabilitiesManager(app, config, internet_available)
+    app.capabilities_manager = CapabilitiesManager(
+        app, config, internet_available, startup_time=startup_time.timestamp()
+    )
+
+    # --- Scheduler ---
+    # Initialize and start the background scheduler
+    app.scheduler = OrakleScheduler(app.capabilities_manager, config)
+    app.scheduler.start()
+    atexit.register(app.scheduler.shutdown)
 
     # --- Health Monitor ---
     app.health_monitor = HealthMonitor(shutdown_callback=shutdown_server)

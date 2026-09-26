@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import math
+import numpy as np
 # import re
 import uuid
 from datetime import datetime, timezone
@@ -30,21 +31,21 @@ import threading
 from typing import Any, Dict, List, Optional
 
 try:
-    from sentence_transformers import SentenceTransformer
-    from sentence_transformers.util import cos_sim
+    from fastembed import TextEmbedding
 
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
+    FASTEMBED_AVAILABLE = True
 except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    FASTEMBED_AVAILABLE = False
 
 from spacy.lang.en.stop_words import STOP_WORDS as SPACY_STOP_WORDS
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
 from ainara.framework.llm.base import LLMBackend
+from ainara.framework.llm import create_llm_backend
 from ainara.framework.storage import get_vector_backend
 from ainara.framework.template_manager import TemplateManager
-from ainara.framework.utils import load_spacy_model
+from ainara.framework.utils import format_relative_time_terse, load_spacy_model
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +53,64 @@ logger = logging.getLogger(__name__)
 # This acts as a low-pass filter to prune irrelevant memories from active recall.
 MIN_RELEVANCE_THRESHOLD = 0.2
 
+MEMORY_MAX_WORDS = 80
+MEMORY_SOFT_MAX_WORDS = 60
+
 # Define a set of stopwords for normalization.
 # We use spaCy's list and can extend it if needed.
 STOPWORDS = set(SPACY_STOP_WORDS)
+
+
+# TODO: GREEN Memories v2 — Compact LLM-Native Memory Format
+#
+# Context: During a design session (2026-03-29), a significant architectural
+# improvement was identified for how memory text is stored and injected into
+# context windows. The core insight is that memories are consumed almost
+# exclusively by LLMs, not humans — so natural language prose is unnecessarily
+# token-expensive. A more token-efficient, LLM-native format was designed.
+#
+# Proposed dual-field memory schema:
+#
+#   - `memory` (compact, PRIMARY): A concise key:value notation using dotted
+#     namespaces to express hierarchy while keeping each entry strictly atomic.
+#     Used everywhere for LLM context injection and memory processing prompts.
+#     Examples:
+#       "loc: London"
+#       "kids: John, Betty"
+#       "core_drive.goal: John edu sovereignty"
+#       "core_drive.catalyst: school fail → special-ed force"
+#       "core_drive.solution: Polaris/Ainara autonomous learn"
+#
+#   - `description` (natural language, SECONDARY): Human-readable version,
+#     generated once at creation time by the same LLM call. Mostly static —
+#     only refreshed when new_memory_text is explicitly provided on reinforce.
+#     Used for: generate_user_profile, generate_recent_memories, and any
+#     human-facing memory browser feature.
+#
+# Key design constraints:
+#   - Atomic model MUST be preserved: one fact = one DB entry = one vector.
+#     Grouping multiple facts into one document would blur the embedding and
+#     degrade retrieval precision. The dotted namespace (core_drive.goal: ...)
+#     preserves relational context without clustering.
+#   - Vector retrieval remains unchanged — compact text embeds well and LLMs
+#     parse it natively, yielding significantly more memories per context window.
+#   - The "network" aspect of GREEN (topic-based boosting) is unaffected.
+#
+# Estimated token savings: 40-60% per memory entry in context injection,
+# allowing proportionally more memories in the same context budget.
+#
+# Migration path:
+#   1. Add `description` column to user_memories (follow _update_schema() pattern).
+#   2. One-time script: populate `description` from existing `memory` text (already
+#      natural language — no transformation needed for existing records).
+#   3. New memories: update consolidated_memory_processing.mu and
+#      extract_memory_candidate_system.mu to instruct the LLM to produce both
+#      a compact `memory` field and a natural language `description` field.
+#   4. Update context injection to use compact `memory` field.
+#   5. Update generate_user_profile and generate_recent_memories templates to
+#      use the `description` field for richer narrative synthesis.
+#   6. Set migration flag (see _check_fastembed_migration() pattern) and trigger
+#      vector DB reset to re-embed all memories in compact format.
 
 
 class GREENMemories:
@@ -67,6 +123,7 @@ class GREENMemories:
     ):
         self.llm = llm
         self.chat_memory = chat_memory
+        self._memory_llm_cache = {}
         self.storage = chat_memory.storage
         self.template_manager = TemplateManager()
         self.context_window = llm.get_context_window() or 4096  # default 4k
@@ -77,7 +134,11 @@ class GREENMemories:
             # semantic similarity to the query. 0.3 means 30% relevance, 70% semantic.
             "relevance_weight": 0.3,
             # The penalty applied to memories marked as 'past' to de-prioritize them.
-            "past_memory_penalty": 0.5,
+            "past_memory_penalty": 0.2,
+            # The penalty applied to memories marked as 'wrong' (retracted).
+            # Much harsher than 'past' — effectively suppresses them from results
+            # while keeping them in the vector store for duplicate detection.
+            "wrong_memory_penalty": 0.02,
             # The maximum boost applied to a memory that was just updated.
             "max_recency_boost": 1.5,
             # Controls how quickly the recency boost fades over time (in hours).
@@ -109,6 +170,8 @@ class GREENMemories:
         # Setup database / load key memories
         self._create_memories_table()
         self._update_schema()
+        self._truncate_long_memories()
+        self._check_fastembed_migration()
         self.all_key_memories = self.get_key_memories()
         # Cache all topics on initialization to avoid repeated DB queries
         self.all_topics = self.get_all_topics()
@@ -136,26 +199,26 @@ class GREENMemories:
             "user_profile.vector_storage.embedding_model",
             config.get(
                 "memory.vector_storage.embedding_model",
-                "sentence-transformers/all-mpnet-base-v2",
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             ),
         )
 
         # Topic matching model for memory boosting
         self.topic_matcher_model = None
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
+        if FASTEMBED_AVAILABLE:
             try:
-                self.topic_matcher_model = SentenceTransformer(
-                    embedding_model,
-                    cache_folder=config.get("cache.directory")
+                self.topic_matcher_model = TextEmbedding(
+                    model_name=embedding_model,
+                    cache_dir=config.get("cache.directory"),
                 )
                 logger.info(f"Loaded topic matcher model: {embedding_model}")
             except Exception as e:
                 logger.error(f"Failed to load topic matcher model: {e}")
-        elif not SENTENCE_TRANSFORMERS_AVAILABLE:
+        elif not FASTEMBED_AVAILABLE:
             logger.warning(
-                "sentence_transformers library not found. Topic-based memory "
+                "fastembed library not found. Topic-based memory "
                 "boosting will be disabled. Please run 'pip install "
-                "sentence-transformers'."
+                "fastembed'."
             )
 
         # Ensure path is expanded
@@ -170,6 +233,9 @@ class GREENMemories:
             logger.info(
                 f"Using {vector_type} vector backend for user profile memories"
             )
+
+            self._deduplicate_existing_memories()
+
             # Sync profile to vector store on startup if needed.
             # First, check the explicit flag.
             needs_reset = self.storage.get_metadata("vector_db_needs_reset")
@@ -221,6 +287,58 @@ class GREENMemories:
     def update_llm(self, llm):
         self.llm = llm
         self.context_window = llm.get_context_window() or 4096  # default 4k
+
+    _ALL_MEMORY_PROVIDERS_FAILED = object()
+
+    def _get_memory_llm(self, provider_name: Optional[str]):
+        """Return a cached memory-processing LLM for the named provider."""
+        if provider_name is None:
+            return self.llm
+
+        if provider_name not in self._memory_llm_cache:
+            self._memory_llm_cache[provider_name] = create_llm_backend(
+                config.get("llm", {}),
+                selected_provider=provider_name,
+            )
+
+        return self._memory_llm_cache[provider_name]
+
+    # TODO: This provider-fallback mechanism may prove useful outside
+    # GREENMemories; consider extracting it into a generic utility later.
+    def _run_with_memory_llm(
+        self,
+        task,
+        blacklist: Optional[set] = None,
+    ) -> tuple[Any, Optional[str]]:
+        """Run ``task(llm)`` using the first available memories processor.
+
+        Providers from ``llm.memories_processors`` are attempted in order.
+        The default LLM (``None`` provider) is always the final fallback.
+        Failures are blacklisted for the lifetime of the supplied set.
+        """
+
+        if blacklist is None:
+            blacklist = set()
+
+        providers = config.get("llm.memories_processors", []) or []
+
+        for provider_name in [*providers, None]:
+            if provider_name in blacklist:
+                continue
+
+            try:
+                llm = self._get_memory_llm(provider_name)
+                return task(llm), provider_name
+            except Exception as exc:
+                logger.warning(
+                    "Memory LLM provider %r failed: %s",
+                    provider_name,
+                    exc,
+                )
+                if provider_name is not None:
+                    blacklist.add(provider_name)
+
+        return self._ALL_MEMORY_PROVIDERS_FAILED, None
 
     def _create_memories_table(self):
         """Creates the user_memories table in the database if it doesn't exist."""
@@ -420,6 +538,220 @@ class GREENMemories:
         except Exception as e:
             logger.error(f"Failed to update user_memories schema: {e}")
 
+    def _truncate_long_memories(self):
+        """
+        One-time process to find and truncate memories exceeding the word limit.
+        """
+        migration_flag = "long_memories_truncated_v1"
+        # !!! FORCE
+        self.storage.delete_metadata([migration_flag])
+        if self.storage.get_metadata(migration_flag) == "true":
+            return
+
+        logger.info("Running one-time check for long memories to truncate...")
+        try:
+            with self.storage.conn:
+                cursor = self.storage.conn.cursor()
+                cursor.execute("SELECT id, memory FROM user_memories")
+                all_memories = cursor.fetchall()
+
+                memories_to_update = []
+                for mem_id, mem_text in all_memories:
+                    if mem_text and len(mem_text.split()) > MEMORY_MAX_WORDS:
+                        truncated_text = self._truncate_memory_text(mem_text)
+                        memories_to_update.append((truncated_text, mem_id))
+
+                if memories_to_update:
+                    logger.info(
+                        f"Found {len(memories_to_update)} memories to truncate."
+                    )
+                    cursor.executemany(
+                        "UPDATE user_memories SET memory = ? WHERE id = ?",
+                        memories_to_update,
+                    )
+                    self.storage.set_metadata("vector_db_needs_reset", "true")
+                    logger.info(
+                        "Flagged vector DB for reset due to memory truncation."
+                    )
+                else:
+                    logger.info("No long memories found that need truncation.")
+
+                self.storage.set_metadata(migration_flag, "true")
+        except Exception as e:
+            logger.error(f"Failed during one-time memory truncation: {e}")
+
+    def _check_fastembed_migration(self):
+        """
+        One-time migration to force a vector DB reset when switching to fastembed.
+        """
+        migration_flag = "migration_fastembed_v1"
+        if self.storage.get_metadata(migration_flag) == "true":
+            return
+
+        logger.info("Running one-time migration for FastEmbed switch...")
+        try:
+            # Force a reset of the vector DB to regenerate embeddings with the new model
+            self.storage.set_metadata("vector_db_needs_reset", "true")
+            self.storage.set_metadata(migration_flag, "true")
+            logger.info(
+                "Flagged vector DB for reset to ensure compatibility with FastEmbed."
+            )
+        except Exception as e:
+            logger.error(f"Failed during FastEmbed migration check: {e}")
+
+    def _truncate_memory_text(self, text: str) -> str:
+        """
+        Truncates memory text if it exceeds word limits, trying to preserve
+        full sentences.
+        """
+        words = text.split()
+        word_count = len(words)
+
+        # If text is within the hard limit, no action needed.
+        if word_count <= MEMORY_MAX_WORDS:
+            return text
+
+        # If text is over the soft limit, try to find the next sentence end.
+        # We search from the word just before the soft limit up to the hard limit.
+        for i in range(
+            MEMORY_SOFT_MAX_WORDS - 1, min(word_count, MEMORY_MAX_WORDS)
+        ):
+            if words[i].endswith("."):
+                # Found a sentence boundary within the acceptable range.
+                truncated_text = " ".join(words[: i + 1])
+                logger.warning(
+                    f"Memory text is long ({word_count} words). Truncating to"
+                    f" {len(truncated_text.split())} words at sentence end."
+                )
+                return truncated_text
+
+        # If no suitable sentence end was found, or if the text exceeds the hard limit,
+        # apply the hard truncation.
+        if word_count > MEMORY_MAX_WORDS:
+            logger.warning(
+                f"Memory text is too long ({word_count} words) and no suitable"
+                " sentence end found. Hard truncating to"
+                f" {MEMORY_MAX_WORDS} words."
+            )
+            return " ".join(words[:MEMORY_MAX_WORDS]) + "..."
+
+        # If text is between the soft and hard limits but no sentence end was found,
+        # return the original text.
+        return text
+
+    def _deduplicate_existing_memories(self):
+        """
+        One-time process to find and consolidate duplicate memories.
+        """
+        migration_flag = "existing_memories_deduplicated_v1"
+        if self.storage.get_metadata(migration_flag) == "true":
+            return
+
+        logger.info("Running one-time check for duplicate memories...")
+        try:
+            with self.storage.conn:
+                cursor = self.storage.conn.cursor()
+                cursor.execute("SELECT * FROM user_memories")
+                all_memories_rows = cursor.fetchall()
+                all_memories = [
+                    self._dict_from_row(row) for row in all_memories_rows
+                ]
+
+            normalized_map = {}
+            for mem in all_memories:
+                normalized_text = self._normalize_memory_text(mem["memory"])
+                if normalized_text not in normalized_map:
+                    normalized_map[normalized_text] = []
+                normalized_map[normalized_text].append(mem)
+
+            memories_to_delete_ids = []
+            memories_to_update = []
+            total_duplicates_found = 0
+
+            for _, duplicates in normalized_map.items():
+                if len(duplicates) > 1:
+                    total_duplicates_found += len(duplicates) - 1
+                    # Sort by relevance to find the one to keep
+                    duplicates.sort(
+                        key=lambda m: m.get("relevance", 0), reverse=True
+                    )
+                    memory_to_keep = duplicates[0]
+                    memories_to_remove = duplicates[1:]
+
+                    # Consolidate relevance and source IDs
+                    total_relevance_from_dupes = sum(
+                        m.get("relevance", 0) for m in memories_to_remove
+                    )
+
+                    kept_source_ids = set(
+                        memory_to_keep.get("source_message_ids") or []
+                    )
+                    for mem in memories_to_remove:
+                        for msg_id in mem.get("source_message_ids") or []:
+                            kept_source_ids.add(msg_id)
+
+                    updated_relevance = (
+                        memory_to_keep.get("relevance", 0)
+                        + total_relevance_from_dupes
+                    )
+                    updated_source_ids_json = json.dumps(
+                        list(kept_source_ids)
+                    )
+
+                    memories_to_update.append(
+                        (
+                            updated_relevance,
+                            updated_source_ids_json,
+                            memory_to_keep["id"],
+                        )
+                    )
+                    memories_to_delete_ids.extend(
+                        [m["id"] for m in memories_to_remove]
+                    )
+
+            if memories_to_delete_ids:
+                logger.info(
+                    f"Found {total_duplicates_found} duplicate memories to"
+                    " consolidate."
+                )
+                with self.storage.conn:
+                    cursor = self.storage.conn.cursor()
+                    # Update the kept memories
+                    cursor.executemany(
+                        "UPDATE user_memories SET relevance = ?,"
+                        " source_message_ids = ? WHERE id = ?",
+                        memories_to_update,
+                    )
+                    # Delete the duplicates
+                    placeholders = ",".join(
+                        "?" for _ in memories_to_delete_ids
+                    )
+                    cursor.execute(
+                        "DELETE FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        memories_to_delete_ids,
+                    )
+
+                if self.vector_storage:
+                    self.vector_storage.delete(memories_to_delete_ids)
+                    logger.info(
+                        f"Deleted {len(memories_to_delete_ids)} duplicates"
+                        " from vector store."
+                    )
+
+                self.storage.set_metadata("vector_db_needs_reset", "true")
+                logger.info(
+                    "Flagged vector DB for reset due to de-duplication."
+                )
+            else:
+                logger.info("No duplicate memories found.")
+
+            self.storage.set_metadata(migration_flag, "true")
+        except Exception as e:
+            logger.error(
+                f"Failed during one-time memory de-duplication: {e}"
+            )
+
     def _dict_from_row(self, row: Any) -> Dict:
         """Converts a sqlite3.Row to a dictionary and parses JSON fields."""
         if not row:
@@ -532,55 +864,68 @@ class GREENMemories:
             A string containing the narrative user profile, or None if no
             memories exist.
         """
-        if top_k is None:
-            # Dynamically set top_k for profile summary based on context window
-            if self.context_window <= 4000:
-                top_k = 35
-            if self.context_window <= 8000:
-                top_k = 35
-            elif self.context_window <= 32768:
-                top_k = 50
+        # TODO: Boot-time memory prep is split between pybridge.create_app()
+        # (`generate_user_profile_summary`) and ChatManager.__init__()
+        # (`generate_recent_memories_summary`). Consider centralising later.
+        logger.info("Generating narrative user profile...")
+
+        def _task(llm) -> Optional[str]:
+            context_window = llm.get_context_window() or 4096
+
+            if top_k is None:
+                if context_window <= 8000:
+                    actual_top_k = 30
+                elif context_window <= 32768:
+                    actual_top_k = 40
+                else:
+                    actual_top_k = 60
+
+                logger.info(
+                    "Selected memory LLM context window is %d, setting"
+                    " top_k for profile summary to %d",
+                    context_window,
+                    actual_top_k,
+                )
             else:
-                top_k = 75
-            logger.info(
-                f"Context window is {self.context_window}, dynamically setting"
-                f" top_k for profile summary to {top_k}"
+                actual_top_k = top_k
+
+            key_memories = self.get_key_memories(limit=actual_top_k)
+
+            if not key_memories:
+                logger.info(
+                    "No key memories found to generate a profile summary."
+                )
+                return None
+
+            formatted_memories = [
+                f"- {mem['memory']} (Relevance: {mem['relevance']:.2f})"
+                for mem in key_memories
+            ]
+            memories_text = "\n".join(formatted_memories)
+
+            user_prompt = self.template_manager.render(
+                "framework.green_memories.generate_user_profile",
+                {"memories_text": memories_text},
             )
-        logger.info(
-            f"Generating narrative user profile from top {top_k} key"
-            " memories..."
-        )
-        key_memories = self.get_key_memories(limit=top_k)
 
-        if not key_memories:
-            logger.info("No key memories found to generate a profile summary.")
-            return None
-
-        # Prepare the memories for the prompt, including relevance scores
-        formatted_memories = [
-            f"- {mem['memory']} (Relevance: {mem['relevance']:.2f})"
-            for mem in key_memories
-        ]
-        memories_text = "\n".join(formatted_memories)
-
-        user_prompt = self.template_manager.render(
-            "framework.green_memories.generate_user_profile",
-            {"memories_text": memories_text},
-        )
-
-        try:
-            profile_summary = self.llm.chat(
+            return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
             )
-            logger.info(
-                f"Generated user profile summary: {profile_summary[:150]}..."
-            )
-        except Exception:
-            profile_summary = "User profile couldn't be generated"
-            logger.error(profile_summary)
 
-        return profile_summary
+        result, _provider_used = self._run_with_memory_llm(_task)
+
+        if result is self._ALL_MEMORY_PROVIDERS_FAILED:
+            logger.error(
+                "User profile summary could not be generated with any"
+                " configured memory LLM."
+            )
+            return "User profile couldn't be generated"
+
+        if result is not None:
+            logger.info(f"Generated user profile summary: {result[:150]}...")
+
+        return result
 
     def generate_recent_memories_summary(
         self, top_k: Optional[int] = None
@@ -598,66 +943,123 @@ class GREENMemories:
             A string containing the narrative of recent memories, or None if no
             memories exist.
         """
-        if top_k is None:
-            # Dynamically set top_k for profile summary based on context window
-            if self.context_window <= 4000:
-                top_k = 35
-            if self.context_window <= 8000:
-                top_k = 35
-            elif self.context_window <= 32768:
-                top_k = 50
+        logger.info("Generating recent memories summary...")
+
+        def _task(llm) -> Optional[str]:
+            context_window = llm.get_context_window() or 4096
+
+            if top_k is None:
+                if context_window <= 8000:
+                    actual_top_k = 30
+                elif context_window <= 32768:
+                    actual_top_k = 40
+                else:
+                    actual_top_k = 60
+
+                logger.info(
+                    "Selected memory LLM context window is %d, setting"
+                    " top_k for recent memories summary to %d",
+                    context_window,
+                    actual_top_k,
+                )
             else:
-                top_k = 75
-            logger.info(
-                f"Context window is {self.context_window}, dynamically setting"
-                f" top_k for recent memories summary to {top_k}"
+                actual_top_k = top_k
+
+            query = (
+                "SELECT * FROM user_memories WHERE status = 'current'"
+                " ORDER BY created_at DESC"
             )
-        logger.info(
-            f"Generating narrative of recent memories from top {top_k} most"
-            " recent memories..."
-        )
+            params: tuple = ()
 
-        # Fetch recent memories
-        query = (
-            "SELECT * FROM user_memories WHERE status = 'current' ORDER BY"
-            " last_updated DESC"
-        )
-        params = ()
+            if actual_top_k is not None:
+                query += " LIMIT ?"
+                params += (actual_top_k,)
 
-        if top_k is not None:
-            query += " LIMIT ?"
-            params += (top_k,)
+            cursor = self.storage.conn.cursor()
+            cursor.execute(query, params)
+            recent_memories = [
+                self._dict_from_row(row) for row in cursor.fetchall()
+            ]
 
-        cursor = self.storage.conn.cursor()
-        cursor.execute(query, params)
-        recent_memories = [self._dict_from_row(row) for row in cursor.fetchall()]
+            if not recent_memories:
+                logger.info(
+                    "No recent memories found to generate a summary."
+                )
+                return None
 
-        if not recent_memories:
-            logger.info("No recent memories found to generate a summary.")
-            return None
+            formatted_memories = []
+            for mem in recent_memories:
+                memory_text = mem['memory']
+                last_updated = mem.get('last_updated')
+                created_at = mem.get('created_at')
 
-        # Prepare the memories for the prompt
-        formatted_memories = [f"- {mem['memory']}" for mem in recent_memories]
-        memories_text = "\n".join(formatted_memories)
+                last_updated_terse = format_relative_time_terse(
+                    last_updated
+                )
+                created_at_terse = format_relative_time_terse(created_at)
 
-        user_prompt = self.template_manager.render(
-            "framework.green_memories.generate_recent_memories",
-            {"memories_text": memories_text},
-        )
+                show_both = False
+                if created_at and last_updated:
+                    try:
+                        created_dt = datetime.fromisoformat(created_at)
+                        updated_dt = datetime.fromisoformat(last_updated)
 
-        try:
-            recent_summary = self.llm.chat(
+                        if created_dt.tzinfo is None:
+                            created_dt = created_dt.replace(
+                                tzinfo=timezone.utc
+                            )
+                        if updated_dt.tzinfo is None:
+                            updated_dt = updated_dt.replace(
+                                tzinfo=timezone.utc
+                            )
+
+                        gap_seconds = (
+                            updated_dt - created_dt
+                        ).total_seconds()
+                        show_both = gap_seconds > 300
+                    except (ValueError, TypeError):
+                        pass
+
+                if show_both and created_at_terse and last_updated_terse:
+                    formatted_memories.append(
+                        f"- [first seen: {created_at_terse} |"
+                        f" last mentioned: {last_updated_terse}]"
+                        f" {memory_text}"
+                    )
+                elif last_updated_terse:
+                    formatted_memories.append(
+                        f"- [{last_updated_terse}] {memory_text}"
+                    )
+                else:
+                    formatted_memories.append(f"- {memory_text}")
+
+            memories_text = "\n".join(formatted_memories)
+
+            user_prompt = self.template_manager.render(
+                "framework.green_memories.generate_recent_memories",
+                {"memories_text": memories_text},
+            )
+
+            return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
             )
-            logger.info(
-                f"Generated recent memories summary: {recent_summary[:150]}..."
-            )
-        except Exception:
-            recent_summary = "Recent memories summary couldn't be generated"
-            logger.error(recent_summary)
 
-        return recent_summary
+        result, _provider_used = self._run_with_memory_llm(_task)
+
+        if result is self._ALL_MEMORY_PROVIDERS_FAILED:
+            logger.error(
+                "Recent memories summary could not be generated with any"
+                " configured memory LLM."
+            )
+            return "Recent memories summary couldn't be generated"
+
+        if result is not None:
+            logger.info(
+                f"Generated recent memories summary: {result[:150]}..."
+            )
+
+        return result
 
     def get_key_memories(
         self,
@@ -729,20 +1131,25 @@ class GREENMemories:
         logger.info("Checking relevant topics...")
 
         try:
-            context_embedding = self.topic_matcher_model.encode(
-                context, convert_to_tensor=True
-            )
-            topic_embeddings = self.topic_matcher_model.encode(
-                all_topics, convert_to_tensor=True
-            )
+            # Generate embeddings (returns generators)
+            context_embedding_gen = self.topic_matcher_model.embed([context])
+            topic_embeddings_gen = self.topic_matcher_model.embed(all_topics)
 
-            similarities = cos_sim(context_embedding, topic_embeddings)
+            # Convert to numpy arrays
+            context_vec = next(context_embedding_gen)
+            topic_vecs = np.array(list(topic_embeddings_gen))
 
-            relevant_indices = (
-                (similarities[0] > threshold)
-                .nonzero(as_tuple=True)[0]
-                .tolist()
-            )
+            # Calculate Cosine Similarity: (A . B) / (||A|| * ||B||)
+            norm_context = np.linalg.norm(context_vec)
+            norm_topics = np.linalg.norm(topic_vecs, axis=1)
+
+            dot_products = np.dot(topic_vecs, context_vec)
+
+            # Calculate scores (add epsilon to avoid division by zero)
+            similarities = dot_products / (norm_topics * norm_context + 1e-9)
+
+            # Filter based on threshold
+            relevant_indices = np.where(similarities > threshold)[0]
             relevant_topics = [all_topics[i] for i in relevant_indices]
 
             return relevant_topics
@@ -907,6 +1314,14 @@ class GREENMemories:
                         "past_memory_penalty"
                     ]  # Apply a penalty
 
+                # Severely demote retracted/wrong memories — they stay in the
+                # vector store for duplicate detection but should almost never
+                # surface in conversation context.
+                elif memory_status == "wrong":
+                    combined_score *= self.scoring_config[
+                        "wrong_memory_penalty"
+                    ]
+
                 ranked_memories.append((memory, combined_score))
 
             ranked_memories.sort(key=lambda x: x[1], reverse=True)
@@ -919,7 +1334,12 @@ class GREENMemories:
             for memory in semantic_memories:
                 if memory.get("status") == "past":
                     memory["memory"] = (
-                        "PAST MEMORY DON'T CONSIDER THIS A CURRENT EVENT:"
+                        "PAST EVENT:"
+                        f" \"{memory['memory']}\""
+                    )
+                elif memory.get("status") == "wrong":
+                    memory["memory"] = (
+                        "RETRACTED MEMORY (hallucinated or misinterpreted):"
                         f" \"{memory['memory']}\""
                     )
 
@@ -1016,6 +1436,7 @@ class GREENMemories:
         total_turns = len(conversation_turns)
         newly_created_or_updated_memories_in_batch = []
         session_update_counts = {}  # Track updates per memory_id in this session
+        blacklisted_providers = set()  # Track failed providers to skip them
         for i, (user_msg, assistant_msg) in enumerate(conversation_turns):
             # Move timestamp forward BEFORE processing to avoid getting stuck.
             # If processing fails, this message will be skipped on the next run.
@@ -1025,50 +1446,51 @@ class GREENMemories:
                     "profile_last_processed_timestamp", current_timestamp
                 )
 
-            try:
-                # Create a sliding window of context. A value of 0 means no extra context.
-                start_index = max(0, i - self.extraction_context_turns)
-                context_turns = conversation_turns[start_index: i + 1]
+            # Create a sliding window of context. A value of 0 means no extra context.
+            start_index = max(0, i - self.extraction_context_turns)
+            context_turns = conversation_turns[start_index: i + 1]
 
-                # The last turn in the window is the one we are primarily analyzing.
-                # The preceding turns provide the context.
-                processed_memory = self._extract_and_assimilate_memory(
+            processed_memory, _provider_used = self._run_with_memory_llm(
+                lambda llm: self._extract_and_assimilate_memory(
                     context_turns,
                     newly_created_or_updated_memories_in_batch,
                     session_update_counts,
-                )
+                    llm=llm,
+                ),
+                blacklist=blacklisted_providers,
+            )
 
-                if processed_memory:
-                    # If a memory was created or updated, update our batch context list
-                    existing_index = next(
-                        (
-                            idx
-                            for idx, mem in enumerate(
-                                newly_created_or_updated_memories_in_batch
-                            )
-                            if mem["id"] == processed_memory["id"]
-                        ),
-                        -1,
-                    )
-                    if existing_index != -1:
-                        # It was an update, replace the old version
-                        newly_created_or_updated_memories_in_batch[
-                            existing_index
-                        ] = processed_memory
-                    else:
-                        # It was a creation, add it
-                        newly_created_or_updated_memories_in_batch.append(
-                            processed_memory
-                        )
-
-            except Exception as e:
+            if processed_memory is self._ALL_MEMORY_PROVIDERS_FAILED:
                 logger.error(
-                    "Failed to process memory for turn ending with message at"
-                    f" timestamp {current_timestamp}. This turn will be"
-                    f" skipped. Error: {e}"
+                    "All providers failed to process memory for turn ending"
+                    " with message at timestamp %s. This turn will be"
+                    " skipped.",
+                    current_timestamp,
                 )
-                # The timestamp is already updated, so we just continue to the next turn.
                 continue
+
+            if processed_memory:
+                # If a memory was created or updated, update our batch context list
+                existing_index = next(
+                    (
+                        idx
+                        for idx, mem in enumerate(
+                            newly_created_or_updated_memories_in_batch
+                        )
+                        if mem["id"] == processed_memory["id"]
+                    ),
+                    -1,
+                )
+                if existing_index != -1:
+                    # It was an update, replace the old version
+                    newly_created_or_updated_memories_in_batch[
+                        existing_index
+                    ] = processed_memory
+                else:
+                    # It was a creation, add it
+                    newly_created_or_updated_memories_in_batch.append(
+                        processed_memory
+                    )
 
             if progress_callback:
                 progress = int(((i + 1) / total_turns) * max_progress)
@@ -1084,6 +1506,72 @@ class GREENMemories:
         # This is a public wrapper for the decay functionality.
         with self._db_lock:
             self._decay_memory_relevance(decay_factor)
+
+    def _find_and_handle_duplicate(
+        self,
+        memory_text: str,
+        user_message: Dict,
+        assistant_message: Dict,
+    ) -> Optional[Dict]:
+        """
+        Checks for a duplicate memory before creation and reinforces it if found.
+
+        Returns:
+            The updated memory object if a duplicate was found and handled,
+            otherwise None.
+        """
+        if not self.vector_storage:
+            return None  # Cannot perform check without vector storage
+
+        normalized_new_text = self._normalize_memory_text(memory_text)
+        if not normalized_new_text:
+            return None  # Cannot check empty memories
+
+        # Phase 1: High-similarity vector search for candidates
+        # We use a very low distance (high similarity) threshold.
+        # A score of 0.1 is very similar.
+        candidates_with_scores = self.vector_storage.search_with_scores(
+            normalized_new_text, limit=5
+        )
+
+        # Filter for very high similarity
+        candidates = [
+            doc.get("metadata", {})
+            for doc, score in candidates_with_scores
+            if score < 0.1
+        ]
+
+        if not candidates:
+            return None
+
+        # Phase 2: Verify with exact normalized match
+        for candidate in candidates:
+            # Skip retracted/wrong memories — don't reinforce a hallucination.
+            # Let the new memory be created as a legitimate fresh entry.
+            if candidate.get("status") == "wrong":
+                logger.info(
+                    f"Skipping wrong/retracted candidate (ID:"
+                    f" {candidate.get('id')}) during duplicate check."
+                )
+                continue
+            normalized_candidate_text = self._normalize_memory_text(
+                candidate.get("memory", "")
+            )
+            if normalized_new_text == normalized_candidate_text:
+                logger.info(
+                    f"Found duplicate memory (ID: {candidate['id']})."
+                    " Reinforcing existing instead of creating new."
+                )
+                # Use _update_memory to handle reinforcement and source ID merging.
+                return self._update_memory(
+                    candidate["id"],
+                    candidate["memory"],  # use existing text
+                    user_message,
+                    assistant_message,
+                    increment=1.0,
+                )
+
+        return None
 
     def _decay_memory_relevance(self, decay_factor: float = 0.998):
         """Applies a decay factor to the relevance of all memories."""
@@ -1144,6 +1632,52 @@ class GREENMemories:
     ) -> Optional[Dict]:
         """Updates an existing memory's text and boosts its relevance."""
         try:
+            # Check if this update would create a duplicate of another memory
+            normalized_new_text = self._normalize_memory_text(new_text)
+            if self.vector_storage and normalized_new_text:
+                # Find candidates
+                candidates_with_scores = self.vector_storage.search_with_scores(
+                    normalized_new_text, limit=5
+                )
+                candidates = [
+                    doc.get("metadata", {})
+                    for doc, score in candidates_with_scores
+                    if score < 0.1
+                    and doc.get("metadata", {}).get("id") != memory_id
+                ]
+
+                for candidate in candidates:
+                    normalized_candidate_text = self._normalize_memory_text(
+                        candidate.get("memory", "")
+                    )
+                    if normalized_new_text == normalized_candidate_text:
+                        logger.warning(
+                            f"Update to memory {memory_id} would create a"
+                            f" duplicate of {candidate['id']}. Consolidating"
+                            " instead."
+                        )
+                        # Consolidate memory_id into candidate['id']
+                        # First, get the relevance of the memory we are about to delete
+                        cursor = self.storage.conn.cursor()
+                        cursor.execute(
+                            "SELECT relevance FROM user_memories WHERE id = ?",
+                            (memory_id,),
+                        )
+                        row = cursor.fetchone()
+                        relevance_to_transfer = row[0] if row else 0
+
+                        # Delete the old memory
+                        self._delete_memories([memory_id])
+
+                        # Update the existing duplicate, transferring relevance
+                        return self._update_memory(
+                            candidate["id"],
+                            candidate["memory"],  # use its own text
+                            user_message,
+                            assistant_message,
+                            increment=increment + relevance_to_transfer,
+                        )
+
             # First, get the existing memory to preserve other metadata
             cursor = self.storage.conn.cursor()
             cursor.execute(
@@ -1174,6 +1708,8 @@ class GREENMemories:
                 if new_id not in source_ids:
                     source_ids.append(new_id)
             updated_source_ids_json = json.dumps(source_ids)
+
+            new_text = self._truncate_memory_text(new_text)
 
             # Update in SQLite, boosting relevance
             with self.storage.conn:
@@ -1241,6 +1777,15 @@ class GREENMemories:
                 "Attempted to create a memory with no text. Skipping."
             )
             return None
+
+        # Check for duplicates before proceeding
+        existing_duplicate = self._find_and_handle_duplicate(
+            memory_text, user_message, assistant_message
+        )
+        if existing_duplicate:
+            return existing_duplicate
+
+        memory_text = self._truncate_memory_text(memory_text)
 
         if target_section not in ["key_memories", "extended_memories"]:
             logger.warning(
@@ -1366,6 +1911,111 @@ class GREENMemories:
         except Exception as e:
             logger.error(f"Failed to mark memories as past: {e}")
 
+    def _retract_memory(
+        self, memory_ids: List[str], reason: Optional[str] = None
+    ):
+        """Marks memories as 'wrong' (retracted) in SQLite and the vector store.
+
+        Retracted memories are not deleted — they remain for auditability and
+        to prevent the same hallucination from being re-created via duplicate
+        detection. Their relevance score is not changed; instead, the
+        'wrong_memory_penalty' in get_relevant_memories() ensures they are
+        effectively suppressed from conversation context.
+
+        Args:
+            memory_ids: List of memory UUIDs to retract.
+            reason: Optional human-readable reason for the retraction (stored
+                    in the memory's metadata JSON field for audit purposes).
+        """
+        if not memory_ids:
+            return
+
+        logger.info(
+            f"Retracting {len(memory_ids)} memories as wrong/hallucinated."
+            + (f" Reason: {reason}" if reason else "")
+        )
+        try:
+            placeholders = ",".join("?" for _ in memory_ids)
+            now_timestamp = datetime.now(timezone.utc).isoformat()
+
+            # Step 1: Update status in SQLite and store retraction reason
+            with self.storage.conn:
+                cursor = self.storage.conn.cursor()
+                # First update status
+                cursor.execute(
+                    "UPDATE user_memories SET status = 'wrong',"
+                    " last_updated = ? WHERE id IN"
+                    f" ({placeholders})",
+                    [now_timestamp] + memory_ids,
+                )
+                retracted_count = cursor.rowcount
+                logger.info(
+                    f"Marked {retracted_count} memories as 'wrong' in SQLite."
+                )
+
+                # Store retraction reason in metadata if provided
+                if reason:
+                    for mem_id in memory_ids:
+                        cursor.execute(
+                            "SELECT metadata FROM user_memories WHERE id = ?",
+                            (mem_id,),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            existing_metadata = {}
+                            if row[0]:
+                                try:
+                                    existing_metadata = json.loads(row[0])
+                                except json.JSONDecodeError:
+                                    pass
+                            existing_metadata["retraction_reason"] = reason
+                            existing_metadata[
+                                "retracted_at"
+                            ] = now_timestamp
+                            cursor.execute(
+                                "UPDATE user_memories SET metadata = ?"
+                                " WHERE id = ?",
+                                (json.dumps(existing_metadata), mem_id),
+                            )
+
+            # Step 2: Update in vector store by re-adding (upserting) with
+            # new status so duplicate detection still works
+            if self.vector_storage:
+                with self.storage.conn:
+                    cursor = self.storage.conn.execute(
+                        "SELECT * FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        memory_ids,
+                    )
+                    updated_memories = [
+                        self._dict_from_row(row)
+                        for row in cursor.fetchall()
+                    ]
+
+                if updated_memories:
+                    documents_to_update = [
+                        {
+                            "page_content": self._normalize_memory_text(
+                                mem["memory"]
+                            ),
+                            "metadata": mem,
+                        }
+                        for mem in updated_memories
+                    ]
+                    self.vector_storage.add_documents(documents_to_update)
+                    logger.info(
+                        f"Updated {len(updated_memories)} memories in"
+                        " vector store to 'wrong' status."
+                    )
+
+            # Step 3: Refresh cached key memories if any retracted memory
+            # was a key memory
+            self.all_key_memories = self.get_key_memories()
+            self.all_topics = self.get_all_topics()
+
+        except Exception as e:
+            logger.error(f"Failed to retract memories: {e}")
+
     def _delete_memories(
         self, memory_ids: List[str], consolidate_into_id: Optional[str] = None
     ):
@@ -1429,6 +2079,7 @@ class GREENMemories:
         conversation_turns: List[tuple[Dict, Dict]],
         batch_context_memories: List[Dict] = None,
         session_update_counts: Dict[str, int] = None,
+        llm: Optional[LLMBackend] = None,
     ) -> Optional[Dict]:
         """
         Analyzes a conversation turn, compares it with existing memories, and
@@ -1443,6 +2094,9 @@ class GREENMemories:
 
         user_message, assistant_message = conversation_turns[-1]
         llm_response_str = ""
+
+        active_llm = llm or self.llm
+        memory_context_window = active_llm.get_context_window() or 4096
 
         try:
             # Step 1: Create conversation snippet for the LLM
@@ -1464,16 +2118,16 @@ class GREENMemories:
             # logger.info(f"Is query substantive? {is_substantive}")
             if self.vector_storage and is_substantive:
                 # Fetch a few relevant memories to provide context to the LLM
-                if self.context_window <= 8192:
+                if memory_context_window <= 8192:
                     search_limit = 20
-                elif self.context_window <= 32768:
+                elif memory_context_window <= 32768:
                     search_limit = 35
                 else:
                     search_limit = 60
                 logger.info(
-                    f"Context window is {self.context_window}, dynamically"
-                    " setting memory search limit for LLM context to"
-                    f" {search_limit}"
+                    f"Context window is {memory_context_window},"
+                    " dynamically setting memory search limit for LLM"
+                    f" context to {search_limit}"
                 )
 
                 search_results = self.vector_storage.search_with_scores(
@@ -1526,7 +2180,7 @@ class GREENMemories:
             #     "Sending memory processing request to LLM with user prompt:\n---"
             #     f"-----\n{processing_prompt}\n--------"
             # )
-            llm_response_str = self.llm.chat(
+            llm_response_str = active_llm.chat(
                 chat_history=processing_history, stream=False
             )
             # !!! DEBUG
@@ -1549,57 +2203,137 @@ class GREENMemories:
             elif action == "reinforce":
                 memory_id = decision.get("memory_id")
                 new_text = decision.get("new_memory_text")
+                duplicates_to_delete = decision.get("duplicates", [])
 
                 if not memory_id:
                     logger.warning(
                         "LLM chose 'reinforce' but provided no memory_id."
                     )
-                else:
-                    # Calculate decayed relevance increment for this session
-                    if session_update_counts is None:
-                        session_update_counts = {}
-                    update_count = session_update_counts.get(memory_id, 0)
-                    increment = self.scoring_config[
-                        "session_relevance_increment"
-                    ] * (
-                        self.scoring_config["session_relevance_decay_rate"]
-                        ** update_count
-                    )
-                    session_update_counts[memory_id] = update_count + 1
+                    return None
 
-                    if new_text:
-                        # This is a reinforcement that also updates the memory text.
-                        logger.info(
-                            f"LLM decided to update memory: {memory_id}"
+                memory_id_to_keep = memory_id
+
+                # Programmatically handle consolidation of duplicates
+                if duplicates_to_delete:
+                    all_candidate_ids = list(
+                        set(duplicates_to_delete + [memory_id])
+                    )
+
+                    # Fetch all candidate memories from DB
+                    placeholders = ",".join("?" for _ in all_candidate_ids)
+                    cursor = self.storage.conn.cursor()
+                    cursor.execute(
+                        "SELECT * FROM user_memories WHERE id IN"
+                        f" ({placeholders})",
+                        all_candidate_ids,
+                    )
+                    candidate_memories = [
+                        self._dict_from_row(row) for row in cursor.fetchall()
+                    ]
+
+                    if candidate_memories:
+                        # Find the one with the highest relevance score
+                        candidate_memories.sort(
+                            key=lambda m: m.get("relevance", 0), reverse=True
                         )
-                        # The return from _update_memory is the updated memory object
-                        # which needs to be passed back to the main loop.
-                        return self._update_memory(
-                            memory_id,
-                            new_text,
-                            user_message,
-                            assistant_message,
-                            increment=increment,
+                        memory_to_keep = candidate_memories[0]
+                        memory_id_to_keep = memory_to_keep["id"]
+
+                        # The rest are to be deleted
+                        duplicates_to_delete = [
+                            m["id"]
+                            for m in candidate_memories
+                            if m["id"] != memory_id_to_keep
+                        ]
+
+                        logger.info(
+                            "Consolidating duplicates. Keeping memory"
+                            f" {memory_id_to_keep} (relevance:"
+                            f" {memory_to_keep['relevance']:.2f}) and"
+                            f" deleting {len(duplicates_to_delete)} others."
                         )
                     else:
-                        # This is a simple reinforcement, just boosting the score.
-                        logger.info(
-                            f"LLM decided to reinforce memory: {memory_id}"
+                        logger.warning(
+                            "LLM suggested duplicates for consolidation, but"
+                            " none were found in the database."
                         )
-                        self._reinforce_memory(memory_id, increment=increment)
+                        duplicates_to_delete = []  # Reset to avoid errors
+
+                # Calculate decayed relevance increment for this session
+                if session_update_counts is None:
+                    session_update_counts = {}
+                update_count = session_update_counts.get(memory_id_to_keep, 0)
+                increment = self.scoring_config[
+                    "session_relevance_increment"
+                ] * (
+                    self.scoring_config["session_relevance_decay_rate"]
+                    ** update_count
+                )
+                session_update_counts[memory_id_to_keep] = update_count + 1
+
+                processed_memory = None
+                if new_text:
+                    new_text = self._truncate_memory_text(new_text)
+
+                    # This is a reinforcement that also updates the memory text.
+                    logger.info(
+                        f"LLM decided to update memory: {memory_id_to_keep}"
+                    )
+                    # The return from _update_memory is the updated memory object
+                    # which needs to be passed back to the main loop.
+                    processed_memory = self._update_memory(
+                        memory_id_to_keep,
+                        new_text,
+                        user_message,
+                        assistant_message,
+                        increment=increment,
+                    )
+                else:
+                    # This is a simple reinforcement, just boosting the score.
+                    logger.info(
+                        f"LLM decided to reinforce memory: {memory_id_to_keep}"
+                    )
+                    self._reinforce_memory(
+                        memory_id_to_keep, increment=increment
+                    )
 
                 # Handle duplicates for deletion
-                duplicates_to_delete = decision.get("duplicates", [])
                 if duplicates_to_delete:
                     self._delete_memories(
-                        duplicates_to_delete, consolidate_into_id=memory_id
+                        duplicates_to_delete,
+                        consolidate_into_id=memory_id_to_keep,
                     )
+
+                return processed_memory
 
             elif action == "create":
                 logger.info("LLM decided to create a new memory.")
                 return self._create_new_memory(
                     decision, user_message, assistant_message
                 )
+
+            elif action == "retract":
+                # Accept both "memory_ids" (list) and "memory_id" (singular)
+                # for robustness against LLM output variation.
+                retract_ids = decision.get("memory_ids", [])
+                singular_id = decision.get("memory_id")
+                if singular_id and singular_id not in retract_ids:
+                    retract_ids.append(singular_id)
+
+                if not retract_ids:
+                    logger.warning(
+                        "LLM chose 'retract' but provided no memory_ids."
+                    )
+                    return None
+
+                reason = decision.get("reason")
+                logger.info(
+                    f"LLM decided to retract {len(retract_ids)}"
+                    f" memories as wrong/hallucinated."
+                    + (f" Reason: {reason}" if reason else "")
+                )
+                self._retract_memory(retract_ids, reason=reason)
+                return None
 
             else:
                 logger.warning(f"LLM returned an unknown action: '{action}'")
@@ -1610,7 +2344,7 @@ class GREENMemories:
                 "LLM returned invalid JSON for memory processing:"
                 f" {llm_response_str}"
             )
-            return None
+            raise ValueError("Invalid JSON returned by LLM")
         except Exception as e:
             logger.error(f"Failed to assimilate memory from conversation: {e}")
             # Re-raise to be caught by the main loop for poison-pill handling

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Ainara Sentinel</title>
+    <style>
+        body { margin: 0; font-family: 'Consolas', 'Monaco', monospace;
+               background: #1e1e1e; color: #d4d4d4; display: flex;
+               flex-direction: column; height: 100vh; }
+        header { padding: 10px 16px; background: #2d2d2d; display: flex;
+                 align-items: center; justify-content: space-between; }
+        header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #fff; }
+        #status { font-size: 12px; color: #9cdcfe; display: none; }
+        #log { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 12px;
+               line-height: 1.5; }
+        .log-line { white-space: pre-wrap; word-break: break-word; }
+        .log-orakle { color: #e06c75; }
+        .log-bureau { color: #569cd6; }
+        footer { padding: 8px 16px; background: #2d2d2d;
+                 display: flex; gap: 8px; justify-content: space-between;
+                 align-items: center; }
+        #font-controls { display: flex; gap: 4px; }
+        #font-controls button { padding: 6px 12px; min-width: 36px; font-weight: 700; }
+        #footer-actions { display: flex; gap: 8px; }
+        button { padding: 6px 18px; background: #c0392b; color: white;
+                 border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        button:hover { background: #e74c3c; }
+        button.secondary { background: #3c3c3c; }
+        button.secondary:hover { background: #4a4a4a; }
+        #controls { display: flex; gap: 8px; align-items: center; }
+        #controls select { padding: 4px 6px; background: #3c3c3c; color: #d4d4d4;
+                           border: 1px solid #555; border-radius: 4px;
+                           font-size: 12px; min-width: 240px; }
+        #controls #run-plan { padding: 6px 14px; background: #0e639c;
+                              color: white; border: none; border-radius: 4px;
+                              cursor: pointer; font-size: 13px; }
+        #controls #run-plan:hover:not(:disabled) { background: #1177bb; }
+        #controls #run-plan:disabled { opacity: 0.5; cursor: default; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Ainara Sentinel</h1>
+        <div id="controls">
+            <select id="plan-select" disabled><option>Loading…</option></select>
+            <button id="run-plan" disabled
+                    title="Trigger this plan immediately, regardless of its schedule">Trigger Plan</button>
+        </div>
+        <span id="status">Starting…</span>
+    </header>
+    <div id="log"></div>
+    <footer>
+        <div id="font-controls">
+            <button id="font-decrease" class="secondary" title="Decrease log font size">A−</button>
+            <button id="font-increase" class="secondary" title="Increase log font size">A+</button>
+        </div>
+        <div id="footer-actions">
+            <button id="copy-log" class="secondary">Copy Log</button>
+            <button id="stop">Stop Sentinel</button>
+        </div>
+    </footer>
+    <script>
+        const { ipcRenderer } = require('electron');
+        const log = document.getElementById('log');
+        const status = document.getElementById('status');
+
+        const MIN_FONT = 9;
+        const MAX_FONT = 24;
+        const DEFAULT_FONT = 12;
+        let fontSize = DEFAULT_FONT;
+
+        function applyFontSize() {
+            log.style.fontSize = fontSize + 'px';
+        }
+
+        async function changeFont(delta) {
+            const next = Math.min(MAX_FONT, Math.max(MIN_FONT, fontSize + delta));
+            if (next === fontSize) return;
+            fontSize = next;
+            applyFontSize();
+            try {
+                await ipcRenderer.invoke('sentinel-set-font-size', fontSize);
+            } catch (e) {
+                Logger && Logger.warn && Logger.warn('Failed to persist font size:', e);
+            }
+        }
+
+        document.getElementById('font-decrease').addEventListener('click', () => changeFont(-1));
+        document.getElementById('font-increase').addEventListener('click', () => changeFont(1));
+
+        (async () => {
+            try {
+                const saved = await ipcRenderer.invoke('sentinel-get-font-size');
+                if (Number.isFinite(saved)) fontSize = saved;
+            } catch (e) { /* fall back to default */ }
+            applyFontSize();
+        })();
+
+        // Only auto-scroll when the user is already pinned to the bottom.
+        // If they have scrolled up to read history, leave the viewport
+        // alone so incoming /health pings don't yank them away.
+        const PIN_THRESHOLD_PX = 40;
+        function isPinnedToBottom() {
+            return (log.scrollHeight - log.scrollTop - log.clientHeight)
+                < PIN_THRESHOLD_PX;
+        }
+
+        // Jump to the bottom and, because we land within PIN_THRESHOLD_PX,
+        // re-pin the auto-scroll for whatever new lines arrive next. Used
+        // when the user performs an action whose consequences they want
+        // to see.
+        function scrollToBottom() {
+            log.scrollTop = log.scrollHeight;
+        }
+
+        ipcRenderer.on('sentinel-output', (event, data) => {
+            const pinned = isPinnedToBottom();
+            const lineEl = document.createElement('div');
+            lineEl.className = 'log-line';
+            if (data.line.startsWith('orakle:')) lineEl.classList.add('log-orakle');
+            else if (data.line.startsWith('bureau:')) lineEl.classList.add('log-bureau');
+            lineEl.textContent = data.line;
+            log.appendChild(lineEl);
+            if (pinned) log.scrollTop = log.scrollHeight;
+        });
+
+        ipcRenderer.on('sentinel-exited', (event, data) => {
+            status.textContent = (data.code === null || data.code === undefined)
+                ? 'Sentinel exited'
+                : `Sentinel exited (code ${data.code})`;
+            status.style.color = '#e06c75';
+        });
+
+        document.getElementById('stop').addEventListener('click', () => {
+            scrollToBottom();
+            ipcRenderer.send('sentinel-stop');
+        });
+
+        document.getElementById('copy-log').addEventListener('click', () => {
+            const { clipboard } = require('electron');
+            const lines = Array.from(log.querySelectorAll('.log-line'))
+                .map(el => el.textContent);
+            clipboard.writeText(lines.join('\n'));
+            const btn = document.getElementById('copy-log');
+            const prev = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = prev; }, 1200);
+        });
+
+        const sel = document.getElementById('plan-select');
+        const runBtn = document.getElementById('run-plan');
+
+        // Plans listed here are available on disk and always triggerable.
+        // "scheduled: false" and "enabled: false" are scheduling hints
+        // only — they describe whether the cron fires, not whether the
+        // user may trigger the plan manually.
+        async function loadPlans() {
+            try {
+                const plans = await ipcRenderer.invoke('sentinel-list-plans');
+                sel.innerHTML = '';
+                if (!Array.isArray(plans) || plans.length === 0) {
+                    sel.appendChild(new Option('(no plans configured)', ''));
+                    sel.disabled = true;
+                    runBtn.disabled = true;
+                    return;
+                }
+                for (const p of plans) {
+                    const suffix = p.scheduled
+                        ? `${p.enabled ? '' : ' (disabled)'} — ${p.cron || '?'}`
+                        : ' — not scheduled';
+                    sel.appendChild(new Option(`${p.name}${suffix}`, p.name));
+                }
+                sel.disabled = false;
+                runBtn.disabled = false;
+            } catch (e) {
+                sel.innerHTML = '';
+                sel.appendChild(new Option('(failed to load plans)', ''));
+                sel.disabled = true;
+                runBtn.disabled = true;
+            }
+        }
+
+        runBtn.addEventListener('click', async () => {
+            const name = sel.value;
+            if (!name) return;
+            scrollToBottom();
+            runBtn.disabled = true;
+            const prev = runBtn.textContent;
+            runBtn.textContent = 'Triggering…';
+            try {
+                await ipcRenderer.invoke('sentinel-run-plan', name);
+            } finally {
+                runBtn.textContent = prev;
+                runBtn.disabled = false;
+            }
+        });
+
+        loadPlans();
+    </script>
+</body>
+</html>

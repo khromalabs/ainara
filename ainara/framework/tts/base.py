@@ -21,6 +21,12 @@ import re
 from abc import ABC, abstractmethod
 from typing import Tuple
 
+try:
+    from num2words import num2words
+    NUM2WORDS_AVAILABLE = True
+except ImportError:
+    NUM2WORDS_AVAILABLE = False
+
 
 class TTSBackend(ABC):
     """Abstract base class for Text-to-Speech backends"""
@@ -91,39 +97,36 @@ class TTSBackend(ABC):
         text = emoji.replace_emoji(text, replace="")
         self.logger.debug("Removed emoji characters from text")
 
-        # Try to use normalise library if available
-        try:
-            from normalise import normalise
+        # Replace common abbreviations
+        abbreviations = {
+            "e.g.": "for example",
+            "i.e.": "that is",
+            "etc.": "etcetera",
+            "vs.": "versus",
+            "Fig.": "Figure",
+            "fig.": "figure",
+        }
+        for abbr, expansion in abbreviations.items():
+            text = text.replace(abbr, expansion)
 
-            text = " ".join(normalise(text, verbose=False))
-            self.logger.debug("Used normalise library for text normalization")
-        except ImportError:
-            self.logger.debug(
-                "normalise library not available, using custom rules"
-            )
+        # Handle numbers with units more naturally
+        text = re.sub(r"(\d+)x(\d+)", r"\1 by \2", text)  # Dimensions
+        text = re.sub(
+            r"(\d+)([kKmMgGtT]?[bB])", r"\1 \2", text
+        )  # File sizes
 
-            # Replace common abbreviations
-            abbreviations = {
-                "e.g.": "for example",
-                "i.e.": "that is",
-                "etc.": "etcetera",
-                "vs.": "versus",
-                "Fig.": "Figure",
-                "fig.": "figure",
-            }
-            for abbr, expansion in abbreviations.items():
-                text = text.replace(abbr, expansion)
+        # Handle version numbers more naturally
+        text = re.sub(r"v(\d+\.\d+(?:\.\d+)?)", r"version \1", text)
 
-            # Handle numbers with units more naturally
-            text = re.sub(r"(\d+)x(\d+)", r"\1 by \2", text)  # Dimensions
-            text = re.sub(
-                r"(\d+)([kKmMgGtT]?[bB])", r"\1 \2", text
-            )  # File sizes
+        # Handle ordinals (1st, 2nd, 3rd) using num2words if available
+        if NUM2WORDS_AVAILABLE:
+            def replace_ordinal(match):
+                try:
+                    return num2words(int(match.group(1)), to='ordinal')
+                except Exception:
+                    return match.group(0)
 
-            # Handle version numbers more naturally
-            text = re.sub(r"v(\d+\.\d+(?:\.\d+)?)", r"version \1", text)
-
-        # Always apply these rules regardless of which library was used
+            text = re.sub(r"\b(\d+)(?:st|nd|rd|th)\b", replace_ordinal, text, flags=re.IGNORECASE)
 
         # Handle large numbers for better readability
         def format_large_number(match):

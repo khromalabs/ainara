@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 
+import ast
 import logging
 import re
 from typing import Annotated, Any, Dict, Optional
@@ -35,8 +36,10 @@ class ToolsCalculator(Skill):
         "Use this skill ONLY when the user provides a complex mathematical"
         " expression or equation to be solved. This skill can handle"
         " arithmetic operations, trigonometric functions, logarithms,"
-        " equations, and more. Examples include: 'calculate 2 + 2', 'solve x^2"
-        " - 4 = 0', 'what is sin(pi/2)', 'evaluate 5 factorial'.\n\nKeywords:"
+        " equations, multi-statement expressions with variable assignments,"
+        " and more. Examples include: 'calculate 2 + 2', 'solve x^2"
+        " - 4 = 0', 'what is sin(pi/2)', 'evaluate 5 factorial',"
+        " 'entry=0.317; tp=0.311; profit=(entry-tp)/entry'.\n\nKeywords:"
         " calculate, solve, evaluate, math, mathematics, equation, expression,"
         " addition, subtraction, multiplication, division, exponent, square"
         " root, cube root, logarithm, sine, cosine, tangent, inverse,"
@@ -134,6 +137,116 @@ class ToolsCalculator(Skill):
             )
         return result
 
+    # ------------------------------------------------------------------ #
+    #  Multi-statement support                                             #
+    # ------------------------------------------------------------------ #
+
+    _ASSIGNMENT_RE = re.compile(r"^([A-Za-z_]\w*)\s*=\s*(.+)$", re.DOTALL)
+
+    def _is_multi_statement(self, expression: str) -> bool:
+        """Return True when the expression contains semicolon-separated
+        statements, at least one of which is a variable assignment."""
+        parts = [p.strip() for p in expression.split(";") if p.strip()]
+        if len(parts) < 2:
+            return False
+        return any(self._ASSIGNMENT_RE.match(p) for p in parts)
+
+    async def _evaluate_multi_statement(self, expression: str) -> Dict[str, Any]:
+        """Evaluate a semicolon-separated sequence of statements.
+
+        Supported statement kinds (in any order, dict/list result last):
+          • Variable assignment:   name = <math-expr>
+          • Final scalar expr:     <math-expr>          (no '=')
+          • Final dict literal:    { 'key': var, … }
+          • Final list literal:    [ var, … ]
+        """
+        parts = [p.strip() for p in expression.split(";") if p.strip()]
+
+        # Accumulated local namespace (starts with math constants)
+        local_vars: Dict[str, Any] = dict(self.constants)
+        computed: Dict[str, float] = {}   # user-defined variables only
+        final_result = None
+
+        for part in parts:
+            # ── dict / list literal ──────────────────────────────────── #
+            if part.startswith("{") or part.startswith("["):
+                try:
+                    # Build a safe namespace of plain Python numbers
+                    safe_ns = {
+                        k: v
+                        for k, v in local_vars.items()
+                        if isinstance(v, (int, float))
+                    }
+                    # ast.parse the literal to catch obvious injection
+                    ast.parse(part, mode="eval")
+                    # eval with an empty builtins dict + our numbers only
+                    final_result = eval(  # noqa: S307
+                        part, {"__builtins__": {}}, safe_ns
+                    )
+                    if isinstance(final_result, dict):
+                        # Round floats for cleaner output
+                        final_result = {
+                            k: round(v, 10) if isinstance(v, float) else v
+                            for k, v in final_result.items()
+                        }
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Error evaluating result literal: {part!r}",
+                        "details": str(e),
+                    }
+                continue
+
+            # ── variable assignment ──────────────────────────────────── #
+            m = self._ASSIGNMENT_RE.match(part)
+            if m:
+                var_name, expr_str = m.group(1), m.group(2).strip()
+                expr_str = self._apply_function_aliases(expr_str)
+                try:
+                    expr = parse_expr(
+                        expr_str,
+                        transformations=self.transformations,
+                        local_dict=local_vars,
+                    )
+                    # parse_expr may return a plain Python float when every
+                    # variable in local_dict is already a float; sympy.N()
+                    # handles both SymPy expressions and bare Python numbers.
+                    value = float(sympy.N(expr, 10))
+                    local_vars[var_name] = value
+                    computed[var_name] = round(value, 10)
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Error evaluating assignment '{var_name}'",
+                        "details": str(e),
+                    }
+                continue
+
+            # ── standalone scalar expression ─────────────────────────── #
+            part = self._apply_function_aliases(part)
+            try:
+                expr = parse_expr(
+                    part,
+                    transformations=self.transformations,
+                    local_dict=local_vars,
+                )
+                final_result = round(float(sympy.N(expr, 10)), 10)
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Error evaluating expression: {part!r}",
+                    "details": str(e),
+                }
+
+        # ── build response ───────────────────────────────────────────── #
+        response: Dict[str, Any] = {"success": True, "variables": computed}
+        if final_result is not None:
+            response["result"] = final_result
+        elif computed:
+            # No explicit final expression – expose all computed vars
+            response["result"] = computed
+        return response
+
     async def run(
         self,
         expression: Annotated[
@@ -164,6 +277,10 @@ class ToolsCalculator(Skill):
         """
         self.logger.info("CALCULATOR: " + expression)
         try:
+            # Multi-statement expressions take priority (they contain "=" too)
+            if self._is_multi_statement(expression):
+                return await self._evaluate_multi_statement(expression)
+
             # Check if this is an equation
             if "=" in expression:
                 return await self.solve_equation(expression)

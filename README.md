@@ -1,7 +1,4 @@
 # Ainara: The Sovereign AI Nexus
-
-![Ainara logo](./assets/ainara_logo.png)
-
 **Ainara** _/aɪˈnɑːrə/ (n.) [Basque origin]: 1. A feminine given name meaning "swallow" (the bird) or "beloved one". [..] Associated with spring, and the beginning of life._
 
 **Ainara is an AI assistant, but not only an assistant. Is an AI companion, but not only an AI companion. Is not an AI agent, but an Orchestrator of AI agents. Ainara is a Human-AI Nexus designed to keep you sovereign.**
@@ -22,10 +19,9 @@ Finally, this project creates a truly AI collaborating-companion experience. Con
 
 All interaction data remains private on the user's system.
 
-## Demonstration video
+## Demonstration short video (2026'09)
 
-UPDATE July 24th, 2025: This is the 13th video in my series featuring Ainara. This time is featuring a cloud LLM model, Grok 3 mini provided by xAI. The video shows the full process of installing, configuring Ainara and then a short demo showing the capabilities of Ainara detecting the user intention and applying the corresponding skills (or tools). MCP is now integrated in Ainara that allows to integrate external services in the AI like Google Maps, like is featured in this video.   
-[![Watch the video](https://img.youtube.com/vi/2rtOBR7hyzw/0.jpg)](https://www.youtube.com/watch?v=2rtOBR7hyzw)
+[![Watch the video](https://img.youtube.com/vi/66543_cxFnY/0.jpg)](https://www.youtube.com/watch?v=66543_cxFnY)
 
 ## Components
 
@@ -33,7 +29,9 @@ UPDATE July 24th, 2025: This is the 13th video in my series featuring Ainara. Th
 A REST API server that provides:
 - Extensible skills system
 - Working client-side, all the skills and a live conversation can be hot-swapped between LLM providers
+- Nexus Skills (AI-driven applications combining data + properties + visual interfaces).
 - MCP compatible for third party servers.
+- User level skills.
 
 ### Polaris
 A modern desktop-integrated application that provides:
@@ -44,19 +42,17 @@ A modern desktop-integrated application that provides:
 - System tray presence for quick access
 - Cross-platform support (Linux, Windows, macOS)
 
-### Kommander
-CLI chat interface for Ainara. Right now is outdated and needs some further work.
-
 ## Available Skills
 
 List of the currently available skills already integrated in the Ainara AI Assistant Framework:
 
 - **Finance Stocks**: Get stock market information.
-- **Search Engines (Google, Metaphor, NewsAPI, Perplexity, Tavily)**: Perform combinated web searches using various search engines.
+- **Search Engines (SearXNG, Google, Metaphor, NewsAPI, Perplexity, Tavily)**: Perform combinated web searches using various search engines.
 - **System Clipboard**: Read and write the system clipboard.
 - **System Finder**: Intelligent file search with LLM-assisted disambiguation and location reveal.
 - **Time Weather**: Get weather information.
 - **Tools Calculator**: Evaluate non-trivial mathematical expressions.
+- **Inbox**: Periodically checks many possible messaging sources.
 
 
 ## Installation
@@ -77,15 +73,10 @@ pip install -r requirements.txt
 ### Development Setup
 
 ```bash
-# Start the backend servers using the services script
-python bin/services.py  --health-check
-
-# In another terminal, once the backend services are healthy, start the Polaris frontend in dev mode
 npm install  # Only needed first time
-npm run dev
+# Start UI using source to boot backend services
+export AINARA_USE_SOURCE=1 && node_modules/electron/dist/electron .
 ```
-
-The `services.py` script manages both the Orakle and PyBridge servers, handling their startup, health monitoring, and shutdown.
 
 ### Building for Production
 
@@ -141,34 +132,42 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 
 ### Environment Variables
 
-The variables used by LiteLLM can be still used for API keys and model configuration:
+- `AINARA_USE_SOURCE`: Use source to boot backend services.
+- `AINARA_LOG_ELECTRON`: Capture all Electron output into /tmp/electron.log
 
-- `OPENAI_API_KEY`: For OpenAI services
-- `ANTHROPIC_API_KEY`: For Anthropic services
-- Other provider-specific variables as documented by LiteLLM
+## Running the Sentinel scheduler script
 
-These environment variables are optional and only needed if you want to override settings in the configuration file.
+An alternative way to run the backend services with no UI frontend for scheduled agentic jobs
+
+```bash
+# Start Buraeau+Orakle
+scripts/scheduler.py
+
+# stop all services
+(press Control+C to quit)
+```
+The services script handles virtualenv activation, health-check polling, and log tailing (same log directories as Polaris).
 
 ## Requirements
 
 - Python 3.12
 - Dependencies listed in requirements.txt
-- Orakle API server running locally or on network
-- Optional local LLM server (compatible with OpenAI API format)
+
+## CLAUDE.md file
+
+Check CLAUDE.md for additional references or either to instruct an AI agent about the framework.
 
 ## License
 
 Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms (contact [email](mailto:rgomez@khromalabs.org))
 
-## $AINARA Token
+## The Nexus Market
 
-This project uses the $AINARA token for optional premium services, and it was created and kept to ensure the project economical independence. It will *never* be a requirement to use the platform.
+The Ainara Project will use the Solana $AINARA utility token in a coming up distributed app store platform, for a new type of applications called Nexus as described in: https://ainara.app/AINARA_NEXUS_APPS_PLATFORM_V1_1.pdf
 
-The project moved into a new V2 Solana token: 4GaCFbxuQ6db8RAepnvvMLvuZCsSmbjZoBwkEyfYLN9X
+The token is meant for application publishers it will *NEVER* be in any way a requirement for platform users.
 
-(Old V1 CA: HhQhdSZNp6DvrxkPZLWMgHMGo9cxt9ZRrcAHc88spump)
-
-The Ainara Project will use this token in a coming up distributed app store platform, for a new type of applications called Nexus as described in: https://ainara.app/AINARA_NEXUS_APPS_PLATFORM_V1_1.pdf
+CA: 4GaCFbxuQ6db8RAepnvvMLvuZCsSmbjZoBwkEyfYLN9X
 
 ## Contributing
 

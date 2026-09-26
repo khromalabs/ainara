@@ -40,25 +40,86 @@ class ConfigManager {
         const platform = process.platform;
         const homeDir = os.homedir();
 
-        // Follow platform-specific standards for config locations
         if (platform === 'win32') {
-            // Check for Windows Store (AppContainer) environment
-            const packageFamilyName = process.env.PackageFamilyName;
-            const localAppData = process.env.LOCALAPPDATA;
-            if (packageFamilyName && localAppData && localAppData.includes('Packages')) {
-                // Windows Store App: Use local app data
-                return path.join(localAppData, 'ainara', 'polaris');
-            } else {
-                // Standard Windows: %APPDATA%\ainara\polaris
-                return path.join(homeDir, 'AppData', 'Roaming', 'ainara', 'polaris');
-            }
-         } else if (platform === 'darwin') {
+            // Always use Saved Games\Ainara\Config\polaris
+            const savedGamesPath = this._getWindowsSavedGamesPath();
+            return path.join(savedGamesPath, 'Ainara', 'Config', 'polaris');
+        } else if (platform === 'darwin') {
             // macOS: ~/Library/Application Support/ainara/polaris
             return path.join(homeDir, 'Library', 'Application Support', 'ainara', 'polaris');
         } else {
             // Linux/Unix: ~/.config/ainara/polaris
             return path.join(homeDir, '.config', 'ainara', 'polaris');
         }
+    }
+
+    /**
+     * Retrieves the Saved Games folder path on Windows using PowerShell.
+     * @returns {string}
+     */
+    _getWindowsSavedGamesPath() {
+        if (ConfigManager._cachedSavedGamesPath) {
+            return ConfigManager._cachedSavedGamesPath;
+        }
+
+        try {
+            // FOLDERID_SavedGames, resolved through the shell namespace.
+            // NOT [Environment]::GetFolderPath('SavedGames') - .NET's
+            // SpecialFolder enum has no SavedGames member, so that call always
+            // threw and this always fell through to the guess below. The guess
+            // is correct on a default profile, which hid the bug, but it is
+            // wrong for anyone who has relocated the folder.
+            const { execSync } = require('child_process');
+            const script = "(New-Object -ComObject Shell.Application)"
+                + ".NameSpace('shell:SavedGames').Self.Path";
+            const result = execSync(
+                'powershell -NoProfile -Command "' + script + '"',
+                { encoding: 'utf8', windowsHide: true }
+            ).trim();
+            if (!result) throw new Error('empty path returned');
+            ConfigManager._cachedSavedGamesPath = result;
+        } catch (error) {
+            console.warn('Failed to get Saved Games path via PowerShell, falling back to default');
+            ConfigManager._cachedSavedGamesPath = path.join(os.homedir(), 'Saved Games');
+        }
+
+        return ConfigManager._cachedSavedGamesPath;
+    }
+
+    /**
+     * Resolve the bundled examples folder shipped with the app.
+     * Packaged: <resources>/bin/servers/_internal/resources/examples
+     * Dev:      <project_root>/resources/examples
+     * Returns null when not found (broken install).
+     */
+    getBundledExamplesSource() {
+        const candidates = [];
+        if (process.resourcesPath) {
+            candidates.push(
+                path.join(process.resourcesPath, 'bin', 'servers', '_internal', 'resources', 'examples')
+            );
+        }
+        // config.js lives in polaris/framework/ → project root is two levels up
+        candidates.push(path.join(__dirname, '..', '..', 'resources', 'examples'));
+
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    _deepMerge(target, ...sources) {
+        sources.forEach(source => {
+            for (const key in source) {
+                if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                    if (!target[key]) target[key] = {};
+                    this._deepMerge(target[key], source[key]);
+                } else {
+                    target[key] = source[key];
+                }
+            }
+        });
+        return target;
     }
 
     loadConfig() {
@@ -77,8 +138,7 @@ class ConfigManager {
                 try {
                     const fileContents = fs.readFileSync(this.configFile, 'utf8');
                     loadedConfig = JSON.parse(fileContents);
-                    // TODO disabled frontend config verification until v0.10
-                    this.config = loadedConfig;
+                    this._deepMerge(this.config, defaultConfig, loadedConfig)
                 } catch (e) {
                     console.warn('Configuration file contains invalid JSON. Resetting to default: ' + e.message);
                     // loadedConfig will be undefined, triggering the reset below
@@ -105,12 +165,9 @@ class ConfigManager {
             }
 
             // Force correct Python server URLs (temporary enforcement)
-            if (this.config.orakle) {
-                this.config.orakle.api_url = 'http://127.0.0.1:8100';
-            }
-            if (this.config.pybridge) {
-                this.config.pybridge.api_url = 'http://127.0.0.1:8101';
-            }
+            this.config.orakle.api_url = 'http://127.0.0.1:8100';
+            this.config.pybridge.api_url = 'http://127.0.0.1:8101';
+            this.config.bureau.api_url = 'http://127.0.0.1:8010';
 
             this.config.stt = this.config.stt ?? {};
             this.config.stt.review = this.config.stt.review ?? true;

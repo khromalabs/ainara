@@ -21,16 +21,16 @@ import logging
 import os
 import sys
 
+from datetime import datetime, timezone
+from typing import Optional
 from ainara.framework.config import config
 
 try:
-    from sentence_transformers import SentenceTransformer
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.utils import EntryNotFoundError
+    from fastembed import TextEmbedding
 
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
+    FASTEMBED_AVAILABLE = True
 except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    FASTEMBED_AVAILABLE = False
 
 
 from colorama import Fore, Style
@@ -119,45 +119,53 @@ def get_embedding_model_name():
         "user_profile.vector_storage.embedding_model",
         config.get(
             "memory.vector_storage.embedding_model",
-            "sentence-transformers/all-mpnet-base-v2",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         ),
     )
 
 
 def check_embedding_model():
     """
-    Checks if the sentence-transformer embedding model is downloaded.
+    Checks if the fastembed embedding model is downloaded.
 
     Returns:
         dict: A dictionary with status and model information.
     """
-    if not SENTENCE_TRANSFORMERS_AVAILABLE:
+    if not FASTEMBED_AVAILABLE:
         return {
             "initialized": False,
-            "message": "sentence-transformers library not found.",
-            "hi": "DARLING",
+            "message": "fastembed library not found.",
             "model_name": get_embedding_model_name(),
         }
 
     model_name = get_embedding_model_name()
     cache_dir = config.get("cache.directory")
+
+    # FastEmbed stores models with a specific naming convention in the cache_dir.
+    # Example: models--qdrant--paraphrase-multilingual-MiniLM-L12-v2-onnx-Q
+    # We search for a directory that contains the model name (without organization).
+    model_simple_name = model_name.split("/")[-1]
+    found_path = None
+
     try:
-        # Check for a core model file instead of the whole snapshot for reliability.
-        # This is less likely to be fooled by a partially deleted cache.
-        hf_hub_download(
-            repo_id=model_name,
-            filename="config.json",
-            local_files_only=True,
-            cache_dir=cache_dir,
-        )
-        logger.info(f"Embedding model '{model_name}' found in cache.")
-        return {
-            "initialized": True,
-            "message": "Model is cached.",
-            "model_name": model_name,
-        }
-    except (EntryNotFoundError, FileNotFoundError, OSError):
-        # These exceptions indicate the model is not cached.
+        if os.path.exists(cache_dir):
+            logger.info(f"Checking cache directory: {cache_dir}")
+            for name in os.listdir(cache_dir):
+                # Look for fastembed style directory names
+                if name.startswith("models--") and model_simple_name in name:
+                    full_path = os.path.join(cache_dir, name)
+                    if os.path.isdir(full_path) and os.listdir(full_path):
+                        found_path = full_path
+                        break
+
+        if found_path:
+            logger.info(f"Embedding model '{model_name}' found in cache at {found_path}.")
+            return {
+                "initialized": True,
+                "message": "Model is cached.",
+                "model_name": model_name,
+            }
+
         logger.info(f"Embedding model '{model_name}' not found in cache.")
         return {
             "initialized": False,
@@ -178,18 +186,18 @@ def check_embedding_model():
 
 def setup_embedding_model():
     """
-    Downloads and caches the sentence-transformer embedding model.
+    Downloads and caches the fastembed embedding model.
 
     Returns:
         dict: A dictionary with success status and a message.
     """
     # logger.info("0")
-    if not SENTENCE_TRANSFORMERS_AVAILABLE:
-        # logger.info("SENTENCE_TRANSFORMERS_AVAILABLE NOT")
+    if not FASTEMBED_AVAILABLE:
+        # logger.info("FASTEMBED_AVAILABLE NOT")
         # logger.info("1")
         return {
             "success": False,
-            "message": "sentence-transformers library not found.",
+            "message": "fastembed library not found.",
         }
 
     model_name = get_embedding_model_name()
@@ -199,7 +207,10 @@ def setup_embedding_model():
         logger.info(f"Downloading and caching embedding model: {model_name}...")
         # Instantiating the model triggers the download and caching process.
         # logger.info("3")
-        SentenceTransformer(model_name, cache_folder=cache_dir)
+        TextEmbedding(
+            model_name=model_name,
+            cache_dir=cache_dir,
+        )
         logger.info(f"Successfully downloaded and cached model: {model_name}")
         # logger.info("5")
         return {"success": True, "message": "Model downloaded successfully."}
@@ -207,3 +218,116 @@ def setup_embedding_model():
         # logger.info("6")
         logger.error(f"Failed to download embedding model '{model_name}': {e}")
         return {"success": False, "message": str(e)}
+
+
+def format_relative_time_terse(timestamp_str: Optional[str]) -> Optional[str]:
+    """Convert an ISO timestamp into a terse relative time marker for LLM-native notation.
+
+    Produces compact markers like "2h", "3d", "1w", "yesterday_eve" designed
+    for token-efficient LLM consumption rather than human readability.
+
+    Returns None if the timestamp is missing or unparseable.
+    """
+    if not timestamp_str:
+        return None
+    try:
+        last_dt = datetime.fromisoformat(timestamp_str)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        delta = now - last_dt
+        total_seconds = delta.total_seconds()
+
+        if total_seconds < 3600:
+            minutes = max(1, int(total_seconds / 60))
+            return f"{minutes}min"
+        elif total_seconds < 86400:
+            hours = int(total_seconds / 3600)
+            return f"{hours}h"
+        elif total_seconds < 172800:
+            local_dt = last_dt.astimezone()
+            hour = local_dt.hour
+            if hour < 12:
+                return "yesterday_morn"
+            elif hour < 17:
+                return "yesterday_aft"
+            elif hour < 21:
+                return "yesterday_eve"
+            else:
+                return "yesterday_night"
+        elif total_seconds < 604800:
+            days = int(total_seconds / 86400)
+            return f"{days}d"
+        elif total_seconds < 2592000:
+            weeks = int(total_seconds / 604800)
+            return f"{weeks}w"
+        else:
+            months = int(total_seconds / 2592000)
+            return f"{months}mo"
+    except Exception as e:
+        logger.warning(
+            f"Could not format terse relative time from '{timestamp_str}': {e}"
+        )
+        return None
+
+
+def format_relative_time(timestamp_str: Optional[str]) -> Optional[str]:
+    """Convert an ISO timestamp into a human-readable relative time string.
+
+    Produces natural-language descriptions like "22 minutes ago",
+    "earlier today", "yesterday evening", or "3 days ago" so the LLM
+    can acknowledge the time gap between sessions naturally rather than
+    receiving a raw ISO timestamp it has to interpret.
+
+    Returns None if the timestamp is missing or unparseable.
+    """
+    if not timestamp_str:
+        return None
+    try:
+        last_dt = datetime.fromisoformat(timestamp_str)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        delta = now - last_dt
+        total_seconds = delta.total_seconds()
+
+        if total_seconds < 60:
+            return "moments ago"
+        elif total_seconds < 3600:
+            minutes = int(total_seconds / 60)
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        elif total_seconds < 7200:
+            return "about an hour ago"
+        elif total_seconds < 86400:
+            hours = int(total_seconds / 3600)
+            return f"about {hours} hours ago"
+        elif total_seconds < 172800:
+            local_dt = last_dt.astimezone()
+            hour = local_dt.hour
+            if hour < 12:
+                time_of_day = "morning"
+            elif hour < 17:
+                time_of_day = "afternoon"
+            elif hour < 21:
+                time_of_day = "evening"
+            else:
+                time_of_day = "night"
+            return f"yesterday {time_of_day}"
+        elif total_seconds < 604800:
+            days = int(total_seconds / 86400)
+            return f"{days} days ago"
+        elif total_seconds < 1209600:
+            return "about a week ago"
+        elif total_seconds < 2592000:
+            weeks = int(total_seconds / 604800)
+            return f"about {weeks} weeks ago"
+        else:
+            months = int(total_seconds / 2592000)
+            return f"about {months} month{'s' if months != 1 else ''} ago"
+    except Exception as e:
+        logger.warning(
+            f"Could not format relative time from '{timestamp_str}': {e}"
+        )
+        return None

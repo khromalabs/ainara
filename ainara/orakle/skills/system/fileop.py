@@ -28,15 +28,18 @@ class SystemFileop(Skill):
     """Perform file operations in the local system as file read, list or exists"""
 
     matcher_info = (
-        "Use this skill when the user wants to perform file operations on the"
-        " local system, such as reading file contents, listing directory"
-        " contents, or checking if a file or directory exists. This skill can"
-        " handle basic file system interactions but not complex searches or"
-        " modifications.\n\nExamples include: 'read the content of notes.txt',"
-        " 'list files in Documents folder', 'does config.json exist', 'show"
-        " directory contents of Downloads'. Keywords: file, read, list,"
-        " exists, check, directory, folder, content, system, local, path."
+        "Perform file operations on the local system, such as reading file"
+        " contents, listing directory contents, or checking if a file or"
+        " directory exists. This skill can handle basic file system"
+        " interactions but not complex searches or modifications. Won't insert"
+        " the file in the context.\n\nExamples include: 'read the content of"
+        " notes.txt', 'list files in Documents folder', 'does config.json"
+        " exist', 'show directory contents of Downloads'. Keywords: file,"
+        " read, list, exists, check, directory, folder, content, system,"
+        " local, path."
     )
+
+    embeddings_boost_factor = 2
 
     def __init__(self):
         super().__init__()

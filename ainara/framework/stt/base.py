@@ -51,3 +51,7 @@ class STTBackend(ABC):
     def setup_model(self) -> Dict[str, Any]:
         """Download and setup the required model"""
         pass
+
+    def reset_context(self):
+        """Clear any internal context buffer (optional for backends that support it)"""
+        pass

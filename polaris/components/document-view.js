@@ -1,10 +1,19 @@
 /* global BaseComponent */
 /* eslint no-undef: "error" */
+
+const fs = require('fs');
+const Pikaday = require('pikaday');
+const electronModule = require('electron');
+const pikadayCSS = fs.readFileSync(
+    require.resolve('pikaday/css/pikaday.css'), 'utf8'
+);
+
 class DocumentView extends BaseComponent {
 
     constructor() {
         super();
         this.isVisible = false;
+        this.selectedText = null;
     }
 
     async connectedCallback() {
@@ -12,18 +21,211 @@ class DocumentView extends BaseComponent {
             const template = this.requireTemplate('document-view-template');
             await this.loadStyles('./document-view.css');
             this.shadowRoot.appendChild(template.content.cloneNode(true));
+            this.container = this.shadowRoot.querySelector('.document-container');
+
+            // Inject styles for search popup
+            const style = document.createElement('style');
+            style.textContent = `
+                ${pikadayCSS}
+                .search-container {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                    margin-right: 10px;
+                }
+                .search-input {
+                    background: rgba(0, 0, 0, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    color: white;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    outline: none;
+                    font-family: inherit;
+                    width: 190px;
+                    transition: width 0.2s, background 0.2s;
+                }
+                .search-input:focus {
+                    width: 240px;
+                    border-color: rgba(255, 255, 255, 0.5);
+                    background: rgba(0, 0, 0, 0.6);
+                }
+                .search-results-popup {
+                    position: absolute;
+                    top: 100%;
+                    right: 0;
+                    width: 300px;
+                    max-height: 400px;
+                    overflow-y: auto;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    z-index: 1000;
+                    display: none;
+                    margin-top: 5px;
+                }
+                .search-results-popup.visible {
+                    display: block;
+                }
+                .search-result-item {
+                    padding: 8px 12px;
+                    border-bottom: 1px solid #333;
+                    cursor: pointer;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+                .search-result-item:last-child {
+                    border-bottom: none;
+                }
+                .search-result-item:hover {
+                    background: #333;
+                }
+                .search-result-date {
+                    font-size: 0.75em;
+                    color: #888;
+                }
+                .search-result-text {
+                    font-size: 0.9em;
+                    color: #eee;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .highlight-flash {
+                    animation: flash-highlight 2s ease-out;
+                }
+                @keyframes flash-highlight {
+                    0% { background-color: rgba(255, 255, 0, 0.3); }
+                    100% { background-color: transparent; }
+                }
+                /* Pikaday container */
+                .pika-container-wrapper {
+                    position: absolute;
+                    top: 100%;
+                    left: 0;
+                    z-index: 1001;
+                    display: none;
+                    margin-top: 5px;
+                }
+                .pika-container-wrapper.visible {
+                    display: block;
+                }
+                /* Pikaday dark theme */
+                .pika-single {
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    color: #eee;
+                    font-family: inherit;
+                }
+                .pika-single.is-bound {
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                }
+                .pika-title {
+                    background: #252526;
+                    border-bottom: 1px solid #333;
+                    padding: 4px 0;
+                }
+                .pika-label {
+                    color: #eee;
+                    background: transparent;
+                    font-size: 14px;
+                }
+                .pika-prev, .pika-next {
+                    filter: invert(1);
+                    opacity: 0.7;
+                }
+                .pika-prev:hover, .pika-next:hover {
+                    opacity: 1;
+                }
+                .pika-table th {
+                    color: #888;
+                    font-size: 12px;
+                }
+                .pika-table td {
+                    border: none;
+                }
+                .pika-button {
+                    background: transparent;
+                    color: #ddd;
+                    border-radius: 3px;
+                    text-align: center;
+                }
+                .pika-button:hover {
+                    background: #333 !important;
+                    color: #fff;
+                    border-radius: 3px;
+                }
+                .is-today .pika-button {
+                    color: #f0f000;
+                }
+                .is-selected .pika-button {
+                    background: rgba(80, 214, 219, 0.4) !important;
+                    color: #fff;
+                    box-shadow: none;
+                    border-radius: 3px;
+                }
+                .is-disabled .pika-button,
+                .is-outside-current-month .pika-button {
+                    color: #555;
+                    opacity: 0.5;
+                    pointer-events: none;
+                }
+                .pika-select {
+                    background: #333;
+                    color: #eee;
+                    border: 1px solid #555;
+                }
+                .is-today .pika-button {
+                    color: #f0f000;
+                }
+                .is-selected .pika-button {
+                    background: #4a4a4a !important;
+                }
+                .pika-label:hover {
+                    color: #f0f000;
+                    cursor: pointer;
+                }
+                .is-disabled .pika-button {
+                    background: #1a1a1a;
+                    color: #888;
+                }
+            `;
+            this.shadowRoot.appendChild(style);
 
             this.container = this.shadowRoot.querySelector('.document-container');
 
             this.hide(); // Initially hidden
+
+            // Capture the last text selection made anywhere in the component.
+            // CLIPBOARD is NOT touched here (explicit actions only). We mirror
+            // to PRIMARY (Linux) so middle-click paste always matches the
+            // visible selection, even under Wayland/XWayland.
+            this.shadowRoot.addEventListener('mouseup', (e) => {
+                // Ignore mouseups on controls so clicking buttons doesn't
+                // clobber the captured selection
+                if (e.composedPath().some(
+                    n => n.closest && n.closest('button, a, input, .date-picker-trigger')
+                )) {
+                    return;
+                }
+                const text = this.getSelectedText();
+                this.selectedText = text;
+                if (text && process.platform === 'linux') {
+                    electronModule.clipboard.writeText(text, 'selection');
+                }
+            });
         } catch (error) {
             this.showError(error);
         }
     }
 
-    addDocument(content, format = 'text', title) {
+    addDocument(content, format = 'text', title, scrollBottom = true) {
         const documentElement = document.createElement('div');
         documentElement.className = 'document-item';
+        documentElement.dataset.format = format;
 
         // Create header for all items
         const header = document.createElement('div');
@@ -42,41 +244,99 @@ class DocumentView extends BaseComponent {
         controls.className = 'doc-controls';
 
         if (format === 'chat-history') {
-            const prevButton = document.createElement('button');
-            prevButton.className = 'nav-button prev';
-            prevButton.innerHTML = '&lt;';
-            prevButton.title = 'Previous Day';
-            prevButton.addEventListener('click', () => this.emitEvent('history-prev-clicked'));
-            controls.appendChild(prevButton);
 
-            const nextButton = document.createElement('button');
-            nextButton.className = 'nav-button next';
-            nextButton.innerHTML = '&gt;';
-            nextButton.title = 'Next Day';
-            nextButton.addEventListener('click', () => this.emitEvent('history-next-clicked'));
-            controls.appendChild(nextButton);
+            // Add Search Control
+            const searchContainer = document.createElement('div');
+            searchContainer.className = 'search-container';
 
-            // Add scroll to top button
-            const scrollTopButton = document.createElement('button');
-            scrollTopButton.className = 'nav-button scroll-top';
-            scrollTopButton.innerHTML = '▲';
-            scrollTopButton.title = 'Scroll to Top';
-            scrollTopButton.addEventListener('click', () => {
-                const contentArea = documentElement.querySelector('.document-content');
-                contentArea?.scrollTo({ top: 0, behavior: 'auto' });
+            const searchInput = document.createElement('input');
+            const tipInfo = document.createElement('div');
+            tipInfo.className = 'tipInfo';
+            tipInfo.title = "Use ~ as prefix for vectorial (concepts based) search.\nMore keyboard shortcuts:\n- Control+Left: Go to the previous day.\n- Control+Right: Go to the next day.\n- Control+Up: Go to text top.\n- Control+Down: Go to text bottom.";
+            searchInput.className = 'search-input';
+            searchInput.placeholder = 'Search history (Ctrl+f)';
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    this.emitEvent('search-requested', { query: e.target.value });
+                }
+                if (e.key === 'Escape') {
+                    this.blur();
+                }
             });
-            controls.appendChild(scrollTopButton);
+            // Prevent keydown propagation to avoid triggering global shortcuts
+            searchInput.addEventListener('keydown', (e) => e.stopPropagation());
 
-            // Add scroll to bottom button
-            const scrollBottomButton = document.createElement('button');
-            scrollBottomButton.className = 'nav-button scroll-bottom';
-            scrollBottomButton.innerHTML = '▼';
-            scrollBottomButton.title = 'Scroll to Bottom';
-            scrollBottomButton.addEventListener('click', () => {
-                const contentArea = documentElement.querySelector('.document-content');
-                contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+            const searchPopup = document.createElement('div');
+            searchPopup.className = 'search-results-popup';
+            this.searchPopup = searchPopup;
+
+            searchContainer.appendChild(searchInput);
+            searchContainer.appendChild(tipInfo);
+            searchContainer.appendChild(searchPopup);
+            controls.appendChild(searchContainer);
+            // prevent automatic focus on input element
+            document.activeElement.blur();
+
+            // Close popup when clicking outside
+            document.addEventListener('click', (e) => {
+                const path = e.composedPath();
+                if (!path.includes(searchContainer)) {
+                    searchPopup.classList.remove('visible');
+                }
             });
-            controls.appendChild(scrollBottomButton);
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'f' && e.ctrlKey) {
+                    const searchInput = this.shadowRoot.querySelector('.search-input');
+                    if (searchInput) {
+                        searchInput.focus();
+                    }
+                }
+                if (e.key === 'ArrowLeft' && e.ctrlKey) {
+                    this.emitEvent('history-prev-clicked');
+                    return;
+                }
+                if (e.key === 'ArrowRight' && e.ctrlKey) {
+                    const nextButton = this.shadowRoot.querySelector('.nav-button.next');
+                    if (!nextButton.disabled) {
+                        this.emitEvent('history-next-clicked');
+                    }
+                    return;
+                }
+                if (e.key === 'ArrowUp' && e.ctrlKey) {
+                    const contentArea = documentElement.querySelector('.document-content');
+                    contentArea?.scrollTo({ top: 0, behavior: 'auto' });
+                    return;
+                }
+                if (e.key === 'ArrowDown' && e.ctrlKey) {
+                    const contentArea = documentElement.querySelector('.document-content');
+                    contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+                    return;
+                }
+            });
+
+
+            // // Add scroll to top button
+            // const scrollTopButton = document.createElement('button');
+            // scrollTopButton.className = 'nav-button scroll-top';
+            // scrollTopButton.innerHTML = '▲';
+            // scrollTopButton.title = 'Scroll to Top';
+            // scrollTopButton.addEventListener('click', () => {
+            //     const contentArea = documentElement.querySelector('.document-content');
+            //     contentArea?.scrollTo({ top: 0, behavior: 'auto' });
+            // });
+            // controls.appendChild(scrollTopButton);
+
+            // // Add scroll to bottom button
+            // const scrollBottomButton = document.createElement('button');
+            // scrollBottomButton.className = 'nav-button scroll-bottom';
+            // scrollBottomButton.innerHTML = '▼';
+            // scrollBottomButton.title = 'Scroll to Bottom';
+            // scrollBottomButton.addEventListener('click', () => {
+            //     const contentArea = documentElement.querySelector('.document-content');
+            //     contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+            // });
+            // controls.appendChild(scrollBottomButton);
         }
 
         if (format !== 'nexus') {
@@ -85,16 +345,132 @@ class DocumentView extends BaseComponent {
             formatBadge.textContent = format;
             docInfo.appendChild(formatBadge);
 
+            if (format === 'chat-history') {
+                const datePicker = document.createElement('span');
+                datePicker.className = 'date-picker-trigger';
+
+                const dateIcon = document.createElement('span');
+                dateIcon.textContent = '📅 ';
+
+                const dateText = document.createElement('span');
+                dateText.className = 'date-picker-text';
+
+                const pikaContainer = document.createElement('div');
+                pikaContainer.className = 'pika-container-wrapper';
+
+                const pikaField = document.createElement('input');
+                pikaField.type = 'hidden';
+
+                datePicker.appendChild(dateIcon);
+                datePicker.appendChild(dateText);
+                datePicker.appendChild(pikaContainer);
+                datePicker.appendChild(pikaField);
+
+                // Prev button (left of date picker)
+                const prevButton = document.createElement('button');
+                prevButton.className = 'nav-button prev';
+                prevButton.innerHTML = `
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                  </svg>
+                `;
+                prevButton.title = 'Previous Day';
+                prevButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.emitEvent('history-prev-clicked');
+                });
+                docInfo.appendChild(prevButton);
+
+                docInfo.appendChild(datePicker);
+
+                // Next button (right of date picker)
+                const nextButton = document.createElement('button');
+                nextButton.className = 'nav-button next';
+                nextButton.innerHTML = `
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                `;
+                nextButton.title = 'Next Day';
+                nextButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.emitEvent('history-next-clicked');
+                });
+                docInfo.appendChild(nextButton);
+
+                // Add "Return to Today" button (hidden by default, next to nav cluster)
+                const todayButton = document.createElement('button');
+                todayButton.className = 'nav-button today-button';
+                todayButton.textContent = 'Today';
+                todayButton.title = 'Return to Current Day';
+                todayButton.style.display = 'none';
+                todayButton.addEventListener('click', () => this.emitEvent('history-today-clicked'));
+                docInfo.appendChild(todayButton);
+
+                // Destroy previous Pikaday instance if any
+                if (this.pikadayInstance) {
+                    this.pikadayInstance.destroy();
+                    this.pikadayInstance = null;
+                }
+
+                // Initialize Pikaday date picker
+                console.log('Pikaday: Initializing instance, container:', pikaContainer);
+                this.pikadayInstance = new Pikaday({
+                    field: pikaField,
+                    container: pikaContainer,
+                    bound: false,
+                    maxDate: new Date(),
+                    defaultDate: new Date(),
+                    keyboardInput: false,
+                    setDefaultDate: true,
+                    onSelect: (date) => {
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const dateStr = `${year}-${month}-${day}`;
+                        this.emitEvent('history-date-picked', { date: dateStr });
+                        pikaContainer.classList.remove('visible');
+                    }
+                });
+                console.log('Pikaday: Instance created:', this.pikadayInstance);
+                console.log('Pikaday: Container children after init:', pikaContainer.children.length, pikaContainer.innerHTML.substring(0, 200));
+
+                // Toggle calendar on trigger click
+                datePicker.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const wasVisible = pikaContainer.classList.contains('visible');
+                    pikaContainer.classList.toggle('visible');
+                    console.log('Pikaday: Toggle clicked, was visible:', wasVisible, 'now visible:', pikaContainer.classList.contains('visible'));
+                    console.log('Pikaday: Container display:', window.getComputedStyle(pikaContainer).display);
+                    console.log('Pikaday: Container dimensions:', pikaContainer.offsetWidth, 'x', pikaContainer.offsetHeight);
+                    console.log('Pikaday: .pika-single element:', pikaContainer.querySelector('.pika-single'));
+                });
+
+                // Close calendar when clicking outside
+                document.addEventListener('click', (e) => {
+                    const path = e.composedPath();
+                    if (!path.includes(datePicker)) {
+                        pikaContainer.classList.remove('visible');
+                    }
+                });
+            }
+
             const copyButton = document.createElement('button');
             copyButton.className = 'copy-button';
             copyButton.textContent = 'Copy';
-            copyButton.addEventListener('click', () => this.copyToClipboard(content));
+            let text = content;
+            copyButton.addEventListener('click', () => {
+                this.copyToClipboard(text);
+                copyButton.textContent = 'Done!';
+                setTimeout(() => (copyButton.textContent = 'Copy'), 1200);
+            });
             controls.appendChild(copyButton);
         }
 
         const helpElement = document.createElement('span');
-        helpElement.textContent = "Press Escape to exit document view";
+        helpElement.textContent = " | Press Escape to exit document view";
         helpElement.title = helpElement.textContent;
+        helpElement.className = 'help-element';
         docInfo.appendChild(helpElement);
 
 
@@ -108,6 +484,11 @@ class DocumentView extends BaseComponent {
                 iframe.src = 'about:blank';
             }
             documentElement.remove();
+
+            // If container is now empty, notify parent to switch back to ring view
+            if (!this.container.firstElementChild) {
+                this.emitEvent('empty');
+            }
         });
         controls.appendChild(closeButton);
 
@@ -139,6 +520,8 @@ class DocumentView extends BaseComponent {
 
             if (format === "chat-history" || format === "help") {
                 contentArea.innerHTML = this.parseMarkdown(content, true);
+                // Add this line to hydrate frames
+                this.hydrateNexusFrames(contentArea);
             } else {
                 contentArea.innerHTML = "<pre>" + content + "</pre>";
                 contentArea.className += ` language-${format}`;
@@ -154,26 +537,72 @@ class DocumentView extends BaseComponent {
         }
 
         this.container.appendChild(documentElement);
+        if (scrollBottom && format === 'chat-history') {
+            const contentArea = documentElement.querySelector('.document-content');
+            contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+        }
+
+        if (format === 'chat-history') {
+            const contentArea = documentElement.querySelector('.document-content');
+            contentArea.focus();
+        }
+    }
+
+    appendDocumentContent(content, format = 'text') {
+        if (format !== 'chat-history') {
+            return;
+        }
+
+        const chatHistoryItem = this.shadowRoot.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
+        if (!chatHistoryItem) {
+            return;
+        }
+
+        const contentArea = chatHistoryItem.querySelector('.document-content');
+        if (!contentArea) {
+            return;
+        }
+
+        const newContentHtml = this.parseMarkdown(content, true);
+        const indicator = contentArea.querySelector('.streaming-indicator');
+        const newHtml = "<BR>" + newContentHtml;
+        if (indicator) {
+            indicator.insertAdjacentHTML('beforebegin', newHtml);
+        } else {
+            contentArea.insertAdjacentHTML('beforeend', newHtml);
+        }
+        // Add this line to hydrate frames
+        this.hydrateNexusFrames(contentArea);
+        this.initAllSortableTables();
+        contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'smooth' });
+    }
+
+    getSelectedText() {
+        // window.getSelection() is unreliable inside shadow roots; prefer
+        // ShadowRoot.getSelection() when available (Chromium >= 111)
+        const sel = typeof this.shadowRoot.getSelection === 'function'
+            ? this.shadowRoot.getSelection()
+            : window.getSelection();
+        return sel ? sel.toString().trim() : '';
     }
 
     copyToClipboard(content) {
-        navigator.clipboard.writeText(content).then(() => {
-            // Find the button that was clicked and update its text
-            const button = event.target;
-            const originalText = button.textContent;
-            button.textContent = 'Copied!';
-            setTimeout(() => {
-                button.textContent = originalText;
-            }, 2000);
-        }).catch(err => {
-            console.error('Failed to copy text: ', err);
-            const button = event.target;
-            const originalText = button.textContent;
-            button.textContent = 'Error';
-            setTimeout(() => {
-                button.textContent = originalText;
-            }, 2000);
-        });
+        // Selection captured at mouseup wins; otherwise copy the whole document.
+        // Uses Electron's synchronous clipboard API: unlike navigator.clipboard,
+        // it cannot silently fail with NotAllowedError when focus is lost.
+        const text = this.selectedText || content;
+        if (text) {
+            electronModule.clipboard.writeText(text);
+        }
+        this.selectedText = '';
+        // Clear both the shadow-root and document selections
+        if (typeof this.shadowRoot.getSelection === 'function') {
+            const sel = this.shadowRoot.getSelection();
+            if (sel) sel.removeAllRanges();
+        }
+        window.getSelection().removeAllRanges();
     }
 
     show() {
@@ -184,12 +613,36 @@ class DocumentView extends BaseComponent {
     hide() {
         this.classList.remove('visible');
         this.isVisible = false;
+        this.blur();
+    }
+
+    formatRelativeDate(dateStr) {
+        if (!dateStr) return '';
+        const today = new Date();
+        // const todayStr = today.toISOString().split('T')[0];
+        //
+        // const yesterday = new Date(today);
+        // yesterday.setDate(yesterday.getDate() - 1);
+        // const yesterdayStr = yesterday.toISOString().split('T')[0];
+        //
+        // if (dateStr === todayStr) return 'Today';
+        // if (dateStr === yesterdayStr) return 'Yesterday';
+
+        // Use locale-aware format: "Jun 15" or "Jun 15, 2024" if different year
+        const date = new Date(dateStr + 'T12:00:00');
+        const options = { month: 'short', day: 'numeric' };
+        if (date.getFullYear() !== today.getFullYear()) {
+            options.year = 'numeric';
+        }
+        return date.toLocaleDateString(undefined, options);
     }
 
     updateNavControls(state) {
-        // state = { prev: boolean, next: boolean }
+        // state = { prev: boolean, next: boolean, date: string }
         const prevButton = this.shadowRoot.querySelector('.nav-button.prev');
         const nextButton = this.shadowRoot.querySelector('.nav-button.next');
+        const todayButton = this.shadowRoot.querySelector('.today-button');
+        const dateText = this.shadowRoot.querySelector('.date-picker-text');
 
         if (prevButton) {
             prevButton.disabled = !state.prev;
@@ -197,9 +650,145 @@ class DocumentView extends BaseComponent {
         if (nextButton) {
             nextButton.disabled = !state.next;
         }
+        if (todayButton) {
+            todayButton.style.display = state.next ? 'inline-flex' : 'none';
+        }
+        if (dateText) {
+            dateText.textContent = this.formatRelativeDate(state.date) || '';
+        }
+        if (this.pikadayInstance && state.date) {
+            this.pikadayInstance.setDate(new Date(state.date + 'T12:00:00'), true);
+        }
+    }
+
+    showSearchResults(results) {
+        if (!this.searchPopup) return;
+
+        this.searchPopup.innerHTML = '';
+
+        if (!results || results.length === 0) {
+            const noResults = document.createElement('div');
+            noResults.className = 'search-result-item';
+            noResults.textContent = 'No results found';
+            this.searchPopup.appendChild(noResults);
+        } else {
+            results.forEach(result => {
+                const item = document.createElement('div');
+                item.className = 'search-result-item';
+
+                const dateDiv = document.createElement('div');
+                dateDiv.className = 'search-result-date';
+                // Format timestamp: YYYY-MM-DD HH:MM
+                const dateObj = new Date(result.timestamp);
+                dateDiv.textContent = dateObj.toLocaleString();
+
+                const textDiv = document.createElement('div');
+                textDiv.className = 'search-result-text';
+                textDiv.textContent = result.content;
+
+                item.appendChild(dateDiv);
+                item.appendChild(textDiv);
+
+                item.addEventListener('click', () => {
+                    this.searchPopup.classList.remove('visible');
+                    // Extract date part for history loading (YYYY-MM-DD)
+                    const dateStr = result.timestamp.split('T')[0];
+                    this.emitEvent('search-result-selected', {
+                        date: dateStr,
+                        timestamp: result.timestamp
+                    });
+                });
+
+                this.searchPopup.appendChild(item);
+            });
+        }
+
+        this.searchPopup.classList.add('visible');
+    }
+
+    scrollToTimestamp(timestamp) {
+        // Extract time part HH:MM:SS from ISO string
+        // The markdown parser typically renders timestamps in code blocks like `12:00:00`
+        const dateObj = new Date(timestamp);
+        const timeStr = String(dateObj.getHours()).padStart(2, '0') + ":" +
+            String(dateObj.getMinutes()).padStart(2, '0') + ":" +
+            String(dateObj.getSeconds()).padStart(2, '0');
+
+        const contentArea = this.shadowRoot.querySelector('.document-content');
+        if (!contentArea) return;
+
+        // Find all code (timestamps) elements
+        const codeElements = contentArea.getElementsByTagName('code');
+        let targetElement = null;
+
+        for (const el of codeElements) {
+            // console.log("Searching '" + timeStr + "' in '" + el.textContent + "'");
+            if (el.textContent.includes(timeStr)) {
+                targetElement = el;
+                break;
+            }
+        }
+
+        if (targetElement) {
+            targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Add a visual flash effect
+            const parentBlock = targetElement.closest('div');
+            if (parentBlock) {
+                parentBlock.classList.add('highlight-flash');
+                setTimeout(() => parentBlock.classList.remove('highlight-flash'), 20000);
+            }
+        }
+    }
+
+    hydrateNexusFrames(container) {
+        const frames = container.querySelectorAll('iframe.nexus-frame');
+        frames.forEach(iframe => {
+            // Only process frames that have data and haven't been hydrated yet
+            if (iframe.dataset.nexusData && !iframe.dataset.hydrated) {
+                try {
+                    const rawData = decodeURIComponent(iframe.dataset.nexusData);
+                    const data = JSON.parse(rawData);
+                    // Match the logic from the live view: use result or raw data
+                    const dataToSend = data.result || data;
+
+                    const sendData = () => {
+                        if (iframe.contentWindow) {
+                            iframe.contentWindow.postMessage(dataToSend, '*');
+                            iframe.dataset.hydrated = 'true';
+                        }
+                    };
+
+                    // Send immediately if loaded, otherwise wait for load
+                    // Note: Since these are injected via innerHTML, they usually trigger 'load' shortly after
+                    iframe.addEventListener('load', sendData);
+                } catch (e) {
+                    console.error('Failed to hydrate Nexus frame:', e);
+                }
+            }
+        });
+    }
+
+    closeChatHistory() {
+        const chatHistoryItem = this.container.querySelector('.document-item[data-format="chat-history"]');
+        if (chatHistoryItem) {
+            const iframe = chatHistoryItem.querySelector('iframe');
+            if (iframe) {
+                iframe.src = 'about:blank';
+            }
+            chatHistoryItem.remove();
+
+            if (!this.container.firstElementChild) {
+                this.hide();
+            }
+        }
     }
 
     clear() {
+        // Destroy Pikaday instance if present
+        if (this.pikadayInstance) {
+            this.pikadayInstance.destroy();
+            this.pikadayInstance = null;
+        }
         // Remove all document items from the container
         while (this.container.firstChild) {
             const child = this.container.firstChild;
@@ -209,6 +798,26 @@ class DocumentView extends BaseComponent {
                 iframe.src = 'about:blank';
             }
             this.container.removeChild(child);
+        }
+    }
+
+    setStreamingActive(active) {
+        const chatItem = this.container?.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
+        const contentArea = chatItem?.querySelector('.document-content');
+        if (!contentArea) return;
+
+        if (active) {
+            if (contentArea.querySelector('.streaming-indicator')) return;
+
+            const indicator = document.createElement('div');
+            indicator.className = 'streaming-indicator';
+            indicator.textContent = 'Answering';
+            contentArea.appendChild(indicator);
+            contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+        } else {
+            contentArea.querySelector('.streaming-indicator')?.remove();
         }
     }
 }

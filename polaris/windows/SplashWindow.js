@@ -16,6 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
+const { app } = require('electron');
 const BaseWindow = require('./BaseWindow');
 // const path = require('path');
 const Logger = require('../framework/logger');
@@ -30,10 +31,12 @@ class SplashWindow extends BaseWindow {
             // transparent: false,
             resizable: false,
             center: true,
-            skipTaskbar: true,
+            skipTaskbar: false,
             backgroundColor: '#000000FF',
-            alwaysOnTop: true,
+            alwaysOnTop: false,
+            focusable: true,
             opacity: 1,
+            type: "normal",
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false
@@ -42,6 +45,19 @@ class SplashWindow extends BaseWindow {
 
         super(config, 'splash', splashOptions, basePath);
         this.setupBaseEventHandlers();
+
+        // If user tries to close the splash from taskbar / Alt+F4,
+        // quit the whole app instead of leaving it running invisibly.
+        // Note: SplashWindow.close() uses destroy(), so this 'close'
+        // event is only triggered by external user actions.
+        let splashQuitRequested = false;
+        this.window.on('close', (event) => {
+            if (splashQuitRequested) return;
+            event.preventDefault();
+            splashQuitRequested = true;
+            app.quit();
+        });
+
         this.loadContent('html/splash.html');
 
         // // Windows-specific fix for transparency issues

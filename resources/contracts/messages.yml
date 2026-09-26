@@ -1,0 +1,89 @@
+openapi: 3.0.0
+info:
+  title: Ainara Messaging Capability Contract
+  version: "1.0"
+  description: Messaging Capability Contract Layer (Discord, Telegram, Email).
+paths:
+  /messages:
+    get:
+      summary: Check pending messages
+      description: Retrieve a list of messages from aggregated sources.
+      operationId: getMessages
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: unread_only
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: source
+          in: query
+          description: Optional filter (e.g., 'discord', 'telegram')
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of messages retrieved.
+    post:
+      summary: Dispatch new message
+      description: Send a message to a generic target.
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_id:
+                  type: string
+                content:
+                  type: string
+              required:
+                - target_id
+                - content
+      responses:
+        '200':
+          description: Message sent successfully.
+  /messages/{id}:
+    get:
+      summary: Get message details
+      description: Read full metadata of a specific message.
+      operationId: getMessageDetails
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message details found.
+    put:
+      summary: Update message status
+      description: Modify the state of a message (e.g., mark as read).
+      operationId: updateMessageStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_read:
+                  type: boolean
+              required:
+                - is_read
+      responses:
+        '200':
+          description: Status updated.

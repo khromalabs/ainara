@@ -17,9 +17,15 @@
 // Lesser General Public License for more details.
 
 const util = require('util');
+const fs = require('fs');
+const logfile = '/tmp/electron.log';
+
+
+const ENABLE_LOG_TMP = ( process.env.AINARA_LOG_ELECTRON === '1' ) ? true : false;
+
 
 class Logger {
-    static debugMode = false;
+    static debugMode = true;
     static className = "LOGGER";
 
     static setDebugMode(enabled) {
@@ -43,6 +49,9 @@ class Logger {
         const message = util.format(...args);
         const caller = this.getCallerInfo();
         process.stdout.write(`[${timestamp}][${this.className}][${caller}] ${message}\n`);
+	if ( ENABLE_LOG_TMP ) {
+		fs.appendFileSync(logfile, `LOG: [${timestamp}][${this.className}][${caller}] ${message}\n`);
+	}
     }
 
     static info(...args) {
@@ -50,6 +59,9 @@ class Logger {
         const message = util.format(...args);
         const caller = this.getCallerInfo();
         process.stdout.write(`[${timestamp}][${this.className}][${caller}] INFO: ${message}\n`);
+	if ( ENABLE_LOG_TMP ) {
+		fs.appendFileSync(logfile, `INFO: [${timestamp}][${this.className}][${caller}] ${message}\n`);
+	}
     }
 
     static warn(...args) {
@@ -57,6 +69,9 @@ class Logger {
         const message = util.format(...args);
         const caller = this.getCallerInfo();
         process.stdout.write(`[${timestamp}][${this.className}][${caller}] WARNING: ${message}\n`);
+	if ( ENABLE_LOG_TMP ) {
+		fs.appendFileSync(logfile, `WARN: [${timestamp}][${this.className}][${caller}] ${message}\n`);
+	}
     }
 
     static error(...args) {
@@ -64,6 +79,9 @@ class Logger {
         const message = util.format(...args);
         const caller = this.getCallerInfo();
         process.stderr.write(`[${timestamp}][${this.className}][${caller}] ERROR: ${message}\n`);
+	if ( ENABLE_LOG_TMP ) {
+		fs.appendFileSync(logfile, `ERROR: [${timestamp}][${this.className}][${caller}] ${message}\n`);
+	}
     }
 }
 

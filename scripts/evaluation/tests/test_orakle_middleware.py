@@ -8,9 +8,10 @@ from typing import Generator
 # Add project root to the Python path to allow importing ainara modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from ainara.framework.orakle_middleware import OrakleMiddleware
+from ainara.framework.orakle_middleware import OrakleMiddleware # noqa: 402
 
 # --- Test Helpers ---
+
 
 def mock_llm_stream(text: str, chunk_min: int = 1, chunk_max: int = 5) -> Generator[str, None, None]:
     """Simulates an LLM stream by yielding a string in random chunks."""
@@ -20,6 +21,7 @@ def mock_llm_stream(text: str, chunk_min: int = 1, chunk_max: int = 5) -> Genera
         chunk = text[pos:pos + chunk_size]
         yield chunk
         pos += chunk_size
+
 
 class TestOrakleMiddleware(unittest.TestCase):
     """
@@ -42,7 +44,7 @@ class TestOrakleMiddleware(unittest.TestCase):
                 orakle_servers=[],
                 system_message="",
                 config_manager=mock_config_manager,
-                capabilities=[] # No capabilities needed for parser logic
+                capabilities=[]  # No capabilities needed for parser logic
             )
 
         # Mock the command processing method to isolate the parser
@@ -69,96 +71,122 @@ class TestOrakleMiddleware(unittest.TestCase):
     def test_correct_multiline_command(self):
         """Tests a correctly formatted multi-line command."""
         print("\n--- Testing: Correct multi-line command ---")
-        input_text = "Here is a command:\n<<<ORAKLE\nget_weather(location='New York')\nORAKLE\nAnd some text after."
-        expected_output = "Here is a command:\n[PROCESSED_COMMAND_SUCCESSFULLY]\nAnd some text after."
+        input_text = "Here is a command:\n<orakle>\nget_weather(location='New York')\n</orakle>\nAnd some text after."
         result = self._run_test_stream(input_text)
-        self.assertEqual(result, expected_output)
+        self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        self.assertIn("Here is a command:", result)
         print("PASSED")
 
     def test_correct_single_line_command(self):
         """Tests a correctly formatted single-line command."""
         print("\n--- Testing: Correct single-line command ---")
-        input_text = "Processing:\n<<<ORAKLE get_time() ORAKLE;\nDone."
-        expected_output = "Processing:\n[PROCESSED_COMMAND_SUCCESSFULLY]\nDone."
+        input_text = "Processing:\n<orakle>get_time()</orakle>\nDone."
         result = self._run_test_stream(input_text)
-        self.assertEqual(result, expected_output)
+        self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        self.assertIn("Processing:", result)
         print("PASSED")
 
-    def test_malformed_start_delimiter_inline(self):
-        """Tests that a start delimiter on the same line as text triggers a guardrail."""
-        print("\n--- Testing: Malformed start delimiter (inline) ---")
-        input_text = "This is an error <<<ORAKLE\ncommand\nORAKLE"
+    def test_attribute_rejection_query_attribute(self):
+        """Tests that orakle tags with query as attribute are rejected."""
+        print("\n--- Testing: Attribute rejection (query attribute) ---")
+        input_text = '<orakle query="get weather in Paris"></orakle>'
         result = self._run_test_stream(input_text)
-        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("attribute", result.lower())
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
-    def test_malformed_end_delimiter_inline(self):
-        """Tests that an end delimiter on the same line as text triggers a guardrail."""
-        print("\n--- Testing: Malformed end delimiter (inline) ---")
-        input_text = "<<<ORAKLE\ncommand ORAKLE"
+    def test_attribute_rejection_with_content(self):
+        """Tests that orakle tags with any attribute are rejected even with content."""
+        print("\n--- Testing: Attribute rejection (attribute with content) ---")
+        input_text = '<orakle type="weather">get weather in Paris</orakle>'
         result = self._run_test_stream(input_text)
-        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("attribute", result.lower())
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
-        # The parser should yield back the buffered content upon failure
-        self.assertIn("command ORAKLE", result)
         print("PASSED")
 
     def test_unterminated_command(self):
-        """Tests that a stream ending mid-command triggers a guardrail."""
-        print("\n--- Testing: Unterminated command ---")
-        input_text = "Here is a command:\n<<<ORAKLE\nget_weather(location='New York')"
+        """Tests that a stream ending with unclosed tag triggers a guardrail."""
+        print("\n--- Testing: Unterminated command (unclosed tag) ---")
+        input_text = "Here is a command:\n<orakle>get_weather(location='New York')"
         result = self._run_test_stream(input_text)
-        self.assertIn("[AINARA GUARDRAIL] Error: Stream ended with an unterminated ORAKLE command.", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("unclosed", result.lower())
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
-        self.assertIn("get_weather(location='New York')", result) # Should return the buffer
         print("PASSED")
 
     def test_empty_command(self):
         """Tests that an empty command block does not get processed."""
         print("\n--- Testing: Empty command block ---")
-        input_text = "<<<ORAKLE\n\nORAKLE"
-        # The mock is never called, so the result is an empty string.
+        input_text = "<orakle></orakle>"
         result = self._run_test_stream(input_text)
-        self.assertEqual(result, "")
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
     def test_multiple_commands_in_stream(self):
         """Tests a stream with multiple valid commands."""
         print("\n--- Testing: Multiple commands in one stream ---")
-        input_text = "First command:\n<<<ORAKLE cmd1 ORAKLE;\nSecond command:\n<<<ORAKLE\ncmd2\nORAKLE\nDone."
-        expected_output = "First command:\n[PROCESSED_COMMAND_SUCCESSFULLY]\nSecond command:\n[PROCESSED_COMMAND_SUCCESSFULLY]\nDone."
+        input_text = "First command:\n<orakle>cmd1</orakle>\nSecond command:\n<orakle>cmd2</orakle>\nDone."
         result = self._run_test_stream(input_text)
-        self.assertEqual(result, expected_output)
+        self.assertEqual(result.count("[PROCESSED_COMMAND_SUCCESSFULLY]"), 2)
         print("PASSED")
 
-    def test_single_orakle_word(self):
-        """Tests a stream with a single orakle word."""
-        print("\n--- Testing: Single orakle workd ---")
-        input_text = "Outputing forbidden word ORAKLE"
+    def test_self_closing_rejection_empty(self):
+        """Tests that empty self-closing orakle tags are rejected."""
+        print("\n--- Testing: Self-closing rejection (empty) ---")
+        input_text = "<orakle/>"
         result = self._run_test_stream(input_text)
-        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("self-closing", result.lower())
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
-    def test_single_orakle_word2(self):
-        """Tests a stream with a single orakle word (2)."""
-        print("\n--- Testing: Single orakle workd (one less-than characters) ---")
-        input_text = "Outputing malformed command start <ORAKLE cmd ORAKLE"
+    def test_self_closing_rejection_with_attribute(self):
+        """Tests that self-closing orakle tags with attributes are rejected."""
+        print("\n--- Testing: Self-closing rejection (with attribute) ---")
+        input_text = '<orakle query="get weather"/>'
         result = self._run_test_stream(input_text)
-        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
-    def test_single_orakle_word3(self):
-        """Tests a stream with a single orakle word (3)."""
-        print("\n--- Testing: Single orakle workd (two less-than characters)---")
-        input_text = "Outputing malformed command start <<ORAKLE cmd ORAKLE"
+    def test_nested_tags_rejection(self):
+        """Tests that nested orakle tags are rejected."""
+        print("\n--- Testing: Nested tags rejection ---")
+        input_text = "<orakle>outer query <orakle>inner query</orakle> more text</orakle>"
         result = self._run_test_stream(input_text)
-        self.assertIn("[AINARA GUARDRAIL] Error: Malformed ORAKLE command detected.", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("nested", result.lower())
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
+    def test_forbidden_signal_injection(self):
+        """Tests that the internal loading signal is caught and blocked."""
+        print("\n--- Testing: Forbidden Signal Injection ---")
+        input_text = "I will now simulate execution: _orakle_loading_signal_|skill_id"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[__AINARA_GUARDRAIL__] Error: You generated a system signal", result)
+        self.assertIn("forbidden", result)
+        print("PASSED")
+
+    def test_spontaneous_orakle_usage(self):
+        """Tests that mentioning 'orakle' as a word is allowed."""
+        print("\n--- Testing: Spontaneous orakle usage (word mention) ---")
+        input_text = "The orakle system is very useful for automation."
+        result = self._run_test_stream(input_text)
+        self.assertEqual(result, input_text)
+        self.assertNotIn("[__AINARA_GUARDRAIL__]", result)
+        print("PASSED")
+
+    def test_case_insensitive_tags(self):
+        """Tests that orakle tags work regardless of case."""
+        print("\n--- Testing: Case insensitive tags ---")
+        input_text = "<ORAKLE>get_weather</ORAKLE>"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        self.assertNotIn("[__AINARA_GUARDRAIL__]", result)
+        print("PASSED")
 
     def test_self_correction_after_failure(self):
         """
@@ -167,26 +195,51 @@ class TestOrakleMiddleware(unittest.TestCase):
         """
         print("\n--- Testing: Self-correction after failure ---")
 
-        # --- Attempt 1: Failure (Unterminated command) ---
+        # --- Attempt 1: Failure (Unclosed tag) ---
         print("  Attempt 1 (Failure): Running...")
-        failed_stream = "Let me try this:\n<<<ORAKLE\ncalculate_pi(digits=10"
+        failed_stream = "Let me try this:\n<orakle>calculate_pi(digits=10"
         failed_result = self._run_test_stream(failed_stream)
 
-        # Verify failure
-        self.assertIn("unterminated ORAKLE command", failed_result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", failed_result)
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", failed_result)
         print("  Attempt 1 (Failure): PASSED")
 
         # --- Attempt 2: Success (Corrected command) ---
         print("  Attempt 2 (Success): Running...")
-        corrected_stream = "My mistake. Let's try again:\n<<<ORAKLE\ncalculate_pi(digits=10)\nORAKLE"
+        corrected_stream = "My mistake. Let's try again:\n<orakle>calculate_pi(digits=10)</orakle>"
         corrected_result = self._run_test_stream(corrected_stream)
 
-        # Verify success
-        self.assertNotIn("unterminated ORAKLE command", corrected_result)
+        self.assertNotIn("[__AINARA_GUARDRAIL__]", corrected_result)
         self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", corrected_result)
-        self.assertIn("My mistake. Let's try again:", corrected_result)
         print("  Attempt 2 (Success): PASSED")
+        print("PASSED")
+
+    def test_typo_start_delimiter(self):
+        """Tests that '<oragle>' triggers the specific typo guardrail."""
+        print("\n--- Testing: Typo tag (oragle) ---")
+        input_text = "<oragle>command</oragle>"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("oragle", result.lower())
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
+    def test_typo_end_delimiter(self):
+        """Tests that '</oracle>' as closing tag triggers the typo guardrail."""
+        print("\n--- Testing: Typo closing tag (oracle) ---")
+        input_text = "<orakle>command</oracle>"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("oracle", result.lower())
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        print("PASSED")
+
+    def test_content_normalization(self):
+        """Tests that content with newlines and extra whitespace is normalized."""
+        print("\n--- Testing: Content normalization ---")
+        input_text = "<orakle>\n  get weather\n  in Paris\n</orakle>"
+        result = self._run_test_stream(input_text)
+        self.assertIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
 

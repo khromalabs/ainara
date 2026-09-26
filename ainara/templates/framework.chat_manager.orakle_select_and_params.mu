@@ -1,75 +1,60 @@
-{{!
-  Template for selecting the best skill and generating parameters.
-  Input variables:
-  - query: The original natural language query from the user.
-  - candidate_skills: A formatted string containing details of candidate skills.
-}}
-Analyze the user's request: "{{query}}"
+User request: "{{query}}"
 
-Here are the potentially relevant skills ids identified by a preliminary search, along with their detailed descriptions and parameters:
+{{#orakle_data}}
+Data payload provided:
+<data>
+{{{orakle_data}}}
+</data>
+{{/orakle_data}}
 
+Available skills:
 {{{candidate_skills}}}
 
-Based on the user's request and the detailed skill descriptions provided above:
+Task: Select the best skill and extract parameters. Return ONLY a JSON object with these keys:
+skill_id, parameters, frustration_level, frustration_reason, reasoning_level{{^agentic_mode}}, skill_intention, requires_agent{{/agentic_mode}}.
 
-1.  **Choose the single BEST skill** from the candidates that most accurately fulfills the user's request. PAY CLOSE ATTENTION to the skill description and carefully select the most appropiate skill for the user request.
-2.  **Extract the necessary parameters** for the chosen skill from the user's request ("{{query}}"), following the parameter specifications listed in that skill's description.
-3.  NEVER add a parameter which is not present in the parameter specifications. If a potentially required parameter to fulfill the user's request is not present, simply discard that skill as a possible candidate. All the possible paramers will always be present in the parameter specifications.
-4.  Only add parameters identified as optional if they are REALLY required to fulfill the user's request.
-5.  Format your output as a single, complete JSON object. This JSON object MUST include the following top-level keys: `skill_id` (string), `parameters` (object), `skill_intention` (string), `frustration_level` (float), `frustration_reason` (string or null), and `reasoning_level` (float). The specific content for these keys should be determined by following instructions 1-4, 6, 7 and 8.
-6. For the `skill_intention` key in the JSON object (defined in point 5), provide a phrase that a helpful assistant would say before performing the requested action. This should:
-    - Be conversational and human-like (Don't introduce the request with a too standard declaration like "Processing request...")
-    - Briefly indicate what you're about to do without technical jargon.
-    - Match the tone of the user's request (casual, urgent, curious, etc.)
-    - Be concise (1-2 short sentences maximum)
-7. **Assess User Frustration** to populate the `frustration_level` and `frustration_reason` keys in the JSON object (defined in point 5): Based on the user's query "{{query}}", determine if the user is expressing frustration, confusion, or dissatisfaction, possibly due to previous misunderstandings.
-    - The `frustration_level` key should contain: a float from 0.0 (no frustration) to 1.0 (high frustration).
-    - The `frustration_reason` key should contain: a brief string explaining the detected frustration (e.g., "User is repeating a correction", "User seems confused by the previous answer", "User is expressing annoyance"). If no frustration, this can be null or an empty string.
-8. **Assess Reasoning Effort**: Based on the user's query "{{query}}", determine if a more complex reasoning process is required to fulfill the request. The `reasoning_level` key in the JSON object should contain a float from 0.0 (for direct commands) to 1.0 (for highly abstract or strategic tasks).
-    - Set to `0.0` for simple, direct commands or questions (e.g., 'what is the weather?', 'calculate 2+2', 'copy this text').
-    - Assign a value between `0.1` and `1.0` for queries that imply comparison, analysis, summarization, or planning (e.g., 'analyze this document', 'compare these two products', 'devise a strategy for...').
-    - Use a higher value for more complex or abstract tasks. For example: `0.3` for a simple analysis, `0.6` for a detailed comparison, or `0.9` for a deep, creative, or strategic thought process.
-9. If none of the available skills seem to be directly related with the user query but the query is a request of information that could be likely found on the Internet, try to use a web search skill if available. Don't select an skill if none of the options seem to fit at all for the user query. In that case, add an additional `error_msg` property in the returned JSON object explaining in conversational style why the user request can't performed.
+Instructions:
+1. Choose the skill which better suits the user request. IMPORTANT: Use only the exact parameters defined in the skill specification.
+2. Skip optional parameters unless needed.
+3. If no skill{{^agentic_mode}} or combination of skills (using requires_agent){{/agentic_mode}} fits, but query clearly seeks for information, use search_web skill as shown in example.
+4. If no skill fits the query intent, return an empty skill_id and add error_msg.
 
+Returned JSON object keys details:
+- frustration_level (0.0-1.0): Detect frustration, confusion, or dissatisfaction in the query.
+- frustration_reason: Brief explanation if frustration, otherwise null.
+- reasoning_level (0.0-1.0): 0.0 for direct commands, higher for analysis/comparison/planning tasks.
+{{^agentic_mode}}
+- skill_intention: Conversational sentence action preview in {{language}}. Be natural, match user's tone, avoid jargon.
+- requires_agent (boolean): true if query needs multiple sequential steps or cross-skill coordination (e.g., "look first for X then Y", "compare A and B", "research and summarize"), triggers agentic process of the query.
+{{/agentic_mode}}
 
-Example Output Format:
-{
-  "skill_id": "system_finder",
-  "parameters": {
-    "query": "recent documents about project X",
-    "file_type": "pdf"
-  },
-  "skill_intention": "I'm looking in the local file system for the requested file...",
-  "frustration_level": 0.1,
-  "frustration_reason": "",
-  "reasoning_level": 0.0
-}
+Result example (skill):
 
-Another Example:
-{
-  "skill_id": "tools_calculator",
-  "parameters": {
-    "expression": "cos(3.14159) * 2"
-  },
-  "skill_intention": "I'm checking the calculator...",
-  "frustration_level": 0.0,
-  "frustration_reason": null,
-  "reasoning_level": 0.0
-}
-
-Another Example for Reasoning:
 {
   "skill_id": "search_web",
-  "parameters": {
-    "query": "analyze the pros and cons of nuclear energy for the environment"
-  },
-  "skill_intention": "Let me look into that for you and I'll prepare an analysis...",
+  "parameters": {"query": "analyze pros and cons of nuclear energy"},
+  "reasoning_level": 0.7{{^agentic_mode}},
   "frustration_level": 0.0,
   "frustration_reason": null,
-  "reasoning_level": 0.7
+  "requires_agent": false
+  "skill_intention": "I'll analyze the pros and cons of nuclear energy for you...",
+{{/agentic_mode}}
+
 }
 
-Ensure the output contains ONLY the JSON object, with no explanations, comments, backticks, or any other text before or after it. Use double quotes for all keys and string values within the JSON. For empty or null values, just use `null`.
-Your entire response MUST consist SOLELY of this JSON object.
+{{^agentic_mode}}
 
-DON'T provide any comments appart from the JSON object.
+Result example 2 (agent):
+
+{
+  "skill_id": null,
+  "parameters": {},
+  "skill_intention": "This requires multiple steps. Let me work on that...",
+  "frustration_level": 0.0,
+  "frustration_reason": null,
+  "reasoning_level": 0.5,
+  "requires_agent": true
+}
+{{/agentic_mode}}
+
+Output only valid JSON with double quotes, no comments or formatting.

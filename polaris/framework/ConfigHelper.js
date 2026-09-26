@@ -18,7 +18,6 @@
 
 const { dialog } = require('electron');
 const Logger = require('./logger');
-const fetch = require('node-fetch');
 const ConfigManager = require('./config');
 
 

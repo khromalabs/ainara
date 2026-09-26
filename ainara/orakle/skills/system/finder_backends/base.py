@@ -16,15 +16,15 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import dataclasses
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 
-@dataclass
+@dataclasses.dataclass
 class SearchResult:
     """Unified search result across all backends"""
     path: Path

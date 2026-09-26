@@ -44,16 +44,37 @@ console.log('com-ring.js loaded');
 
 const ERROR_WITH_CALL_TRACE = false
 
+var me;
+
 class ComRing extends BaseComponent {
     constructor() {
         try {
             super();
+            me = this;
+
+            /*
+             * TODO: REFACTORING PROPOSAL - STATE MACHINE
+             * The current implementation relies on multiple boolean flags (isRecording, isProcessingLLM,
+             * wakeWordEnabled, etc.) which leads to complex edge cases and race conditions, particularly
+             * with audio resource management.
+             *
+             * Future refactoring should implement a Finite State Machine (FSM) with explicit states:
+             * - IDLE: Waiting for input (WakeWord active if enabled)
+             * - LISTENING: Active recording (PTT or WakeWord triggered)
+             * - PROCESSING: Sending audio/text to LLM
+             * - SPEAKING: Playing TTS response
+             *
+             * This would decouple the UI state from the underlying audio resource management and
+             * prevent issues where stopping TTS accidentally kills the microphone input loop.
+             */
+
             this.ignoreIncomingEvents = false;
             this.showInitialMessages = true;
             console.log('ComRing: Initializing constructor');
             this.config = new ConfigManager();
             this.text = null;
             this.memoryEnabled = null;
+            this.notificationCount = 0;
 
             // Add tracking for animations and message queue
             this.pendingAnimations = new Map();  // Track pending animations by message ID
@@ -69,14 +90,16 @@ class ComRing extends BaseComponent {
             this.pybridgeEndpoints = {
                 chat: `${this.pybridgeEndpoint}/framework/chat`,
                 history: `${this.pybridgeEndpoint}/framework/chat/history`,
+                notifications: `${this.pybridgeEndpoint}/framework/notifications/status`
             };
-
             this.isWindowVisible = false;
             this.isProcessingUserMessage = false;
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
             this.currentView = 'ring';
             this.docFormat = 'text';
+            this.navigatingHistory = false;
+            this.isLLMStreaming = false;
 
             this.state = {
                 keyPressed: false,
@@ -87,9 +110,11 @@ class ComRing extends BaseComponent {
             };
             console.log('ComRing: State initialized');
             this.historyDate = null;
+            this.lastMessageTimestamp = null;
 
             // Setup keyboard shortcut configuration
             this.triggerKey = this.config.get('shortcuts.trigger', 'Space');
+            this.showKey = this.config.get('shortcuts.show', 'F1');
             console.log('ComRing: Keyboard shortcuts initialized:', { trigger: this.triggerKey });
 
             this.stt = new WhisperSTT();
@@ -97,13 +122,30 @@ class ComRing extends BaseComponent {
 
             this.llmClient = null;
             this.setupTranscriptionHandler();
+            this.onAnimation = false;
+
+            // Add Wake Word configuration
+            this.wakeWordEnabled = this.config.get('wakeword.enabled', false);
+            this.wakeWordSocket = null;
+            this.audioProcessor = null;
+            this.isListeningForWakeWord = false;
+
+            // VAD Configuration
+            this.vadThreshold = 0.30; // Volume threshold (0.0 - 1.0)
+            this.silenceStartTimestamp = null;
+            this.maxSilenceDuration = 2000; // 2 seconds
+
+            // Media Recorder for the new flow
+            this.mediaRecorder = null;
+            this.audioChunks = [];
+
+            this.wizardActive = false;
 
         } catch (error) {
             console.error('ComRing constructor error:', error);
             throw error;
         }
     }
-
 
     async connectedCallback(recursion=null) {
         try {
@@ -155,6 +197,35 @@ class ComRing extends BaseComponent {
 
             this.initializeEventListeners();
             await this.updateLLMProviderDisplay();
+
+            // Initialize Audio Stream immediately if Wake Word is enabled
+            if (this.wakeWordEnabled) {
+                async function checkPybridgeAndInitializeAudio() {
+                    let retries = 0;
+                    while (retries < 20) {
+                        // console.log('Attempt connection to pybridge health:' + retries);
+                        const url = me.config.get('pybridge.api_url') + '/health';
+                        // console.log('url: ' + url);
+                        try {
+                            const response = await fetch(url);
+                            // console.log('response');
+                            // console.log(response);
+                            if (response.ok) {
+                                me.initializeAudioStream();
+                                break;
+                            }
+                        } catch (error) {
+                            // console.log('RUBEN failed to fetch');
+                            console.log(error);
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        retries++;
+                    }
+                }
+                // Launch parallel process
+                setTimeout(() => checkPybridgeAndInitializeAudio(), 10);
+            }
+
             this.emitEvent('ready');
 
         } catch (error) {
@@ -327,6 +398,11 @@ class ComRing extends BaseComponent {
             return start + '...' + end;
         }
 
+        ipcRenderer.on('wizard-status', async (event, wizardStatus) => {
+            console.log('ComRing: Setup Wizard is ', wizardStatus);
+            this.wizardActive = wizardStatus;
+        });
+
         // Add listener for LLM provider changes
         ipcRenderer.on('llm-provider-changed', async (event, providerName) => {
             console.log('ComRing: LLM provider changed to', providerName);
@@ -341,6 +417,7 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     sttStatus.classList.remove('active2');
                     sttStatus.textContent = '';
+                    this.updateIdleStatus();
                 }, 4000);
             }
         });
@@ -361,18 +438,36 @@ class ComRing extends BaseComponent {
             // }
 
             this.exitTypingMode();
+
+            // TODO Unsure about what to do here
+            // if (!this.onAnimation &&
+            //     this.currentView === 'document' &&
+            //     this.docFormat === "chat-history") {
+            //     // auto shrink if on chat-history mode
+            //     this.switchToRingView();
+            // }
+        });
+
+        ipcRenderer.on('not-on-animation', () => {
+            this.onAnimation = false;
+        });
+
+        ipcRenderer.on('on-animation', () => {
+            this.onAnimation = true;
         });
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
             if (this.isProcessingUserMessage) {
-                console.log("process-typed-message: Avoiding concurrent entry");
+                console.log("process-typed-message: isProcessingUserMessage=true, avoiding concurrent entry");
                 return;
             }
             this.isProcessingUserMessage = true;
 
             if (message.trim() === '/history') {
                 console.log('Handling /history command');
-                await this.fetchAndDisplayChatHistory();
+                if (!this.onAnimation) {
+                    await this.fetchAndDisplayChatHistory();
+                }
             } else if (message.trim() === '/provider') {
                 console.log('Handling /provider command');
                 await this.updateLLMProviderDisplay();
@@ -392,6 +487,9 @@ class ComRing extends BaseComponent {
             } else if (message.trim() === '/about') {
                 console.log('Handling /about command');
                 await this.showAbout();
+            } else if (message.trim() === '/refresh') {
+                console.log('Handling /refresh command');
+                ipcRenderer.send('refresh-frontend');
             } else {
                 await this.processUserMessage(message, true);
             }
@@ -410,9 +508,48 @@ class ComRing extends BaseComponent {
             this.circle.style.opacity = isTypingMode ? '0.3' : '1';
         });
 
+        // Listen for document-view becoming empty (all items closed)
+        this.documentView.addEventListener('documentview-empty', () => {
+            if (!this.onAnimation) {
+                this.switchToRingView();
+            }
+        });
+
         // Listen for history navigation events from the document-view component
         this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
         this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));
+        this.documentView.addEventListener('documentview-history-today-clicked', () => this.fetchAndDisplayChatHistory());
+        this.documentView.addEventListener('documentview-history-date-picked', (e) => this.fetchAndDisplayChatHistory(e.detail.date, false));
+
+        // Listen for search events
+        this.documentView.addEventListener('documentview-search-requested', async (e) => {
+            const query = e.detail.query;
+            if (!query) return;
+
+            try {
+                // Use the new search endpoint
+                const response = await fetch(`${this.pybridgeEndpoints.chat}/search?q=${encodeURIComponent(query)}&limit=20`);
+                const data = await response.json();
+                if (data.results) {
+                    this.documentView.showSearchResults(data.results);
+                }
+            } catch (err) {
+                console.error('Search failed', err);
+                this.showInfo('Search failed: ' + err.message, true);
+            }
+        });
+
+        this.documentView.addEventListener('documentview-search-result-selected', async (e) => {
+            const { date, timestamp } = e.detail;
+            // Load history for that date, but don't auto-scroll to bottom (pass false)
+            await this.fetchAndDisplayChatHistory(date, false);
+
+            // Scroll to the specific message
+            // Give the DOM a moment to render the markdown
+            setTimeout(() => {
+                this.documentView.scrollToTimestamp(timestamp);
+            }, 500);
+        });
 
         // Add event listeners for animation events
         ipcRenderer.on('animation-started', (event, data) => {
@@ -420,7 +557,7 @@ class ComRing extends BaseComponent {
             this.pendingAnimations.set(data.messageId, true);
         });
 
-        ipcRenderer.on('animation-completed', (event, data) => {
+        ipcRenderer.on('animation-completed', async (event, data) => {
             console.log('Animation completed:', data, 'Current message:', this.currentMessageId);
             this.pendingAnimations.set(data.messageId, false);
 
@@ -466,10 +603,14 @@ class ComRing extends BaseComponent {
         // Debug keyboard events
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
+            // console.log(event);
             if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
-                console.log('Escape in document view: switching back to ring view.');
-                this.switchToRingView();
-                this.abortLLMResponse();
+                if (this.messageQueue.length > 0) {
+                    this.abortLLMResponse();
+                } else {
+                    console.log('Escape in document view: switching back to ring view.');
+                    this.switchToRingView();
+                }
                 event.preventDefault();
                 event.stopPropagation();
                 return;
@@ -499,14 +640,12 @@ class ComRing extends BaseComponent {
                 if (event.key === 'Tab' && !isTypingMode) {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (this.currentView === 'ring') {
-                        if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
-                            this.switchToDocumentView(this.docFormat);
-                        } else {
+                    if (!this.onAnimation) {
+                        if (this.currentView === 'ring') {
                             await this.fetchAndDisplayChatHistory();
+                        } else if (this.currentView === 'document') {
+                            this.switchToRingView();
                         }
-                    } else if (this.currentView === 'document') {
-                        this.switchToRingView();
                     }
                     return;
                 }
@@ -521,6 +660,7 @@ class ComRing extends BaseComponent {
                 } else if (
                     !isTypingMode &&
                     !this.state.isRecording &&
+                    !event.ctrlKey &&
                     // don't process control+v
                     ( !(event.key.toLowerCase() === 'v' && event.ctrlKey) ) &&
                     (
@@ -589,17 +729,86 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('show-about', async () => {
             await this.showAbout();
         });
+
+        // Start polling for notifications every minute
+        this.doingNotificationPolling = false;
+        this.notificationPollingInterval =
+            setInterval(this.notificationPolling, 60000);
+    }
+
+    updateIdleStatus() {
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+
+        // Check if busy with higher priority states
+        // Note: isProcessingLLM is excluded so notifications can show while text streams (after thinking stops)
+        const isBusy = this.state.isRecording ||
+                       this.isShowingInfo ||
+                       this.circle.classList.contains('loading') ||
+                       this.circle.classList.contains('skill-active');
+
+        if (isBusy)
+            return;
+
+        if (!this.config.get('ui.comringNotifications', false))
+            return;
+        if (this.notificationCount > 0) {
+            ipcRenderer.send('notifications-available', true);
+            sttStatus.textContent = `${this.notificationCount} notification${this.notificationCount > 1 ? 's' : ''}`;
+            sttStatus.classList.remove('active2', 'active3', 'error');
+            sttStatus.classList.add('notification');
+        } else {
+            ipcRenderer.send('notifications-available', false);
+            sttStatus.classList.remove('notification');
+            setTimeout(() => {
+                sttStatus.textContent = '';
+            }, 4000);
+        }
+    }
+
+    async notificationPolling() {
+        if (me.doingNotificationPolling) {
+            // avoid re-entry
+            return;
+        }
+        me.doingNotificationPolling = true;
+        try {
+            console.log(me.pybridgeEndpoints)
+            const response = await fetch(me.pybridgeEndpoints.notifications);
+            if (response.ok) {
+                const data = await response.json();
+                // // Send to main process to update tray
+                // ipcRenderer.send('update-tray-icon', {
+                //     hasNotifications: data.pending
+                // });
+                // Update local state and UI
+                me.notificationCount = data.pending || 0;
+                me.updateIdleStatus();
+            }
+        } catch (e) {
+            console.error('Notification Error:', e);
+            console.error(e.stack);
+        }
+        me.doingNotificationPolling = false;
     }
 
 
     async processUserMessage(message, typed = false) {
         console.log('processUserMessage:', message);
+        this.ignoreIncomingEvents = false;
         if (!typed) {
             // Show user message in display window
             ipcRenderer.send('transcription-received', message);
         }
         try {
             if (message) {
+                // TODO this is not working yet it should retrieve the users' message before the answer is available
+                // // Optimistically pull the just-persisted user message into chat-history.
+                // // Awaiting before the LLM request starts orders this fetch ahead of the
+                // // 'completed' fetch, preventing duplicate appends.
+                // if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                //     await this.fetchAndAppendNewChatMessages();
+                // }
                 await this.processAIResponse(message);
                 this.circle.classList.add('faded');
             }
@@ -612,16 +821,57 @@ class ComRing extends BaseComponent {
     }
 
 
+    // [NEW] Helper to determine if we should review based on settings and confidence
+    shouldReview(text, confidence) {
+        const reviewSetting = this.config.get('stt.review', 'on');
+        const threshold = this.config.get('stt.smart_send_threshold', 0.80);
+
+        // Legacy boolean support
+        if (reviewSetting === 'on')
+            return true;
+        if (reviewSetting === 'off')
+            return false;
+        // Smart mode ('auto')
+        if (reviewSetting === 'auto') {
+            // If we have no confidence data (e.g. OpenAI direct), default to review for safety
+            if (confidence === undefined || confidence === null) return true;
+            // If confidence is high, skip review
+            if (confidence >= threshold) {
+                console.log(`Smart Send: Confidence ${confidence.toFixed(2)} >= ${threshold}. Auto-sending.`);
+                return false;
+            }
+            console.log(`Smart Send: Confidence ${confidence.toFixed(2)} < ${threshold}. Reviewing.`);
+            return true;
+        }
+
+        return true; // Default safe fallback
+    }
+
     setupTranscriptionHandler() {
-        this.stt.onTranscriptionResult = async (transcription) => {
-            const reviewBeforeSend = this.config.get('stt.review', true);
-            if (transcription) {
-                if (reviewBeforeSend) {
+        this.stt.onTranscriptionResult = async (result) => {
+            if (this.isProcessingUserMessage) {
+                console.log("setupTranscriptionHandler: isProcessingUserMessage=true, avoiding concurrent entry");
+                return;
+            }
+
+            // [MODIFIED] Handle both object (new) and string (legacy) formats
+            let text = '';
+            let confidence = undefined;
+
+            if (typeof result === 'object' && result !== null) {
+                text = result.text;
+                confidence = result.confidence;
+            } else if (typeof result === 'string') {
+                text = result;
+            }
+
+            if (text) {
+                if (this.shouldReview(text, confidence)) {
                     await this.enterTypingMode();
-                    ipcRenderer.send('typing-key-pressed', transcription);
+                    ipcRenderer.send('typing-key-pressed', text);
                     ipcRenderer.send('focus-chat-display');
                 } else {
-                    await this.processUserMessage(transcription);
+                    await this.processUserMessage(text);
                 }
             }
         };
@@ -629,94 +879,266 @@ class ComRing extends BaseComponent {
 
 
 
-    async startRecording() {
-        if (this.state.isRecording || !this.isWindowVisible) return;
+    // NEW: Persistent Audio Stream Initialization
+    // TODO Falla lógica ahora esto no se muestra en segunda grabación
+    async initializeAudioStream() {
+        try {
+            if (this.mediaStream) return; // Already initialized
 
-        // // Force-sync memory state from config to fix color issue
-        // const memoryEnabled = this.config.get('memory.enabled', false);
-        // this.setMemoryState(memoryEnabled);
+            console.log('ComRing: Initializing persistent audio stream...');
+            this.mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+
+            this.audioContext = new AudioContext();
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = this.config.get('ring.fftSize', 256);
+
+            const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+            source.connect(this.analyser);
+
+            // Start Wake Word Processing
+            if (this.wakeWordEnabled) {
+                this.setupWakeWordProcessing(source);
+            }
+
+            // Start visualization loop (runs continuously for VAD)
+            this.startVisualizationLoop();
+
+        } catch (error) {
+            console.error('Audio Initialization Error:', error);
+            this.showInfo('Microphone access failed', true);
+        }
+    }
+
+    // NEW: Wake Word WebSocket & Processing
+    async setupWakeWordProcessing(source) {
+        try {
+            console.log(`WakeWord: Setting up processing. AudioContext SampleRate: ${this.audioContext.sampleRate}`);
+        // Connect to WebSocket
+        const wsUrl = this.pybridgeEndpoint.replace('http', 'ws') + '/wakeword';
+        this.wakeWordSocket = new WebSocket(wsUrl);
+        } catch (error) {
+            console.error("Can't start WakeWord WebSocket!: " + error);
+            return false;
+        }
+
+        this.wakeWordSocket.onopen = () => {
+            console.log('WakeWord: WebSocket connected');
+            this.isListeningForWakeWord = true;
+            // this.circle.classList.add('listening');
+            this.emitEvent('wakeword-active');
+            ipcRenderer.send('wakeword-status', 'listening');
+        };
+
+        this.wakeWordSocket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            // Strict check: Don't trigger if recording, processing, or awaiting response
+            if (data.detected &&
+                !this.state.isRecording &&
+                !this.state.isProcessingLLM &&
+                !this.state.isAwaitingResponse &&
+                !this.wizardActive
+            ) {
+
+                console.log(`WakeWord: Detected (${data.score})`);
+                this.triggerWakeWordActivation();
+            } else if (data.detectd) {
+                console.log(`WakeWord: Detected (${data.score}) but bad environment: wizardActive: ${this.wizardActive}`);
+            }
+        };
+
+        this.wakeWordSocket.onclose = () => {
+            console.log('WakeWord: WebSocket disconnected');
+            this.isListeningForWakeWord = false;
+            // this.circle.classList.remove('listening');
+            this.emitEvent('wakeword-inactive');
+        };
+
+        // Audio Processing (Downsampling to 16kHz)
+        // Note: ScriptProcessor is deprecated but widely supported.
+        // For production, AudioWorklet is preferred but requires separate file loading.
+        this.audioProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+        this.audioProcessor.onaudioprocess = (e) => {
+            const inputData = e.inputBuffer.getChannelData(0);
+
+            // Only send if we are listening (socket is open/intended)
+            // We REMOVE the checks for isRecording/isProcessingLLM/isAwaitingResponse
+            // to ensure continuous stream to server, preventing timeouts and buffer issues.
+            if (!this.isListeningForWakeWord) {
+                return;
+            }
+
+            const downsampled = this.downsampleBuffer(inputData, this.audioContext.sampleRate, 16000);
+
+            if (this.wakeWordSocket && this.wakeWordSocket.readyState === WebSocket.OPEN) {
+                this.wakeWordSocket.send(downsampled);
+            }
+        };
+
+        source.connect(this.audioProcessor);
+        this.audioProcessor.connect(this.audioContext.destination); // Necessary for the processor to run
+    }
+
+    // NEW: Downsampling Utility
+    downsampleBuffer(buffer, sampleRate, outSampleRate) {
+        if (outSampleRate === sampleRate) {
+            return buffer;
+        }
+        if (outSampleRate > sampleRate) {
+            throw new Error("Downsampling rate show be smaller than original sample rate");
+        }
+        const sampleRateRatio = sampleRate / outSampleRate;
+        const newLength = Math.round(buffer.length / sampleRateRatio);
+        const result = new Int16Array(newLength);
+        let offsetResult = 0;
+        let offsetBuffer = 0;
+        while (offsetResult < result.length) {
+            const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+            let accum = 0, count = 0;
+            for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                accum += buffer[i];
+                count++;
+            }
+            // Convert float to 16-bit PCM
+            let s = Math.max(-1, Math.min(1, accum / count));
+            result[offsetResult] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            offsetResult++;
+            offsetBuffer = nextOffsetBuffer;
+        }
+        return result;
+    }
+
+    // NEW: Trigger Activation
+    async triggerWakeWordActivation() {
+        // 1. Visual Feedback
+        this.circle.classList.add('recording'); // Pulse effect
+        // 2. Audio Feedback (Generated Beep)
+        this.playFeedbackSound();
+        // 3. Show Window
+        ipcRenderer.send('show-window');
+        // 4. Start Recording
+        await this.startRecording();
+    }
+
+    playFeedbackSound() {
+        if (!this.audioContext) return;
+        const oscillator = this.audioContext.createOscillator();
+        const gainNode = this.audioContext.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(this.audioContext.destination);
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, this.audioContext.currentTime); // A5
+        oscillator.frequency.exponentialRampToValueAtTime(1760, this.audioContext.currentTime + 0.1); // A6
+
+        gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+
+        oscillator.start();
+        oscillator.stop(this.audioContext.currentTime + 0.1);
+    }
+
+    // REFACTORED: Start Recording (Uses existing stream)
+    async startRecording() {
+        if (this.state.isRecording) return;
+
+        // Ensure audio is initialized
+        if (!this.mediaStream) {
+            await this.initializeAudioStream();
+        }
+
+        ipcRenderer.send('ptt-start');
+        ipcRenderer.send('wakeword-status', 'active'); // Update tray to purple
 
         this.ignoreIncomingEvents = false;
         this.state.isRecording = true;
         this.state.isAwaitingResponse = false;
+        this.silenceStartTimestamp = null; // Reset VAD
+
+        // this.circle.classList.remove('faded', 'listening');
         this.circle.classList.remove('faded');
         this.circle.classList.add('recording');
-        this.innerCircle.style.opacity = 0; // Reset inner circle opacity
-
+        this.innerCircle.style.opacity = 0;
 
         try {
-            // Setup audio visualization
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            this.mediaStream = stream;  // Store stream reference
-            this.audioContext = new AudioContext();
-            this.analyser = this.audioContext.createAnalyser();
-            const source = this.audioContext.createMediaStreamSource(stream);
-            source.connect(this.analyser);
+            console.log('Starting MediaRecorder...');
+            this.audioChunks = [];
+            this.mediaRecorder = new MediaRecorder(this.mediaStream, { mimeType: 'audio/webm' });
 
-            this.analyser.fftSize = this.config.get('ring.fftSize', 256);
-            const bufferLength = this.analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-
-            console.log('Audio setup complete:', {
-                fftSize: this.analyser.fftSize,
-                bufferLength,
-                contextState: this.audioContext.state
-            });
-
-            // Start volume visualization
-            const updateVolume = () => {
-                if (!this.state.isRecording) {
-                    console.log('Stopping volume visualization - not recording');
-                    return;
+            this.mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    this.audioChunks.push(event.data);
                 }
-
-                this.analyser.getByteFrequencyData(dataArray);
-                const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-                const volume = Math.pow(average / 255, 0.4);
-                const finalOpacity = volume < 0.4 ? 0 : Math.min(1, volume * 1.2);
-
-                // console.log('Volume update:', {
-                //     average,
-                //     volume,
-                //     finalOpacity
-                // });
-
-                this.innerCircle.style.opacity = finalOpacity;
-                this.animationFrame = requestAnimationFrame(updateVolume);
             };
 
-            updateVolume();
-            console.log('Volume visualization started');
+            this.mediaRecorder.onstop = async () => {
+                console.log('MediaRecorder stopped, processing audio...');
+                const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
 
-            // Start recording
-            try {
-                console.log('Starting recording...');
-                // Get the ring container element
-                const ringContainer = this.shadowRoot.querySelector('.ring-container');
-                ringContainer.style.setProperty('--border-color', 'rgba(255, 255, 255, 1)');
-                ringContainer.classList.add('recording-active');
-                this.currentRecording = this.stt.listen()
+                // Send to STT (Passive Mode)
+                try {
+                    const result = await this.stt.transcribe(audioBlob);
 
-            } catch (error) {
-                console.error('Recording Error:', error);
-                this.state.isRecording = false;
-                const sttStatus = this.shadowRoot.querySelector('.stt-status');
-                sttStatus.textContent = 'Error: Could not start recording';
-                sttStatus.classList.add('active', 'error');
-                setTimeout(() => {
-                    sttStatus.classList.remove('active', 'error');
-                }, 2000);
-            }
+                    // [MODIFIED] Handle both object (new) and string (legacy) formats
+                    let text = '';
+                    let confidence = undefined;
+
+                    if (typeof result === 'object' && result !== null) {
+                        text = result.text;
+                        confidence = result.confidence;
+                    } else if (typeof result === 'string') {
+                        text = result;
+                    }
+
+                    // Handle result via existing logic
+                    if (text && text.trim()) {
+                        if (this.shouldReview(text, confidence)) {
+                            await this.enterTypingMode();
+                            ipcRenderer.send('typing-key-pressed', text);
+                            ipcRenderer.send('focus-chat-display');
+                            // Reset awaiting state since we are now typing
+                            this.state.isAwaitingResponse = false;
+                            this.circle.classList.remove('awaiting');
+                        } else {
+                            await this.processUserMessage(text);
+                        }
+                    } else {
+                        // Empty transcription - reset state
+                        console.log('Empty transcription, resetting state');
+                        this.state.isAwaitingResponse = false;
+                        this.circle.classList.remove('awaiting');
+                    }
+                } catch (e) {
+                    console.error('Transcription failed:', e);
+                    this.showInfo('Transcription failed', true);
+                    // Error - reset state
+                    this.state.isAwaitingResponse = false;
+                    this.circle.classList.remove('awaiting');
+                }
+            };
+
+            this.mediaRecorder.start();
+
+            // Visuals
+            const ringContainer = this.shadowRoot.querySelector('.ring-container');
+            ringContainer.style.setProperty('--border-color', 'rgba(255, 255, 255, 1)');
+            ringContainer.classList.add('recording-active');
 
         } catch (error) {
             console.error('Recording Error:', error);
-            this.isRecording = false;
+            this.stopRecording();
         }
     }
 
-
     async enterTypingMode() {
-        this.ignoreIncomingEvents = false;
         this.text = "";
         // Set state in window
         await ipcRenderer.invoke('set-typing-mode-state', true);
@@ -733,10 +1155,38 @@ class ComRing extends BaseComponent {
         this.circle.style.opacity = '1';
         // this.isWindowVisible = true;
         // console.log('exitTypingMode: isWindowVisible true');
-
         ipcRenderer.send('com-ring-focus');
     }
 
+    // NEW: Helper to stop only the TTS output without killing input resources
+    stopTTSPlayback() {
+        if (this.currentAudio) {
+            this.closeTTSAudioContext(this.currentAudio);
+            this.currentAudio.pause();
+            this.currentAudio.src = '';
+            this.currentAudio = null;
+        }
+    }
+
+    // Each streamed TTS message gets its own AudioContext (for the ring visualization).
+    // These were never being closed, so every spoken message during a conversation
+    // leaked one open AudioContext (and its OS-level audio stream) for the life of the
+    // renderer. In long conversations this eventually exhausts the audio device/
+    // WebAudio renderer's concurrent stream limit and playback silently fails
+    // ("The AudioContext encountered an error from the audio device or the WebAudio
+    // renderer"). Call this whenever a given audio element is done being used
+    // (ended, errored, timed out, replaced, or discarded unplayed).
+    closeTTSAudioContext(audio) {
+        if (audio && audio._ttsAudioContext) {
+            const ctx = audio._ttsAudioContext;
+            audio._ttsAudioContext = null;
+            if (ctx.state !== 'closed') {
+                ctx.close().catch(err => console.error('Error closing TTS AudioContext:', err));
+            }
+        }
+    }
+
+    // REFACTORED: Clean Audio (Don't kill context if Wake Word is on)
     cleanAudio() {
         if (this.keyCheckInterval) {
             clearInterval(this.keyCheckInterval);
@@ -751,81 +1201,141 @@ class ComRing extends BaseComponent {
             this.animationFrame = null;
         }
 
-        // Cleanup analyser node
-        if (this.analyser) {
-            console.log('Cleaning up analyser node');
-            this.analyser.disconnect();
-            this.analyser = null;
-        }
-
-        // Enhanced MediaStream cleanup
-        if (this.mediaStream) {
-            console.log('MediaStream cleanup starting');
-            try {
-                const tracks = this.mediaStream.getTracks();
-                console.log(`Found ${tracks.length} tracks to clean up`);
-
-                tracks.forEach((track, index) => {
-                    console.log(`Track ${index}: kind=${track.kind}, state=${track.readyState}, enabled=${track.enabled}`);
-                    track.stop();
-                    console.log(`Track ${index} stopped, new state=${track.readyState}`);
-                });
-
-                this.mediaStream = null;
-                console.log('MediaStream cleanup completed');
-            } catch (error) {
-                console.error('Error during MediaStream cleanup:', error);
-            }
-        }
-
-        // Enhanced AudioContext cleanup
-        if (this.audioContext) {
-            console.log(`AudioContext cleanup starting (current state: ${this.audioContext.state})`);
-            try {
-                this.audioContext.close().then(() => {
-                    console.log('AudioContext closed successfully');
-                }).catch(error => {
-                    console.error('Error closing AudioContext:', error);
-                });
-            } catch (error) {
-                console.error('Error during AudioContext cleanup:', error);
-            } finally {
-                this.audioContext = null;
-            }
-        }
-
         // Clean up current audio
-        if (this.currentAudio) {
-            this.currentAudio.pause();
-            this.currentAudio.src = '';
-            this.currentAudio = null;
+        this.stopTTSPlayback();
+
+        // Only fully kill audio if we are destroying the component or disabling wake word
+        if (!this.wakeWordEnabled) {
+            // Cleanup analyser node
+            if (this.analyser) {
+                console.log('Cleaning up analyser node');
+                this.analyser.disconnect();
+                this.analyser = null;
+            }
+
+            // Enhanced MediaStream cleanup
+            if (this.mediaStream) {
+                console.log('MediaStream cleanup starting');
+                try {
+                    const tracks = this.mediaStream.getTracks();
+                    console.log(`Found ${tracks.length} tracks to clean up`);
+
+                    tracks.forEach((track, index) => {
+                        console.log(`Track ${index}: kind=${track.kind}, state=${track.readyState}, enabled=${track.enabled}`);
+                        track.stop();
+                        console.log(`Track ${index} stopped, new state=${track.readyState}`);
+                    });
+
+                    this.mediaStream = null;
+                    console.log('MediaStream cleanup completed');
+                } catch (error) {
+                    console.error('Error during MediaStream cleanup:', error);
+                }
+            }
+
+            // Enhanced AudioContext cleanup
+            if (this.audioContext) {
+                console.log(`AudioContext cleanup starting (current state: ${this.audioContext.state})`);
+                try {
+                    this.audioContext.close().then(() => {
+                        console.log('AudioContext closed successfully');
+                    }).catch(error => {
+                        console.error('Error closing AudioContext:', error);
+                    });
+                } catch (error) {
+                    console.error('Error during AudioContext cleanup:', error);
+                } finally {
+                    this.audioContext = null;
+                }
+            }
         }
+        // If Wake Word is enabled, we keep the stream/context alive!
     }
 
 
+    // REFACTORED: Stop Recording
     stopRecording() {
         if (!this.state.isRecording) return;
+        console.log('Stopping recording...');
+        this.state.isRecording = false;
+        ipcRenderer.send('ptt-stop');
 
-        // Stop the WhisperSTT recording first
-        if (this.stt) {
-            this.stt.stopRecording();
+        // Stop MediaRecorder
+        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+            this.mediaRecorder.stop();
         }
 
-        // Remove recording active state
+        // UI Updates
         const ringContainer = this.shadowRoot.querySelector('.ring-container');
         ringContainer.classList.remove('recording-active');
-
-        console.log('Stopping recording - starting cleanup process');
-
-        this.cleanAudio();
-
-        this.state.isRecording = false;
-        this.state.isAwaitingResponse = true;
         this.circle.classList.remove('recording');
         this.circle.classList.add('awaiting');
 
+        this.state.isAwaitingResponse = true;
         this.innerCircle.style.opacity = 0;
-        console.log('Recording stopped and cleanup process completed');
+
+        // Resume Wake Word Listening state (if enabled)
+        if (this.wakeWordEnabled) {
+            // this.circle.classList.add('listening');
+            ipcRenderer.send('wakeword-status', 'listening');
+        } else {
+            ipcRenderer.send('wakeword-status', 'inactive');
+        }
+    }
+
+    // REFACTORED: Visualization & VAD Loop
+    // TODO Not showing 2nd time
+    startVisualizationLoop() {
+        // Ensure we don't start multiple loops
+        if (this.animationFrame) {
+            cancelAnimationFrame(this.animationFrame);
+        }
+
+        const bufferLength = this.analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const update = () => {
+            // console.log("startVisualizationLoop 1")
+            if (!this.analyser) {
+                // Skip logic but run again
+                this.animationFrame = requestAnimationFrame(update);
+                return;
+            }
+
+            // console.log("startVisualizationLoop PROCESSING")
+
+            this.analyser.getByteFrequencyData(dataArray);
+            const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+            const volume = Math.pow(average / 255, 0.4); // Normalize 0-1
+
+            // 1. Update Visuals
+            if (this.state.isRecording) {
+                const finalOpacity = volume < 0.4 ? 0 : Math.min(1, volume * 1.2);
+                this.innerCircle.style.opacity = finalOpacity;
+            }
+
+            // 2. VAD Logic (Auto-stop on silence)
+            if (this.state.isRecording && !this.state.keyPressed) {
+                if (volume < this.vadThreshold) {
+                    if (this.silenceStartTimestamp === null) {
+                        this.silenceStartTimestamp = Date.now();
+                    } else {
+                        const silenceDuration = Date.now() - this.silenceStartTimestamp;
+                        if (silenceDuration > this.maxSilenceDuration) {
+                            console.log(`VAD: Silence detected (${silenceDuration}ms), stopping recording.`);
+                            this.stopRecording();
+                        }
+                    }
+                } else {
+                    this.silenceStartTimestamp = null;
+                }
+            } else {
+                this.silenceStartTimestamp = null;
+            }
+
+            this.animationFrame = requestAnimationFrame(update);
+        };
+        update();
     }
 
 
@@ -845,7 +1355,6 @@ class ComRing extends BaseComponent {
         }
     }
 
-
     async processAIResponse(userInput) {
         // Reset ignore flag when starting new request
         this.ignoreIncomingEvents = false;
@@ -861,6 +1370,11 @@ class ComRing extends BaseComponent {
                     use_tts: true
                 })
             });
+
+            // Refresh notifications immediately as they were likely consumed by this request
+            if (this.notificationCount > 0) {
+                this.notificationPolling();
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -985,25 +1499,30 @@ class ComRing extends BaseComponent {
                 } else {
                     sttStatus.classList.remove('active2');
                 }
-                sttStatus.textContent = '';
                 this.isShowingInfo = false;
 
                 // Process next error in queue if any
-                setTimeout(() => this.processInfoQueue(), 100);
+                if (this.infoQueue.length > 0) {
+                    setTimeout(() => this.processInfoQueue(), 100);
+                } else {
+                    this.updateIdleStatus();
+                }
             }
         }, refreshInterval);
     }
 
     async showHelp() {
         const helpTitle = 'Help & Shortcuts';
+// - **/refresh**: Refresh the frontend application.
         const helpContent = `
 ### Keyboard Shortcuts
+- **${this.showKey}**: Show the UI interface (Also clicking on tray icon).
 - **${this.triggerKey}**: Hold to record your voice.
-- **Tab**: Toggle between Ring and Document view (history if no previous documents present).
+- **Tab**: Toggle between Ring and Document Mode chat history view.
 - **Escape**: Abort current action, hide Polaris, in document view exit view."
 - **ArrowUp** / **ArrowDown**: Navigate command history in typing mode.
 - **Control+v**: Paste clipboard content on input control.
-- **Typing mode**: Type any letter/number key to bring up the text input control, press <Esc> to close it.
+- **Typing mode**: Type any letter/number key to bring up the text input control, press **Escape** to close it.
 ### Commands
 - **/help**: Shows this help message.
 - **/history**: View your chat history.
@@ -1024,8 +1543,8 @@ class ComRing extends BaseComponent {
     async showAbout() {
         const helpTitle = 'About Ainara Polaris';
         const helpContent = `
-### About Ainara Polaris v${this.config.get("setup.version")} (testing)
-Copyright 2025 &copy; Rubén Gómez - https://khromalabs.org
+### About Ainara Polaris v${this.config.get("setup.version")} (beta)
+Copyright 2025-2026 &copy; Rubén Gómez - https://khromalabs.org
 Visit our project site at: https://ainara.app
         `.trim().replace(/^\s+/gm, '');
 
@@ -1034,7 +1553,45 @@ Visit our project site at: https://ainara.app
         this.documentView.addDocument(helpContent, 'help', helpTitle);
     }
 
-    async fetchAndDisplayChatHistory(date = null) {
+    async fetchAndAppendNewChatMessages() {
+        // TODO: This method is not safe against concurrent invocations.
+        // If a new exchange starts while one is already pending, two fetches can
+        // both append the same user message. Serialize calls by chaining on a
+        // this._appendChain promise; each queued call should read the freshest
+        // lastMessageTimestamp when its turn runs.
+        if (!this.lastMessageTimestamp) {
+            console.log('No last message timestamp, skipping append.');
+            return;
+        }
+
+        try {
+            const url = `${this.pybridgeEndpoints.history}?since=${this.lastMessageTimestamp}`;
+            const response = await fetch(url);
+
+            if (!response.ok) {
+                console.error(`Failed to fetch new messages: ${response.status}`);
+                return;
+            }
+
+            const data = await response.json();
+
+            if (data.error) {
+                console.error('Error fetching new messages:', data.error);
+                return;
+            }
+
+            const historyContent = data.history ? data.history.substring(data.history.indexOf('\n')).trim() : '';
+
+            if (historyContent) {
+                this.documentView.appendDocumentContent(historyContent, 'chat-history');
+                this.lastMessageTimestamp = data.last_timestamp; // Update timestamp
+            }
+        } catch (error) {
+            console.error('Error fetching new chat messages:', error);
+        }
+    }
+
+    async fetchAndDisplayChatHistory(date = null, scrollBottom = true) {
         try {
             const sttStatus = this.shadowRoot.querySelector('.stt-status');
             sttStatus.textContent = 'Loading chat history...';
@@ -1061,25 +1618,31 @@ Visit our project site at: https://ainara.app
 
             if (historyContent) {
                 this.historyDate = data.date;
+                this.lastMessageTimestamp = data.last_timestamp;
                 this.switchToDocumentView('chat-history');
                 this.documentView.clear();
                 this.documentView.addDocument(
                     data.history,
                     'chat-history',
-                    `Chat History: ${this.historyDate}`
+                    ' ',
+                    scrollBottom
                 );
                 this.documentView.updateNavControls({
                     prev: data.has_previous,
-                    next: data.has_next
+                    next: data.has_next,
+                    date: this.historyDate
                 });
                 sttStatus.classList.remove('active');
                 sttStatus.textContent = '';
+                this.updateIdleStatus();
             } else {
                 // If no history, just show a message and don't switch view
                 sttStatus.textContent = 'No chat history for this day.';
+                this.lastMessageTimestamp = null;
                 setTimeout(() => {
                     sttStatus.classList.remove('active');
                     sttStatus.textContent = '';
+                    this.updateIdleStatus();
                 }, 4000);
             }
         } catch (error) {
@@ -1096,8 +1659,20 @@ Visit our project site at: https://ainara.app
     }
 
 
-    navigateHistory(direction) {
-        if (!this.historyDate) return;
+    async navigateHistory(direction) {
+        if (this.navigatingHistory) {
+            // prevent reentry
+            return;
+        }
+        this.navigatingHistory = true;
+        if (this.currentView != 'document') {
+            this.navigatingHistory = false;
+            return;
+        }
+        if (!this.historyDate) {
+            this.navigatingHistory = false;
+            return;
+        }
 
         // The 'T12:00:00Z' avoids timezone-related date change issues
         const currentDate = new Date(`${this.historyDate}T12:00:00Z`);
@@ -1109,31 +1684,50 @@ Visit our project site at: https://ainara.app
         }
 
         const newDateStr = currentDate.toISOString().split('T')[0];
-        this.fetchAndDisplayChatHistory(newDateStr);
+        await this.fetchAndDisplayChatHistory(newDateStr, false);
+        this.navigatingHistory = false;
     }
 
     switchToDocumentView(format) {
         this.currentView = 'document';
         this.docFormat = format;
+        if (format != 'chat-history') {
+            // ensure we don't mix content windows with chat-history windows
+            this.documentView.closeChatHistory();
+        }
         ipcRenderer.send('set-view-mode', { view: 'document' });
         this.ringContainer.classList.add('document-view');
         this.documentView.show();
+
+        if (format === 'chat-history' && this.isLLMStreaming) {
+            this.documentView.setStreamingActive(true);
+        }
     }
 
     switchToRingView() {
         this.currentView = 'ring';
-        ipcRenderer.send('set-view-mode', { view: 'ring' });
         this.ringContainer.classList.remove('document-view');
+        ipcRenderer.send('set-view-mode', { view: 'ring', fixMouse: false });
         this.documentView.hide();
     }
 
     abortLLMResponse() {
-        console.log('Aborting LLM response');
+        console.log('Interrupting playback (stream continues in background)');
 
         // Set flag to ignore incoming events
         this.ignoreIncomingEvents = true;
 
-        // Clear message queue
+        // Release AudioContexts for any messages still sitting in the queue -
+        // they were created up front when the message streamed in, so an
+        // unplayed queued message still holds an open context that would
+        // otherwise leak here.
+        this.messageQueue.forEach(queued => {
+            if (queued && queued.audio) {
+                this.closeTTSAudioContext(queued.audio);
+            }
+        });
+
+        // Clear message queue and mark no message is currently being processed
         this.messageQueue = [];
         this.isProcessingMessage = false;
         this.currentMessageId = null;
@@ -1154,15 +1748,16 @@ Visit our project site at: https://ainara.app
 
         // Stop any playing audio
         if (this.currentAudio) {
+            this.closeTTSAudioContext(this.currentAudio);
             this.currentAudio.pause();
             this.currentAudio.src = '';
             this.currentAudio = null;
         }
 
-        // If in document view, switch back to ring view
-        if (this.currentView === 'document') {
-            this.switchToRingView();
-        }
+        // // If in document view, switch back to ring view
+        // if (this.currentView === 'document') {
+        //     this.switchToRingView();
+        // }
 
         // Reset visual states
         this.circle.classList.remove('loading', 'skill-active', 'awaiting');
@@ -1174,9 +1769,14 @@ Visit our project site at: https://ainara.app
         sttStatus.classList.remove('active');
         sttStatus.textContent = '';
 
-        // Reset state
-        this.state.isProcessingLLM = false;
+        // Keep isProcessingLLM true so processAIResponse() continues reading
+        // the stream and lets the backend finish persisting the full message.
         this.state.isAwaitingResponse = false;
+
+        this.isLLMStreaming = false;
+        if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+            this.documentView.setStreamingActive(false);
+        }
 
         // Notify chat-display about the abort
         ipcRenderer.send('llm-aborted');
@@ -1187,6 +1787,7 @@ Visit our project site at: https://ainara.app
         setTimeout(() => {
             sttStatus.classList.remove('active');
             sttStatus.textContent = '';
+            this.updateIdleStatus();
         }, 1000);
     }
 
@@ -1277,7 +1878,7 @@ Visit our project site at: https://ainara.app
                 const audioPromise = new Promise((resolve) => {
                     // Clean up previous audio
                     if (this.currentAudio) {
-                        this.cleanAudio();
+                        this.stopTTSPlayback();
                     }
 
                     // Set up audio completion handler
@@ -1289,6 +1890,9 @@ Visit our project site at: https://ainara.app
                             clearTimeout(this.audioTimeouts.get(messageId));
                             this.audioTimeouts.delete(messageId);
                         }
+
+                        // Release this message's AudioContext now that it's done playing
+                        this.closeTTSAudioContext(audio);
 
                         // Call resolve
                         resolve();
@@ -1303,6 +1907,9 @@ Visit our project site at: https://ainara.app
                             clearTimeout(this.audioTimeouts.get(messageId));
                             this.audioTimeouts.delete(messageId);
                         }
+
+                        // Release this message's AudioContext even on error
+                        this.closeTTSAudioContext(audio);
 
                         // Still resolve to continue processing
                         resolve();
@@ -1325,6 +1932,11 @@ Visit our project site at: https://ainara.app
                             audio.pause();
                             audio.currentTime = 0;
                         }
+
+                        // Release this message's AudioContext - onended/onerror won't
+                        // fire once we've forced a stop here, so this is the only
+                        // place that would otherwise clean it up.
+                        this.closeTTSAudioContext(audio);
 
                         resolve();
                     }, timeoutDuration);
@@ -1435,6 +2047,10 @@ Visit our project site at: https://ainara.app
                         event.content.content.messageId = messageId;
                     }
 
+                    if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                        this.documentView.setStreamingActive(true);
+                    }
+
                     if (content.flags.audio && content.audio) {
                         const audioUrl = this.pybridgeEndpoint + content.audio.url;
                         try {
@@ -1456,6 +2072,10 @@ Visit our project site at: https://ainara.app
                             analyser.fftSize = 256;
                             source.connect(analyser);
                             source.connect(audioContext.destination);
+
+                            // Tag the audio element with its context so it can be closed
+                            // later (see closeTTSAudioContext) instead of leaking it.
+                            audio._ttsAudioContext = audioContext;
 
                             const bufferLength = analyser.frequencyBinCount;
                             const dataArray = new Uint8Array(bufferLength);
@@ -1558,15 +2178,17 @@ Visit our project site at: https://ainara.app
                 if (event.type === 'signal') {
                     const sttStatus = this.shadowRoot.querySelector('.stt-status');
                     if (event.content.state === 'start') {
+                        this.isLLMStreaming = true;
+                        if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                            this.documentView.setStreamingActive(true);
+                        }
                         this.circle.classList.add('loading');
                         // Also add loading state to container for border effect
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
                         ringContainer.classList.add('loading');
-                        // Show "Thinking..." message
                         if (event.content?.type == "skill") {
                             sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
                         } else {
-                            // console.log("!!!!!!" + JSON.stringify(event));
                             if ( event.content.reasoning ) {
                                 sttStatus.textContent = 'Reasoning...';
                             } else {
@@ -1588,6 +2210,11 @@ Visit our project site at: https://ainara.app
             case 'completed':
                 if (event.type === 'signal') {
                     this.circle.classList.remove('skill-active');
+                    this.isLLMStreaming = false;
+                    if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                        await this.fetchAndAppendNewChatMessages();
+                        this.documentView.setStreamingActive(false);
+                    }
                 }
                 break;
 
@@ -1642,7 +2269,9 @@ Visit our project site at: https://ainara.app
             case 'full':
                 // console.log(JSON.stringify(event));
                 if (event.type === 'content') {
-                    if (this.currentView === 'document') {
+                    if (this.currentView === 'document' &&
+                        // avoid injecting new documents if chat-history is opened
+                        this.docFormat != 'chat-history') {
                         const title =
                             event.content.title ||
                             this.docFormat.charAt(0).toUpperCase() + this.docFormat.slice(1);

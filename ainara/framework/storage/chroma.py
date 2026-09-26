@@ -22,13 +22,15 @@ import os
 import uuid
 from typing import Any, Dict, List, Optional
 
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 from .vector_base import VectorStorageBackend
 
 from ainara.framework.config import config
 
 try:
     import chromadb
-    from sentence_transformers import SentenceTransformer
+    from fastembed import TextEmbedding
 
     VECTOR_DB_AVAILABLE = True
 except ImportError:
@@ -43,7 +45,7 @@ class ChromaVectorStorage(VectorStorageBackend):
     def __init__(
         self,
         vector_db_path: str = None,
-        embedding_model: str = "sentence-transformers/all-mpnet-base-v2",
+        embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         collection_name: str = "persona-default",
         **kwargs,
     ):
@@ -58,7 +60,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         if not VECTOR_DB_AVAILABLE:
             raise ImportError(
                 "Vector storage dependencies not installed. Run: pip install"
-                " chromadb sentence-transformers"
+                " chromadb fastembed"
             )
 
         self.vector_db_path = vector_db_path
@@ -67,9 +69,9 @@ class ChromaVectorStorage(VectorStorageBackend):
         self.collection_name = collection_name
 
         # Initialize embeddings
-        self.embedding_model = SentenceTransformer(
-            embedding_model,
-            cache_folder=config.get("cache.directory")
+        self.embedding_model = TextEmbedding(
+            model_name=embedding_model,
+            cache_dir=config.get("cache.directory"),
         )
 
         # Initialize ChromaDB client and collection
@@ -116,8 +118,10 @@ class ChromaVectorStorage(VectorStorageBackend):
                 if not isinstance(value, (str, int, float, bool)):
                     meta[key] = str(value)
 
-        self.collection.add(
-            embeddings=self.embedding_model.encode(texts).tolist(),
+        embeddings = [e.tolist() for e in self.embedding_model.embed(texts)]
+
+        self.collection.upsert(
+            embeddings=embeddings,
             documents=texts,
             metadatas=metadatas,
             ids=ids,
@@ -142,7 +146,9 @@ class ChromaVectorStorage(VectorStorageBackend):
         Returns:
             List of search results
         """
-        query_embedding = self.embedding_model.encode([query]).tolist()
+        query_embedding = [
+            e.tolist() for e in self.embedding_model.embed([query])
+        ]
 
         results = self.collection.query(
             query_embeddings=query_embedding,
@@ -187,7 +193,9 @@ class ChromaVectorStorage(VectorStorageBackend):
         Returns:
             List of tuples, where each tuple contains a result dictionary and its distance score.
         """
-        query_embedding = self.embedding_model.encode([query]).tolist()
+        query_embedding = [
+            e.tolist() for e in self.embedding_model.embed([query])
+        ]
 
         results = self.collection.query(
             query_embeddings=query_embedding,

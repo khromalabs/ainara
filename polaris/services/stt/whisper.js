@@ -50,7 +50,6 @@ class WhisperSTT extends STTBackend {
         this.apiUrl = serviceConfig.apiUrl;
         this.model = serviceConfig.model || 'whisper-1';
         this.headers = serviceConfig.headers || {};
-        this.mediaRecorder = null;
 
         if (!this.apiKey || !this.apiUrl) {
             throw new Error(`Whisper ${this.service} service not properly configured`);
@@ -125,69 +124,29 @@ class WhisperSTT extends STTBackend {
     }
 
 
-    async listen() {
+    /**
+     * Transcribes an audio blob.
+     * Automatically converts WebM to WAV if needed.
+     * @param {Blob} audioBlob
+     * @returns {Promise<string>} Transcription text
+     */
+    async transcribe(audioBlob) {
         try {
-            console.log('Starting audio recording...');
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            this.mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm'
-            });
-            const audioChunks = [];
+            console.log(`WhisperSTT: Transcribing blob of type ${audioBlob.type}, size: ${audioBlob.size}`);
 
-            this.mediaRecorder.start();
+            let blobToProcess = audioBlob;
 
-            return new Promise((resolve, reject) => {
-                this.mediaRecorder.ondataavailable = (event) => {
-                    audioChunks.push(event.data);
-                };
+            // Convert if it's WebM (common from MediaRecorder)
+            if (audioBlob.type.includes('webm') || audioBlob.type.includes('x-matroska')) {
+                console.log('WhisperSTT: Detected WebM/Matroska, converting to WAV...');
+                blobToProcess = await this.webmToWav(audioBlob);
+            }
 
-                // In whisper.js
-                this.mediaRecorder.onstop = async () => {
-                    try {
-                        console.log('MediaRecorder stopped, creating audio blob...');
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                        console.log(`Audio blob created, size: ${audioBlob.size} bytes`);
-
-                        // Convert WebM to WAV
-                        const wavBlob = await this.webmToWav(audioBlob);
-
-                        console.log('Sending to Whisper server...');
-                        const transcription = await this.transcribeFile(wavBlob);
-                        // console.log('Got transcription result:', transcription);
-
-                        if (this.onTranscriptionResult) {
-                            console.log('Calling onTranscriptionResult callback');
-                            this.onTranscriptionResult(transcription);
-                        }
-                        resolve(transcription);
-                    } catch (error) {
-                        console.error('Error in onstop handler:', error);
-                        reject(error);
-                    }
-                };
-            });
+            return await this.transcribeFile(blobToProcess);
         } catch (error) {
-            console.error('Error in listen():', error);
+            console.error('WhisperSTT: Transcription error:', error);
             throw error;
         }
-    }
-
-    async stopRecording() {
-         console.log("whisper stopRecording 1")
-         console.log("this.mediaRecorder:" + this.mediaRecorder)
-         console.log("this.mediaRecorder.state:" + this.mediaRecorder.state)
-         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-             console.log("whisper stopRecording 2")
-             console.log('Stopping WhisperSTT recording');
-             this.mediaRecorder.stop();
-             // // Return a promise that resolves when the recording is actually stopped
-             // return new Promise((resolve) => {
-             //     this.mediaRecorder.onstop = () => {
-             //         console.log('MediaRecorder actually stopped');
-             //         resolve();
-             //     };
-             // });
-         }
     }
 
     async transcribeFile(audioBlob) {
@@ -221,7 +180,13 @@ class WhisperSTT extends STTBackend {
 
             const result = await response.json();
             console.log('Transcription:', result);
-            return result.text?.trim() || '';
+            
+            // [MODIFIED] Return object with text and confidence
+            return {
+                text: result.text?.trim() || '',
+                confidence: result.confidence, // May be undefined if using direct OpenAI
+                language: result.language
+            };
 
         } catch (error) {
             console.error(`Whisper ${this.service} transcription failed:`, error);
