@@ -36,7 +36,9 @@ apis:
       authenticator_id: 0000
 
   executor:
-    url: "http://127.0.0.1:8130"      # where the executor daemon listens
+    url: "http://127.0.0.1:8130"      # where the executor daemon listens; the
+                                       # host must be 127.0.0.1 or localhost, the
+                                       # only names the daemon answers to
     timeout: 30                        # seconds; opens/closes use a longer window
 
   # Only needed if you let Ainara trigger plans conversationally (see bureau below).

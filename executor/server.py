@@ -83,6 +83,53 @@ app = Flask(__name__)
 config = ExecutorConfig()
 VENUES = {"hyperliquid": HyperliquidExecutor, "dydx": DydxExecutor}
 
+# The only names this daemon answers to. It binds IPv4 loopback, so "::1" is
+# deliberately absent; see host_is_expected before adding it.
+ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
+def host_is_expected(raw_host):
+    """True when a raw Host header names this machine's loopback, else False.
+
+    The DNS-rebinding defence. A page cannot read a cross-origin reply, so it
+    points its own domain at 127.0.0.1 after loading; the browser then treats
+    the daemon as same-origin and the page reads positions, sizes and orders
+    freely. By then only the Host header still shows the request was addressed
+    to someone else's name.
+
+    Takes the raw header, not request.host: with no Host header Flask falls
+    back to the server's SERVER_NAME and reports a value the client never
+    sent. A missing or empty header is refused.
+
+    Exact match on the name before an optional port, never a prefix or suffix
+    test, so "localhost.evil.example" and "127.0.0.1.evil.example" fail.
+    Bracketed IPv6 forms are not parsed: none is allowed, and splitting on the
+    first colon leaves "[" at the front, which can never match. Parse them
+    properly if "::1" is ever added, since this shortcut would then refuse it.
+    """
+    if not raw_host:
+        return False
+    return raw_host.strip().casefold().split(":")[0] in ALLOWED_HOSTS
+
+
+# Registered before _refuse_browser_writes, so it runs first: a rebound write
+# would fail either check, and this way the log names the real reason.
+@app.before_request
+def _refuse_unexpected_host():
+    """Refuse any request, of any method, whose Host is not a loopback name.
+
+    Reads are what this protects. Without it every read route answered to any
+    Host, so a rebound page could read the whole book.
+    """
+    host = request.headers.get("Host")
+    if not host_is_expected(host):
+        logger.warning("REFUSED %s %s: Host %r is not a loopback name (what a"
+                       " DNS-rebinding request looks like)", request.method,
+                       request.path, host)
+        return jsonify(error="refused: unexpected Host header. This daemon"
+                             " answers only to 127.0.0.1 and localhost."), 403
+    return None
+
 
 @app.before_request
 def _refuse_browser_writes():

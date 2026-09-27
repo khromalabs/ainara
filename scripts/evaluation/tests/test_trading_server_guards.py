@@ -396,5 +396,41 @@ class BrowserWritesAreRefused(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
 
 
+class OnlyLoopbackHostsAreServed(unittest.TestCase):
+    """A page that rebinds its domain to 127.0.0.1 must not read the book.
+
+    Before: no Host check, so every read route answered to any name.
+    """
+
+    def _get(self, host):
+        with patch.object(S, "_watchdog_alarm", return_value=None):
+            return S.app.test_client().get(
+                "/health", environ_overrides={"HTTP_HOST": host})
+
+    def test_foreign_and_lookalike_hosts_are_refused(self):
+        for host in ("evil.example", "localhost.evil.example",
+                     "127.0.0.1.evil.example", "evil.example:8130",
+                     "[::1]:8130", "[127.0.0.1]:8130", ""):
+            self.assertEqual(self._get(host).status_code, 403, host)
+
+    def test_a_missing_host_is_refused(self):
+        self.assertFalse(S.host_is_expected(None))
+        self.assertFalse(S.host_is_expected(""))
+
+    def test_loopback_names_are_served(self):
+        for host in ("127.0.0.1:8140", "localhost:8140", "127.0.0.1",
+                     "LOCALHOST:8130"):
+            self.assertTrue(S.host_is_expected(host), host)
+            self.assertEqual(self._get(host).status_code, 200, host)
+
+    def test_writes_are_checked_for_host_first(self):
+        # Both guards would refuse this; the Host guard answers.
+        r = S.app.test_client().post(
+            "/hedge/open", data="{}", content_type="text/plain",
+            environ_overrides={"HTTP_HOST": "evil.example"})
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("Host", r.get_json()["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
