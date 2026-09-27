@@ -52,6 +52,9 @@ def dy_pos(coin, size, liq_dist=None, liq_note="not liquidatable by price alone"
 
 
 _UNSET = object()
+# Runtime files (alarm, heartbeat) resolve under data.directory; keep every
+# test's inside a scratch directory, never the operator's real data dir.
+_DATA_DIR = tempfile.mkdtemp(prefix="ainara-watchdog-tests-")
 
 
 class _Cfg:
@@ -71,6 +74,10 @@ class _Cfg:
             return self._w
         if key == "trading.dry_run":
             return default if self._dry_run is _UNSET else self._dry_run
+        if key == "data.directory":
+            return _DATA_DIR
+        if key.startswith("trading.watchdog."):
+            return self._w.get(key[len("trading.watchdog."):], default)
         if key == "trading.notify":
             return {}  # notifier inert: no webhook, no dead-man ping
         return default
@@ -738,6 +745,49 @@ class RuntimeFilesAreWrittenAtomically(unittest.TestCase):
             wd._write_alarm_file({"alarm": "x"})
             wd._write_heartbeat()
         self.assertEqual(written, [wd.alarm_file, wd.heartbeat_file])
+
+
+class RuntimeFilesLiveInTheDataDirectory(unittest.TestCase):
+    """One resolver for the alarm and heartbeat paths, under data.directory.
+
+    Before: each process built its own path in the system temp directory.
+    """
+
+    def test_defaults_are_under_data_directory_not_temp(self):
+        from executor import runtime as R
+        cfg = _Cfg()
+        want = os.path.join(_DATA_DIR, "executor")
+        self.assertEqual(os.path.dirname(R.alarm_path(cfg)), want)
+        self.assertEqual(os.path.dirname(R.heartbeat_path(cfg)), want)
+        self.assertNotEqual(os.path.dirname(R.alarm_path(cfg)),
+                            tempfile.gettempdir())
+
+    def test_a_pinned_path_wins(self):
+        from executor import runtime as R
+        cfg = _Cfg(alarm_file="/pinned/alarm.json",
+                   heartbeat_file="/pinned/hb.txt")
+        self.assertEqual(R.alarm_path(cfg), "/pinned/alarm.json")
+        self.assertEqual(R.heartbeat_path(cfg), "/pinned/hb.txt")
+
+    def test_the_watchdog_uses_the_resolver(self):
+        from executor import runtime as R
+        cfg = _Cfg()
+        wd = W.Watchdog(_FakeHL(), _FakeDydx(), cfg)
+        self.assertEqual(wd.alarm_file, R.alarm_path(cfg))
+        self.assertEqual(wd.heartbeat_file, R.heartbeat_path(cfg))
+
+    def test_the_directory_is_created_on_first_write(self):
+        from executor import runtime as R
+        base = tempfile.mkdtemp()
+
+        class Cfg:
+            def get(self, key, default=None):
+                return base if key == "data.directory" else default
+
+        path = R.heartbeat_path(Cfg())
+        self.assertFalse(os.path.exists(os.path.dirname(path)))
+        R.write_text_atomic(path, "1")
+        self.assertTrue(os.path.exists(path))
 
 
 if __name__ == "__main__":

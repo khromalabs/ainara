@@ -204,7 +204,7 @@ adapter's error, because the causes need completely different responses:
 
 ## Alerting (off-box)
 
-Everything above escalates *locally* — a log line, `%TEMP%\ainara_executor_watchdog_alarm.json`,
+Everything above escalates *locally* — a log line, `<data.directory>/executor/watchdog_alarm.json`,
 and a field on the daemon's `/health`. All three go quiet together the moment the
 machine does. `trading.notify` adds the two signals that don't, and they fail in
 opposite directions on purpose:

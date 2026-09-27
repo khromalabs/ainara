@@ -35,7 +35,6 @@ import logging
 import math
 import os
 import re
-import tempfile
 import threading
 import time
 
@@ -45,6 +44,7 @@ from executor.compliance import (DEFAULT_MAX_ACCOUNT_MARGIN_PCT,
                                  DEFAULT_MAX_ORDER_NOTIONAL_USD)
 from executor.config import ExecutorConfig
 from executor.notify import Notifier
+from executor.runtime import alarm_path
 from executor.venues.dydx import DydxExecutor
 from executor.venues.hyperliquid import HyperliquidExecutor
 
@@ -255,9 +255,7 @@ def _watchdog_alarm():
     something you can QUERY, instead of a line that scrolled off a console an hour
     ago. Stale alarms (>5min) are ignored: a live watchdog rewrites it every poll.
     """
-    path = (config.get("trading.watchdog.alarm_file")
-            or os.path.join(tempfile.gettempdir(),
-                            "ainara_executor_watchdog_alarm.json"))
+    path = alarm_path(config)
     try:
         if not os.path.exists(path):
             return None

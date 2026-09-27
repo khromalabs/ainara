@@ -432,5 +432,22 @@ class OnlyLoopbackHostsAreServed(unittest.TestCase):
         self.assertIn("Host", r.get_json()["error"])
 
 
+class HealthReadsTheWatchdogsAlarmFile(unittest.TestCase):
+    """The daemon reads the alarm where the watchdog writes it."""
+
+    def test_alarm_is_read_from_the_shared_path(self):
+        import json
+        import time
+        from executor import runtime as R
+        base = __import__("tempfile").mkdtemp()
+        settings = {"data.directory": base}
+        path = R.alarm_path(_Cfg(**settings))
+        R.write_text_atomic(path, json.dumps({"alarm": "broken_hedge",
+                                              "ts": time.time()}))
+        with patch.object(S, "config") as cfg:
+            cfg.get.side_effect = _cfg_get(settings)
+            self.assertEqual(S._watchdog_alarm()["alarm"], "broken_hedge")
+
+
 if __name__ == "__main__":
     unittest.main()

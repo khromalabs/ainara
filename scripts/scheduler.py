@@ -133,6 +133,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ainara.framework.config import ConfigManager  # noqa: E402
+from executor.runtime import heartbeat_path  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +204,8 @@ EXECUTOR_LOG_NAME = "executor.log"
 WATCHDOG_LOG_NAME = "executor_watchdog.log"
 DEFAULT_EXECUTOR_HEALTH_URL = "http://127.0.0.1:8130/health"
 # The position watchdog has no HTTP surface; it freshens a heartbeat file each
-# loop. Must match executor/watchdog.py's default (trading.watchdog.heartbeat_file).
-DEFAULT_WATCHDOG_HEARTBEAT = os.path.join(
-    tempfile.gettempdir(), "ainara_executor_watchdog_heartbeat.txt"
-)
+# loop. Its default path comes from executor.runtime.heartbeat_path, the same
+# resolver the watchdog writes through, so the two cannot drift apart.
 DEFAULT_WATCHDOG_HEARTBEAT_MAX_AGE = 30  # seconds (~6× the 5s watchdog poll)
 
 
@@ -270,7 +269,8 @@ DEFAULT_SCHEDULER_YAML = """\
 #    enabled: false
 #    #venv_python: "C:/path/to/executor/.venv/Scripts/python.exe"  # override auto-detect
 #    #health_url: "http://127.0.0.1:8130/health"
-#    #heartbeat_file: "..."       # must match trading.watchdog.heartbeat_file
+#    #heartbeat_file: "..."       # defaults to the watchdog's own path; set
+#                                 # trading.watchdog.heartbeat_file instead
 #    #heartbeat_max_age: 30       # seconds; watchdog considered dead past this
 #    #log_dir: "..."              # defaults to ainara.yaml logging.directory, so the
 #                                 # executor + watchdog logs sit with every other
@@ -487,7 +487,8 @@ def _load_executor_config(raw):
     """
     svc = ((raw.get("services") or {}).get("executor") or {})
     log_dir = svc.get("log_dir") or default_executor_log_dir()
-    autostart_flag = bool(ConfigManager().get("trading.executor.autostart", False))
+    ainara_config = ConfigManager()
+    autostart_flag = bool(ainara_config.get("trading.executor.autostart", False))
     return {
         "executor_enabled": bool(svc.get("enabled", False)) or autostart_flag,
         "executor_python": svc.get("venv_python") or default_executor_python(),
@@ -495,8 +496,8 @@ def _load_executor_config(raw):
         "watchdog_log": os.path.join(log_dir, WATCHDOG_LOG_NAME),
         "executor_health_url": svc.get(
             "health_url", DEFAULT_EXECUTOR_HEALTH_URL),
-        "watchdog_heartbeat_file": svc.get(
-            "heartbeat_file", DEFAULT_WATCHDOG_HEARTBEAT),
+        "watchdog_heartbeat_file": (svc.get("heartbeat_file")
+                                    or heartbeat_path(ainara_config)),
         "watchdog_heartbeat_max_age": svc.get(
             "heartbeat_max_age", DEFAULT_WATCHDOG_HEARTBEAT_MAX_AGE),
     }

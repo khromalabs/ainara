@@ -46,11 +46,10 @@ import json
 import logging
 import math
 import os
-import tempfile
 import time
 
 from executor.notify import Notifier
-from executor.runtime import write_text_atomic
+from executor.runtime import alarm_path, heartbeat_path, write_text_atomic
 
 logger = logging.getLogger("executor.watchdog")
 
@@ -394,16 +393,14 @@ class Watchdog:
         # testnet book while the console cheerfully logged "BROKEN HEDGE" as though
         # it were handling it. Count consecutive failures and get loud.
         self.escalate_after = int(w.get("escalate_after", 3))
-        self.alarm_file = w.get("alarm_file") or os.path.join(
-            tempfile.gettempdir(), "ainara_executor_watchdog_alarm.json")
+        self.alarm_file = alarm_path(config)
         # Liveness heartbeat. The watchdog has no HTTP surface, so a supervisor
         # (the scheduler's managed-services layer) can only tell it is alive by a
         # file it freshens every loop. A silently-dead watchdog otherwise looks
         # exactly like a healthy quiet one — the very failure this guard exists to
         # avoid. Written every iteration, even when guard_once raises, because it
         # means "the loop is turning", not "the last assessment succeeded".
-        self.heartbeat_file = w.get("heartbeat_file") or os.path.join(
-            tempfile.gettempdir(), "ainara_executor_watchdog_heartbeat.txt")
+        self.heartbeat_file = heartbeat_path(config)
         # Retry backoff, applied only AFTER escalation. The first few attempts
         # fire every poll — a transient API blip or momentary liquidity gap
         # deserves a fast retry. Past escalate_after the failure is structural

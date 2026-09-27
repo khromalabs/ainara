@@ -20,7 +20,10 @@
 
 The watchdog writes an alarm file the daemon serves on /health and a heartbeat
 file the scheduler uses to decide whether the watchdog is alive. Each is
-written by one process and read by another on a loop.
+written by one process and read by another on a loop, so every one of them
+resolves the path HERE: the watchdog, the daemon and the scheduler used to
+each build it themselves, and a writer and reader that disagree look exactly
+like a healthy system with nothing to report.
 
 Stdlib only: the watchdog's risk logic is tested under any virtualenv, and
 the scheduler (main venv) imports this too.
@@ -28,8 +31,55 @@ the scheduler (main venv) imports this too.
 
 import contextlib
 import os
+import platform
 import tempfile
 import time
+
+ALARM_FILENAME = "watchdog_alarm.json"
+HEARTBEAT_FILENAME = "watchdog_heartbeat.txt"
+
+
+def default_data_dir():
+    """Ainara's default data directory, as framework/config.py computes it.
+
+    The executor cannot import the framework (separate virtualenv), so this
+    mirrors ConfigManager.get_default_data_dir. On Windows it takes the
+    default "Saved Games" location, as executor/config.py does for the config
+    file; the framework writes the resolved data.directory into ainara.yaml,
+    which runtime_dir() reads first.
+    """
+    system = platform.system()
+    if system == "Windows":
+        return os.path.join(os.path.expanduser("~"), "Saved Games", "Ainara",
+                            "Data")
+    if system == "Darwin":
+        return os.path.join(os.path.expanduser("~/Library/Application Support"),
+                            "ainara")
+    return os.path.join(os.path.expanduser("~/.local/state"), "ainara")
+
+
+def runtime_dir(config):
+    """Directory for the executor's runtime files: <data.directory>/executor.
+
+    These used to default to the system temp directory, which is cleaned
+    without notice, shared by every user of the machine, and per-user on
+    Windows, so two processes started differently could disagree on it.
+    Resolving only: nothing is created until a file is written.
+    """
+    base = config.get("data.directory") or default_data_dir()
+    return os.path.join(os.path.expanduser(str(base)), "executor")
+
+
+def alarm_path(config):
+    """The watchdog's alarm file. trading.watchdog.alarm_file pins it."""
+    return (config.get("trading.watchdog.alarm_file")
+            or os.path.join(runtime_dir(config), ALARM_FILENAME))
+
+
+def heartbeat_path(config):
+    """The watchdog's heartbeat file. trading.watchdog.heartbeat_file pins it."""
+    return (config.get("trading.watchdog.heartbeat_file")
+            or os.path.join(runtime_dir(config), HEARTBEAT_FILENAME))
 
 # A Windows reader holding the destination open makes os.replace fail with a
 # sharing violation for a few microseconds; a short bounded retry clears it.
@@ -54,6 +104,7 @@ def write_text_atomic(path, text):
     survives a power cut.
     """
     directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".ainara-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

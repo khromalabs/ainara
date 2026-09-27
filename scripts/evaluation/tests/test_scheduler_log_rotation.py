@@ -144,5 +144,25 @@ class LoadLogRotationConfig(unittest.TestCase):
         self.assertEqual(backups, S.DEFAULT_LOG_ROTATE_BACKUP_COUNT)
 
 
+class WatchdogHeartbeatPath(unittest.TestCase):
+    """The scheduler checks the heartbeat file the watchdog actually writes."""
+
+    def test_default_comes_from_the_shared_resolver(self):
+        from executor.runtime import heartbeat_path
+
+        class Cfg:
+            def get(self, key, default=None):
+                return "/data" if key == "data.directory" else default
+
+        with patch.object(S, "ConfigManager", Cfg):
+            cfg = S._load_executor_config({})
+        self.assertEqual(cfg["watchdog_heartbeat_file"], heartbeat_path(Cfg()))
+
+    def test_an_explicit_services_setting_still_wins(self):
+        raw = {"services": {"executor": {"heartbeat_file": "/x/hb.txt"}}}
+        cfg = S._load_executor_config(raw)
+        self.assertEqual(cfg["watchdog_heartbeat_file"], "/x/hb.txt")
+
+
 if __name__ == "__main__":
     unittest.main()
