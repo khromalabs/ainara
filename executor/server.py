@@ -84,6 +84,45 @@ config = ExecutorConfig()
 VENUES = {"hyperliquid": HyperliquidExecutor, "dydx": DydxExecutor}
 
 
+@app.before_request
+def _refuse_browser_writes():
+    """Refuse any state-changing request that a web page could have sent.
+
+    The daemon has no authentication; binding loopback is its only boundary.
+    A browser on the trading host is inside that boundary, and every write
+    route reads its body with get_json(force=True), which ignores
+    Content-Type. So a CORS-simple POST (text/plain or a form) from any page
+    open on that machine reached the order routes and placed orders: no
+    preflight, and the attacker not being able to read the reply changes
+    nothing once the order is sent.
+
+    Either check alone closes that:
+      - Content-Type must be application/json. A simple request cannot use
+        it, so a page asking for it triggers a preflight this daemon never
+        answers.
+      - No Origin header. Browsers send one on cross-origin requests and on
+        same-origin writes; requests, curl and the executor client do not.
+
+    GET, HEAD and OPTIONS pass here: they cannot move money.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    origin = request.headers.get("Origin")
+    if origin:
+        logger.warning("REFUSED %s %s: carries Origin %r, so it came from a"
+                       " web page", request.method, request.path, origin)
+        return jsonify(error="refused: requests carrying an Origin header come"
+                             " from a web page, and this daemon only serves"
+                             " local clients."), 403
+    content_type = (request.headers.get("Content-Type") or "")
+    if content_type.split(";")[0].strip().lower() != "application/json":
+        logger.warning("REFUSED %s %s: Content-Type %r is not application/json",
+                       request.method, request.path, content_type)
+        return jsonify(error="refused: write requests must be sent as"
+                             " application/json."), 415
+    return None
+
+
 def _resolve(value):
     """Run a coroutine to completion if needed; pass through plain values."""
     if inspect.isawaitable(value):

@@ -338,5 +338,63 @@ class OneOpenPerCoin(unittest.TestCase):
                       S._open_lock(S._coin_key("ETH-USD")))
 
 
+class BrowserWritesAreRefused(unittest.TestCase):
+    """A web page on the trading host must not be able to place orders.
+
+    Before: no check at all, and every write route parsed its body with
+    get_json(force=True), so a CORS-simple text/plain POST reached it.
+    """
+
+    def setUp(self):
+        self.reached = []
+        self._patch = patch.object(
+            S, "_hedge_open",
+            side_effect=lambda body: self.reached.append(body) or ("ok", 200))
+        self._patch.start()
+        self.client = S.app.test_client()
+
+    def tearDown(self):
+        self._patch.stop()
+
+    def test_a_request_carrying_origin_is_refused(self):
+        r = self.client.post("/hedge/open", json={"short_symbol": "BTC"},
+                             headers={"Origin": "https://evil.example"})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self.reached, [])
+
+    def test_a_cors_simple_text_plain_post_is_refused(self):
+        r = self.client.post("/hedge/open", data='{"short_symbol": "BTC"}',
+                             content_type="text/plain")
+        self.assertEqual(r.status_code, 415)
+        self.assertEqual(self.reached, [])
+
+    def test_a_form_post_is_refused(self):
+        for ctype in ("application/x-www-form-urlencoded",
+                      "multipart/form-data"):
+            r = self.client.post("/hedge/open", data="a=1", content_type=ctype)
+            self.assertEqual(r.status_code, 415, ctype)
+        r = self.client.post("/hedge/open", data="{}")  # no Content-Type
+        self.assertEqual(r.status_code, 415)
+        self.assertEqual(self.reached, [])
+
+    def test_the_order_routes_are_covered_too(self):
+        for path in ("/venues/hyperliquid/order", "/venues/dydx/cancel",
+                     "/hedge/close"):
+            r = self.client.post(path, data="{}", content_type="text/plain")
+            self.assertEqual(r.status_code, 415, path)
+
+    def test_a_local_json_client_is_served(self):
+        r = self.client.post(
+            "/hedge/open", data='{"short_symbol": "BTC"}',
+            content_type="application/json; charset=utf-8")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.reached, [{"short_symbol": "BTC"}])
+
+    def test_reads_are_not_affected_by_this_guard(self):
+        with patch.object(S, "_watchdog_alarm", return_value=None):
+            r = self.client.get("/health")
+        self.assertEqual(r.status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()
