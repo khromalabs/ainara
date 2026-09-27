@@ -140,5 +140,46 @@ class RecordOpenUsesFilledSize(unittest.TestCase):
         self.assertIsNone(L.record_close("BTC", {}, {}))
 
 
+class ClientReadsTheOpenStatus(unittest.TestCase):
+    """opened=True is not the same as delta-neutral.
+
+    /hedge/open can answer "hedged_imbalanced": both legs on, unequal. The
+    client records the trade either way, and turns anything but "hedged" into
+    an error so the plan step fails and its on_failure notification fires.
+    """
+
+    def _open(self, result):
+        from unittest.mock import patch
+        from ainara.orakle.skills.trading import executor_client as EC
+        client = EC.TradingExecutorClient()
+        client._request = lambda *a, **kw: dict(result)
+        recorded = []
+        with patch.object(EC._ledger, "record_open",
+                          lambda d, r: recorded.append(r)):
+            out = client._open_hedge(
+                {**DECISION, "short_symbol": "BTC", "long_symbol": "BTC-USD"},
+                dry_run=False)
+        return out, recorded
+
+    def test_a_clean_hedge_is_not_an_error(self):
+        out, recorded = self._open(RESULT)
+        self.assertNotIn("error", out)
+        self.assertEqual(len(recorded), 1)
+
+    def test_an_imbalanced_hedge_is_recorded_and_reported_as_an_error(self):
+        imbalanced = {"opened": True, "status": "hedged_imbalanced",
+                      "positions": {"hyperliquid": -0.0008, "dydx": 0.0005},
+                      "detail": "both legs are on but unequal"}
+        out, recorded = self._open(imbalanced)
+        self.assertEqual(len(recorded), 1)
+        self.assertTrue(out["opened"])
+        self.assertIn("hedged_imbalanced", out["error"])
+
+    def test_nothing_opened_is_left_alone(self):
+        out, recorded = self._open({"opened": False, "status": "unwound"})
+        self.assertEqual(recorded, [])
+        self.assertNotIn("error", out)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -150,6 +150,15 @@ class TradingExecutorClient(Skill):
         # ledger swallows its own errors, so this never affects the returned result.
         if isinstance(result, dict) and result.get("opened") is True:
             _ledger.record_open(d, result)
+            # opened=True no longer implies equal legs: the daemon reports
+            # "hedged_imbalanced" when a partial fill could not be evened out.
+            # Surfacing it as an error fails the plan step, so the plan's
+            # on_failure notification fires instead of the imbalance living
+            # only in the report's prose.
+            if result.get("status") != "hedged":
+                result = {**result, "error": (
+                    f"hedge opened but status is {result.get('status')!r}, not"
+                    f" 'hedged': {result.get('detail') or result.get('positions')}")}
         return result
 
     def _close_hedge(self, decision, dry_run: bool) -> Dict[str, Any]:

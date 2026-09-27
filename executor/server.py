@@ -597,21 +597,51 @@ def _signed_position(venue_name, symbol):
     return 0.0
 
 
-def _await_position(venue_name, symbol, want_buy, timeout_s, poll_s=1.0):
+def _await_position(venue_name, symbol, want_buy, timeout_s, poll_s=1.0,
+                    want_size=None, tolerance=0.0):
     """Poll until a position with the expected direction appears. 0.0 on timeout.
 
     Position state is the ground truth: HL's place_order reports submitted=True
     once the request goes out, which says nothing about whether the venue
     accepted or filled it.
+
+    With `want_size` it waits for the position to reach that size (within
+    `tolerance`) instead of returning on the first correctly-signed reading,
+    which is how a partial fill used to be taken for a complete one. On timeout
+    it then returns the largest correctly-signed size it saw: a partial fill is
+    a leg that is on, and 0.0 would send the caller down the "nothing filled"
+    path.
     """
     deadline = time.monotonic() + float(timeout_s)
+    best = 0.0
     while True:
         sz = _signed_position(venue_name, symbol)
         if sz and (sz > 0) == bool(want_buy):
-            return sz
+            if abs(sz) > abs(best):
+                best = sz
+            if want_size is None or abs(sz) >= abs(float(want_size)) - tolerance:
+                return sz
         if time.monotonic() >= deadline:
-            return 0.0
+            return best
         time.sleep(poll_s)
+
+
+def _floor_to_step(qty, step):
+    """Largest multiple of `step` not above `qty` (qty unchanged without a step)."""
+    if not step:
+        return float(qty)
+    return round(math.floor(float(qty) / float(step) + 1e-9) * float(step), 10)
+
+
+def _fill_tolerance(planned_size, size_step):
+    """How far under `planned_size` a leg may fill and still count as complete.
+
+    trading.executor.fill_tolerance_pct (default 2) of the planned size, but
+    never finer than one venue size step: both legs are quantized to that step
+    before they are sent, so a smaller difference cannot be acted on anyway.
+    """
+    pct = float(config.get("trading.executor.fill_tolerance_pct", 2.0))
+    return max(float(planned_size) * pct / 100.0, float(size_step or 0.0))
 
 
 def _place_leg(venue_name, leg):
@@ -645,6 +675,75 @@ def _close_leg(venue_name, symbol):
     return _resolve(v.place_market_reduce(symbol, is_buy,
                                           abs(float(pos["size"])),
                                           dry_run=False))
+
+
+def _reduce_leg(venue_name, symbol, qty):
+    """Shrink an open leg by `qty` with a reduce-only order. Mirrors _close_leg.
+
+    Only used to trim an over-hedged leg back to its partner, so the worst a
+    stale read can do is leave the hedge slightly smaller.
+    """
+    v = _venue(venue_name)
+    if venue_name == "hyperliquid":
+        return v.reduce(symbol, qty, dry_run=False)
+    pos = next((p for p in (_resolve(v.state()).get("positions") or [])
+                if p.get("coin") == symbol), None)
+    if not pos or not abs(float(pos["size"])):
+        return {"closed": True, "note": "no position to reduce"}
+    return _resolve(v.place_market_reduce(symbol, float(pos["size"]) < 0,
+                                          abs(float(qty)), dry_run=False))
+
+
+def _settle_hedge(short_venue, short_symbol, short_pos, long_venue, long_symbol,
+                  long_pos, tolerance, leg_results, resized):
+    """The response for an open whose two legs are both on: equal, or not.
+
+    The long is sized to the short's actual fill before it is placed, so what
+    is left to reconcile here is a long that itself filled short. That leaves
+    the short over-hedged, and the safe repair is to trim the short
+    (reduce-only: it can only shrink exposure). If the legs still differ by
+    more than `tolerance`, the status is "hedged_imbalanced" with both sizes,
+    never "hedged": callers read "hedged" as delta-neutral.
+    """
+    short_size, long_size = abs(short_pos), abs(long_pos)
+    trim = None
+    if short_size > long_size + tolerance:
+        excess = short_size - long_size
+        logger.warning("HEDGE: long filled %s against a %s short; trimming the"
+                       " short by %s", long_size, short_size, excess)
+        try:
+            trim = {"venue": short_venue, "qty": excess,
+                    "result": _reduce_leg(short_venue, short_symbol, excess)}
+        except Exception as e:
+            logger.error("HEDGE: could not trim the over-hedged short: %s", e)
+            trim = {"venue": short_venue, "qty": excess, "error": str(e)}
+        try:
+            short_pos = _signed_position(short_venue, short_symbol)
+            short_size = abs(short_pos)
+        except Exception as e:
+            logger.error("HEDGE: could not re-read the short after the trim: %s",
+                         e)
+
+    balanced = abs(short_size - long_size) <= tolerance
+    payload = {"opened": True,
+               "status": "hedged" if balanced else "hedged_imbalanced",
+               "legs": leg_results,
+               "positions": {short_venue: short_pos, long_venue: long_pos}}
+    if resized:
+        payload["resized"] = resized
+    if trim:
+        payload["trim"] = trim
+    if balanced:
+        logger.info("HEDGE OPEN OK short=%s long=%s", short_pos, long_pos)
+    else:
+        payload["detail"] = (
+            f"both legs are on but unequal: {short_venue} {short_size},"
+            f" {long_venue} {long_size}. The difference is naked directional"
+            " exposure; the watchdog's rebalance (active mode only) is the"
+            " backstop.")
+        logger.error("HEDGE IMBALANCED: %s %s vs %s %s", short_venue,
+                     short_size, long_venue, long_size)
+    return payload
 
 
 def _cancel_resting(venue_name, symbol, leg_res):
@@ -733,6 +832,7 @@ def hedge_open():
         logger.info("HEDGE size shaved to fit cap: %s", legs["shaved"])
     if legs["quantized"]:
         logger.info("HEDGE size quantized to venue step: %s", legs["quantized"])
+    tolerance = _fill_tolerance(legs["short"]["size"], step)
 
     # 1. Preflight — only open from flat. Stacking onto an existing position
     #    would silently change the size the engine sized for.
@@ -784,7 +884,10 @@ def hedge_open():
     # and return a 500 with a naked leg on. Treat "cannot confirm" as "did not
     # confirm" and fall into the cancel/flatten path.
     try:
-        short_pos = _await_position(short_venue, short_symbol, False, fill_timeout)
+        short_pos = _await_position(short_venue, short_symbol, False,
+                                    fill_timeout,
+                                    want_size=legs["short"]["size"],
+                                    tolerance=tolerance)
     except Exception as e:
         logger.error("HEDGE: could not confirm the short leg (%s) — unwinding", e)
         short_pos = 0.0
@@ -835,26 +938,56 @@ def hedge_open():
                        cancel_short=cancel_short,
                        positions={short_venue: 0.0, long_venue: 0.0})
 
+    # 2b. Size the long to what the short actually filled. It used to go out
+    #     at the planned size whatever the short did, so a partial short was
+    #     paired with a full long and reported as hedged. Shrinking the long
+    #     can only reduce exposure. A dYdX short may still have its unfilled
+    #     remainder resting on the book, which would grow the short after the
+    #     hedge is settled, so cancel it and re-read before sizing.
+    resized = None
+    if abs(short_pos) < float(legs["short"]["size"]) - tolerance:
+        cancel_remainder = _cancel_resting(short_venue, short_symbol, short_res)
+        try:
+            short_pos = _signed_position(short_venue, short_symbol) or short_pos
+        except Exception as e:
+            logger.error("HEDGE: could not re-read the partial short (%s);"
+                         " sizing the long to the last reading", e)
+        fitted = _floor_to_step(abs(short_pos), step)
+        resized = {"planned_size": legs["long"]["size"],
+                   "short_filled": abs(short_pos), "long_size": fitted,
+                   "cancel_short_remainder": cancel_remainder,
+                   "reason": "long sized to the short's actual fill"}
+        logger.warning("HEDGE: short filled %s of %s; sizing the long to %s",
+                       abs(short_pos), legs["short"]["size"], fitted)
+        legs["long"]["size"] = fitted
+
     # 3. Long leg. From here the short is LIVE — every failure path must unwind.
     #    Skip the fill wait when the leg was refused outright: there is no fill
     #    coming, and every second spent waiting is a second held naked.
     try:
+        if legs["long"]["size"] <= 0:
+            raise ValueError(
+                f"short filled {abs(short_pos)}, under one venue step ({step});"
+                " no long can pair with it")
         long_res = _place_leg(long_venue, legs["long"])
         if _leg_refused(long_res):
             logger.error("HEDGE: long leg refused (%s) — unwinding short now",
                          (long_res.get("gate") or long_res.get("error")))
             long_pos = 0.0
         else:
-            long_pos = _await_position(long_venue, long_symbol, True, fill_timeout)
+            long_pos = _await_position(long_venue, long_symbol, True,
+                                       fill_timeout,
+                                       want_size=legs["long"]["size"],
+                                       tolerance=tolerance)
     except Exception as e:
         logger.error("HEDGE long leg raised: %s — unwinding short", e)
         long_res, long_pos = {"error": str(e)}, 0.0
 
     if long_pos:
-        logger.info("HEDGE OPEN OK short=%s long=%s", short_pos, long_pos)
-        return jsonify(opened=True, status="hedged",
-                       legs={"short": short_res, "long": long_res},
-                       positions={short_venue: short_pos, long_venue: long_pos})
+        return jsonify(_settle_hedge(
+            short_venue, short_symbol, short_pos, long_venue, long_symbol,
+            long_pos, tolerance, {"short": short_res, "long": long_res},
+            resized))
 
     # 4. Long leg did not confirm within the fill window. Before unwinding, CANCEL
     #    it — a dYdX LONG_TERM open leg is still resting on the book and WILL fill
@@ -865,12 +998,13 @@ def hedge_open():
     cancel_long = _cancel_resting(long_venue, long_symbol, long_res)
     long_pos = _await_position(long_venue, long_symbol, True, min(3.0, fill_timeout))
     if long_pos:
-        logger.info("HEDGE OPEN OK (long filled while cancelling) short=%s long=%s",
-                    short_pos, long_pos)
-        return jsonify(opened=True, status="hedged",
-                       legs={"short": short_res, "long": long_res},
-                       cancel_long=cancel_long,
-                       positions={short_venue: short_pos, long_venue: long_pos})
+        logger.info("HEDGE: long filled while cancelling")
+        payload = _settle_hedge(
+            short_venue, short_symbol, short_pos, long_venue, long_symbol,
+            long_pos, tolerance, {"short": short_res, "long": long_res},
+            resized)
+        payload["cancel_long"] = cancel_long
+        return jsonify(payload)
 
     # Long is confirmed off the book -> unwind the short so we never hold a naked leg.
     logger.error("HEDGE BROKEN: long leg not filled — resting order cancelled, "

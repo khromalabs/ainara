@@ -184,5 +184,111 @@ class MarginBackstopFailsClosed(unittest.TestCase):
         self.assertEqual(r.get_json()["refused"], "margin_cap_unreadable")
 
 
+class _Book:
+    """Two venues' positions, moved by the order functions hedge_open calls.
+
+    `short_fill` / `long_fill` are the fraction of each requested size that
+    fills; `trim_lands` controls whether a reduce actually shrinks the leg.
+    """
+
+    def __init__(self, short_fill=1.0, long_fill=1.0, trim_lands=True):
+        self.pos = {"hyperliquid": 0.0, "dydx": 0.0}
+        self.short_fill, self.long_fill = short_fill, long_fill
+        self.trim_lands = trim_lands
+        self.placed, self.reduced, self.cancelled, self.closed = [], [], [], []
+
+    def signed_position(self, venue, symbol):
+        return self.pos[venue]
+
+    def place_leg(self, venue, leg):
+        self.placed.append((venue, leg["size"]))
+        frac = self.long_fill if leg["is_buy"] else self.short_fill
+        filled = round(leg["size"] * frac, 10)
+        self.pos[venue] += filled if leg["is_buy"] else -filled
+        return {"submitted": True}
+
+    def reduce_leg(self, venue, symbol, qty):
+        self.reduced.append((venue, qty))
+        if self.trim_lands:
+            sign = 1 if self.pos[venue] > 0 else -1
+            self.pos[venue] -= sign * qty
+        return {"submitted": True}
+
+    def cancel_resting(self, venue, symbol, res):
+        self.cancelled.append(venue)
+        return None
+
+    def close_leg(self, venue, symbol):
+        self.closed.append(venue)
+        self.pos[venue] = 0.0
+        return {"submitted": True}
+
+
+class PartialFillsAreNotReportedHedged(unittest.TestCase):
+    """A partial fill must shape the other leg, or be reported as imbalanced.
+
+    Before: the long always went out at the planned size and the route
+    answered status "hedged" whatever the two legs actually held.
+    """
+
+    BODY = {"short_venue": "hyperliquid", "long_venue": "dydx",
+            "short_symbol": "BTC", "long_symbol": "BTC-USD", "size": 1.0,
+            "ref_price": 50.0, "dry_run": False, "fill_timeout_s": 0.01}
+
+    def _open(self, book):
+        client = S.app.test_client()
+        with patch.object(S, "config") as cfg,              patch.object(S, "_effective_cap_notional",
+                          return_value=(None, None)),              patch.object(S, "_hedge_size_step", return_value=0.001),              patch.object(S, "_hedge_price_tick", return_value=0.01),              patch.object(S, "_book_cap_check", return_value=None),              patch.object(S, "_signed_position", book.signed_position),              patch.object(S, "_place_leg", book.place_leg),              patch.object(S, "_reduce_leg", book.reduce_leg),              patch.object(S, "_cancel_resting", book.cancel_resting),              patch.object(S, "_close_leg", book.close_leg),              patch.object(S.time, "sleep", lambda s: None):
+            cfg.get.side_effect = _cfg_get({})
+            return client.post("/hedge/open", json=self.BODY).get_json()
+
+    def test_full_fills_are_hedged(self):
+        book = _Book()
+        res = self._open(book)
+        self.assertEqual(res["status"], "hedged")
+        self.assertNotIn("resized", res)
+        self.assertEqual(book.placed, [("hyperliquid", 1.0), ("dydx", 1.0)])
+
+    def test_partial_short_sizes_the_long_to_the_fill(self):
+        book = _Book(short_fill=0.6)
+        res = self._open(book)
+        self.assertEqual(res["status"], "hedged")
+        self.assertEqual(book.placed[1], ("dydx", 0.6))
+        self.assertEqual(res["resized"]["long_size"], 0.6)
+        # Any resting remainder of the short is cancelled before sizing.
+        self.assertIn("hyperliquid", book.cancelled)
+        self.assertAlmostEqual(book.pos["hyperliquid"] + book.pos["dydx"], 0.0)
+
+    def test_partial_long_trims_the_short(self):
+        book = _Book(long_fill=0.5)
+        res = self._open(book)
+        self.assertEqual(res["status"], "hedged")
+        self.assertEqual(book.reduced, [("hyperliquid", 0.5)])
+        self.assertAlmostEqual(res["trim"]["qty"], 0.5)
+
+    def test_a_trim_that_does_not_land_is_reported_imbalanced(self):
+        book = _Book(long_fill=0.5, trim_lands=False)
+        res = self._open(book)
+        self.assertTrue(res["opened"])
+        self.assertEqual(res["status"], "hedged_imbalanced")
+        self.assertEqual(res["positions"], {"hyperliquid": -1.0, "dydx": 0.5})
+        self.assertIn("unequal", res["detail"])
+
+    def test_a_fill_within_tolerance_is_hedged_without_resizing(self):
+        # 99% is inside the default 2% tolerance: no resize, no trim.
+        book = _Book(long_fill=0.99)
+        res = self._open(book)
+        self.assertEqual(res["status"], "hedged")
+        self.assertEqual(book.reduced, [])
+
+    def test_a_short_fill_under_one_step_is_unwound(self):
+        book = _Book(short_fill=0.0005)
+        res = self._open(book)
+        self.assertFalse(res["opened"])
+        self.assertEqual(res["status"], "unwound")
+        self.assertEqual(book.placed, [("hyperliquid", 1.0)])
+        self.assertIn("hyperliquid", book.closed)
+
+
 if __name__ == "__main__":
     unittest.main()

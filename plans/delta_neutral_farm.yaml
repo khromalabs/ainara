@@ -87,4 +87,5 @@ steps:
       {{execute.response}}
 
       Keep it concise and factual: the coin, the decision, the venues/sides if
-      opened, and whether the position is confirmed hedged or was unwound.
+      opened, and whether the position is confirmed hedged, was unwound, or
+      opened with unequal legs (status "hedged_imbalanced": say so first).

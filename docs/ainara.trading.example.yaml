@@ -82,6 +82,9 @@ trading:
     max_order_notional_usd: 100
     # cross_pct: 0.05                 # how far each leg crosses the book for a taker fill
     # fill_timeout_s: 15              # seconds to wait for a leg before unwinding
+    # fill_tolerance_pct: 2.0         # a leg this far under its planned size (or
+    #                                 # one venue step) still counts as filled;
+    #                                 # beyond it the other leg is resized or trimmed
 
   carry_engine:
     # Sizing multiplier: notional = margin budget x leverage. NOT the venue's
