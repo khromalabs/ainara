@@ -816,6 +816,13 @@ def _settle_hedge(short_venue, short_symbol, short_pos, long_venue, long_symbol,
     more than `tolerance`, the status is "hedged_imbalanced" with both sizes,
     never "hedged": callers read "hedged" as delta-neutral.
     """
+    # Re-read the short: the reading taken before the long leg can be a fill
+    # window old, and trimming from a stale size can double-trim a short
+    # something else already reduced, leaving the long naked.
+    try:
+        short_pos = _signed_position(short_venue, short_symbol) or short_pos
+    except Exception as e:
+        logger.error("HEDGE: could not re-read the short before settling: %s", e)
     short_size, long_size = abs(short_pos), abs(long_pos)
     trim = None
     if short_size > long_size + tolerance:
@@ -1143,6 +1150,7 @@ def _hedge_open(body):
     # 3. Long leg. From here the short is LIVE — every failure path must unwind.
     #    Skip the fill wait when the leg was refused outright: there is no fill
     #    coming, and every second spent waiting is a second held naked.
+    long_res = None
     try:
         if legs["long"]["size"] <= 0:
             raise ValueError(
@@ -1160,7 +1168,27 @@ def _hedge_open(body):
                                        tolerance=tolerance)
     except Exception as e:
         logger.error("HEDGE long leg raised: %s — unwinding short", e)
-        long_res, long_pos = {"error": str(e)}, 0.0
+        # Keep the place result: a dYdX long may be resting, and its
+        # client_id / good_til_block_time are what _cancel_resting needs.
+        # Overwriting it cancelled nothing and left the order live.
+        long_res = {**(long_res if isinstance(long_res, dict) else {}),
+                    "error": str(e)}
+        long_pos = 0.0
+
+    # A long that filled only partly may still be resting on dYdX for its
+    # full good-til time. Once the short is trimmed to match, a later fill of
+    # that remainder would be naked, so cancel it and re-read before settling.
+    if long_pos and abs(long_pos) < float(legs["long"]["size"]) - tolerance:
+        cancel_long_remainder = _cancel_resting(long_venue, long_symbol,
+                                                long_res)
+        try:
+            long_pos = _signed_position(long_venue, long_symbol) or long_pos
+        except Exception as e:
+            logger.error("HEDGE: could not re-read the partial long (%s);"
+                         " settling on the last reading", e)
+        if resized is None:
+            resized = {}
+        resized["cancel_long_remainder"] = cancel_long_remainder
 
     if long_pos:
         return jsonify(_settle_hedge(
@@ -1175,7 +1203,14 @@ def _hedge_open(body):
     #    on and we must NOT unwind it. A short window lets the lagging indexer
     #    surface a just-landed fill without holding the short naked much longer.
     cancel_long = _cancel_resting(long_venue, long_symbol, long_res)
-    long_pos = _await_position(long_venue, long_symbol, True, min(3.0, fill_timeout))
+    try:
+        long_pos = _await_position(long_venue, long_symbol, True,
+                                   min(3.0, fill_timeout))
+    except Exception as e:
+        # The short is live and the unwind has not run: a read failure here
+        # must not escape as a 500 and skip it. Treat it as "not confirmed".
+        logger.error("HEDGE: could not re-check the long (%s); unwinding", e)
+        long_pos = 0.0
     if long_pos:
         logger.info("HEDGE: long filled while cancelling")
         payload = _settle_hedge(
@@ -1195,10 +1230,21 @@ def _hedge_open(body):
         unwind_err = str(e)
         logger.error("HEDGE UNWIND RAISED: %s", e)
 
-    remaining = _signed_position(short_venue, short_symbol)
     # Re-confirm the long stayed flat too: a fill could have landed after the
     # re-check but before the cancel took effect. Either leftover means NOT flat.
-    long_leftover = _signed_position(long_venue, long_symbol)
+    try:
+        remaining = _signed_position(short_venue, short_symbol)
+        long_leftover = _signed_position(long_venue, long_symbol)
+    except Exception as e:
+        logger.error("HEDGE: unwind sent but the account is unreadable: %s", e)
+        return jsonify(
+            opened=False, status="INDETERMINATE_UNREADABLE",
+            detail=(f"the long did not confirm, the short unwind was sent, and"
+                    f" the account is unreadable ({e}). VERIFY THE ACCOUNT"
+                    " MANUALLY: this may be a naked leg."),
+            legs={"short": short_res, "long": long_res},
+            cancel_long=cancel_long,
+            unwind={"result": unwind_res, "error": unwind_err}), 500
     if remaining or long_leftover:
         # Worst case. Say so loudly; the position watchdog is the backstop.
         logger.error("NAKED LEG after unwind: %s short=%s, %s long=%s",
@@ -1341,7 +1387,8 @@ def hedge_close():
     if not any(pre.values()):
         return jsonify(closed=True, status="flat_already",
                        detail="nothing open on either venue", positions=pre,
-                       ledger=_record_ledger_close(legs, body))
+                       ledger=(None if dry_run
+                               else _record_ledger_close(legs, body)))
 
     if dry_run:
         return jsonify(closed=False, dry_run=True, status="planned",

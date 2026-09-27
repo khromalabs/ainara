@@ -207,8 +207,16 @@ class _Book:
         self.short_fill, self.long_fill = short_fill, long_fill
         self.trim_lands = trim_lands
         self.placed, self.reduced, self.cancelled, self.closed = [], [], [], []
+        # Reads of these venues that raise before answering (an indexer 429).
+        self.failing_reads = {}
+        # Called after the long is placed: models another actor (the
+        # watchdog) changing a leg while the daemon waits on the long.
+        self.after_long = None
 
     def signed_position(self, venue, symbol):
+        if self.failing_reads.get(venue):
+            self.failing_reads[venue] -= 1
+            raise RuntimeError("indexer 429")
         return self.pos[venue]
 
     def place_leg(self, venue, leg):
@@ -216,7 +224,9 @@ class _Book:
         frac = self.long_fill if leg["is_buy"] else self.short_fill
         filled = round(leg["size"] * frac, 10)
         self.pos[venue] += filled if leg["is_buy"] else -filled
-        return {"submitted": True}
+        if leg["is_buy"] and self.after_long:
+            self.after_long(self)
+        return {"submitted": True, "client_id": 7, "good_til_block_time": 9}
 
     def reduce_leg(self, venue, symbol, qty):
         self.reduced.append((venue, qty))
@@ -226,7 +236,7 @@ class _Book:
         return {"submitted": True}
 
     def cancel_resting(self, venue, symbol, res):
-        self.cancelled.append(venue)
+        self.cancelled.append((venue, (res or {}).get("client_id")))
         return None
 
     def close_leg(self, venue, symbol):
@@ -277,7 +287,7 @@ class PartialFillsAreNotReportedHedged(unittest.TestCase):
         self.assertEqual(book.placed[1], ("dydx", 0.6))
         self.assertEqual(res["resized"]["long_size"], 0.6)
         # Any resting remainder of the short is cancelled before sizing.
-        self.assertIn("hyperliquid", book.cancelled)
+        self.assertIn(("hyperliquid", 7), book.cancelled)
         self.assertAlmostEqual(book.pos["hyperliquid"] + book.pos["dydx"], 0.0)
 
     def test_partial_long_trims_the_short(self):
@@ -545,6 +555,57 @@ class HedgeCloseRecordsTheLedger(unittest.TestCase):
             S.app.test_client().post("/hedge/close", json={
                 "legs": {"hyperliquid": "BTC", "dydx": "BTC-USD"}})
         self.assertEqual(calls, [])
+
+
+class OpenFailurePathsLeaveNoRestingLeg(unittest.TestCase):
+    """Paths in /hedge/open that could leave an order resting or a leg naked."""
+
+    def _open(self, book):
+        return PartialFillsAreNotReportedHedged._open(self, book)
+
+    BODY = PartialFillsAreNotReportedHedged.BODY
+
+    def test_a_partial_long_has_its_remainder_cancelled_before_the_trim(self):
+        # The resting 0.5 would otherwise fill after the short is trimmed to
+        # 0.5, leaving a 0.5 naked long on a response that said "hedged".
+        book = _Book(long_fill=0.5)
+        res = self._open(book)
+        self.assertIn(("dydx", 7), book.cancelled)
+        self.assertEqual(res["status"], "hedged")
+
+    def test_the_trim_uses_a_fresh_short_reading(self):
+        # Something else trims the short to -0.5 while the long fills 0.5:
+        # the daemon must not trim it a second time.
+        book = _Book(long_fill=0.5)
+        book.after_long = lambda b: b.pos.update(hyperliquid=-0.5)
+        res = self._open(book)
+        self.assertEqual(book.reduced, [])
+        self.assertEqual(res["status"], "hedged")
+
+    def test_a_failed_long_read_still_cancels_the_placed_order(self):
+        # Before: the exception overwrote the place result, so the cancel had
+        # no client_id and the dYdX buy stayed resting.
+        book = _Book(long_fill=0.0)
+        book.after_long = lambda b: b.failing_reads.update(dydx=1)
+        res = self._open(book)
+        self.assertIn(("dydx", 7), book.cancelled)
+        self.assertEqual(res["status"], "unwound")
+
+    def test_a_failed_recheck_read_still_unwinds_the_short(self):
+        # Before: this read sat outside any try and a raise returned a 500
+        # with the short live and the unwind never run.
+        book = _Book(long_fill=0.0)
+        book.after_long = lambda b: b.failing_reads.update(dydx=2)
+        res = self._open(book)
+        self.assertIn("hyperliquid", book.closed)
+        self.assertEqual(res["status"], "unwound")
+
+    def test_an_unreadable_account_after_the_unwind_is_reported(self):
+        book = _Book(long_fill=0.0)
+        book.after_long = lambda b: b.failing_reads.update(dydx=3)
+        res = self._open(book)
+        self.assertIn("hyperliquid", book.closed)
+        self.assertEqual(res["status"], "INDETERMINATE_UNREADABLE")
 
 
 if __name__ == "__main__":

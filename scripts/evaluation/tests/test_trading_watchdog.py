@@ -1063,5 +1063,23 @@ class FlattenedHedgesCloseTheirLedgerRow(unittest.TestCase):
         self.assertEqual(wd._ledger_pending, {})
 
 
+class RebalanceWaitsForAnOpenInFlight(unittest.TestCase):
+    """The daemon settles unequal legs mid-open; the watchdog must not race it."""
+
+    def test_rebalance_is_held_for_a_leased_coin(self):
+        from executor import runtime as R
+        cfg = _Cfg()
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0010)),
+                        _FakeDydx(dy_pos("BTC-USD", 0.0005)), cfg)
+        wd.mode = "active"
+        token = R.acquire_lease(cfg, "BTC", 60)
+        try:
+            rep = wd.guard_once()
+        finally:
+            R.release_lease(token)
+        self.assertFalse([a for a in rep["actions"] if a["type"] == "rebalance"])
+        self.assertEqual(wd.hl.reduced, [])
+
+
 if __name__ == "__main__":
     unittest.main()

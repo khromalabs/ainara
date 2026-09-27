@@ -494,6 +494,15 @@ class Watchdog:
         opening = self._opening_leases()
         mid_open = [a for a in broken
                     if str(a.get("coin") or "").upper().split("-")[0] in opening]
+        # Unequal legs are expected mid-open too, and the daemon settles them
+        # itself; a rebalance trim here races the daemon's own trim and can
+        # take the short twice. Liquidation proximity is still never held.
+        rebalancing = [a for a in report["actions"]
+                       if a["type"] == "rebalance" and str(a.get("coin") or "")
+                       .upper().split("-")[0] in opening]
+        if rebalancing:
+            report["actions"] = [a for a in report["actions"]
+                                 if a not in rebalancing]
         if mid_open:
             broken = [a for a in broken if a not in mid_open]
             for a in mid_open:
