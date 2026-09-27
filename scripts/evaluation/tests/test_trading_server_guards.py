@@ -131,7 +131,8 @@ class MarginBackstopFailsClosed(unittest.TestCase):
     """
 
     def _cap(self, coin="ETH-USD", hl=None, dydx=None, settings=None):
-        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", side_effect=_venues(hl, dydx)):
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_venue", side_effect=_venues(hl, dydx)):
             cfg.get.side_effect = _cfg_get(settings or {})
             return S._margin_cap_notional(coin)
 
@@ -169,7 +170,8 @@ class MarginBackstopFailsClosed(unittest.TestCase):
 
     def test_order_route_refuses_an_opening_order_when_blind(self):
         client = S.app.test_client()
-        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", side_effect=_venues(
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_venue", side_effect=_venues(
                  dydx=_FakeDydx(raises=RuntimeError("down")))):
             cfg.get.side_effect = _cfg_get({})
             r = client.post("/venues/hyperliquid/order", json={
@@ -181,7 +183,8 @@ class MarginBackstopFailsClosed(unittest.TestCase):
 
     def test_hedge_open_refuses_when_blind(self):
         client = S.app.test_client()
-        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", side_effect=_venues(
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_venue", side_effect=_venues(
                  dydx=_FakeDydx(raises=RuntimeError("down")))):
             cfg.get.side_effect = _cfg_get({})
             r = client.post("/hedge/open", json={
@@ -245,8 +248,18 @@ class PartialFillsAreNotReportedHedged(unittest.TestCase):
 
     def _open(self, book):
         client = S.app.test_client()
-        with patch.object(S, "config") as cfg,              patch.object(S, "_effective_cap_notional",
-                          return_value=(None, None)),              patch.object(S, "_hedge_size_step", return_value=0.001),              patch.object(S, "_hedge_price_tick", return_value=0.01),              patch.object(S, "_book_cap_check", return_value=None),              patch.object(S, "_signed_position", book.signed_position),              patch.object(S, "_place_leg", book.place_leg),              patch.object(S, "_reduce_leg", book.reduce_leg),              patch.object(S, "_cancel_resting", book.cancel_resting),              patch.object(S, "_close_leg", book.close_leg),              patch.object(S.time, "sleep", lambda s: None):
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_effective_cap_notional",
+                          return_value=(None, None)), \
+             patch.object(S, "_hedge_size_step", return_value=0.001), \
+             patch.object(S, "_hedge_price_tick", return_value=0.01), \
+             patch.object(S, "_book_cap_check", return_value=None), \
+             patch.object(S, "_signed_position", book.signed_position), \
+             patch.object(S, "_place_leg", book.place_leg), \
+             patch.object(S, "_reduce_leg", book.reduce_leg), \
+             patch.object(S, "_cancel_resting", book.cancel_resting), \
+             patch.object(S, "_close_leg", book.close_leg), \
+             patch.object(S.time, "sleep", lambda s: None):
             cfg.get.side_effect = _cfg_get({})
             return client.post("/hedge/open", json=self.BODY).get_json()
 
@@ -471,7 +484,8 @@ class LiveOpensHoldALease(unittest.TestCase):
             seen.append(R.active_leases(Cfg()))
             return {"opened": False}
 
-        with patch.object(S, "config") as cfg,              patch.object(S, "_hedge_open", side_effect=fake_open):
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_hedge_open", side_effect=fake_open):
             cfg.get.side_effect = _cfg_get(settings)
             S.app.test_client().post("/hedge/open", json=body)
         return R.active_leases(Cfg())

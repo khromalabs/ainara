@@ -722,7 +722,8 @@ class RuntimeFilesAreWrittenAtomically(unittest.TestCase):
                 raise PermissionError("sharing violation")
             real(src, dst)
 
-        with patch.object(self.R.os, "replace", flaky),              patch.object(self.R.time, "sleep", lambda s: None):
+        with patch.object(self.R.os, "replace", flaky), \
+             patch.object(self.R.time, "sleep", lambda s: None):
             self.R.write_text_atomic(self.path, "new")
         self.assertEqual(self._read(), "new")
         self.assertEqual(len(calls), 3)
@@ -731,7 +732,8 @@ class RuntimeFilesAreWrittenAtomically(unittest.TestCase):
         def denied(src, dst):
             raise PermissionError("denied")
 
-        with patch.object(self.R.os, "replace", denied),              patch.object(self.R.time, "sleep", lambda s: None):
+        with patch.object(self.R.os, "replace", denied), \
+             patch.object(self.R.time, "sleep", lambda s: None):
             with self.assertRaises(PermissionError):
                 self.R.write_text_atomic(self.path, "new")
         self.assertEqual(self._read(), "original")

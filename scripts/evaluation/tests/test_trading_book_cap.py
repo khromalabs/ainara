@@ -168,7 +168,9 @@ class OrderRouteAppliesTheBookCap(unittest.TestCase):
                 return max_notional
             return default
 
-        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", return_value=fake),              patch.object(S, "_margin_cap_notional",
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_venue", return_value=fake), \
+             patch.object(S, "_margin_cap_notional",
                           return_value=(None, None)):
             cfg.get.side_effect = get
             r = S.app.test_client().post(f"/venues/{venue}/order", json={
