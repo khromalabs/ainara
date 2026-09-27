@@ -164,5 +164,60 @@ class WatchdogHeartbeatPath(unittest.TestCase):
         self.assertEqual(cfg["watchdog_heartbeat_file"], "/x/hb.txt")
 
 
+class ShutdownWaitsForOpensInFlight(unittest.TestCase):
+    """Stopping the scheduler must not kill the daemon between two legs.
+
+    Before: the executor services were stopped immediately, and stop_process
+    kills three seconds after SIGTERM, abandoning the daemon's unwind.
+    """
+
+    def _stop(self, lease_readings, grace=90):
+        events = []
+        readings = iter(lease_readings)
+
+        def leases(cfg):
+            value = next(readings, set())
+            if isinstance(value, Exception):
+                raise value
+            events.append(("leases", frozenset(value)))
+            return value
+
+        # stop_services deletes the Orakle/Bureau logs: point it at scratch
+        # paths, never the real ones in LOG_DIR.
+        scratch = tempfile.mkdtemp()
+        with patch.object(S, "active_leases", leases), \
+             patch.object(S, "ORAKLE_LOG", os.path.join(scratch, "o.log")), \
+             patch.object(S, "BUREAU_LOG", os.path.join(scratch, "b.log")), \
+             patch.object(S, "ConfigManager", lambda: None), \
+             patch.object(S, "stop_process",
+                          lambda ident: events.append(("stop", ident))), \
+             patch.object(S, "log_info", lambda m: None), \
+             patch.object(S, "log_error", lambda m: events.append(("err", m))), \
+             patch.object(S.time, "sleep", lambda s: None):
+            S.stop_services({"executor_enabled": True,
+                             "executor_stop_grace": grace})
+        return events
+
+    def test_executor_stops_only_after_the_open_finishes(self):
+        events = self._stop([{"BTC"}, {"BTC"}, set()])
+        stops = [e for e in events if e[0] == "stop"]
+        first_executor_stop = events.index(("stop", "executor.watchdog"))
+        last_lease_read = max(i for i, e in enumerate(events)
+                              if e[0] == "leases")
+        self.assertLess(last_lease_read, first_executor_stop)
+        self.assertEqual([s[1] for s in stops][-2:],
+                         ["executor.watchdog", "executor.server"])
+
+    def test_the_wait_is_bounded(self):
+        events = self._stop([{"BTC"}] * 1000, grace=0)
+        self.assertIn(("stop", "executor.server"), events)
+        self.assertTrue(any(e[0] == "err" and "VERIFY THE ACCOUNT" in e[1]
+                            for e in events))
+
+    def test_an_unreadable_lease_directory_does_not_block_shutdown(self):
+        events = self._stop([OSError("denied")])
+        self.assertIn(("stop", "executor.server"), events)
+
+
 if __name__ == "__main__":
     unittest.main()

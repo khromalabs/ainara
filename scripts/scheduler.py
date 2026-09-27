@@ -133,7 +133,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ainara.framework.config import ConfigManager  # noqa: E402
-from executor.runtime import heartbeat_path  # noqa: E402
+from executor.runtime import active_leases, heartbeat_path  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +207,9 @@ DEFAULT_EXECUTOR_HEALTH_URL = "http://127.0.0.1:8130/health"
 # loop. Its default path comes from executor.runtime.heartbeat_path, the same
 # resolver the watchdog writes through, so the two cannot drift apart.
 DEFAULT_WATCHDOG_HEARTBEAT_MAX_AGE = 30  # seconds (~6× the 5s watchdog poll)
+# How long shutdown waits for a hedge open already in flight: the daemon's
+# longest open (two 15 s fill windows plus 30 s) with a margin.
+DEFAULT_EXECUTOR_STOP_GRACE = 90
 
 
 def default_executor_python():
@@ -500,6 +503,8 @@ def _load_executor_config(raw):
                                     or heartbeat_path(ainara_config)),
         "watchdog_heartbeat_max_age": svc.get(
             "heartbeat_max_age", DEFAULT_WATCHDOG_HEARTBEAT_MAX_AGE),
+        "executor_stop_grace": float(svc.get(
+            "stop_grace_seconds", DEFAULT_EXECUTOR_STOP_GRACE)),
     }
 
 
@@ -764,9 +769,15 @@ def stop_services(sched_config=None):
 
     logs = [ORAKLE_LOG, BUREAU_LOG]
     if sched_config and sched_config.get("executor_enabled"):
-        # Stop the watchdog BEFORE the daemon: with the daemon already gone the
-        # watchdog cannot act on a broken hedge anyway, and this avoids it logging
-        # spurious alarms during the brief teardown window.
+        # Bureau is down, so no new plan run can start an open. One already in
+        # flight is still running inside the daemon, which owns its unwind:
+        # stop_process kills it three seconds after SIGTERM, which between the
+        # two legs leaves one of them naked with nothing to unwind it. Wait
+        # for the daemon's opening leases to clear first (bounded).
+        _await_opens_in_flight(sched_config.get(
+            "executor_stop_grace", DEFAULT_EXECUTOR_STOP_GRACE))
+        # Then the watchdog, then the daemon, so the watchdog does not alarm on
+        # a daemon that is already gone.
         stop_process("executor.watchdog")
         stop_process("executor.server")
         # The executor logs are deliberately NOT added to `logs` below: they are the
@@ -778,6 +789,36 @@ def stop_services(sched_config=None):
             os.remove(log_file)
 
     log_info("Services stopped")
+
+
+def _await_opens_in_flight(grace_s, poll_s=1.0):
+    """Wait until no coin holds a daemon opening lease, or `grace_s` passes.
+
+    Returns True when nothing is in flight. An unreadable lease directory is
+    reported and treated as nothing in flight: shutdown must still happen.
+    """
+    deadline = time.monotonic() + float(grace_s)
+    announced = False
+    while True:
+        try:
+            opening = active_leases(ConfigManager())
+        except Exception as e:
+            log_error(f"Could not read the executor's opening leases ({e});"
+                      " stopping without waiting for opens in flight")
+            return True
+        if not opening:
+            return True
+        if time.monotonic() >= deadline:
+            log_error(
+                f"Hedge open(s) for {', '.join(sorted(opening))} still in flight"
+                f" after {grace_s:.0f}s; stopping anyway. VERIFY THE ACCOUNT:"
+                " a two-leg open may have been interrupted.")
+            return False
+        if not announced:
+            log_info(f"Waiting up to {grace_s:.0f}s for the hedge open(s) in"
+                     f" flight to finish: {', '.join(sorted(opening))}")
+            announced = True
+        time.sleep(poll_s)
 
 
 def restart_service(service_name, cmd, log_file, health_url, sched_config):
