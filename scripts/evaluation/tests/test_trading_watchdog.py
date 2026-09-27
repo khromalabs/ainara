@@ -928,5 +928,66 @@ class OpeningLeases(unittest.TestCase):
         self.assertEqual(len(wd.hl.reduced), 1)
 
 
+class RefusedShavesDoNotSpendTheBudget(unittest.TestCase):
+    """A shave that reached no venue must not count toward closing the hedge.
+
+    Before: every shave counted, sent or not, so a venue that kept refusing
+    escalated to close_hedge on a hedge that had never been shaved; and the
+    second leg was shaved even when the first was refused.
+    """
+
+    REFUSED = {"submitted": False, "gate": {"refused": "dry_run"}}
+
+    def _wd(self, **cfg):
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008, liq_dist=3.0)),
+                        _FakeDydx(dy_pos("BTC-USD", 0.0008)),
+                        _Cfg(reduce_cooldown_seconds=0, **cfg))
+        wd.mode = "active"
+        return wd
+
+    def _refuse(self, fake, attr):
+        calls = []
+
+        def refused(*a, **kw):
+            calls.append(a)
+            return dict(self.REFUSED)
+        if attr == "reduce":
+            fake.reduce = refused
+        else:
+            async def refused_async(*a, **kw):
+                calls.append(a)
+                return dict(self.REFUSED)
+            fake.place_market_reduce = refused_async
+        return calls
+
+    def _shave(self, wd):
+        rep = wd.guard_once()
+        return next(e["result"] for e in rep["executed"]
+                    if e["action"]["type"] == "reduce_both")
+
+    def test_a_refused_first_leg_skips_the_second_and_is_not_counted(self):
+        wd = self._wd()
+        self._refuse(wd.hl, "reduce")  # HL is the threatened leg, so first
+        res = self._shave(wd)
+        self.assertEqual(wd.dydx.reduced, [])  # never sent
+        self.assertIn("skipped", res["results"]["dydx"])
+        self.assertFalse(res["counted_toward_escalation"])
+        self.assertNotIn("BTC", wd._reduce_attempts)
+
+    def test_repeated_refusals_never_escalate_to_closing(self):
+        wd = self._wd(reduce_max_attempts=2)
+        self._refuse(wd.hl, "reduce")
+        plans = [self._shave(wd)["plan"] for _ in range(4)]
+        self.assertEqual(plans, ["reduce"] * 4)
+
+    def test_a_half_landed_shave_still_counts(self):
+        wd = self._wd()
+        self._refuse(wd.dydx, "place_market_reduce")  # second leg refuses
+        res = self._shave(wd)
+        self.assertEqual(len(wd.hl.reduced), 1)
+        self.assertTrue(res["counted_toward_escalation"])
+        self.assertEqual(wd._reduce_attempts["BTC"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

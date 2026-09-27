@@ -1135,16 +1135,38 @@ class Watchdog:
         if act.get("trigger") == "dydx":
             order.reverse()  # de-risk the threatened venue first
         positions = {"hyperliquid": hl_pos, "dydx": dy_pos}
-        results = {}
-        for venue in order:
-            results[venue] = self._reduce_leg(venue, positions[venue], qty)
+        first, second = order
+        results = {first: self._reduce_leg(first, positions[first], qty)}
+        if plan == "reduce" and self._close_failed(results[first]):
+            # Shaving the second leg alone would leave the hedge unequal: the
+            # guard creating the naked delta it exists to prevent. Recorded as
+            # not submitted, because nothing reached that venue.
+            results[second] = {
+                "submitted": False,
+                "skipped": f"{first} refused, so shaving {second} alone would"
+                           " create naked delta"}
+        else:
+            results[second] = self._reduce_leg(second, positions[second], qty)
+        failed = sorted(v for v, r in results.items() if self._close_failed(r))
+
+        # The cooldown is a rate limit and applies either way: re-sending to a
+        # refusing venue every poll fixes nothing, and the alarm below is up.
         self._reduce_at[coin] = time.time()
-        self._reduce_attempts[coin] = attempts + 1
+        # The attempt count is not a rate limit. It means "shaved and STILL in
+        # the band", and past reduce_max_attempts it closes the whole hedge.
+        # It used to count shaves that reached no venue at all, so a venue that
+        # kept refusing (dry run, a gate, an outage) walked the count up and
+        # closed a hedge that had never been shaved. A shave that landed on
+        # either leg changed the position and counts; one that landed nowhere
+        # does not.
+        counted = len(failed) < len(results)
+        if counted:
+            self._reduce_attempts[coin] = attempts + 1
         self._save_state()
 
-        failed = sorted(v for v, r in results.items() if self._close_failed(r))
         out = {"plan": plan, "qty": qty, "size_step": step, "sequence": order,
-               "attempt": attempts + 1, "results": results}
+               "attempt": attempts + 1, "results": results,
+               "counted_toward_escalation": counted}
         if failed:
             out["failed"] = failed
             self._add_alarm(
