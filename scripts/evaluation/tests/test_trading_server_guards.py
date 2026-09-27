@@ -513,5 +513,39 @@ class LiveOpensHoldALease(unittest.TestCase):
         self.assertEqual(len(seen), 1)  # the open still ran
 
 
+class HedgeCloseRecordsTheLedger(unittest.TestCase):
+    """/hedge/close closes the coin's ledger row once the account is flat."""
+
+    def test_flat_already_records_and_reports_it(self):
+        calls = []
+
+        def close_open_trade(cfg, coin, reason, decision=None):
+            calls.append((coin, reason, decision))
+            return 11
+
+        decision = {"reason": "spread decayed"}
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_signed_position", return_value=0.0), \
+             patch.object(S, "close_open_trade", close_open_trade):
+            cfg.get.side_effect = _cfg_get({})
+            r = S.app.test_client().post("/hedge/close", json={
+                "legs": {"hyperliquid": "BTC", "dydx": "BTC-USD"},
+                "dry_run": False, "exit_decision": decision})
+        body = r.get_json()
+        self.assertEqual(body["ledger"], {"recorded": 11})
+        self.assertEqual(calls, [("BTC", "hedge_close", decision)])
+
+    def test_a_dry_run_records_nothing(self):
+        calls = []
+        with patch.object(S, "config") as cfg, \
+             patch.object(S, "_signed_position", return_value=-0.001), \
+             patch.object(S, "close_open_trade",
+                          lambda *a, **kw: calls.append(a)):
+            cfg.get.side_effect = _cfg_get({})
+            S.app.test_client().post("/hedge/close", json={
+                "legs": {"hyperliquid": "BTC", "dydx": "BTC-USD"}})
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

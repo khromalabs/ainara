@@ -181,5 +181,96 @@ class ClientReadsTheOpenStatus(unittest.TestCase):
         self.assertNotIn("error", out)
 
 
+class ExecutorSideCloses(unittest.TestCase):
+    """A hedge closed outside a plan still closes its ledger row.
+
+    Before: only the executor client wrote closes, after a plan's
+    /hedge/close. A hedge the watchdog flattened, or one closed by calling
+    the daemon directly, stayed "open" in the ledger forever.
+    """
+
+    def setUp(self):
+        from executor import ledger as XL
+        self.XL = XL
+        self.tmp = tempfile.mkdtemp()
+        self._original = L._db_path
+        L._db_path = lambda: os.path.join(self.tmp, "carry_ledger.db")
+        tmp = self.tmp
+
+        class Cfg:
+            def get(self, key, default=None):
+                return tmp if key == "data.directory" else default
+        self.cfg = Cfg()
+
+    def tearDown(self):
+        L._db_path = self._original
+
+    def test_the_executor_closes_the_row_the_client_opened(self):
+        L.record_open(DECISION, RESULT)
+        row_id = self.XL.close_open_trade(self.cfg, "BTC-USD",
+                                          "watchdog_broken_hedge")
+        self.assertIsNotNone(row_id)
+        row = L.trades(coin="BTC")[0]
+        self.assertEqual(row["status"], "closed")
+        self.assertEqual(row["exit_reason"], "watchdog_broken_hedge")
+        self.assertIsNotNone(row["closed_at"])
+
+    def test_an_exit_decision_is_kept_as_the_close_context(self):
+        L.record_open(DECISION, RESULT)
+        self.XL.close_open_trade(self.cfg, "BTC", "hedge_close", {
+            "reason": "spread decayed", "smoothed_spread_annual_pct": 1.5})
+        row = L.trades(coin="BTC")[0]
+        self.assertEqual(row["exit_reason"], "spread decayed")
+        self.assertEqual(row["close_smoothed_spread_annual_pct"], 1.5)
+
+    def test_no_ledger_means_nothing_is_created(self):
+        self.assertIsNone(self.XL.close_open_trade(self.cfg, "BTC", "x"))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp,
+                                                     "carry_ledger.db")))
+
+    def test_no_open_row_is_a_no_op(self):
+        L.record_open(DECISION, RESULT)
+        self.XL.close_open_trade(self.cfg, "BTC", "first")
+        self.assertIsNone(self.XL.close_open_trade(self.cfg, "BTC", "second"))
+        self.assertEqual(L.trades(coin="BTC")[0]["exit_reason"], "first")
+
+
+class ClientRecordsTheCloseOnlyAsAFallback(unittest.TestCase):
+    """The daemon records the close; the client only fills in when it did not."""
+
+    EXIT = {"coin": "BTC", "action": "close", "reason": "spread decayed"}
+
+    def _close(self, result):
+        from unittest.mock import patch
+        from ainara.orakle.skills.trading import executor_client as EC
+        client = EC.TradingExecutorClient()
+        sent = {}
+
+        def request(method, path, body=None, timeout=None):
+            sent.update(body or {})
+            return dict(result)
+
+        client._request = request
+        recorded = []
+        with patch.object(EC._ledger, "record_close",
+                          lambda c, d, r: recorded.append(c)):
+            client._close_hedge(dict(self.EXIT), dry_run=False)
+        return sent, recorded
+
+    def test_the_exit_decision_is_sent_to_the_daemon(self):
+        sent, _ = self._close({"closed": True, "ledger": {"recorded": 7}})
+        self.assertEqual(sent["exit_decision"]["reason"], "spread decayed")
+
+    def test_no_second_write_when_the_daemon_recorded_it(self):
+        _, recorded = self._close({"closed": True, "ledger": {"recorded": 7}})
+        self.assertEqual(recorded, [])
+
+    def test_the_client_records_when_the_daemon_did_not(self):
+        for result in ({"closed": True, "ledger": {"recorded": None}},
+                       {"closed": True}):
+            _, recorded = self._close(result)
+            self.assertEqual(recorded, ["BTC"], result)
+
+
 if __name__ == "__main__":
     unittest.main()

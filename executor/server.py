@@ -43,6 +43,7 @@ from flask import Flask, jsonify, request
 from executor.compliance import (DEFAULT_MAX_ACCOUNT_MARGIN_PCT,
                                  DEFAULT_MAX_ORDER_NOTIONAL_USD)
 from executor.config import ExecutorConfig
+from executor.ledger import close_open_trade
 from executor.notify import Notifier
 from executor.runtime import acquire_lease, alarm_path, release_lease
 from executor.venues.dydx import DydxExecutor
@@ -1312,7 +1313,11 @@ def hedge_close():
     it is never capped and never refused. It still confirms by reading positions
     back, and shouts if anything survives.
 
-    Body: {"legs": {"hyperliquid": "BTC", "dydx": "BTC-USD"}, "dry_run": false}
+    Body: {"legs": {"hyperliquid": "BTC", "dydx": "BTC-USD"}, "dry_run": false,
+           "exit_decision": {...}}   # optional: the decide_exit verdict
+
+    A close that leaves the account flat also closes the coin's open row in
+    the carry ledger, and the response says whether it did ("ledger").
     """
     body = request.get_json(force=True, silent=True) or {}
     dry_run = body.get("dry_run", True) is not False
@@ -1335,7 +1340,8 @@ def hedge_close():
 
     if not any(pre.values()):
         return jsonify(closed=True, status="flat_already",
-                       detail="nothing open on either venue", positions=pre)
+                       detail="nothing open on either venue", positions=pre,
+                       ledger=_record_ledger_close(legs, body))
 
     if dry_run:
         return jsonify(closed=False, dry_run=True, status="planned",
@@ -1366,7 +1372,19 @@ def hedge_close():
     logger.info("HEDGE CLOSED: account flat")
     _notify_closed(legs, pre, results)
     return jsonify(closed=True, status="closed", detail="all legs closed; flat",
-                   legs=results, positions=post, was=pre)
+                   legs=results, positions=post, was=pre,
+                   ledger=_record_ledger_close(legs, body))
+
+
+def _record_ledger_close(legs, body):
+    """Close the coin's ledger row now the account is flat. Best-effort.
+
+    Called only after the venues are confirmed flat. {"recorded": None}
+    tells the executor client to fall back to recording the close itself.
+    """
+    coin = _coin_key(legs.get("hyperliquid") or next(iter(legs.values())))
+    return {"recorded": close_open_trade(config, coin, "hedge_close",
+                                         body.get("exit_decision"))}
 
 
 def main():

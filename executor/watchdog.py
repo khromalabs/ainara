@@ -48,6 +48,7 @@ import math
 import os
 import time
 
+from executor.ledger import close_open_trade
 from executor.notify import Notifier
 from executor.runtime import (active_leases, alarm_path, heartbeat_path,
                               state_path, write_text_atomic)
@@ -453,6 +454,10 @@ class Watchdog:
         self._reduce_attempts = {}
         self._rebalance_at = {}
         self._load_state()
+        # Coins this process sent a flattening close for, waiting to be seen
+        # flat on both venues before their carry-ledger row is closed. Without
+        # it a hedge the guard flattened stayed "open" in the ledger forever.
+        self._ledger_pending = {}
         # Off-box alerting. Everything above escalates LOCALLY — a log line, the
         # alarm file, a /health field — and all three go quiet together when the box
         # sleeps, loses network, or the supervisor dies. See notify.py: push covers
@@ -909,6 +914,7 @@ class Watchdog:
         report = assess(hl_state, dydx_state,
                         liq_critical_pct=self.liq_critical_pct,
                         size_tolerance_pct=self.size_tolerance_pct)
+        self._record_flattened(report)
         # Book-wide HL margin utilization — a separate, account-level check
         # from assess()'s per-coin ones, merged in here rather than folded
         # into assess() itself so assess() stays exactly as tested: this only
@@ -1006,6 +1012,26 @@ class Watchdog:
             if s:
                 steps.append(float(s))
         return max(steps) if steps else None
+
+    def _mark_flattening(self, act, res):
+        """Remember a coin whose surviving leg this process sent a close for."""
+        if not self._close_failed(res) and act.get("coin"):
+            self._ledger_pending[act["coin"]] = (
+                f"watchdog_{act.get('reason') or 'close'}")
+
+    def _record_flattened(self, report):
+        """Close the ledger row of each coin this process flattened, once seen flat.
+
+        Only on a readable assessment, and only once the coin holds nothing on
+        either venue: a submitted close is not a filled one, and a blind read
+        proves nothing. Best-effort; a ledger failure never touches guarding.
+        """
+        if report.get("unreadable") or not self._ledger_pending:
+            return
+        live = set(report.get("coins") or [])
+        for coin in [c for c in self._ledger_pending if c not in live]:
+            reason = self._ledger_pending.pop(coin)
+            close_open_trade(self.config, coin, reason)
 
     def _opening_leases(self):
         """Coins the daemon is opening right now; empty if unreadable.
@@ -1172,6 +1198,8 @@ class Watchdog:
         counted = len(failed) < len(results)
         if counted:
             self._reduce_attempts[coin] = attempts + 1
+        if plan == "close_hedge" and counted:
+            self._ledger_pending[coin] = "watchdog_near_liquidation"
         self._save_state()
 
         out = {"plan": plan, "qty": qty, "size_step": step, "sequence": order,
@@ -1272,6 +1300,7 @@ class Watchdog:
                         lambda p=pos: self.hl.flatten(p["coin"],
                                                       dry_run=self.dry_run),
                         findings or [])
+                    self._mark_flattening(act, res)
                     done.append({"action": act, "result": res})
                 else:
                     done.append({"action": act, "result": "no position to close"})
@@ -1292,6 +1321,7 @@ class Watchdog:
                             p["coin"], is_buy, abs(p["size"]),
                             dry_run=self.dry_run)),
                         findings or [])
+                    self._mark_flattening(act, res)
                     done.append({"action": act, "result": res})
                 else:
                     done.append({"action": act, "result": "no position to close"})

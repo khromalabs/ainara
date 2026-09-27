@@ -1037,5 +1037,31 @@ class ABlindLoopStopsReportingHealthy(unittest.TestCase):
         self.assertEqual(len(self.beats), 2)  # first failure, then recovery
 
 
+class FlattenedHedgesCloseTheirLedgerRow(unittest.TestCase):
+    """A hedge the watchdog flattened is recorded as closed once seen flat."""
+
+    def test_recorded_after_the_coin_reads_flat_not_when_the_close_is_sent(self):
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008)), _FakeDydx(),
+                        _Cfg(confirm_polls=1))
+        wd.mode = "active"
+        recorded = []
+        with patch.object(W, "close_open_trade",
+                          lambda cfg, coin, reason: recorded.append(
+                              (coin, reason))):
+            wd.guard_once()  # sends the close; the leg still reads open
+            self.assertEqual(recorded, [])
+            wd.hl._positions = []  # the close filled
+            wd.guard_once()
+        self.assertEqual(recorded, [("BTC", "watchdog_broken_hedge")])
+
+    def test_a_refused_close_is_not_recorded(self):
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008)), _FakeDydx(),
+                        _Cfg(confirm_polls=1))
+        wd.mode = "active"
+        wd.hl.reduce = lambda *a, **kw: {"submitted": False, "gate": {}}
+        wd.guard_once()
+        self.assertEqual(wd._ledger_pending, {})
+
+
 if __name__ == "__main__":
     unittest.main()

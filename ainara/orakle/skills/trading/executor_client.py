@@ -187,11 +187,16 @@ class TradingExecutorClient(Skill):
         result = self._request("POST", "/hedge/close", {
             "legs": {"hyperliquid": coin, "dydx": f"{coin}-USD"},
             "dry_run": dry_run,
+            # The daemon closes the ledger row itself (so do the watchdog and
+            # direct calls, which never pass through here) and stores this
+            # verdict as the close context.
+            "exit_decision": d,
         }, timeout=self.write_timeout)
-        # Stamp the close context onto the open row (exit reason, closing spread) so
-        # the trade window is exact. Only on a real close; ledger errors are
-        # swallowed and never affect the returned result.
-        if isinstance(result, dict) and result.get("closed") is True:
+        # Fallback only: record the close here when the daemon reports it did
+        # not (an older daemon, or a ledger it could not reach). Ledger errors
+        # are swallowed and never affect the returned result.
+        if (isinstance(result, dict) and result.get("closed") is True
+                and not (result.get("ledger") or {}).get("recorded")):
             _ledger.record_close(coin, d, result)
         return result
 
