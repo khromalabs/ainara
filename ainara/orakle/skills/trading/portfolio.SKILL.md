@@ -22,7 +22,8 @@ questions and does nothing that moves money:
 - **`analytics`** — realized vs PREDICTED: joins the carry ledger's captured
   prediction (the `decide` verdict at entry) against realized outcomes rebuilt
   over each trade's exact window. Headline is `funding_capture_ratio` (realized
-  funding rate ÷ predicted spread); fees are reported separately, and rate metrics
+  funding rate ÷ predicted edge, the spread's magnitude); fees are reported
+  separately, and rate metrics
   are suppressed for holds too short to annualize honestly. Pass `benchmark=true`
   to additionally ask whether the strategy beat simply **holding** the hedge.
 

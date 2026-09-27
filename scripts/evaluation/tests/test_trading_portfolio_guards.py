@@ -812,5 +812,49 @@ class HistoryReadsArePaged(unittest.TestCase):
         self.assertEqual(counter["n"], P._MAX_HISTORY_PAGES)
 
 
+class CaptureIsMeasuredAgainstTheEdge(unittest.TestCase):
+    """The capture ratio must not depend on which way the hedge was opened.
+
+    The ledger stores the signed smoothed spread. Dividing realized funding
+    (positive when earned either way) by it made every trade opened in the
+    negative direction read as a negative capture, with its fee break-even
+    never reached.
+    """
+
+    def setUp(self):
+        self.p = TradingPortfolio()
+        self._rows = P._ledger.trades
+        # 14 days at a 9.38% annual edge on $1000: what the prediction implies.
+        funding = 1000.0 * 0.0938 * 14 / 365
+        self.p._realized_in_window = lambda c, lo, hi: {
+            "funding_usd": funding, "fees_usd": 1.7, "price_pnl_usd": 0.0,
+            "net_usd": funding - 1.7,
+            "coverage": {"complete": True, "fills_counted": 4, "legs": {},
+                         "reasons": []}}
+
+    def tearDown(self):
+        P._ledger.trades = self._rows
+
+    def _analytics(self, pred):
+        row = {"coin": "BTC", "opened_at": "2026-08-01T00:00:00+00:00",
+               "closed_at": "2026-08-15T00:00:00+00:00", "notional_usd": 1000.0,
+               "pred_smoothed_spread_annual_pct": pred}
+        P._ledger.trades = lambda coin=None, status=None: [row]
+        return self.p._analytics("BTC")
+
+    def test_both_directions_read_the_same(self):
+        pos, neg = self._analytics(9.38), self._analytics(-9.38)
+        for out in (pos, neg):
+            trade = out["trades"][0]
+            self.assertAlmostEqual(trade["funding_capture_ratio"], 1.0, places=2)
+            self.assertTrue(trade["held_past_fee_breakeven"])
+            self.assertEqual(trade["predicted"]["edge_annual_pct"], 9.38)
+            self.assertEqual(out["summary"]["mean_predicted_edge_annual_pct"],
+                             9.38)
+        # The signed value is kept: it records the direction.
+        self.assertEqual(
+            neg["trades"][0]["predicted"]["smoothed_spread_annual_pct"], -9.38)
+
+
 if __name__ == "__main__":
     unittest.main()

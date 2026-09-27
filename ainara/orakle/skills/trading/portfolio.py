@@ -630,13 +630,15 @@ class TradingPortfolio(Skill):
         ~14-day hold, so comparing its dollar total to a trade closed in hours is
         meaningless — but 'did we capture the funding EDGE we predicted' holds at
         any duration. So the headline is `funding_capture_ratio` (realized funding
-        annualized ÷ predicted smoothed spread). Fees are a fixed round-trip cost
-        reported separately, because annualizing them over a short hold produces a
-        scary number that says nothing about the strategy — only about holding too
-        briefly to clear the toll.
+        annualized ÷ the predicted edge, the magnitude of the smoothed spread:
+        the engine opens whichever direction is positive, so the spread's sign
+        records the direction and not the size of the edge). Fees are a fixed
+        round-trip cost reported separately, because annualizing them over a
+        short hold produces a scary number that says nothing about the
+        strategy — only about holding too briefly to clear the toll.
         """
         rows = _ledger.trades(coin=coin, status="closed")
-        trades, captures, pred_spreads, real_funding_annuals = [], [], [], []
+        trades, captures, pred_edges, real_funding_annuals = [], [], [], []
         faults, breaches = [], []
         net_total = 0.0
         for row in rows:
@@ -678,12 +680,19 @@ class TradingPortfolio(Skill):
                                  "closed_at": row["closed_at"],
                                  "net_usd": realized.get("net_usd")})
 
+            # The ledger stores the SIGNED smoothed spread (venue A minus venue
+            # B); the engine shorts whichever side is higher, so the edge it
+            # trades is the magnitude, and realized funding is positive when
+            # earned in either direction. Dividing by the signed value made
+            # every trade opened in one direction read as a negative capture,
+            # and its fee break-even as never reached.
             pred_spread = row.get("pred_smoothed_spread_annual_pct")
-            if (reliable and pred_spread and r_funding_annual is not None
+            pred_edge = abs(pred_spread) if pred_spread else None
+            if (reliable and pred_edge and r_funding_annual is not None
                     and not fault):
-                capture = r_funding_annual / pred_spread
+                capture = r_funding_annual / pred_edge
                 captures.append(capture)
-                pred_spreads.append(pred_spread)
+                pred_edges.append(pred_edge)
                 real_funding_annuals.append(r_funding_annual)
 
             trades.append({
@@ -697,6 +706,7 @@ class TradingPortfolio(Skill):
                 "annualized_metrics_reliable": reliable,
                 "predicted": {
                     "smoothed_spread_annual_pct": pred_spread,
+                    "edge_annual_pct": pred_edge,
                     "net_annual_pct_on_capital": row.get(
                         "pred_net_annual_pct_on_capital"),
                     "net_over_hold_pct_notional": row.get(
@@ -731,7 +741,7 @@ class TradingPortfolio(Skill):
                 "mark_drift_pct": None,
                 "funding_capture_ratio": _round(capture, 3),
                 "held_past_fee_breakeven": (hold_days >= self._fee_breakeven_days(
-                    pred_spread)) if pred_spread else None,
+                    pred_edge)) if pred_edge else None,
                 # Present and False only when something is actually wrong, so a
                 # reader scanning for it finds nothing on a healthy trade.
                 "data_quality_ok": fault is None,
@@ -764,7 +774,7 @@ class TradingPortfolio(Skill):
                 "counted_in_totals": True,
                 "breaches": breaches,
             },
-            "mean_predicted_spread_annual_pct": _round(_mean(pred_spreads), 2),
+            "mean_predicted_edge_annual_pct": _round(_mean(pred_edges), 2),
             "mean_realized_funding_annual_pct": _round(_mean(real_funding_annuals), 2),
             "mean_funding_capture_ratio": _round(_mean(captures), 3),
             "winners": sum(1 for t in trades
