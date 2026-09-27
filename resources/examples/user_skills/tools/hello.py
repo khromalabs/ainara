@@ -21,8 +21,26 @@ from typing import Annotated, Any, Dict
 
 from ainara.framework.skill import Skill
 
-# test it in Polaris with:
+# test it in Polaris with the following command:
 # /testuserui ToolsHello {"success": true, "message": "Hello, John!", "timestamp": "2025-04-14T12:00:00"}
+
+# NOTES about the skill.py format:
+# - The docbook definition below the class declaration is meant to be permanently
+#   kept in the conversation, all the skill possibilities must be concisely defined
+#   there including expected parameters. Syntax is not so important here as
+#   semantics, intention.
+# - Matcher info is used in two different stages in the Orakle engine:
+#   1) Embeddings based filtering (including keywords, double '\n' splits text and keywords)
+#   2) LLM based final decision (keywords not included)
+#      The 2nd filtering stage also includes the full `Annotated` information
+#      providing the full expected syntax.
+# - Ainara Skills also support schenduled execution (pro-active execution).
+#   Check `ainara/orakle/skills/messaging/inbox.py` as an example
+# - A _PROPERTIES special array can be used to define a set of configurable
+#   properties what will be displayed in the Polaris Wizard, these properties
+#   are accesible also in Bureau orchestration plans, so AI agents can be prompted
+#   according to the skills configuration. Right now _PROPERTIES are only
+#   integrated for Nexus Applications skills.
 
 
 class ToolsHello(Skill):
@@ -30,6 +48,7 @@ class ToolsHello(Skill):
 
     matcher_info = (
         "Use this skill to say hello or test the system. "
+        "\n\n"
         "Keywords: hello, hi, test, ping."
     )
 

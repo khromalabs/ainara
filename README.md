@@ -7,17 +7,17 @@
 
 Core elements:
 
-- **ORAKLE Engine**: Exclusive client-side AI skills (function calling) hybrid matching framework. Real-time multi-agent orchestration. Designed to run flawlesslly both with big LLM providers, and small LLM local systems.
-- **GREEN Memory**: True relational persistence (Subconscious processing).
-- **NEXUS Skills**: AI-Driven skills mixing data and interface generation.
+- **ORAKLE Engine**: Client-side AI skills (function calling) hybrid matching framework. Designed to run flawlesslly both with big LLM providers, and small LLM local systems.
+- **GREEN Memory**: Generatively Reinforced Evolving Embeddings Network. True relational persistence (Subconscious processing).
+- **NEXUS Skills**: AI-Driven skills mixing data and template based interface generation.
 - **Bureau agents Orchestrator**: Orakle powered agents server, runs individual agentic tasks or DAG agent orchestration plans.
 - **Sovereign by Design**: Your data, your keys, your consciousness.
 
 Ainara is a modular AI integration platform that reimagines human-computer interaction through natural conversation, made with components which work together to create intelligent companions that collaborate helping with tasks, generating insights, and transforming how people work with technology through voice and intuitive interfaces.
 
-It differentiates itself from other projects with its "user-first" philosophy. Eg. AI skills/tools can be both locally in the user's system, using the Orakle server approach developed by this project, or be accessed remotelly via the MCP protocol. The project also emphasizes a "local-first" AI approach via Ollama full integration, although this is not strictly enforced, allowing users to select from over 100 LLM providers via the excellent LiteLLM library.
+It differentiates itself from other projects with its "user-first" philosophy. Skills can be both local or accessed remotelly via the MCP protocol. The AI model can be either local or remote.
 
-Finally, this project creates a truly AI collaborating-companion experience. Conversations are not session-based; user interactions with the LLM are recorded permanently as a continuous conversation (though users can choose to disable the memory feature at any moment).
+Polaris creates a truly AI collaborating-companion experience. Conversations are not session-based; user interactions with the LLM are recorded permanently as a continuous conversation (though users can choose to disable the memory feature at any moment).
 
 All interaction data remains private on the user's system.
 
@@ -55,6 +55,10 @@ List of the currently available skills already integrated in the Ainara AI Assis
 - **Time Weather**: Get weather information.
 - **Tools Calculator**: Evaluate non-trivial mathematical expressions.
 - **Inbox**: Periodically checks many possible messaging sources.
+
+## skill.py
+
+This framework proposes a really simple approach towards skill definition, skills can be self-contained in a Python module, and a `_components` subdirectoy can optionally provide a visual template interface to the skill. The assistant will generate automatically the interface but the skill data is injected in the conversation. Since version 0.11 users can create and use their own skills in the distributed bundle. Check `resources/examples/user_skill/tools/hello.py`
 
 
 ## Installation
