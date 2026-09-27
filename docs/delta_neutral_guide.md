@@ -447,7 +447,7 @@ runs when you remember it is not an exit; this is what stops a position sitting
 open after its edge has gone.
 
 **Each coin needs its own scheduled exit.** A `scheduler.yaml` entry targets a
-plan and passes its coin via `vars`, so one plan file serves every asset:
+plan and passes its coin via `variables`, so one plan file serves every asset:
 
 ```yaml
 delta_neutral_exit:          # BTC (default)
@@ -456,7 +456,7 @@ delta_neutral_exit:          # BTC (default)
   enabled: true
 delta_neutral_exit_eth:      # ETH — its own schedule key, same plan file
   plan: delta_neutral_exit
-  vars: { coin: ETH }
+  variables: { coin: ETH }
   cron: "6 * * * *"
   enabled: true
 ```

@@ -80,7 +80,8 @@ module.exports = {
         version: "",
         timestamp: "",
         firstLaunch: true,
-        tosAccepted: false
+        tosAccepted: false,
+        tosAcceptedVersion: ""
     },
     startup: {
         autoStart: false,
@@ -102,5 +103,8 @@ module.exports = {
     },
     wakeword: {
         enabled: false
+    },
+    sentinel: {
+        fontSize: 12
     }
 };

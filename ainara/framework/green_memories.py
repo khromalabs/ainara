@@ -288,6 +288,58 @@ class GREENMemories:
         self.llm = llm
         self.context_window = llm.get_context_window() or 4096  # default 4k
 
+    _ALL_MEMORY_PROVIDERS_FAILED = object()
+
+    def _get_memory_llm(self, provider_name: Optional[str]):
+        """Return a cached memory-processing LLM for the named provider."""
+        if provider_name is None:
+            return self.llm
+
+        if provider_name not in self._memory_llm_cache:
+            self._memory_llm_cache[provider_name] = create_llm_backend(
+                config.get("llm", {}),
+                selected_provider=provider_name,
+            )
+
+        return self._memory_llm_cache[provider_name]
+
+    # TODO: This provider-fallback mechanism may prove useful outside
+    # GREENMemories; consider extracting it into a generic utility later.
+    def _run_with_memory_llm(
+        self,
+        task,
+        blacklist: Optional[set] = None,
+    ) -> tuple[Any, Optional[str]]:
+        """Run ``task(llm)`` using the first available memories processor.
+
+        Providers from ``llm.memories_processors`` are attempted in order.
+        The default LLM (``None`` provider) is always the final fallback.
+        Failures are blacklisted for the lifetime of the supplied set.
+        """
+
+        if blacklist is None:
+            blacklist = set()
+
+        providers = config.get("llm.memories_processors", []) or []
+
+        for provider_name in [*providers, None]:
+            if provider_name in blacklist:
+                continue
+
+            try:
+                llm = self._get_memory_llm(provider_name)
+                return task(llm), provider_name
+            except Exception as exc:
+                logger.warning(
+                    "Memory LLM provider %r failed: %s",
+                    provider_name,
+                    exc,
+                )
+                if provider_name is not None:
+                    blacklist.add(provider_name)
+
+        return self._ALL_MEMORY_PROVIDERS_FAILED, None
+
     def _create_memories_table(self):
         """Creates the user_memories table in the database if it doesn't exist."""
         try:
@@ -812,55 +864,68 @@ class GREENMemories:
             A string containing the narrative user profile, or None if no
             memories exist.
         """
-        if top_k is None:
-            # Dynamically set top_k for profile summary based on context window
-            if self.context_window <= 4000:
-                top_k = 35
-            if self.context_window <= 8000:
-                top_k = 35
-            elif self.context_window <= 32768:
-                top_k = 40
+        # TODO: Boot-time memory prep is split between pybridge.create_app()
+        # (`generate_user_profile_summary`) and ChatManager.__init__()
+        # (`generate_recent_memories_summary`). Consider centralising later.
+        logger.info("Generating narrative user profile...")
+
+        def _task(llm) -> Optional[str]:
+            context_window = llm.get_context_window() or 4096
+
+            if top_k is None:
+                if context_window <= 8000:
+                    actual_top_k = 30
+                elif context_window <= 32768:
+                    actual_top_k = 40
+                else:
+                    actual_top_k = 60
+
+                logger.info(
+                    "Selected memory LLM context window is %d, setting"
+                    " top_k for profile summary to %d",
+                    context_window,
+                    actual_top_k,
+                )
             else:
-                top_k = 60
-            logger.info(
-                f"Context window is {self.context_window}, dynamically setting"
-                f" top_k for profile summary to {top_k}"
+                actual_top_k = top_k
+
+            key_memories = self.get_key_memories(limit=actual_top_k)
+
+            if not key_memories:
+                logger.info(
+                    "No key memories found to generate a profile summary."
+                )
+                return None
+
+            formatted_memories = [
+                f"- {mem['memory']} (Relevance: {mem['relevance']:.2f})"
+                for mem in key_memories
+            ]
+            memories_text = "\n".join(formatted_memories)
+
+            user_prompt = self.template_manager.render(
+                "framework.green_memories.generate_user_profile",
+                {"memories_text": memories_text},
             )
-        logger.info(
-            f"Generating narrative user profile from top {top_k} key"
-            " memories..."
-        )
-        key_memories = self.get_key_memories(limit=top_k)
 
-        if not key_memories:
-            logger.info("No key memories found to generate a profile summary.")
-            return None
-
-        # Prepare the memories for the prompt, including relevance scores
-        formatted_memories = [
-            f"- {mem['memory']} (Relevance: {mem['relevance']:.2f})"
-            for mem in key_memories
-        ]
-        memories_text = "\n".join(formatted_memories)
-
-        user_prompt = self.template_manager.render(
-            "framework.green_memories.generate_user_profile",
-            {"memories_text": memories_text},
-        )
-
-        try:
-            profile_summary = self.llm.chat(
+            return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
             )
-            logger.info(
-                f"Generated user profile summary: {profile_summary[:150]}..."
-            )
-        except Exception:
-            profile_summary = "User profile couldn't be generated"
-            logger.error(profile_summary)
 
-        return profile_summary
+        result, _provider_used = self._run_with_memory_llm(_task)
+
+        if result is self._ALL_MEMORY_PROVIDERS_FAILED:
+            logger.error(
+                "User profile summary could not be generated with any"
+                " configured memory LLM."
+            )
+            return "User profile couldn't be generated"
+
+        if result is not None:
+            logger.info(f"Generated user profile summary: {result[:150]}...")
+
+        return result
 
     def generate_recent_memories_summary(
         self, top_k: Optional[int] = None
@@ -878,100 +943,123 @@ class GREENMemories:
             A string containing the narrative of recent memories, or None if no
             memories exist.
         """
-        if top_k is None:
-            # Dynamically set top_k for profile summary based on context window
-            if self.context_window <= 4000:
-                top_k = 35
-            if self.context_window <= 8000:
-                top_k = 35
-            elif self.context_window <= 32768:
-                top_k = 50
+        logger.info("Generating recent memories summary...")
+
+        def _task(llm) -> Optional[str]:
+            context_window = llm.get_context_window() or 4096
+
+            if top_k is None:
+                if context_window <= 8000:
+                    actual_top_k = 30
+                elif context_window <= 32768:
+                    actual_top_k = 40
+                else:
+                    actual_top_k = 60
+
+                logger.info(
+                    "Selected memory LLM context window is %d, setting"
+                    " top_k for recent memories summary to %d",
+                    context_window,
+                    actual_top_k,
+                )
             else:
-                top_k = 75
-            logger.info(
-                f"Context window is {self.context_window}, dynamically setting"
-                f" top_k for recent memories summary to {top_k}"
+                actual_top_k = top_k
+
+            query = (
+                "SELECT * FROM user_memories WHERE status = 'current'"
+                " ORDER BY created_at DESC"
             )
-        logger.info(
-            f"Generating narrative of recent memories from top {top_k} most"
-            " recent memories..."
-        )
+            params: tuple = ()
 
-        # Fetch recent memories
-        query = (
-            "SELECT * FROM user_memories WHERE status = 'current' ORDER BY"
-            " created_at DESC"
-        )
-        params = ()
+            if actual_top_k is not None:
+                query += " LIMIT ?"
+                params += (actual_top_k,)
 
-        if top_k is not None:
-            query += " LIMIT ?"
-            params += (top_k,)
+            cursor = self.storage.conn.cursor()
+            cursor.execute(query, params)
+            recent_memories = [
+                self._dict_from_row(row) for row in cursor.fetchall()
+            ]
 
-        cursor = self.storage.conn.cursor()
-        cursor.execute(query, params)
-        recent_memories = [self._dict_from_row(row) for row in cursor.fetchall()]
-
-        if not recent_memories:
-            logger.info("No recent memories found to generate a summary.")
-            return None
-
-        # Prepare the memories for the prompt with temporal context
-        formatted_memories = []
-        for mem in recent_memories:
-            memory_text = mem['memory']
-            last_updated = mem.get('last_updated')
-            created_at = mem.get('created_at')
-
-            last_updated_terse = format_relative_time_terse(last_updated)
-            created_at_terse = format_relative_time_terse(created_at)
-
-            # Determine if this is a recurring memory (>5 min between creation and last update)
-            show_both = False
-            if created_at and last_updated:
-                try:
-                    created_dt = datetime.fromisoformat(created_at)
-                    updated_dt = datetime.fromisoformat(last_updated)
-                    if created_dt.tzinfo is None:
-                        created_dt = created_dt.replace(tzinfo=timezone.utc)
-                    if updated_dt.tzinfo is None:
-                        updated_dt = updated_dt.replace(tzinfo=timezone.utc)
-                    gap_seconds = (updated_dt - created_dt).total_seconds()
-                    show_both = gap_seconds > 300  # 5 minutes
-                except (ValueError, TypeError):
-                    pass
-
-            if show_both and created_at_terse and last_updated_terse:
-                formatted_memories.append(
-                    f"- [first seen: {created_at_terse} | last mentioned: {last_updated_terse}] {memory_text}"
+            if not recent_memories:
+                logger.info(
+                    "No recent memories found to generate a summary."
                 )
-            elif last_updated_terse:
-                formatted_memories.append(
-                    f"- [{last_updated_terse}] {memory_text}"
+                return None
+
+            formatted_memories = []
+            for mem in recent_memories:
+                memory_text = mem['memory']
+                last_updated = mem.get('last_updated')
+                created_at = mem.get('created_at')
+
+                last_updated_terse = format_relative_time_terse(
+                    last_updated
                 )
-            else:
-                formatted_memories.append(f"- {memory_text}")
+                created_at_terse = format_relative_time_terse(created_at)
 
-        memories_text = "\n".join(formatted_memories)
+                show_both = False
+                if created_at and last_updated:
+                    try:
+                        created_dt = datetime.fromisoformat(created_at)
+                        updated_dt = datetime.fromisoformat(last_updated)
 
-        user_prompt = self.template_manager.render(
-            "framework.green_memories.generate_recent_memories",
-            {"memories_text": memories_text},
-        )
+                        if created_dt.tzinfo is None:
+                            created_dt = created_dt.replace(
+                                tzinfo=timezone.utc
+                            )
+                        if updated_dt.tzinfo is None:
+                            updated_dt = updated_dt.replace(
+                                tzinfo=timezone.utc
+                            )
 
-        try:
-            recent_summary = self.llm.chat(
+                        gap_seconds = (
+                            updated_dt - created_dt
+                        ).total_seconds()
+                        show_both = gap_seconds > 300
+                    except (ValueError, TypeError):
+                        pass
+
+                if show_both and created_at_terse and last_updated_terse:
+                    formatted_memories.append(
+                        f"- [first seen: {created_at_terse} |"
+                        f" last mentioned: {last_updated_terse}]"
+                        f" {memory_text}"
+                    )
+                elif last_updated_terse:
+                    formatted_memories.append(
+                        f"- [{last_updated_terse}] {memory_text}"
+                    )
+                else:
+                    formatted_memories.append(f"- {memory_text}")
+
+            memories_text = "\n".join(formatted_memories)
+
+            user_prompt = self.template_manager.render(
+                "framework.green_memories.generate_recent_memories",
+                {"memories_text": memories_text},
+            )
+
+            return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
             )
-            logger.info(
-                f"Generated recent memories summary: {recent_summary[:150]}..."
-            )
-        except Exception:
-            recent_summary = "Recent memories summary couldn't be generated"
-            logger.error(recent_summary)
 
-        return recent_summary
+        result, _provider_used = self._run_with_memory_llm(_task)
+
+        if result is self._ALL_MEMORY_PROVIDERS_FAILED:
+            logger.error(
+                "Recent memories summary could not be generated with any"
+                " configured memory LLM."
+            )
+            return "Recent memories summary couldn't be generated"
+
+        if result is not None:
+            logger.info(
+                f"Generated recent memories summary: {result[:150]}..."
+            )
+
+        return result
 
     def get_key_memories(
         self,
@@ -1342,11 +1430,6 @@ class GREENMemories:
             )
             return
 
-        # Check if the user has a list of favorites LLMs to process memories,
-        # pick the first one working or use the default LLM if not
-        memories_processors = config.get("llm.memories_processors", [])
-        llm_config = config.get("llm", {})
-
         logger.info(
             f"Processing {len(conversation_turns)} new conversation turns."
         )
@@ -1367,48 +1450,22 @@ class GREENMemories:
             start_index = max(0, i - self.extraction_context_turns)
             context_turns = conversation_turns[start_index: i + 1]
 
-            processed_memory = None
-            success = False
+            processed_memory, _provider_used = self._run_with_memory_llm(
+                lambda llm: self._extract_and_assimilate_memory(
+                    context_turns,
+                    newly_created_or_updated_memories_in_batch,
+                    session_update_counts,
+                    llm=llm,
+                ),
+                blacklist=blacklisted_providers,
+            )
 
-            # Try preferred processors first, then fallback to default (None)
-            providers_to_try = memories_processors + [None]
-
-            for provider_name in providers_to_try:
-                if provider_name in blacklisted_providers:
-                    continue
-
-                try:
-                    if provider_name:
-                        if provider_name not in self._memory_llm_cache:
-                            self._memory_llm_cache[provider_name] = create_llm_backend(
-                                llm_config, selected_provider=provider_name
-                            )
-                        current_llm = self._memory_llm_cache[provider_name]
-                    else:
-                        current_llm = self.llm
-
-                    # The last turn in the window is the one we are primarily analyzing.
-                    # The preceding turns provide the context.
-                    processed_memory = self._extract_and_assimilate_memory(
-                        context_turns,
-                        newly_created_or_updated_memories_in_batch,
-                        session_update_counts,
-                        llm=current_llm
-                    )
-                    success = True
-                    break  # Successfully processed, exit provider loop
-                except Exception as e:
-                    provider_label = provider_name or "default"
-                    logger.warning(
-                        f"Provider '{provider_label}' failed to process memory for turn "
-                        f"ending at {current_timestamp}. Error: {e}. Blacklisting for the rest of this batch."
-                    )
-                    blacklisted_providers.add(provider_name)
-
-            if not success:
+            if processed_memory is self._ALL_MEMORY_PROVIDERS_FAILED:
                 logger.error(
-                    f"All providers failed to process memory for turn ending with message at "
-                    f"timestamp {current_timestamp}. This turn will be skipped."
+                    "All providers failed to process memory for turn ending"
+                    " with message at timestamp %s. This turn will be"
+                    " skipped.",
+                    current_timestamp,
                 )
                 continue
 
@@ -2038,6 +2095,9 @@ class GREENMemories:
         user_message, assistant_message = conversation_turns[-1]
         llm_response_str = ""
 
+        active_llm = llm or self.llm
+        memory_context_window = active_llm.get_context_window() or 4096
+
         try:
             # Step 1: Create conversation snippet for the LLM
             conversation_snippet = "\n".join(
@@ -2058,16 +2118,16 @@ class GREENMemories:
             # logger.info(f"Is query substantive? {is_substantive}")
             if self.vector_storage and is_substantive:
                 # Fetch a few relevant memories to provide context to the LLM
-                if self.context_window <= 8192:
+                if memory_context_window <= 8192:
                     search_limit = 20
-                elif self.context_window <= 32768:
+                elif memory_context_window <= 32768:
                     search_limit = 35
                 else:
                     search_limit = 60
                 logger.info(
-                    f"Context window is {self.context_window}, dynamically"
-                    " setting memory search limit for LLM context to"
-                    f" {search_limit}"
+                    f"Context window is {memory_context_window},"
+                    " dynamically setting memory search limit for LLM"
+                    f" context to {search_limit}"
                 )
 
                 search_results = self.vector_storage.search_with_scores(
@@ -2120,7 +2180,6 @@ class GREENMemories:
             #     "Sending memory processing request to LLM with user prompt:\n---"
             #     f"-----\n{processing_prompt}\n--------"
             # )
-            active_llm = llm or self.llm
             llm_response_str = active_llm.chat(
                 chat_history=processing_history, stream=False
             )

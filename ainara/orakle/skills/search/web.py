@@ -77,6 +77,30 @@ class SearchWeb(Skill):
         for engine_name, engine_class in engine_classes.items():
             engine_config = search_config.get(engine_name, {})
 
+            # SearXNG is keyless and opt-in: it only joins the engine pool
+            # when the user configured a base_url (empty/missing = engine
+            # disabled).
+            if engine_name == "searxng":
+                base_url = (engine_config.get("base_url") or "").strip()
+                if not base_url:
+                    logger.info(
+                        "SearXNG search engine disabled: no base_url"
+                        " configured"
+                    )
+                    continue
+                try:
+                    self.engines[engine_name] = engine_class(
+                        base_url=base_url,
+                        api_key=engine_config.get("api_key"),
+                        category_map=engine_config.get("category_map"),
+                    )
+                    logger.info("SearXNG search engine initialized")
+                except Exception as e:
+                    logger.error(
+                        f"Failed to initialize {engine_name} search: {str(e)}"
+                    )
+                continue
+
             # Check if this engine has an API key configured
             if api_key := engine_config.get("api_key"):
                 try:
@@ -288,15 +312,16 @@ class SearchWeb(Skill):
                 # Add recency parameters for single engine
                 engine_kwargs = dict(kwargs)
                 if recency:
+                    # Write the "<engine>_params" recency dict directly into
+                    # engine_kwargs, then flatten it so the engine receives
+                    # the params as plain kwargs (same as _search_with_engine
+                    # does in the meta path).
                     self._add_recency_params(
-                        recency,
-                        [engine_name],
-                        {"engine_params": engine_kwargs},
+                        recency, [engine_name], engine_kwargs
                     )
-                    if f"{engine_name}_params" in engine_kwargs:
-                        engine_kwargs.update(
-                            engine_kwargs.pop(f"{engine_name}_params")
-                        )
+                    engine_kwargs.update(
+                        engine_kwargs.pop(f"{engine_name}_params", {})
+                    )
 
                 results = await self.engines[engine_name].search(
                     query=query, num_results=num_results, **engine_kwargs
@@ -774,6 +799,24 @@ class SearchWeb(Skill):
 
         return unique_results
 
+    @staticmethod
+    def _recency_to_days(recency: str) -> float:
+        """Convert a recency string ("24h", "7d", "1w", "1m", "1y") into an
+        approximate number of days, for mapping onto coarse engine time
+        filters (Brave "freshness", SearXNG "time_range")."""
+        unit = recency[-1].lower()
+        try:
+            value = int(recency[:-1])
+        except ValueError:
+            return 0.0
+        return {
+            "h": value / 24.0,
+            "d": float(value),
+            "w": value * 7.0,
+            "m": value * 30.0,
+            "y": value * 365.0,
+        }.get(unit, 0.0)
+
     def _add_recency_params(
         self, recency: str, engines: List[str], kwargs: Dict[str, Any]
     ) -> None:
@@ -831,6 +874,34 @@ class SearchWeb(Skill):
             elif engine_name == "tavily":
                 # Tavily might use time_period (if supported)
                 kwargs[f"{engine_name}_params"]["time_period"] = recency
+
+            elif engine_name == "brave":
+                # Brave uses a coarse "freshness" filter: pd = past day,
+                # pw = past week, pm = past month, py = past year
+                days = self._recency_to_days(recency)
+                if days <= 1:
+                    freshness = "pd"
+                elif days <= 7:
+                    freshness = "pw"
+                elif days <= 31:
+                    freshness = "pm"
+                else:
+                    freshness = "py"
+                kwargs[f"{engine_name}_params"]["freshness"] = freshness
+
+            elif engine_name == "searxng":
+                # SearXNG uses a coarse "time_range" filter:
+                # day, week, month or year
+                days = self._recency_to_days(recency)
+                if days <= 1:
+                    time_range = "day"
+                elif days <= 7:
+                    time_range = "week"
+                elif days <= 31:
+                    time_range = "month"
+                else:
+                    time_range = "year"
+                kwargs[f"{engine_name}_params"]["time_range"] = time_range
 
             # Google doesn't have a direct recency filter in this implementation
 

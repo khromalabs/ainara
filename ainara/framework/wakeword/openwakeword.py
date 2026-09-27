@@ -7,6 +7,7 @@ import platform
 
 from ainara.framework.config import get_data_dir
 from ainara.framework.wakeword.base import WakeWordBackend
+from ainara.framework.config import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class OpenWakeWordBackend(WakeWordBackend):
     Requires: pip install openwakeword
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: ConfigManager):
         self.config = config
         self.model = None
         self.chunk_size = 1280  # openWakeWord standard chunk size (80ms @ 16kHz)

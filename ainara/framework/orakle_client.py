@@ -46,7 +46,7 @@ def call_skill(
     skill_id: str,
     params: dict,
     timeout: int = 300,
-    max_retries: int = 5,
+    max_retries: int = 3,
 ) -> str:
     import time
 

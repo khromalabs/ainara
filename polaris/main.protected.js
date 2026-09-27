@@ -17,6 +17,7 @@
 // Lesser General Public License for more details.
 
 const { app, Tray, Menu, dialog, globalShortcut, BrowserWindow, ipcMain, shell, screen, Notification, net } = require('electron');
+const fs = require('fs');
 // const { autoUpdater } = require('electron-updater');
 const { EventEmitter } = require('events');
 const semver = require('semver');
@@ -31,7 +32,10 @@ const ChatDisplayWindow = require('./windows/ChatDisplayWindow');
 const SplashWindow = require('./windows/SplashWindow');
 const UpdateProgressWindow = require('./windows/UpdateProgressWindow');
 const ServiceManager = require('./framework/ServiceManager');
+const SentinelRunner = require('./framework/SentinelRunner');
+const SentinelWindow = require('./windows/SentinelWindow');
 const ConfigHelper = require('./framework/ConfigHelper');
+const { TOS_VERSION } = require('./framework/constants');
 const Logger = require('./framework/logger');
 const process = require('process');
 const { nativeTheme } = require('electron');
@@ -57,6 +61,51 @@ const ollama = require('ollama');
 
 
 const config = new ConfigManager();
+
+// Edition of this bundle: 'public' (no wallet/NFT gate) or 'supporters'.
+// Resolution order: AINARA_EDITION env override → '.edition' marker shipped
+// inside the servers bundle → default 'public'. Real entitlement enforcement
+// lives inside the protected skills, so a missing marker only means the UI
+// does not ask for a wallet.
+function resolveAppEdition() {
+    const envEdition = (process.env.AINARA_EDITION || '').trim().toLowerCase();
+    if (envEdition === 'public' || envEdition === 'supporters') {
+        return envEdition;
+    }
+    const baseDir = ServiceManager.executablesDir;
+    for (const rel of [path.join('_internal', '.edition'), '.edition']) {
+        try {
+            const value = fs.readFileSync(path.join(baseDir, rel), 'utf8').trim().toLowerCase();
+            if (value === 'public' || value === 'supporters') {
+                return value;
+            }
+        } catch (e) { /* marker not at this path — try next candidate */ }
+    }
+    if (app.isPackaged) {
+        Logger.warn(`Edition marker not found under ${baseDir}; defaulting to 'public'`);
+    }
+    return 'public';
+}
+const appEdition = resolveAppEdition();
+
+function detectSentinelRequest() {
+    if (process.argv.includes('--sentinel')) {
+        return { sentinel: true, invalidEnvValue: null };
+    }
+    const raw = (process.env.AINARA_SENTINEL_MODE || '').trim().toLowerCase();
+    if (!raw) return { sentinel: false, invalidEnvValue: null };
+    if (['1', 'true', 'yes', 'on'].includes(raw)) {
+        return { sentinel: true, invalidEnvValue: null };
+    }
+    if (['0', 'false', 'no', 'off'].includes(raw)) {
+        return { sentinel: false, invalidEnvValue: null };
+    }
+    return { sentinel: false, invalidEnvValue: raw };
+}
+
+const requestedSentinel = detectSentinelRequest();
+let activeMode = 'polaris'; // 'polaris' | 'sentinel'
+
 let updateAvailable = null;
 let windowManager = null;
 let tray = null;
@@ -64,6 +113,8 @@ let shortcutRegistered = false;
 let splashWindow = null;
 let setupWindow = null;
 let wizardActive = false;
+let reauthMode = false;
+let reauthResolve = null;
 let updateProgressWindow = null;
 let ollamaClient = null;
 let appReady = false;
@@ -93,6 +144,12 @@ function isFirstRun() {
     return !config.get('setup.completed', false);
 }
 
+// True when the stored ToS acceptance predates the current terms version,
+// meaning the setup wizard must be shown so the user can re-accept.
+function needsTosReacceptance() {
+    return config.get('setup.tosAcceptedVersion', '') !== TOS_VERSION;
+}
+
 var executingSetupComplete = false;
 
 async function setupComplete() {
@@ -111,8 +168,9 @@ async function setupComplete() {
 
     // Close setup window
     try {
-        setupWindow?.close();
-        setupWindow?.destroy();
+        if (setupWindow && !setupWindow.isDestroyed()) {
+            setupWindow.destroy();
+        }
     } catch (error) {
         Logger.error('Error closing setupWindow:' + error);
         app.quit();
@@ -133,19 +191,26 @@ async function setupComplete() {
 
     // Restart application
     Logger.info('Reinitializing application (firstInitialization=false)');
-    await appInitialization(false);
+    if (requestedSentinel.sentinel) {
+        activeMode = 'sentinel';
+        await startSentinelMode();
+    } else {
+        await appInitialization(false);
+    }
     executingSetupComplete = false;
 }
 
 
 // Show the setup wizard for first-time users
-function showSetupWizard(validationErrors = []) {
-    // console.trace();
+function showSetupWizard(validationErrors = [], options = {}) {
+    const { reauth = false } = options;
+    reauthMode = reauth;
+
     if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
         Logger.warn('Configuration validation failed, invalidating setup.complete because of these errors:', validationErrors);
         config.set("setup.completed", false);
     } else {
-        Logger.info('Showing setup wizard');
+        Logger.info(reauth ? 'Showing re-auth wizard' : 'Showing setup wizard');
     }
 
     // Notify com-ring wizard active
@@ -155,86 +220,74 @@ function showSetupWizard(validationErrors = []) {
         }
     });
 
-   // Disable tray icon
-    if (tray) {
-        tray.destroy();
-        tray = null;
+    // Only full setup tears down tray/shortcuts/config
+    if (!reauth) {
+        if (tray) { tray.destroy(); tray = null; }
+        config.set('setup.completed', false);
+        globalShortcut.unregisterAll();
+        shortcutRegistered = false;
     }
 
-    config.set('setup.completed', false)
+    wizardActive = true;
 
-    // Get the appropriate icon based on theme
     const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
     const iconPath = path.resolve(__dirname, 'assets', `tray-icon-active-${theme}.png`);
-
-    wizardActive = true;
-    console.log("showSetupWizard: Disabled shortcutKey")
-    globalShortcut.unregisterAll();
-    shortcutRegistered = false;
-
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    Logger.info("Screen X:" + screenWidth + " Screen Y:" + screenWidth)
 
-    // Create setup window
+    const winWidth = reauth ? 480 : Math.floor(screenWidth * 0.7);
+    const winHeight = reauth ? 620 : Math.floor(screenHeight * 0.95);
+
     setupWindow = new BrowserWindow({
-        width: Math.floor(screenWidth * 0.7),
-        height: Math.floor(screenHeight * 0.95),
+        width: winWidth,
+        height: winHeight,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false
         },
-        title: 'Polaris Setup',
+        title: reauth ? 'License Verification' : 'Polaris Setup',
         show: false,
         center: true,
         resizable: false,
         frame: false,
-        skipTaskbar: false, // Show taskbar icon for setup window
+        skipTaskbar: false,
         transparent: true,
         iconPath: iconPath,
         hasShadow: false
     });
-    // setupWindow.webContents.openDevTools();
+    // setupWindow.openDevTools();
+
+    // If the user closes the setup wizard from the taskbar/Alt+F4,
+    // quit the whole app so hidden services are not left running.
+    let setupQuitRequested = false;
+    setupWindow.on('close', (event) => {
+        if (setupQuitRequested) return;
+        event.preventDefault();
+        setupQuitRequested = true;
+        app.quit();
+    });
 
     setupWindow.setIcon(iconPath);
-    // updateTrayIcon();
-
-    // Load the setup page
-    setupWindow.loadFile(path.join(__dirname, 'components', 'setup.html'));
+    setupWindow.loadFile(
+        path.join(__dirname, 'components', 'setup.html'),
+        { query: { mode: reauth ? 'reauth' : 'full', edition: appEdition } }
+    );
 
     setupWindow.once('ready-to-show', () => {
         if (validationErrors && validationErrors.length > 0 && config.get("setup.completed", false)) {
             dialog.showErrorBox(
                 'Configuration Error',
-                'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors,
-                // 'The configuration file contains the following errors:\n\n' + validationErrors + "\n\nThe setup wizard will be opened now."
+                'The configuration is missing some required values. The setup wizard will now launch. Error(s):\n\n' + validationErrors
             );
         }
         setupWindow.show();
-        // // Pass validation errors to the wizard window
-        // if (validationErrors && validationErrors.length > 0) {
-        //     setupWindow.webContents.send('config-validation-errors', validationErrors);
-        // }
     });
+}
 
-
-    // If the user closes the setup window without completing setup
-    ipcMain.on('close-setup-window', async () => {
-        Logger.info('close-setup-window event');
-        setupWindow?.close();
-        if (config.get('setup.completed', false)) {
-            // TODO: Don't know what this means, setupComplete is needed here
-            // Correction: Prevented re-entrant call to setupComplete.
-            Logger.info('Setup complete, window closed by user. Main flow will continue.');
-            setupComplete();
-        } else {
-            Logger.info('Setup incomplete - forcing immediate exit');
-            await ServiceManager.stopServices();
-            app.quit(); // Hard exit without cleanup
-        }
+function showReauthWizard() {
+    return new Promise((resolve) => {
+        reauthResolve = resolve;
+        showSetupWizard([], { reauth: true });
     });
-
-    // Handle setup completion
-    ipcMain.on('setup-complete', setupComplete);
 }
 
 async function checkConfigAndProceed() {
@@ -249,8 +302,8 @@ async function checkConfigAndProceed() {
         }
         const configStatus = await response.json();
 
-        // Show wizard if it's the first run or if the original config was invalid
-        if (isFirstRun() || !configStatus.initial_config_valid) {
+        // Show wizard if it's the first run, the ToS version changed, or the original config was invalid
+        if (isFirstRun() || needsTosReacceptance() || !configStatus.initial_config_valid) {
             if (splashWindow && !splashWindow.window.isDestroyed()) {
                 splashWindow.close();
             }
@@ -302,6 +355,32 @@ async function appFirstInitializationTasks() {
     // Apply auto-start setting on launch (in case it drifted, e.g. a reinstall
     // or the user toggled it outside Ainara).
     applyAutoStartSetting();
+
+    // --- Sentinel mode fork (before any Polaris-only initialization) ---
+    if (requestedSentinel.invalidEnvValue) {
+        dialog.showErrorBox(
+            'Ainara Polaris',
+            `Unrecognized value "${requestedSentinel.invalidEnvValue}" for the ` +
+            'AINARA_SENTINEL_MODE environment variable.\n\n' +
+            'Starting in normal live assistant mode.'
+        );
+    }
+
+    if (requestedSentinel.sentinel) {
+        if (process.env.AINARA_ONLY_POLARIS) {
+            Logger.warning(
+                'AINARA_ONLY_POLARIS is set but Sentinel mode was requested; ' +
+                'Sentinel mode takes precedence'
+            );
+        }
+        if (config.get('setup.completed', false)) {
+            Logger.info('Sentinel mode requested and setup completed, entering Sentinel');
+            activeMode = 'sentinel';
+            await startSentinelMode();
+            return true;
+        }
+        Logger.info('Sentinel mode requested but setup incomplete, running setup first');
+    }
 
     // Initialize Ollama client
     initializeOllamaClient();
@@ -379,7 +458,8 @@ async function appInitialization(firstInitialization = true) {
         trayNotifications = null;
 
         if (firstInitialization) {
-            await appFirstInitializationTasks();
+            const sentinelEntered = await appFirstInitializationTasks();
+            if (sentinelEntered) return;
         }
         // app.commandLine.appendSwitch('disable-gpu');
 
@@ -523,7 +603,9 @@ async function appInitialization(firstInitialization = true) {
         }
 
         // AUTHENTICATION CHECK
-        splashWindow.updateProgress('Verifying Access...', 70);
+        if (appEdition !== 'public') {
+            splashWindow.updateProgress('Verifying Access...', 70);
+        }
 
         // // Check Internet Connection before Auth
         // while (!await checkInternetConnection()) {
@@ -540,8 +622,11 @@ async function appInitialization(firstInitialization = true) {
         //     }
         // }
 
-        if (!await checkBackendAuth(splashWindow)) {
-            return; // Stop initialization, Setup Wizard has been triggered
+        if (appEdition === 'public') {
+            Logger.info('Public edition: skipping wallet/NFT authorization gate');
+        } else if (!await checkBackendAuth(splashWindow)) {
+            app.quit(); // User closed the wizard or auth failed → exit
+            return;
         }
 
         // Services are ready, check config and initialize the rest of the app
@@ -623,8 +708,7 @@ async function appInitialization(firstInitialization = true) {
 
             // If we get here, we are not authorized
             splash.close();
-            showSetupWizard();
-            return false;
+            return await showReauthWizard();
         }
 
         checkFirstRunTasks();
@@ -1280,6 +1364,70 @@ function appSetupEventHandlers() {
         }
     });
 
+    // Copy bundled examples into a user-chosen folder (Setup wizard, finish step)
+    ipcMain.handle('examples:copy', async (event) => {
+        const source = config.getBundledExamplesSource();
+        if (!source) {
+            dialog.showErrorBox(
+                'Examples not found',
+                'The bundled examples folder is missing from this installation.'
+            );
+            return { status: 'error', message: 'source-missing' };
+        }
+
+        const parentWindow = BrowserWindow.fromWebContents(event.sender);
+        const picked = await dialog.showOpenDialog(parentWindow, {
+            title: 'Choose where to copy the examples',
+            defaultPath: app.getPath('desktop'),
+            properties: ['openDirectory', 'createDirectory']
+        });
+        if (picked.canceled || !picked.filePaths.length) {
+            return { status: 'canceled' };
+        }
+
+        const destination = path.join(picked.filePaths[0], 'Ainara Examples');
+
+        // Conflict check: does any bundled example file already exist at destination?
+        let hasConflict = false;
+        if (fs.existsSync(destination)) {
+            const collectRelativeFiles = (dir, base, acc) => {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                    const rel = base ? `${base}/${entry.name}` : entry.name;
+                    if (entry.isDirectory()) {
+                        collectRelativeFiles(path.join(dir, entry.name), rel, acc);
+                    } else {
+                        acc.push(rel);
+                    }
+                }
+                return acc;
+            };
+            const sourceFiles = collectRelativeFiles(source, '', []);
+            hasConflict = sourceFiles.some(rel => fs.existsSync(path.join(destination, rel)));
+        }
+
+        if (hasConflict) {
+            const answer = await dialog.showMessageBox(parentWindow, {
+                type: 'warning',
+                buttons: ['Overwrite', 'Cancel'],
+                defaultId: 0,
+                cancelId: 1,
+                title: 'Overwrite existing examples?',
+                message: `"Ainara Examples" already contains files with the same names.`,
+                detail: 'Your existing example files will be replaced. Any other files in the folder will not be touched.'
+            });
+            if (answer.response !== 0) {
+                return { status: 'canceled' };
+            }
+        }
+
+        // Recursive copy; force overwrites matching files only, never deletes extras.
+        fs.mkdirSync(destination, { recursive: true });
+        fs.cpSync(source, destination, { recursive: true, force: true, errorOnExist: false });
+
+        shell.openPath(destination);
+        return { status: 'copied', path: destination };
+    });
+
     // Handle user skills directory selection from setup wizard
     ipcMain.handle('select-user-skills-directory', async (event) => {
         const result = await dialog.showOpenDialog({
@@ -1307,26 +1455,6 @@ function appSetupEventHandlers() {
         // Ensure windows are shown if they were hidden or minimized
         if (!windowManager.isAnyVisible()) {
             windowManager.showAll();
-        }
-    });
-
-    // Cleanup before quit
-    app.on('before-quit', async () => {
-        globalShortcut.unregisterAll();
-        shortcutRegistered = false;
-
-        if (!app.isRefreshing) {
-            // Stop services
-            try {
-                await ServiceManager.stopServices();
-                Logger.info('Services stopped successfully');
-            } catch (error) {
-                Logger.error('Error stopping services:', error);
-            }
-        }
-
-        if (windowManager) {
-            windowManager.cleanup();
         }
     });
 
@@ -1367,6 +1495,51 @@ function appSetupEventHandlers() {
     ipcMain.on('open-auth-portal', () => {
         const pybridgeUrl = config.get('pybridge.api_url', 'http://127.0.0.1:8101');
         shell.openExternal(`${pybridgeUrl}/auth/portal`);
+    });
+
+    // Handle closing the setup wizard (full or re-auth)
+    ipcMain.on('close-setup-window', async () => {
+        Logger.info('close-setup-window event');
+        if (setupWindow && !setupWindow.isDestroyed()) {
+            setupWindow.destroy();
+        }
+
+        if (reauthMode) {
+            reauthMode = false;
+            reauthResolve?.(false);
+            reauthResolve = null;
+            app.quit(); // User closed re-auth without completing → quit
+            return;
+        }
+
+        if (config.get('setup.completed', false)) {
+            setupComplete();
+        } else {
+            Logger.info('Setup incomplete - forcing immediate exit');
+            await ServiceManager.stopServices();
+            app.quit();
+        }
+    });
+
+    // Handle setup completion
+    ipcMain.on('setup-complete', setupComplete);
+
+    // Handle successful re-verification (reauth mode)
+    ipcMain.on('license-verified', () => {
+        if (reauthMode) {
+            wizardActive = false;
+            BrowserWindow.getAllWindows().forEach(window => {
+                if (!window.isDestroyed()) {
+                    window.webContents.send('wizard-status', false);
+                }
+            });
+            reauthMode = false;
+            if (setupWindow && !setupWindow.isDestroyed()) {
+                setupWindow.destroy();
+            }
+            reauthResolve?.(true);
+            reauthResolve = null;
+        }
     });
 
 }
@@ -1440,37 +1613,129 @@ function appHandleCriticalError(error) {
     app.quit();
 }
 
-let isForceShutdown = false;
+let isShuttingDown = false;
 
-process.on('SIGINT', async () => {
-  if (isForceShutdown) return;
+/**
+ * Single owner of the exit path. Every quit entry point (tray Quit,
+ * window close, SIGINT, critical errors) funnels through here.
+ */
+async function startSentinelMode() {
+    Logger.info('Entering Sentinel mode');
 
-  isForceShutdown = true;
-  Logger.info('Ctrl+C detected - initiating forced shutdown');
+    ipcMain.on('sentinel-stop', () => {
+        Logger.info('SentinelWindow: stop requested by user');
+        app.isQuitting = true;
+        app.quit(); // funnels through before-quit -> performShutdown
+    });
 
-  try {
-    await ServiceManager.stopServices({ force: true });
-    app.exit(0);
-  } catch (err) {
-    Logger.error('Forced shutdown failed:', err);
-    app.quit();
-  }
+    if (splashWindow) {
+        splashWindow.close();
+    }
+
+    ipcMain.handle('sentinel-list-plans', async () => {
+        const { ok, stdout } = await SentinelRunner.runOnce(
+            ['--list-plans'], { collect: true }
+        );
+        if (!ok) return [];
+        const marker = 'PLANS_JSON:';
+        const line = (stdout || '')
+            .split('\n')
+            .find((l) => l.startsWith(marker));
+        if (!line) return [];
+        try {
+            return JSON.parse(line.slice(marker.length));
+        } catch (e) {
+            Logger.error('Failed to parse plans JSON:', e);
+            return [];
+        }
+    });
+
+    ipcMain.handle('sentinel-run-plan', (_e, name) => {
+        if (typeof name !== 'string' || !name.trim()) {
+            return { ok: false, message: 'invalid plan name' };
+        }
+        return SentinelRunner.runOnce(['--run-plan', name.trim()]);
+    });
+
+    ipcMain.handle('sentinel-get-font-size', () => {
+        return config.get('sentinel.fontSize', 12);
+    });
+
+    ipcMain.handle('sentinel-set-font-size', (_e, size) => {
+        const n = Math.min(24, Math.max(9, Number(size) || 12));
+        config.set('sentinel.fontSize', n);
+        return n;
+    });
+
+    const sentinelWindow = new SentinelWindow(config, null, __dirname);
+
+    SentinelRunner.on('output', (line) => sentinelWindow.appendOutput(line));
+    SentinelRunner.on('exit', (code) => {
+        // Keep the window open so the user can see why Sentinel stopped
+        sentinelWindow.showExited(code);
+    });
+
+    try {
+        await SentinelRunner.start();
+    } catch (error) {
+        Logger.error('Failed to start Sentinel process:', error);
+        sentinelWindow.appendOutput(
+            `ERROR: Failed to start Sentinel: ${error.message}`
+        );
+        sentinelWindow.showExited(null);
+    }
+
+    appReady = true;
+}
+
+async function stopActiveModeServices({ force = false } = {}) {
+    if (activeMode === 'sentinel') {
+        await SentinelRunner.stop({ force });
+    } else {
+        await ServiceManager.stopServices({ force });
+    }
+}
+
+async function performShutdown(force = false) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    // Safety net: never let a hung cleanup block the exit
+    setTimeout(() => app.exit(0), 30000).unref();
+
+    try {
+        if (!app.isRefreshing) {
+            try {
+                await stopActiveModeServices({ force });
+            } catch (err) {
+                Logger.error('Graceful shutdown failed:', err);
+                if (!force) {
+                    await stopActiveModeServices({ force: true });
+                }
+            }
+        }
+    } finally {
+        globalShortcut.unregisterAll();
+        shortcutRegistered = false;
+        if (windowManager) {
+            windowManager.cleanup();
+        }
+        Logger.info('Shutdown complete, exiting');
+        app.exit(0);
+    }
+}
+
+app.on('before-quit', (event) => {
+    // We own the exit: pause Electron's quit sequence until services are
+    // stopped, then exit explicitly. Fixes the old race where a concurrent
+    // handler called app.exit() mid-cleanup and orphaned child servers.
+    event.preventDefault();
+    performShutdown(false);
 });
 
-app.on('before-quit', async (event) => {
-  if (isForceShutdown) {
-      event.preventDefault();
-      return;
-  }
-  try {
-      if (!app.isRefreshing) {
-          await ServiceManager.stopServices();
-      }
-      // force
-      app.exit(0);
-  } catch (err) {
-      Logger.error('Graceful shutdown failed:', err);
-  }
+process.on('SIGINT', () => {
+    Logger.info('SIGINT received - initiating forced shutdown');
+    performShutdown(true);
 });
 
 

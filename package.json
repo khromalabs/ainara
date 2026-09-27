@@ -54,6 +54,7 @@
   },
   "build": {
     "appId": "app.ainara.polaris",
+    "artifactName": "Ainara_Polaris-${version}-${arch}.${ext}",
     "publish": [
       {
         "provider": "github",
@@ -77,7 +78,6 @@
           "target": "dmg"
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "icon": "polaris/resources/icon.icns",
       "category": "public.app-category.productivity",
       "identity": "-",
@@ -127,6 +127,7 @@
     },
     "linux": {
       "target": "AppImage",
+      "executableName": "Ainara_Polaris",
       "icon": "polaris/assets/icon.png",
       "category": "Utility",
       "extraResources": [

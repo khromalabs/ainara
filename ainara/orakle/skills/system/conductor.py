@@ -174,7 +174,7 @@ class SystemConductor(Skill):
 
         body: Dict[str, Any] = {}
         if coin:
-            body["vars"] = {"coin": str(coin).upper()}
+            body["variables"] = {"coin": str(coin).upper()}
         if avoid_if:
             body["avoid_if"] = list(avoid_if)
 

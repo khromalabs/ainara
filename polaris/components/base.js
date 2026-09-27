@@ -16,7 +16,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
-const { shell } = require('electron');
+const { shell, clipboard } = require('electron');
 const { marked } = require('marked');
 const DOMPurify = require('dompurify');
 const Tablesort = require('tablesort');
@@ -37,6 +37,18 @@ class BaseComponent extends HTMLElement {
                 event.preventDefault();
                 shell.openExternal(href);
             }
+        });
+
+        // Code-block "Copy" buttons (generated markdown): use Electron's sync
+        // clipboard API — navigator.clipboard silently fails when the window
+        // is unfocused. Delegated so it works for dynamically injected blocks.
+        this.delegate('click', '.copy-btn', (event, target) => {
+            const code = target.nextElementSibling?.textContent || '';
+            if (code) {
+                clipboard.writeText(code);
+            }
+            target.textContent = 'Done!';
+            setTimeout(() => (target.textContent = 'Copy'), 1200);
         });
 
         // TODO Replace local markdown processing with marked
@@ -284,7 +296,7 @@ class BaseComponent extends HTMLElement {
                 // </div>`);
                 codeBlocks.push(`<div class="code-block-wrapper">
                     <span class="code-type">${codetype}</span>
-                    <button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.textContent)">Copy</button>
+                    <button class="copy-btn">Copy</button>
                     <code>${content}</code>
                 </div>`);
                 return `%%CODEBLOCK${blockIndex++}%%`;

@@ -44,6 +44,7 @@ plans:
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -80,17 +81,32 @@ def _find_venv_python():
     return None
 
 
-if not _running_in_venv():
+_IS_BUNDLED = getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
+
+if not _IS_BUNDLED and not _running_in_venv():
     _venv_python = _find_venv_python()
     if _venv_python:
-        # Re-exec the same script under the venv interpreter
+        # Re-exec the same script under the venv interpreter.
         os.execv(_venv_python, [_venv_python] + sys.argv)
-    elif not getattr(sys, "frozen", False) and not hasattr(sys, "_MEIPASS"):
+    else:
         print(
             "WARNING: No virtual environment found and not running inside one. "
             "Third-party dependencies may be missing.",
             file=sys.stderr,
         )
+
+# When this script is spawned as a child of the Electron app (Sentinel UI)
+# its stdout/stderr are pipes, which makes Python pick a 4-8 KB block
+# buffer. That is what produces the "silence then a big blob" output in
+# the Sentinel window. Force line buffering so the relay streams.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except (AttributeError, ValueError):
+    # An interpreter too old to expose reconfigure, or an odd stream
+    # wrapper. Not fatal — the explicit flush=True calls elsewhere still
+    # work, and stderr is line-buffered by default in modern Python.
+    pass
 
 # ---------------------------------------------------------------------------
 # Now safe to import third-party packages
@@ -120,15 +136,59 @@ from ainara.framework.config import ConfigManager  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
+# Helpers for bundled/source server commands
+# ---------------------------------------------------------------------------
+def _server_command(server_name):
+    """Return the command list used to launch a bundled/source server.
+
+    When running inside a PyInstaller bundle the server executables are
+    expected to be siblings of the current executable.  When running from a
+    source checkout, the server is started as ``python -m
+    ainara.<server>.server``.
+
+    TODO: sentinel is currently always shipped together with orakle, bureau
+    and pybridge.  If this changes in the future, allow the paths to be
+    overridden through scheduler.yaml / environment variables.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        exe_dir = Path(sys.executable).resolve().parent
+        exe_name = f"{server_name}.exe" if os.name == "nt" else server_name
+        bundled = exe_dir / exe_name
+        if bundled.exists():
+            return [str(bundled)]
+        raise FileNotFoundError(
+            f"Bundled executable '{exe_name}' was not found next to sentinel "
+            f"(looked in '{exe_dir}'). sentinel must be distributed together "
+            "with the other server executables."
+        )
+
+    # Source checkout.
+    return [sys.executable, "-m", f"ainara.{server_name}.server"]
+
+
+def _server_identifier(cmd):
+    """Return a stable substring that identifies a service process in psutil."""
+    if isinstance(cmd, str):
+        cmd = cmd.split()
+
+    if "-m" in cmd:
+        return cmd[cmd.index("-m") + 1]
+
+    return os.path.basename(cmd[0])
+
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-LOG_DIR = "/tmp"
+_logs_env = os.environ.get("AINARA_LOGS")
+LOG_DIR = os.path.expanduser(_logs_env) if _logs_env else tempfile.gettempdir()
+os.makedirs(LOG_DIR, exist_ok=True)
 PID_FILE = os.path.join(LOG_DIR, "ainara-scheduler.pid")
 ORAKLE_LOG = os.path.join(LOG_DIR, "orakle.log")
 BUREAU_LOG = os.path.join(LOG_DIR, "bureau.log")
 
-ORAKLE_CMD = "python -m ainara.orakle.server"
-BUREAU_CMD = "python -m ainara.bureau.server"
+ORAKLE_CMD = _server_command("orakle")
+BUREAU_CMD = _server_command("bureau")
 
 # Trading executor managed services — OPT-IN via scheduler.yaml `services.executor`.
 # These run from the SEPARATE executor virtualenv (the venue signing SDKs conflict
@@ -245,6 +305,24 @@ def find_scheduler_yaml(config_manager):
         if scheduler_yaml.exists():
             return scheduler_yaml
     return None
+
+
+def discover_plans(config_manager):
+    """Return the sorted plan names available for execution.
+
+    Mirrors the plans-dir derivation used by Bureau's
+    initialize_components(): parent of the first config path, plus
+    "bureau". The two derivations must stay in sync; if this ever
+    grows beyond a single glob, switch to querying Bureau's
+    /v1/conductor/plans endpoint instead.
+    """
+    config_paths = config_manager.get_default_config_paths()
+    if not config_paths:
+        return []
+    plans_dir = Path(config_paths[0]).parent / "bureau"
+    if not plans_dir.is_dir():
+        return []
+    return sorted(p.stem for p in plans_dir.glob("*.yaml"))
 
 
 def load_scheduler_yaml(config_manager):
@@ -572,19 +650,17 @@ def check_health(svc):
 # ---------------------------------------------------------------------------
 # Process management
 # ---------------------------------------------------------------------------
-def is_service_running(command):
+def is_service_running(cmd):
     """Check if a service is running using psutil."""
-    module_name = ""
-    if " -m " in command:
-        module_name = command.split(" -m ")[-1]
+    identifier = _server_identifier(cmd)
 
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmdline = proc.info["cmdline"]
-            if not cmdline or len(cmdline) < 2:
+            if not cmdline:
                 continue
             cmdline_str = " ".join(cmdline)
-            if module_name and module_name in cmdline_str:
+            if identifier in cmdline_str:
                 return True
         except (
             psutil.NoSuchProcess,
@@ -633,6 +709,21 @@ def start_service(service_name, cmd, log_file, python_exe=None, cwd=None):
     if is_service_running(cmd):
         return True, f"{service_name} is already running"
 
+    # Force child processes to flush their stdout/stderr line-by-line so
+    # Sentinel's log tail sees messages as they are produced instead of in
+    # 4-8 KB bursts. PYTHONUNBUFFERED is honoured both by a plain python
+    # interpreter and by a PyInstaller-frozen executable.
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    # Orakle/Bureau arrive as an argv list (_server_command, bundle-aware);
+    # the executor services as "python -m <module>" run under `python_exe`.
+    if isinstance(cmd, str):
+        argv = [python_exe or sys.executable, "-m", cmd.split(" -m ")[1]]
+    else:
+        argv = list(cmd)
+
     try:
         # APPEND, never truncate. A supervisor that restarts a crashed service and
         # erases the log explaining why it crashed is worse than no supervisor: the
@@ -641,19 +732,16 @@ def start_service(service_name, cmd, log_file, python_exe=None, cwd=None):
         # a second time. Growth is bounded in practice — these services log only on
         # risk, not per poll.
         with open(log_file, "a") as log:
-            module = cmd.split(" -m ")[1]
-            full_cmd = f'"{python_exe or sys.executable}" -m {module}'
-
             if os.name == "nt":
-                subprocess.Popen(full_cmd, stdout=log, stderr=log, shell=True,
+                subprocess.Popen(argv, stdout=log, stderr=log, env=env,
                                  cwd=cwd)
             else:
                 subprocess.Popen(
-                    full_cmd,
+                    argv,
                     stdout=log,
                     stderr=log,
-                    shell=True,
-                    executable="/bin/bash",
+                    env=env,
+                    start_new_session=True,
                     cwd=cwd,
                 )
 
@@ -670,8 +758,8 @@ def start_service(service_name, cmd, log_file, python_exe=None, cwd=None):
 def stop_services(sched_config=None):
     """Stop Bureau and Orakle — and the executor services too when managed."""
     log_info("Stopping services...")
-    stop_process("ainara.bureau.server")
-    stop_process("ainara.orakle.server")
+    stop_process(_server_identifier(BUREAU_CMD))
+    stop_process(_server_identifier(ORAKLE_CMD))
 
     logs = [ORAKLE_LOG, BUREAU_LOG]
     if sched_config and sched_config.get("executor_enabled"):
@@ -693,7 +781,7 @@ def stop_services(sched_config=None):
 
 def restart_service(service_name, cmd, log_file, health_url, sched_config):
     """Stop and restart a service, waiting for it to become healthy."""
-    identifier = cmd.split(" -m ")[1] if " -m " in cmd else cmd
+    identifier = _server_identifier(cmd)
     log_info(f"Restarting {service_name}...")
 
     stop_process(identifier)
@@ -722,19 +810,19 @@ def restart_service(service_name, cmd, log_file, health_url, sched_config):
 # ---------------------------------------------------------------------------
 # Plan triggering
 # ---------------------------------------------------------------------------
-def trigger_plan(plan_name, bureau_url, avoid_if=None, plan_vars=None):
+def trigger_plan(plan_name, bureau_url, avoid_if=None, variables=None):
     """Trigger a plan execution via Bureau API.
 
-    plan_vars (a flat dict, e.g. {"coin": "ETH"}) overrides the plan's own vars
-    for this run only — how one coin-parameterized plan is pointed at different
-    assets.
+    variables (a flat dict, e.g. {"coin": "ETH"}) overrides values of the
+    plan's own `variables` for this run only, which is how one plan is pointed
+    at different assets. Bureau refuses names the plan does not declare.
     """
     url = f"{bureau_url}/v1/conductor/plans/{plan_name}/run"
     body = {}
     if avoid_if:
         body["avoid_if"] = avoid_if
-    if plan_vars:
-        body["vars"] = plan_vars
+    if variables:
+        body["variables"] = variables
     try:
         response = requests.post(url, json=body or None, timeout=30)
         if response.status_code == 200 or response.status_code == 202:
@@ -790,17 +878,25 @@ def build_scheduler(schedules, bureau_url):
                 day_of_week=parts[4],
             )
             avoid_if = plan_config.get("avoid_if")
-            # Optional per-schedule vars override (e.g. vars: {coin: ETH}) so the
+            # Optional per-schedule override (e.g. variables: {coin: ETH}) so the
             # same coin-parameterized plan can be scheduled per asset. The job id
             # is still the schedule key, so a coin-specific schedule needs its own
             # key (e.g. a "target" plan + distinct key) — kept simple here: one
-            # schedule entry, one job, its own vars.
-            plan_vars = plan_config.get("vars")
+            # schedule entry, one job, its own variables.
+            if "vars" in plan_config:
+                # The old key. Ignoring it would run the plan's default coin
+                # under a schedule the operator believes points elsewhere.
+                log_error(
+                    f"Plan '{plan_name}' uses 'vars:', which was renamed to"
+                    " 'variables:'. Not scheduling it until the key is renamed."
+                )
+                continue
+            variables = plan_config.get("variables")
             target_plan = plan_config.get("plan", plan_name)
             scheduler.add_job(
                 trigger_plan,
                 trigger=trigger,
-                args=[target_plan, bureau_url, avoid_if, plan_vars],
+                args=[target_plan, bureau_url, avoid_if, variables],
                 id=plan_name,
                 name=f"Plan: {plan_name}",
                 replace_existing=True,
@@ -822,19 +918,29 @@ def stream_logs(stop_event=None):
     event is set.  If stop_event is None, runs in the foreground until
     interrupted with Ctrl+C.
     """
+    # Only emit ANSI codes when stdout is a real terminal (e.g. --logs
+    # attach mode or a foreground daemon run). When stdout is piped
+    # (Electron Sentinel window, file redirect) the codes would show up
+    # as literal garbage.
+    use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     colors = {
-        "orakle": "\033[31m",  # Red
-        "bureau": "\033[34m",  # Blue
+        "orakle": "\033[31m" if use_color else "",  # Red
+        "bureau": "\033[34m" if use_color else "",  # Blue
     }
-    reset = "\033[0m"
+    reset = "\033[0m" if use_color else ""
 
-    # Enable ANSI on Windows
-    if os.name == "nt":
+    # Enable ANSI on Windows (only meaningful for a real console)
+    if os.name == "nt" and use_color:
         try:
             import ctypes
 
             kernel32 = ctypes.windll.kernel32
-            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+            # SetConsoleMode returns 0 on failure instead of raising
+            # (legacy conhost); fall back to plain text in that case.
+            if not kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7):
+                for key in colors:
+                    colors[key] = ""
+                reset = ""
         except (ImportError, AttributeError):
             for key in colors:
                 colors[key] = ""
@@ -1033,6 +1139,11 @@ def parse_args():
         help="Show service and schedule status",
     )
     parser.add_argument(
+        "--list-plans",
+        action="store_true",
+        help="Print plans found in the plans directory as JSON and exit",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress log streaming in main mode (run as silent daemon)",
@@ -1060,7 +1171,7 @@ def parse_args():
         metavar="SYMBOL",
         help=(
             "Override the coin for a coin-parameterized plan, e.g. ETH or SOL "
-            "(used with --run-plan; sends vars={coin: SYMBOL})"
+            "(used with --run-plan; sends variables={coin: SYMBOL})"
         ),
     )
     return parser.parse_args()
@@ -1085,6 +1196,29 @@ def main():
         print_status(sched_config, schedules)
         return
 
+    # Handle --list-plans (machine-readable plan list)
+    #
+    # Availability comes from the plans directory on disk (same
+    # derivation Bureau uses). scheduler.yaml only *annotates*: a plan
+    # present in scheduler.yaml but missing from disk is not listed, and
+    # a plan on disk but absent from scheduler.yaml is listed as
+    # scheduled=False. Either way, everything listed is triggerable via
+    # --run-plan / the Sentinel UI; the enabled flag is a scheduling
+    # concept and does not gate manual triggering.
+    if args.list_plans:
+        schedules_map = schedules or {}
+        payload = []
+        for name in discover_plans(config_manager):
+            sched = schedules_map.get(name)
+            payload.append({
+                "name": name,
+                "scheduled": sched is not None,
+                "enabled": bool(sched.get("enabled", False)) if sched else False,
+                "cron": sched.get("cron") if sched else None,
+            })
+        print("PLANS_JSON:" + json.dumps(payload))
+        return
+
     # Handle --logs (attach to running instance)
     if args.logs:
         if not os.path.exists(ORAKLE_LOG) and not os.path.exists(BUREAU_LOG):
@@ -1107,15 +1241,14 @@ def main():
         if not bureau_healthy:
             log_error("Bureau is not running. Start the scheduler first.")
             sys.exit(1)
-        avoid_if = (
-            [p.strip() for p in args.avoid_if.split(",")]
-            if args.avoid_if
-            else None
-        )
-        plan_vars = {"coin": args.coin.strip().upper()} if args.coin else None
+        if args.avoid_if:
+            avoid_if = [p.strip() for p in args.avoid_if.split(",")]
+        else:
+            avoid_if = (schedules.get(args.run_plan) or {}).get("avoid_if")
+        variables = {"coin": args.coin.strip().upper()} if args.coin else None
         success = trigger_plan(
             args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if,
-            plan_vars=plan_vars,
+            variables=variables,
         )
         sys.exit(0 if success else 1)
 

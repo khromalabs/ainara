@@ -160,7 +160,7 @@ guard can no longer measure a book that isn't there.
   parallel copy of the machine. One deterministic order path, one watchdog, and one
   set of guards serve every asset: the watchdog groups both venues' positions by
   coin and assesses each hedge on its own; the plans carry the coin as an input
-  variable (`{{vars.coin}}`, defaulting to BTC) rather than duplicating files; and
+  variable (`{{$coin}}`, defaulting to BTC) rather than duplicating files; and
   where a shared guard cannot stay valid across assets — the dYdX cross-margin
   liquidation price, which couples positions in one subaccount — it degrades to
   "unknown" and alerts, rather than reporting an optimistic single-position number.

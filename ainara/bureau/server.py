@@ -88,6 +88,60 @@ def _terminate_step(step_id: str, task: Dict[str, Any], reason: str) -> None:
     # once the grace period (GRACE_PERIOD) expires.
 
 
+def _graceful_shutdown() -> None:
+    """
+    Terminate all running step processes, stop the conductor, and exit.
+    Safe to call multiple times; only the first call does work.
+    """
+    if _shutting_down.is_set():
+        return
+    _shutting_down.set()
+    logger.info("Graceful shutdown initiated")
+
+    # 1. Stop the timeout monitor loop
+    _shutdown_event.set()
+
+    # 2. Terminate every RUNNING step (agents and skills, conductor or not)
+    for step_id, task in list(step_registry.items()):
+        if task.get("status") != "RUNNING":
+            continue
+        proc = task.get("process")
+        if proc and proc.is_alive():
+            logger.warning("Terminating step %s during shutdown", step_id)
+            _terminate_step(step_id, task, reason="server shutdown")
+        task["status"] = "FAILED"
+        task["failure_reason"] = "Aborted due to server shutdown"
+        task["error"] = "Shutdown"
+
+    # 3. Give children a short window to exit, then hard-kill survivors
+    deadline = time.time() + GRACE_PERIOD
+    for step_id, task in list(step_registry.items()):
+        proc = task.get("process")
+        if not proc:
+            continue
+        while proc.is_alive() and time.time() < deadline:
+            time.sleep(0.2)
+        if proc.is_alive():
+            logger.warning("Force-killing step %s after grace period", step_id)
+            try:
+                proc.kill()
+            except Exception as e:  # pragma: no cover – defensive
+                logger.error(f"Error force-killing step {step_id}: {e}")
+
+    # 4. Stop the conductor (releases plan locks, marks plan status)
+    if conductor is not None:
+        conductor.shutdown()
+
+    logger.info("Shutdown complete, exiting")
+    os._exit(0)
+
+
+def _request_shutdown(signum, frame) -> None:
+    """Signal handler: run the graceful shutdown in a helper thread."""
+    logger.info("Received signal %s, initiating shutdown", signum)
+    threading.Thread(target=_graceful_shutdown, daemon=True).start()
+
+
 # Process pool for running agents in the background
 # We limit the number of concurrent agents to prevent resource exhaustion
 # Using processes instead of threads to allow true termination on timeout
@@ -102,7 +156,13 @@ step_registry: Dict[str, Dict[str, Any]] = {}
 config_manager: Optional[ConfigManager] = None
 llm_backend = None
 global_capabilities: list = []
+global_property_registry: dict = {}
 conductor: Optional[Conductor] = None
+
+# Set when a shutdown has been requested; stops the timeout_monitor loop.
+_shutdown_event = threading.Event()
+# Ensures the graceful-shutdown routine runs exactly once.
+_shutting_down = threading.Event()
 
 
 def parse_args():
@@ -136,7 +196,7 @@ def timeout_monitor():
     """
     logger.info("Timeout monitor thread started")
 
-    while True:
+    while not _shutdown_event.is_set():
         try:
             current_time = time.time()
 
@@ -148,6 +208,39 @@ def timeout_monitor():
                 proc = task.get("process")
                 if not proc:
                     continue
+
+                # Drain the result queue even while the child is alive.
+                # A child whose result payload exceeds the OS pipe buffer
+                # (~64 KiB) blocks forever in its exit flush until the
+                # parent reads the item — waiting for exit first
+                # deadlocks until the execution timeout, and the result
+                # is destroyed at SIGTERM time (classic
+                # multiprocessing.Queue trap).
+                result_queue = task.get("result_queue")
+                if result_queue is not None:
+                    result = None
+                    try:
+                        result = result_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    except Exception as e:
+                        logger.error(
+                            f"Error reading queue for step {step_id}: {e}"
+                        )
+                    if result is not None:
+                        task["status"] = "COMPLETED"
+                        task["response"] = result
+                        # The child can now finish its exit flush; reap it.
+                        try:
+                            proc.join(timeout=2)
+                            if proc.is_alive():
+                                proc.terminate()
+                                proc.join(timeout=1)
+                        except Exception as e:
+                            logger.error(f"Error reaping step {step_id}: {e}")
+                        task["process"] = None
+                        task["result_queue"] = None
+                        continue
 
                 # Check if process has finished
                 if not proc.is_alive():
@@ -237,10 +330,12 @@ def timeout_monitor():
             logger.error(f"Error in timeout monitor: {e}", exc_info=True)
             time.sleep(1)
 
+    logger.info("Timeout monitor exiting")
+
 
 def initialize_components():
     """Initialize configuration, LLM, and Middleware."""
-    global config_manager, llm_backend, global_capabilities
+    global config_manager, llm_backend, global_capabilities, global_property_registry
 
     logger.info("Initializing Bureau components...")
 
@@ -260,6 +355,20 @@ def initialize_components():
     orakle_servers = config.get("orakle.servers", ["http://127.0.0.1:8100"])
     fetcher = OrakleCapabilityFetcher(orakle_servers)
     global_capabilities = fetcher.fetch_capabilities()
+
+    # Flat skill-property registry (full_key -> descriptor) used by the
+    # Conductor to resolve config_aliases / $skills.* references against
+    # declared property defaults.
+    # TODO: Skill properties are assumed static for the process lifetime.
+    # If hot-swapping of skill properties is ever supported, refresh this
+    # registry (e.g. per plan run) instead of fetching it once at startup.
+    global_property_registry = fetcher.fetch_config_properties() or {}
+    if not global_property_registry:
+        logger.warning(
+            "No skill property registry available from Orakle"
+            " (view=properties). Conductor config_aliases will only resolve"
+            " against literal config values."
+        )
 
     # 4. Start timeout monitor thread
     monitor_thread = threading.Thread(target=timeout_monitor, daemon=True)
@@ -290,21 +399,30 @@ def initialize_components():
     )
 
     if plans_dir:
-        conductor = Conductor(
-            plans_dir=plans_dir,
-            llm_config=config.get("llm", {}),
-            orakle_servers=config.get(
-                "orakle.servers", ["http://127.0.0.1:8100"]
-            ),
-            global_capabilities=global_capabilities,
-            step_registry=step_registry,
-            router=router,
-            config_manager=config_manager,
-        )
-        conductor.start()
-        logger.info(
-            "Conductor initialized%s."
-        )
+        try:
+            plans_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error(
+                f"Could not create/access plans directory {plans_dir}: {e}. "
+                "Conductor will not be initialized."
+            )
+        else:
+            conductor = Conductor(
+                plans_dir=plans_dir,
+                llm_config=config.get("llm", {}),
+                orakle_servers=config.get(
+                    "orakle.servers", ["http://127.0.0.1:8100"]
+                ),
+                global_capabilities=global_capabilities,
+                step_registry=step_registry,
+                router=router,
+                config_manager=config_manager,
+                property_registry=global_property_registry,
+            )
+            conductor.start()
+            logger.info(
+                "Conductor initialized%s."
+            )
     else:
         logger.warning(
             "Could not determine config path for Conductor plans"
@@ -667,23 +785,33 @@ def trigger_conductor_plan(plan_name):
 
     Returns 202 with ``run_id`` on success.
     Returns 404 if the plan is unknown, 409 if it is already running or blocked by avoid_if.
+    Returns 400 if a ``variables`` override names a variable the plan does not
+    declare, or is not a mapping of scalars.
     """
     if conductor is None:
         return jsonify({"error": "Conductor not initialized"}), 503
 
     data = request.get_json(silent=True) or {}
     avoid_if = data.get("avoid_if")
-    # Optional per-run variable overrides (e.g. {"coin": "ETH"}) for a
-    # coin-parameterized plan. Must be a flat mapping; ignore anything else.
-    run_vars = data.get("vars")
-    if run_vars is not None and not isinstance(run_vars, dict):
-        return jsonify({"error": "'vars' must be a JSON object"}), 400
+    # Optional per-run overrides of the plan's own `variables` (e.g.
+    # {"coin": "ETH"}); the Conductor rejects names the plan does not declare.
+    variables = data.get("variables")
 
     run_id, error = conductor.trigger_plan(
-        plan_name, avoid_if=avoid_if, vars=run_vars)
+        plan_name, avoid_if=avoid_if, variables=variables)
 
     if error == "plan_not_found":
         return jsonify({"error": f"Plan '{plan_name}' not found"}), 404
+    if error and error.startswith("invalid_variables:"):
+        return (
+            jsonify(
+                {
+                    "error": error.split(":", 1)[1],
+                    "plan_name": plan_name,
+                }
+            ),
+            400,
+        )
     if error == "already_running":
         return (
             jsonify(
@@ -736,12 +864,20 @@ if __name__ == "__main__":
     initialize_components()
     logging_manager.setup(log_level=args.log_level, log_name="bureau.log")
 
+    # Graceful shutdown on SIGINT (Ctrl+C / Service.stop()) and SIGTERM
+    signal.signal(signal.SIGINT, _request_shutdown)
+    signal.signal(signal.SIGTERM, _request_shutdown)
+
     # Get port from config or default to 8001 (distinct from Orakle's 8000)
     config = config_manager.get_safe_config()
     port = config.get("bureau", {}).get("port", 8010)
     host = config.get("bureau", {}).get("host", "0.0.0.0")
 
     logger.info(f"Starting Bureau Server on {host}:{port}")
+    # TODO: The Werkzeug dev server has no clean programmatic shutdown API
+    # (its `werkzeug.server.shutdown` environ hook is dev-only and slated
+    # for removal). When migrating to a production WSGI server, replace
+    # the os._exit(0) in _graceful_shutdown with a proper server stop.
     try:
         app.run(host=host, port=port, debug=False, use_reloader=False)
     finally:

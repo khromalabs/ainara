@@ -51,14 +51,14 @@ from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.notifications import NotificationManager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
-from ainara.framework.secrets import (
+from ainara.framework.vault import (
     SENSITIVE_KEY_MARKERS,
     VAULT_PREFIXES,
     SecretVaultUnavailable,
     get_vault,
 )
-from ainara.framework.secrets.keystore import KeystoreProvider
-from ainara.framework.secrets.wallet import WalletKeyDerivation
+from ainara.framework.vault.keystore import KeystoreProvider
+from ainara.framework.vault.wallet import WalletKeyDerivation
 from ainara.framework.stt.faster_whisper import FasterWhisperSTT
 from ainara.framework.stt.whisper import WhisperSTT
 from ainara.framework.tts import create_tts_backend
@@ -207,6 +207,19 @@ def parse_args():
 
 
 # def setup_app()
+
+
+_HEX_DIGITS = set("0123456789abcdefABCDEF")
+
+
+def _is_evm_address(value: str) -> bool:
+    """Return True for a valid EVM address: 0x + 40 hex characters."""
+    return (
+        isinstance(value, str)
+        and value.startswith("0x")
+        and len(value) == 42
+        and all(c in _HEX_DIGITS for c in value[2:])
+    )
 
 
 def _validate_skill_key(service: str, keys: dict):
@@ -358,6 +371,154 @@ def _validate_skill_key(service: str, keys: dict):
             )
             response.raise_for_status()
             return True, "Key is valid."
+
+        elif service == "brave":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            headers = {
+                "Accept": "application/json",
+                "X-Subscription-Token": api_key,
+            }
+            response = requests.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": "test", "count": 1},
+                headers=headers,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
+        elif service == "hyperliquid":
+            secret = (keys.get("secret") or "").strip()
+            api_key = (keys.get("api_key") or "").strip()
+            wallet_address = (keys.get("wallet_address") or "").strip()
+
+            # All fields are mandatory for Hyperliquid (agent-wallet model)
+            missing = [
+                name
+                for name, value in (
+                    ("api_key", api_key),
+                    ("secret", secret),
+                    ("wallet_address", wallet_address),
+                )
+                if not value
+            ]
+            if missing:
+                return False, (
+                    "All Hyperliquid fields are required (missing: "
+                    + ", ".join(missing)
+                    + ")"
+                )
+
+            # 1) secret must be a valid EVM private key; derive the address
+            derived_address = None
+            try:
+                from eth_account import Account
+
+                derived_address = Account.from_key(secret).address
+            except ImportError:
+                # Fallback: 64-hex shape check (0x prefix optional)
+                clean = (
+                    secret[2:] if secret.lower().startswith("0x") else secret
+                )
+                if len(clean) != 64 or not all(
+                    c in _HEX_DIGITS for c in clean
+                ):
+                    return False, "Invalid private key format (secret)."
+            except Exception:
+                return False, "Invalid private key (secret)."
+
+            # 2) api_key must be a valid EVM address and must match the
+            #    address derived from secret. Hyperliquid verifies the
+            #    signature against this address, so a mismatch would break
+            #    every signed action at trade time.
+            if not _is_evm_address(api_key):
+                return False, (
+                    "Invalid api_key: expected a 0x-prefixed 40-hex address."
+                )
+            if (
+                derived_address
+                and derived_address.lower() != api_key.lower()
+            ):
+                return False, (
+                    "api_key does not match the address derived from secret "
+                    f"(expected {derived_address})."
+                )
+
+            # 3) wallet_address (master account) must be a valid address
+            if not _is_evm_address(wallet_address):
+                return False, (
+                    "Invalid wallet_address: expected a 0x-prefixed 40-hex"
+                    " address."
+                )
+
+            # 4) Live check against the public info endpoint
+            sandbox = keys.get("sandbox_mode")
+            if sandbox is None:
+                sandbox = config.get(
+                    "apis.cryptoexchanges.hyperliquid.sandbox_mode", False
+                )
+            host = (
+                "https://api.hyperliquid-testnet.xyz"
+                if sandbox
+                else "https://api.hyperliquid.xyz"
+            )
+            response = requests.post(
+                f"{host}/info",
+                json={"type": "clearinghouseState", "user": wallet_address},
+                timeout=10,
+            )
+            response.raise_for_status()
+            try:
+                data = response.json()
+            except ValueError:
+                return False, (
+                    "Hyperliquid endpoint responded, but not with JSON."
+                )
+            if isinstance(data, dict) and data.get("error"):
+                return False, f"Hyperliquid API error: {data['error']}"
+            return True, "Key is valid."
+
+        elif service == "searxng":
+            base_url = (keys.get("base_url") or "").strip().rstrip("/")
+            if not base_url:
+                # Opt-out semantics: empty base_url means SearXNG is
+                # intentionally disabled; treat as valid so the wizard
+                # can proceed.
+                return True, "SearXNG is disabled (no base_url configured)."
+            headers = {"Accept": "application/json"}
+            # TODO api_key has been hidden in the Wizard on purpose because
+            # it can be confusing next to base_url, detect later on whenever
+            # the user might have confused one value for another
+            if keys.get("api_key"):
+                headers["Authorization"] = f"Bearer {keys['api_key']}"
+            try:
+                response = requests.get(
+                    f"{base_url}/search",
+                    params={"q": "test", "format": "json"},
+                    headers=headers,
+                    timeout=10,
+                )
+            except requests.ConnectionError:
+                return False, f"Could not reach SearXNG instance at {base_url}"
+            if response.status_code == 403:
+                return False, (
+                    "Instance reachable, but JSON output is disabled: add"
+                    " 'json' to 'search.formats' in the instance's"
+                    " settings.yml and restart it"
+                )
+            response.raise_for_status()
+            try:
+                data = response.json()
+            except ValueError:
+                return False, "Endpoint responded, but not with JSON."
+            if not isinstance(data.get("results"), list):
+                return False, (
+                    "Endpoint responded, but not with a SearXNG JSON result"
+                    " set."
+                )
+            return True, "Instance reachable and JSON output enabled."
 
         else:
             return (
@@ -666,7 +827,7 @@ def create_app():
     # --- Initialize Wake Word Backend ---
     try:
         logger.info("Initializing Wake Word backend...")
-        app.wakeword = create_wakeword_backend(config.config)
+        app.wakeword = create_wakeword_backend(config)
         app.wakeword.load_model()
         logger.info(f"Wake Word backend initialized. Models: {app.wakeword.get_loaded_models()}")
     except Exception as e:
@@ -1852,7 +2013,6 @@ def create_app():
             "markers": list(SENSITIVE_KEY_MARKERS),
         })
 
-
     @app.route("/vault/setup", methods=["POST"])
     def vault_setup():
         """Verify a wallet signature and derive/store the master key."""
@@ -1904,7 +2064,6 @@ def create_app():
             logger.error(f"Vault setup failed: {e}", exc_info=True)
             return jsonify({"success": False, "error": str(e)}), 500
 
-
     @app.route("/vault/encrypt", methods=["POST"])
     def vault_encrypt():
         """Return an encrypted blob for a path without writing config."""
@@ -1927,7 +2086,6 @@ def create_app():
         except Exception as e:
             logger.error(f"Vault encrypt failed: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
-
 
     @app.route("/vault/reveal", methods=["POST"])
     def vault_reveal():
@@ -1953,7 +2111,6 @@ def create_app():
                 errors[path] = str(e)
 
         return jsonify({"success": True, "values": values, "errors": errors})
-
 
     @app.route("/vault/scrub-backup", methods=["POST"])
     def vault_scrub_backup():

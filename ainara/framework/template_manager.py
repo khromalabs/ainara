@@ -29,6 +29,39 @@ from ainara.framework.config import config
 logger = logging.getLogger(__name__)
 
 
+def default_template_context() -> Dict[str, Any]:
+    """Built-in template variables shared by every template layer.
+
+    Single source of truth for names and formats:
+      * current_date – e.g. 'Monday 2025-06-13' (local time)
+      * current_time – e.g. '14:05:09' (local time)
+      * language     – UI language name from stt.language (e.g. 'English')
+
+    Consumers:
+      * TemplateManager.render — default context for .mu files.
+      * Bureau Conductor — seeds each plan run's static bindings so
+        {{$current_date}} etc. resolve in goals/system messages/params.
+
+    Never raises: rendering and plan startup degrade gracefully when the
+    language lookup fails.
+    """
+    language_name = "English"
+    try:
+        language = languages.get(alpha_2=config.get("stt.language", "en"))
+        if language is not None and language.name:
+            language_name = language.name
+    except Exception as e:  # bad config value / pycountry data missing
+        logger.warning(
+            "Could not resolve language for template context: %s", e
+        )
+    now = datetime.now()
+    return {
+        "current_date": now.strftime("%A %Y-%m-%d"),
+        "current_time": now.strftime("%H:%M:%S"),
+        "language": language_name,
+    }
+
+
 class TemplateManager:
     """Template manager using Mustache templating system with .mu extension"""
 
@@ -83,16 +116,9 @@ class TemplateManager:
         if context is None:
             context = {}
 
-        current_language = languages.get(
-            alpha_2=config.get("stt.language", "en")
-        ).name or "English"
-
-        # Add some default variables
-        full_context = {
-            'current_date': datetime.now().strftime('%A %Y-%m-%d'),
-            'current_time': datetime.now().strftime('%H:%M:%S'),
-            'language': current_language
-        }
+        # Default variables — single source of truth, see
+        # default_template_context(). Caller context wins on collision.
+        full_context = default_template_context()
         full_context.update(context)
 
         try:

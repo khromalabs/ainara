@@ -150,6 +150,7 @@ class ChatManager:
             self.last_chat_relative_time = format_relative_time(
                 self.last_chat_timestamp
             )
+            logger.info(f"Last message: {self.last_chat_relative_time} / {self.last_chat_timestamp}")
 
         # Fetch capabilities first
         if capabilities:

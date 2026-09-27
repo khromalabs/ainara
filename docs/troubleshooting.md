@@ -96,7 +96,7 @@ nothing until something is wrong. Do not read silence as broken.
 
 | Symptom | Cause | What to do |
 |---|---|---|
-| One coin never auto-exits | The exit plan is coin-parameterized and defaults to `vars.coin: BTC`, so a single schedule only ever checks BTC. Other coins stay open regardless of funding. | **One scheduler entry per coin**, using `plan:` and `vars:`. Stagger the crons. See the template. |
+| One coin never auto-exits | The exit plan is coin-parameterized and defaults to `variables: {coin: BTC}`, so a single schedule only ever checks BTC. Other coins stay open regardless of funding. | **One scheduler entry per coin**, using `plan:` and `variables:`. Stagger the crons. See the template. |
 | Ainara says she cannot execute a plan | Either `bureau.plan_runner.allowed_plans` is unset (deny-by-default), or Orakle has not been restarted since the skill was added — it discovers skills at startup. | Allowlist the plan, restart Orakle, ask again. If she still refuses while `system_conductor` is loaded and allowlisted, it is a hallucination — push back. |
 | Plan returns `409` | Already running, or blocked by `avoid_if`. | Not an error — the overlap guard working. Do not retry immediately. |
 | Plan call times out | The Conductor runs plans **asynchronously**, so a timeout says nothing about whether the run started. | Check portfolio status before retrying. A blind retry can double-open. |

@@ -396,6 +396,7 @@ class LiteLLM(LLMBackend):
                 # "temperature": 0.2,
                 "stream": stream,
                 "timeout": float(provider.get("request_timeout", 120.0)),
+                "stream_timeout": 30,
                 **(
                     {"api_base": provider["api_base"]}
                     if "api_base" in provider
@@ -548,6 +549,7 @@ class LiteLLM(LLMBackend):
                 # "temperature": 0.2,
                 "stream": stream,
                 "timeout": float(provider.get("request_timeout", 120.0)),
+                "stream_timeout": 30,
                 **(
                     {"api_base": provider["api_base"]}
                     if "api_base" in provider

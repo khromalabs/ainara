@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <AppInstaller
-    Version="0.10.1.0"
+    Version="0.11.0.0"
     Uri="https://download.ainara.app/polaris.appinstaller"
     xmlns="http://schemas.microsoft.com/appx/appinstaller/2018">
 
     <MainPackage
         Name="Khromalabs.AinaraPolaris"
-        Publisher='CN="Open Source Developer, RUBEM GOMEZ AGUDO", O=Open Source Developer, L=Madrid, S=Madrid, C=ES'
-        Version="0.10.1.0"
+        Publisher='CN="Open Source Developer, RUBEN GOMEZ AGUDO", O=Open Source Developer, L=Madrid, S=Madrid, C=ES'
+        Version="0.11.0.0"
         ProcessorArchitecture="x64"
-        Uri="https://download.ainara.app/Ainara_Polaris_0.10.1.appx" />
+        Uri="https://download.ainara.app/Ainara_Polaris_0.11.0.appx" />
 
     <UpdateSettings>
         <OnLaunch

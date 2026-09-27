@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 import asyncio
+import copy
 import json
 import logging
 import multiprocessing
@@ -28,9 +29,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional  # List,
 
-from ainara.bureau.plan import Plan, PlanValidationError, StepNode
-from ainara.bureau.scratchpad import Scratchpad
+from ainara.bureau.plan import (
+    BUILTIN_STATIC_ROOTS,
+    STATIC_PLACEHOLDER_RE,
+    Plan,
+    PlanValidationError,
+    StepNode,
+    iter_static_refs,
+)
+from ainara.bureau.scratchpad import (
+    Scratchpad,
+    StaticBindings,
+    map_strings,
+    resolve_property_aware,
+)
 from ainara.framework.orakle_client import call_skill
+from ainara.framework.template_manager import default_template_context
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +73,14 @@ def _skill_reported_error(result_str: str) -> Optional[str]:
     return None
 
 
+def _format_binding_value(value: Any, limit: int = 160) -> str:
+    """Compact, markdown-table-safe repr of a resolved binding value."""
+    text = repr(value)
+    if len(text) > limit:
+        text = text[:limit] + f"...[repr len={len(text)}]"
+    return text.replace("|", "\\|")
+
+
 def _run_skill_in_process(
     orakle_servers: list,
     skill_id: str,
@@ -71,8 +93,13 @@ def _run_skill_in_process(
     Calls the Orakle skill directly and puts the result on the queue.
     """
     try:
+        # Finish slightly before the parent's execution timeout so a
+        # network-level hang surfaces as an informative "Skill execution
+        # error: Read timed out" result instead of racing the monitor's
+        # SIGTERM (which reports an uninformative ProcessCrash).
         result_str = call_skill(
-            orakle_servers, skill_id, params, timeout=timeout
+            orakle_servers, skill_id, params,
+            timeout=max(timeout - 30, 1),
         )
 
         reported = _skill_reported_error(result_str)
@@ -155,6 +182,7 @@ class Conductor:
         step_registry: dict,
         router=None,
         config_manager=None,
+        property_registry: Optional[Dict[str, Any]] = None,
     ):
         self.plans_dir = Path(plans_dir)
         self.llm_config = llm_config
@@ -163,6 +191,14 @@ class Conductor:
         self.step_registry = step_registry  # shared with server.py
         self.router = router
         self.config_manager = config_manager
+        # Flat full_key -> property descriptor map fetched from the Orakle
+        # server (view=properties). Lets config_aliases and $skills.* refs
+        # resolve against declared skill property defaults.
+        # TODO: Skill properties are assumed static for the process lifetime.
+        # If hot-swapping of skill properties is ever supported, refresh this
+        # snapshot (e.g. at the start of each plan run) instead of capturing
+        # it once at Bureau startup.
+        self.property_registry = property_registry or {}
 
         self.plans: Dict[str, Plan] = {}
         self.plan_status: Dict[str, Dict[str, Any]] = {}
@@ -178,8 +214,44 @@ class Conductor:
         logger.info("Conductor started with %d plan(s)", len(self.plans))
 
     def shutdown(self) -> None:
-        """Gracefully shut down"""
+        """
+        Gracefully shut down: terminate any running steps registered by
+        this conductor, mark their plans as stopped, and release plan
+        locks. Idempotent; safe to call multiple times.
+        """
         logger.info("Conductor shutting down...")
+
+        # Local import to avoid a circular import at module load time,
+        # matching the pattern used in _abort_running_steps.
+        from ainara.bureau.server import _terminate_step
+
+        for step_id, task in list(self.step_registry.items()):
+            if not step_id.startswith("conductor-"):
+                continue
+            if task.get("status") != "RUNNING":
+                continue
+            proc = task.get("process")
+            if proc and proc.is_alive():
+                logger.warning(
+                    "Terminating step '%s' during shutdown", step_id
+                )
+                _terminate_step(step_id, task, reason="server shutdown")
+            task["status"] = "FAILED"
+            task["failure_reason"] = "Aborted due to server shutdown"
+            task["error"] = "Shutdown"
+
+        for plan_name, lock in self._locks.items():
+            if not lock.locked():
+                continue
+            self.plan_status[plan_name]["state"] = "stopped"
+            logger.info("Releasing lock for plan '%s'", plan_name)
+            try:
+                lock.release()
+            except RuntimeError:
+                # Executor thread released it first; harmless during exit.
+                pass
+
+        logger.info("Conductor shutdown complete")
 
     # ------------------------------------------------------------------
     # Plan loading
@@ -193,6 +265,8 @@ class Conductor:
                 self.plans_dir,
             )
             return
+
+        logger.info("Loading plans in %s", self.plans_dir)
 
         for filepath in sorted(self.plans_dir.glob("*.yaml")):
             try:
@@ -224,7 +298,7 @@ class Conductor:
 
     def trigger_plan(
         self, plan_name: str, avoid_if: Optional[Any] = None,
-        vars: Optional[Dict[str, Any]] = None,
+        variables: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Attempt to start a plan run.  Returns ``(run_id, error_str)``
@@ -233,14 +307,26 @@ class Conductor:
         * ``"plan_not_found"``   – no plan with that name is loaded
         * ``"already_running"``  – the plan's lock is held; run in progress
         * ``"avoid_condition_met:<blocking_plan>"`` – a plan specified in avoid_if is running
+        * ``"invalid_variables:<reason>"`` – the per-run override was rejected
 
-        ``vars`` overrides the plan's own ``vars`` defaults for this run only
-        (e.g. ``{"coin": "ETH"}`` to point a coin-parameterized plan at a
-        different asset). Unknown keys are allowed; steps simply won't reference
-        them.
+        ``variables`` overrides values of the plan's own ``variables`` for
+        this run only (e.g. ``{"coin": "ETH"}`` to point one plan at a
+        different asset). Only names the plan already declares may be
+        overridden, and only with scalars: a misspelled name would otherwise
+        run silently with the plan's default value.
+
+        The lock stays per plan name, so two runs of one plan never overlap
+        whatever their overrides, and ``avoid_if`` keeps meaning "any run of
+        that plan".
         """
         if plan_name not in self.plans:
             return None, "plan_not_found"
+
+        override_error = self._check_variable_override(
+            self.plans[plan_name], variables
+        )
+        if override_error:
+            return None, f"invalid_variables:{override_error}"
 
         lock = self._locks.get(plan_name)
         if lock is None:
@@ -264,15 +350,9 @@ class Conductor:
             return None, "already_running"
 
         run_id = str(uuid.uuid4())[:8]
-        # Merge this run's overrides onto the plan's vars defaults. A missing
-        # override leaves the default (so BTC stays the default coin); an unknown
-        # key is harmless (no step references it).
-        run_vars = dict(self.plans[plan_name].vars)
-        if vars:
-            run_vars.update(vars)
         thread = threading.Thread(
             target=self._execute_plan,
-            args=(plan_name, run_id, lock, run_vars),
+            args=(plan_name, run_id, lock, dict(variables or {})),
             name=f"conductor-{plan_name}-{run_id}",
             daemon=True,
         )
@@ -285,7 +365,7 @@ class Conductor:
 
     def _execute_plan(
         self, plan_name: str, run_id: str, lock: threading.Lock,
-        run_vars: Optional[Dict[str, Any]] = None,
+        variables: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Orchestrate the full DAG execution for a single plan run.
@@ -293,13 +373,15 @@ class Conductor:
         """
         log_prefix = f"[conductor:{plan_name}:{run_id}]"
         plan = self.plans[plan_name]
-        scratchpad = Scratchpad(max_chars=plan.scratchpad_max_chars)
-        # Seed plan input variables so step params can resolve {{vars.<name>}}
-        # (e.g. {{vars.coin}}). Stored like any step result, under the reserved
-        # name "vars"; a step called "vars" would be unusual and is not used here.
-        if run_vars:
-            scratchpad.store("vars", dict(run_vars))
-            logger.info("%s Plan vars: %s", log_prefix, run_vars)
+
+        # --- Static bindings snapshot (variables + config aliases) ---
+        # Resolved once per run; mid-run config reloads do not affect it.
+        bindings, bindings_error = self._build_static_bindings(
+            plan, log_prefix, variables
+        )
+        scratchpad = Scratchpad(
+            max_chars=plan.scratchpad_max_chars, static_bindings=bindings
+        )
 
         # Create a shared list for blacklisted providers in this specific plan run
         manager = multiprocessing.Manager()
@@ -327,9 +409,28 @@ class Conductor:
         aborted_steps: Dict[str, str] = {}  # step_name -> abort reason
         # Track avoid_if evaluation errors for reporting
         avoid_if_errors: Dict[str, Optional[str]] = {}
+        # Heartbeat state for the "still running" watchdog log
+        last_heartbeat = time.time()
+
+        # --- Preflight: resolve every static ref before launching steps ---
+        resolved_refs: Dict[str, Any] = {}
+        binding_failures: list = []
+        if bindings_error is None:
+            resolved_refs, binding_failures = self._preflight_static_refs(
+                plan, scratchpad, log_prefix
+            )
+        else:
+            binding_failures = [bindings_error]
+
+        if binding_failures:
+            failed = True
+            failure_reason = (
+                "Static binding resolution failed: "
+                + "; ".join(binding_failures)
+            )
 
         try:
-            while len(completed) < len(plan.steps):
+            while not failed and len(completed) < len(plan.steps):
                 ready = plan.get_ready_steps(completed)
                 # Filter out steps already running
                 ready = [s for s in ready if s not in running_step_ids]
@@ -394,6 +495,8 @@ class Conductor:
                         resolved_goal = scratchpad.resolve_template(
                             step_node.goal_template
                         )
+                        if not isinstance(resolved_goal, str):
+                            resolved_goal = str(resolved_goal)
                         step_id = self._spawn_agent(
                             plan_name=plan_name,
                             run_id=run_id,
@@ -401,6 +504,7 @@ class Conductor:
                             step_node=step_node,
                             goal=resolved_goal,
                             blacklisted_providers=blacklisted_providers,
+                            scratchpad=scratchpad,
                         )
                     elif step_node.type == "skill":
                         step_id = self._spawn_skill(
@@ -494,6 +598,21 @@ class Conductor:
                 # Small sleep to avoid busy-waiting
                 if running_step_ids:
                     time.sleep(2)
+                    now = time.time()
+                    if now - last_heartbeat >= 60:
+                        for hb_name, hb_id in running_step_ids.items():
+                            hb_task = self.step_registry.get(hb_id) or {}
+                            hb_start = hb_task.get("start_time")
+                            hb_elapsed = (
+                                int(now - hb_start) if hb_start else "?"
+                            )
+                            logger.info(
+                                "%s Step '%s' still running (%ss elapsed)",
+                                log_prefix,
+                                hb_name,
+                                hb_elapsed,
+                            )
+                        last_heartbeat = now
 
         except Exception as e:
             failed = True
@@ -523,9 +642,23 @@ class Conductor:
             )
 
             if plan.on_failure == "notify":
-                self._send_failure_notification(
-                    plan_name, run_id, failed_step, failure_reason
+                # Fire-and-forget with a hard join timeout: a wedged
+                # connector must never hold the plan lock hostage (the
+                # lock is only released after this returns).
+                notifier = threading.Thread(
+                    target=self._send_failure_notification,
+                    args=(plan_name, run_id, failed_step, failure_reason),
+                    daemon=True,
+                    name=f"notify-{plan_name}-{run_id}",
                 )
+                notifier.start()
+                notifier.join(timeout=10)
+                if notifier.is_alive():
+                    logger.warning(
+                        "%s Failure notification still pending after 10s;"
+                        " continuing (report and lock release not blocked)",
+                        log_prefix,
+                    )
         else:
             self.plan_status[plan_name]["state"] = "idle"
             self.plan_status[plan_name]["last_result"] = "success"
@@ -535,6 +668,11 @@ class Conductor:
         # --- avoid_report_if ---
         # Only evaluated on success; if truthy (possibly negated) the
         # forensic report is suppressed to reduce noise.
+        # TODO: Not validated at plan load time and resolved leniently here
+        # (eval error → warning, report generated anyway), so a typo in the
+        # condition path degrades silently by design. If stricter behaviour
+        # is ever wanted, validate the path's first segment against step
+        # names in Plan._validate and/or fail the run on eval errors.
         if not failed and plan.avoid_report_if:
             condition = plan.avoid_report_if
             invert = False
@@ -576,10 +714,136 @@ class Conductor:
             skipped_steps=skipped_steps,
             aborted_steps=aborted_steps,
             log_prefix=log_prefix,
+            bindings=bindings,
+            resolved_refs=resolved_refs,
+            binding_failures=binding_failures,
         )
 
         self.plan_status[plan_name].pop("current_run_id", None)
         lock.release()
+
+    @staticmethod
+    def _check_variable_override(
+        plan: Plan, variables: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Return why a per-run ``variables`` override is unusable, or None.
+
+        Same value rules as the plan's own ``variables`` (scalars, no chained
+        ``{{$...}}``), plus: every name must already be declared by the plan.
+        """
+        if variables is None:
+            return None
+        if not isinstance(variables, dict):
+            return "must be a mapping of name -> scalar"
+        unknown = sorted(str(k) for k in variables if k not in plan.variables)
+        if unknown:
+            return (
+                f"plan '{plan.name}' declares no variable(s) {unknown};"
+                f" declared: {sorted(plan.variables)}"
+            )
+        for name, value in variables.items():
+            if value is None or isinstance(value, (dict, list)):
+                return f"variable '{name}' must be a scalar"
+            if isinstance(value, str) and STATIC_PLACEHOLDER_RE.search(value):
+                return f"variable '{name}' contains a {{{{$...}}}} reference"
+        return None
+
+    def _build_static_bindings(
+        self,
+        plan: Plan,
+        log_prefix: str,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> tuple:
+        """
+        Snapshot plan variables and resolve config aliases once per run.
+
+        Returns ``(StaticBindings, error_or_None)``. Aliases are resolved
+        immediately so a broken alias aborts the run before any step runs.
+        *overrides* is the run's validated ``trigger_plan(variables=...)``.
+        """
+        config_root: dict = {}
+        if self.config_manager is not None:
+            try:
+                if self.config_manager.needs_load():
+                    self.config_manager.load_config()
+                config_root = copy.deepcopy(self.config_manager.config) or {}
+            except Exception as e:
+                logger.error(
+                    "%s Failed to snapshot configuration for bindings: %s",
+                    log_prefix,
+                    e,
+                    exc_info=True,
+                )
+                return None, f"Failed to snapshot configuration: {e}"
+
+        aliases: Dict[str, Any] = {}
+        for name, target in plan.config_aliases.items():
+            value, error = resolve_property_aware(
+                config_root, target, target, self.property_registry
+            )
+            if error is not None or value is None:
+                message = (
+                    f"Config alias '{name}' -> '{target}' could not be"
+                    f" resolved: {error or 'null value'}"
+                )
+                logger.error("%s %s", log_prefix, message)
+                return None, message
+            aliases[name] = value
+
+        # Built-in time/language bindings come from the shared
+        # default_template_context() — the same values .mu templates get.
+        # Plan variables win on collision (same precedence as render()), and
+        # a run's overrides win over the plan's own values.
+        if overrides:
+            logger.info("%s Variable overrides: %s", log_prefix, overrides)
+        bindings = StaticBindings(
+            variables={
+                **default_template_context(),
+                **plan.variables,
+                **(overrides or {}),
+            },
+            aliases=aliases,
+            alias_targets=dict(plan.config_aliases),
+            config_root=config_root,
+            property_registry=self.property_registry,
+        )
+        logger.info(
+            "%s Static bindings ready: %d variable(s), %d config alias(es)",
+            log_prefix,
+            len(bindings.variables),
+            len(bindings.aliases),
+        )
+        return bindings, None
+
+    def _preflight_static_refs(
+        self, plan: Plan, scratchpad: Scratchpad, log_prefix: str
+    ) -> tuple:
+        """
+        Resolve every static ``{{$...}}`` reference used across agent goals,
+        agent system messages and skill params. Returns
+        ``(resolved_refs, failures)``: *resolved_refs* maps each distinct ref
+        body to its resolved value (for the forensic report); *failures* is a
+        list of error strings (empty when everything resolves).
+        """
+        resolved: Dict[str, Any] = {}
+        failed_bodies: set = set()
+        failures: list = []
+        for _, body in iter_static_refs(plan.steps):
+            if body in resolved or body in failed_bodies:
+                continue
+            value, error = scratchpad.resolve_dotted_path(f"${body}")
+            if error is not None or value is None:
+                failed_bodies.add(body)
+                failures.append(f"${body}: {error or 'resolved to null'}")
+            else:
+                resolved[body] = value
+        if failures:
+            logger.error(
+                "%s Static binding preflight failed: %s",
+                log_prefix,
+                "; ".join(failures),
+            )
+        return resolved, failures
 
     @staticmethod
     def _format_response(response: str) -> str:
@@ -715,6 +979,10 @@ class Conductor:
         aborted_steps = kwargs.get("aborted_steps", {})
         log_prefix = kwargs.get("log_prefix", "")
 
+        bindings = kwargs.get("bindings")
+        resolved_refs = kwargs.get("resolved_refs", {})
+        binding_failures = kwargs.get("binding_failures", [])
+
         try:
             end_time = datetime.now(timezone.utc)
             duration = end_time - start_time
@@ -786,6 +1054,49 @@ class Conductor:
                     f"| `{step_name}` | {step_node.type} | {status} | {turns}"
                     f" | {skills} |"
                 )
+
+            # --- Resolved static bindings (audit trail) ---
+            lines.append("\n## Resolved Bindings\n")
+            if bindings is None:
+                lines.append(
+                    "_Static bindings could not be built (see failure"
+                    " reason)._\n"
+                )
+            elif (
+                set(bindings.variables) <= BUILTIN_STATIC_ROOTS
+                and not bindings.aliases
+                and not resolved_refs
+            ):
+                lines.append("_No static bindings used by this plan._\n")
+            else:
+                lines.append("| Binding | Source | Resolved Value |")
+                lines.append("|---|---|---|")
+                for name, value in bindings.variables.items():
+                    if (
+                        name in BUILTIN_STATIC_ROOTS
+                        and name not in plan.variables
+                    ):
+                        source = "built-in"
+                    else:
+                        source = "plan variable"
+                    lines.append(
+                        f"| `${name}` | {source} |"
+                        f" {_format_binding_value(value)} |"
+                    )
+                for name, target in bindings.alias_targets.items():
+                    lines.append(
+                        f"| `${name}` | config alias `{target}` |"
+                        f" {_format_binding_value(bindings.aliases.get(name))}"
+                        " |"
+                    )
+                for body, value in sorted(resolved_refs.items()):
+                    lines.append(
+                        f"| `${body}` | template reference |"
+                        f" {_format_binding_value(value)} |"
+                    )
+                lines.append("")
+            for failure in binding_failures:
+                lines.append(f"\n> ⚠️ **Binding failure:** {failure}")
 
             lines.append("\n## Step Details\n")
             for step_name in attempted_steps:
@@ -934,12 +1245,25 @@ class Conductor:
         step_node: StepNode,
         goal: str,
         blacklisted_providers: Any = None,
+        scratchpad: Optional[Scratchpad] = None,
     ) -> str:
         """Spawn an agent process, reusing the Bureau infrastructure."""
         from ainara.bureau.server import run_agent_in_process
 
         step_id = f"conductor-{plan_name}-{run_id}-{step_name}"
         result_queue = multiprocessing.Queue()
+
+        # Render placeholders in the blueprint's system message (static $refs
+        # and dynamic {{step.*}} refs) before it crosses the process
+        # boundary. The worker receives final text; server.py is untouched.
+        blueprint = copy.deepcopy(step_node.blueprint)
+        if scratchpad is not None and isinstance(
+            blueprint.get("system_message"), str
+        ):
+            rendered = scratchpad.resolve_template(blueprint["system_message"])
+            blueprint["system_message"] = (
+                rendered if isinstance(rendered, str) else str(rendered)
+            )
 
         plan = self.plans[plan_name]
         user_context = {"language": plan.raw.get("language", "en")}
@@ -949,7 +1273,7 @@ class Conductor:
             args=(
                 self.llm_config,
                 self.orakle_servers,
-                step_node.blueprint,
+                blueprint,
                 user_context,
                 goal,
                 step_node.max_turns,
@@ -992,13 +1316,16 @@ class Conductor:
         step_id = f"conductor-{plan_name}-{run_id}-{step_name}"
         result_queue = multiprocessing.Queue()
 
-        # Resolve any scratchpad templates in params
-        resolved_params = {}
-        for key, value in (step_node.params or {}).items():
-            if isinstance(value, str):
-                resolved_params[key] = scratchpad.resolve_template(value)
-            else:
-                resolved_params[key] = value
+        # Resolve any scratchpad templates in params, recursing through
+        # nested dicts/lists. Every string goes through
+        # scratchpad.resolve_template; whole placeholders — static and
+        # dynamic — keep their native type (int/float/bool/dict/list...)
+        # via native_whole=True. Values must remain JSON-serializable for
+        # call_skill (they originate from YAML scalars or JSON results).
+        resolved_params = map_strings(
+            step_node.params or {},
+            lambda text: scratchpad.resolve_template(text, native_whole=True),
+        )
 
         process = multiprocessing.Process(
             target=_run_skill_in_process,

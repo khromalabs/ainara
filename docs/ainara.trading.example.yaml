@@ -138,17 +138,17 @@ trading:
 #     enabled: true          # supervise the daemon + watchdog; restart if they die
 #
 # plans:
-#   # ONE ENTRY PER COIN. The plans default to vars.coin=BTC, so a single schedule
+#   # ONE ENTRY PER COIN. The plans default to coin: BTC, so a single schedule
 #   # only ever checks BTC and other coins would never auto-exit. Stagger them: three
 #   # simultaneous runs triple the burst load on the dYdX indexer.
 #   delta_neutral_exit:
 #     cron: "5 * * * *"
 #     enabled: true
-#     vars: { coin: BTC }
+#     variables: { coin: BTC }
 #     avoid_if: [delta_neutral_farm]
 #   delta_neutral_exit_eth:
 #     plan: delta_neutral_exit
 #     cron: "10 * * * *"
 #     enabled: true
-#     vars: { coin: ETH }
+#     variables: { coin: ETH }
 #     avoid_if: [delta_neutral_farm]
