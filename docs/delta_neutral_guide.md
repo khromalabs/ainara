@@ -162,10 +162,9 @@ The `network` key per venue selects which credential block and which chain is us
 | `trading.dydx.subaccounts` | *(unset)* | Coin → dYdX subaccount map for position isolation, e.g. `{BTC: 0, ETH: 1, SOL: 2}`. Unset = every coin shares subaccount 0. **Required for holding more than one coin at a time** — see below. |
 | `bureau.plan_runner.allowed_plans` | *(unset)* | Plans Ainara may trigger conversationally. Deny-by-default — see below. |
 
-> **Set the two size caps explicitly** — they have no protective built-in default.
-> If `max_order_notional_usd` is unset there is **no hard notional ceiling**, and if
-> `max_account_margin_pct` is unset the sizing rule falls back to 50%. Smaller is
-> safer; start low. Likewise, `watchdog.mode` defaults to `monitor` (report-only) —
+> **Set the two size caps explicitly.** Unset, they default to the template's
+> values (`max_order_notional_usd` 100, `max_account_margin_pct` 20); an explicit
+> `null` removes the limit. Smaller is safer; start low. Likewise, `watchdog.mode` defaults to `monitor` (report-only) —
 > set it to `active` for unattended runs, and set `trading.dry_run: false` so the
 > active watchdog's orders actually reach the venues.
 

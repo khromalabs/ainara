@@ -40,6 +40,8 @@ import time
 
 from flask import Flask, jsonify, request
 
+from executor.compliance import (DEFAULT_MAX_ACCOUNT_MARGIN_PCT,
+                                 DEFAULT_MAX_ORDER_NOTIONAL_USD)
 from executor.config import ExecutorConfig
 from executor.notify import Notifier
 from executor.venues.dydx import DydxExecutor
@@ -114,7 +116,8 @@ def _margin_cap_notional():
     (which would strand a naked leg). When flat, equity == free collateral, so it
     matches the carry engine's sizing.
     """
-    pct = config.get("trading.max_account_margin_pct")
+    pct = config.get("trading.max_account_margin_pct",
+                     DEFAULT_MAX_ACCOUNT_MARGIN_PCT)
     if pct is None:
         return None
     try:
@@ -451,7 +454,8 @@ def _effective_cap_notional():
     the two-leg path would silently be the weaker gate. None = uncapped.
     """
     caps = []
-    hard = config.get("trading.executor.max_order_notional_usd")
+    hard = config.get("trading.executor.max_order_notional_usd",
+                      DEFAULT_MAX_ORDER_NOTIONAL_USD)
     if hard is not None:
         caps.append(float(hard))
     margin = _margin_cap_notional()

@@ -17,6 +17,7 @@ Orakle deps — see `executor/README.md`), so the tests do too:
 | `test_trading_carry_engine.py` | ainara (main) | `ainara` package; HL fetch is mocked |
 | `test_trading_plan_vars.py` | ainara (main) | reads the real `plans/*.yaml` |
 | `test_trading_portfolio.py` | ainara (main) | `ainara` package; venue reads stubbed |
+| `test_trading_server_guards.py` | **executor** (`executor/.venv`) | Flask + venue SDKs to import `executor.server`; venues and config stubbed |
 
 ## Run
 

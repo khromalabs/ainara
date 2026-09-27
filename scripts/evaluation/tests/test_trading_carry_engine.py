@@ -216,5 +216,49 @@ class HLFundingPagination(unittest.TestCase):
         self.assertEqual(len(hist), 50)
 
 
+class SizingDefaultsMatchTheTemplate(unittest.TestCase):
+    """An absent sizing key must not be looser than the shipped template.
+
+    Before: an unset max_account_margin_pct sized at 50% and an unset
+    max_order_notional_usd meant no ceiling at all.
+    """
+
+    def _size(self, settings, free=(1000.0, 1000.0)):
+        def get(key, default=None):
+            return settings.get(key, default)
+
+        e = TradingCarryEngine()
+        e._free_collateral = lambda coin=None: free
+        with patch.object(CE, "config") as cfg:
+            cfg.get.side_effect = get
+            return e._size_position(50000.0, 3.0, 500.0, "BTC")
+
+    def test_unset_keys_use_the_template_values(self):
+        _, detail = self._size({})
+        self.assertEqual(detail["margin_pct"], 20.0)
+        self.assertEqual(detail["hard_notional_cap"], 100.0)
+        # 20% of 1000 x3 = 600 by the margin rule; the $100 cap binds.
+        self.assertEqual(detail["capped_by"], "hard_notional_cap")
+        self.assertLessEqual(detail["notional_at_ref"], 100.0)
+
+    def test_capital_fallback_is_capped_too(self):
+        _, detail = self._size({}, free=(None, None))
+        self.assertEqual(detail["method"], "capital_fallback")
+        self.assertLessEqual(detail["effective_notional_per_leg"], 100.0)
+
+    def test_explicit_null_still_removes_the_hard_cap(self):
+        _, detail = self._size(
+            {"trading.executor.max_order_notional_usd": None})
+        self.assertIsNone(detail["hard_notional_cap"])
+        self.assertEqual(detail["capped_by"], "margin_rule")
+
+    def test_configured_values_win(self):
+        _, detail = self._size(
+            {"trading.max_account_margin_pct": 10,
+             "trading.executor.max_order_notional_usd": 1000})
+        self.assertEqual(detail["margin_pct"], 10.0)
+        self.assertEqual(detail["effective_notional_per_leg"], 300.0)
+
+
 if __name__ == "__main__":
     unittest.main()

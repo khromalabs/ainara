@@ -74,10 +74,11 @@ trading:
   # to trap you in a position.
   #
   # Each leg's margin may use at most this % of the smaller account's free
-  # collateral. Unset falls back to 50%, which is not a safe default.
+  # collateral. Unset falls back to 20 (this value).
   max_account_margin_pct: 20
   executor:
-    # Absolute ceiling on one opening order. Unset means NO ceiling. Start low.
+    # Absolute ceiling on one opening order. Unset falls back to 100 (this value);
+    # an explicit null means NO ceiling. Start low.
     max_order_notional_usd: 100
     # cross_pct: 0.05                 # how far each leg crosses the book for a taker fill
     # fill_timeout_s: 15              # seconds to wait for a leg before unwinding

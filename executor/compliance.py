@@ -33,6 +33,16 @@ _compliance.py). It confers no permission or protection.
 """
 
 
+# Code defaults for the two sizing limits, equal to what
+# docs/ainara.trading.example.yaml ships. They were looser (no hard cap, and no
+# margin rule at all in the daemon), so a config written by hand instead of
+# from the template silently ran with far more at risk. An explicit null in
+# the config still means "no limit": that is a choice, an absent key is not.
+# carry_engine.py keeps its own copy because it runs in the other virtualenv.
+DEFAULT_MAX_ORDER_NOTIONAL_USD = 100.0
+DEFAULT_MAX_ACCOUNT_MARGIN_PCT = 20.0
+
+
 def check_order_cap(config, notional_usd, reduce_only):
     """Refuse an OPENING order whose USD notional exceeds the configured cap.
 
@@ -40,12 +50,14 @@ def check_order_cap(config, notional_usd, reduce_only):
     carry engine sized or an LLM agent requested. Reduce-only / closing orders are
     NEVER capped — a size limit must never be able to trap you in a naked leg.
 
-    Cap: trading.executor.max_order_notional_usd (unset = no cap).
+    Cap: trading.executor.max_order_notional_usd (unset =
+    DEFAULT_MAX_ORDER_NOTIONAL_USD; an explicit null = no cap).
     Returns None to proceed, or a refusal dict.
     """
     if reduce_only:
         return None
-    cap = config.get("trading.executor.max_order_notional_usd")
+    cap = config.get("trading.executor.max_order_notional_usd",
+                     DEFAULT_MAX_ORDER_NOTIONAL_USD)
     if cap is None:
         return None
     try:

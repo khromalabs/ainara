@@ -28,6 +28,15 @@ from ainara.framework.config import config
 from ainara.framework.skill import Skill
 
 HOURS_PER_YEAR = 24 * 365
+
+# Code defaults for the two sizing limits, equal to what
+# docs/ainara.trading.example.yaml ships. They were 50% and no hard cap, so a
+# hand-written config sized each leg against half the smaller account with no
+# ceiling, and the capital fallback below sized against capital_usd * leverage.
+# The executor daemon holds the same values in executor/compliance.py (it
+# cannot import this module: separate virtualenv).
+DEFAULT_MAX_ACCOUNT_MARGIN_PCT = 20.0
+DEFAULT_MAX_ORDER_NOTIONAL_USD = 100.0
 HOUR_MS = 3_600_000
 
 # Public funding endpoints. Decisions default to MAINNET data (the real economic
@@ -670,12 +679,14 @@ class TradingCarryEngine(Skill):
         both matched legs stay within that budget with a liquidation buffer. Also
         clamped by the hard notional cap. Falls back to capital_usd if balances
         can't be read (so nothing silently mis-sizes)."""
-        hard_cap = config.get("trading.executor.max_order_notional_usd")
+        hard_cap = config.get("trading.executor.max_order_notional_usd",
+                              DEFAULT_MAX_ORDER_NOTIONAL_USD)
         hard_cap = float(hard_cap) if hard_cap is not None else None
         hl_free, dydx_free = self._free_collateral(coin)
 
         if hl_free is not None and dydx_free is not None:
-            pct = float(config.get("trading.max_account_margin_pct", 50))
+            pct = float(config.get("trading.max_account_margin_pct",
+                                   DEFAULT_MAX_ACCOUNT_MARGIN_PCT))
             binding = min(hl_free, dydx_free)
             margin_per_leg = pct / 100.0 * binding
             margin_notional = margin_per_leg * leverage
