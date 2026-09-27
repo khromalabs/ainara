@@ -290,5 +290,53 @@ class PartialFillsAreNotReportedHedged(unittest.TestCase):
         self.assertIn("hyperliquid", book.closed)
 
 
+class OneOpenPerCoin(unittest.TestCase):
+    """Two opens for one coin must not both pass the flat check.
+
+    Before: nothing serialized /hedge/open, and the daemon serves requests
+    on threads.
+    """
+
+    def _post(self, body):
+        with patch.object(S, "config") as cfg:
+            cfg.get.side_effect = _cfg_get({})
+            return S.app.test_client().post("/hedge/open", json=body)
+
+    def test_a_second_open_for_the_same_coin_is_refused(self):
+        lock = S._open_lock("BTC")
+        lock.acquire()
+        try:
+            r = self._post({"short_symbol": "btc", "long_symbol": "BTC-USD"})
+        finally:
+            lock.release()
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["refused"], "already_opening")
+
+    def test_another_coin_is_not_blocked(self):
+        lock = S._open_lock("BTC")
+        lock.acquire()
+        try:
+            # Reaches the handler (and fails its own validation), rather than
+            # being refused by the BTC lock.
+            r = self._post({"short_symbol": "ETH"})
+        finally:
+            lock.release()
+        self.assertEqual(r.status_code, 400)
+
+    def test_the_lock_is_released_after_every_outcome(self):
+        self._post({"short_symbol": "SOL"})  # 400: missing fields
+        self.assertFalse(S._open_lock("SOL").locked())
+        with patch.object(S, "_hedge_open", side_effect=RuntimeError("boom")):
+            try:
+                self._post({"short_symbol": "SOL"})
+            except RuntimeError:
+                pass
+        self.assertFalse(S._open_lock("SOL").locked())
+
+    def test_symbols_for_one_coin_share_a_lock(self):
+        self.assertIs(S._open_lock(S._coin_key("eth")),
+                      S._open_lock(S._coin_key("ETH-USD")))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ import math
 import os
 import re
 import tempfile
+import threading
 import time
 
 from flask import Flask, jsonify, request
@@ -774,6 +775,25 @@ def _cancel_resting(venue_name, symbol, leg_res):
         return {"cancelled": False, "error": str(e)}
 
 
+# One lock per coin, made on first use and never dropped: there are a handful
+# of coins, and never evicting avoids ever discarding a lock a thread holds.
+_OPEN_LOCKS = {}
+_OPEN_LOCKS_GUARD = threading.Lock()
+
+
+def _coin_key(symbol):
+    """Bare upper-case coin for a venue symbol ("btc-usd" -> "BTC")."""
+    return str(symbol or "").upper().split("-")[0]
+
+
+def _open_lock(coin):
+    with _OPEN_LOCKS_GUARD:
+        lock = _OPEN_LOCKS.get(coin)
+        if lock is None:
+            lock = _OPEN_LOCKS[coin] = threading.Lock()
+        return lock
+
+
 @app.post("/hedge/open")
 def hedge_open():
     """Open both legs of a delta-neutral hedge, or leave the account flat.
@@ -784,8 +804,28 @@ def hedge_open():
 
     Defaults to dry_run=True like /venues/<v>/order; a caller must send
     dry_run=false explicitly to reach a venue.
+
+    One open per coin at a time. Without it, two requests for the same coin
+    (a retried plan, a manual call during a cron run) both passed the "only
+    open from flat" check before either had placed a leg, and both opened.
+    A second request is refused rather than queued: waiting would only let it
+    run the flat check after the first open, where it would be refused anyway.
     """
     body = request.get_json(force=True, silent=True) or {}
+    coin = _coin_key(body.get("short_symbol") or body.get("long_symbol"))
+    lock = _open_lock(coin)
+    if not lock.acquire(blocking=False):
+        logger.info("HEDGE REFUSED (open already in progress): %s", coin)
+        return jsonify(opened=False, status="refused", refused="already_opening",
+                       detail=f"an open for {coin} is already in progress"), 409
+    try:
+        return _hedge_open(body)
+    finally:
+        lock.release()
+
+
+def _hedge_open(body):
+    """hedge_open's body, run while the coin's open lock is held."""
     dry_run = body.get("dry_run", True) is not False
 
     short_venue = body.get("short_venue")
