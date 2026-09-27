@@ -107,29 +107,57 @@ def _notifier():
     return _NOTIFIER
 
 
-def _margin_cap_notional():
+def _margin_cap_notional(coin):
     """Max notional per leg allowed by the margin rule, from BOTH live balances.
-    None if the rule isn't configured or balances can't be read.
+
+    Returns `(cap, refusal)`. A non-None `refusal` means the caller must refuse
+    the order; `(None, None)` means the rule is switched off (an explicit null
+    trading.max_account_margin_pct) and there is no margin cap to apply.
 
     Uses EQUITY (account value), not free collateral: equity is stable as the two
     legs open, so the cap doesn't tighten after leg 1 and wrongly refuse leg 2
     (which would strand a naked leg). When flat, equity == free collateral, so it
     matches the carry engine's sizing.
+
+    `coin` picks the dYdX subaccount the order will actually draw on. This used
+    to take no coin and read subaccount 0, so under trading.dydx.subaccounts an
+    ETH order was capped against BTC's balance. state() quietly answers with
+    the first subaccount when the one asked for does not exist, so a mismatch
+    is treated as unreadable too.
+
+    Anything it cannot measure refuses. It used to catch every error and return
+    None, which both callers read as "no cap": an unreadable venue removed the
+    backstop at the moment it was least safe to trade.
     """
     pct = config.get("trading.max_account_margin_pct",
                      DEFAULT_MAX_ACCOUNT_MARGIN_PCT)
     if pct is None:
-        return None
+        return None, None
+
+    def unreadable(why):
+        logger.error("margin-cap unreadable for %s: %s", coin, why)
+        return None, {
+            "refused": "margin_cap_unreadable",
+            "detail": (f"could not measure account equity for {coin} ({why}),"
+                       " so the margin cap cannot be applied. Refusing rather"
+                       " than placing an order with the backstop lifted.")}
+
     try:
         hl_eq = _venue("hyperliquid").state().get("perp_account_value")
-        dy_eq = _resolve(_venue("dydx").state()).get("equity")
-        if hl_eq is None or dy_eq is None:
-            return None
-        leverage = float(config.get("trading.carry_engine.leverage", 3.0))
-        return float(pct) / 100.0 * min(float(hl_eq), float(dy_eq)) * leverage
+        dydx = _venue("dydx")
+        sub = dydx.subaccount_for(coin)
+        dy_state = _resolve(dydx.state(sub))
     except Exception as e:
-        logger.warning("margin-cap read failed: %s", e)
-        return None
+        return unreadable(f"{type(e).__name__}: {e}")
+    if dy_state.get("subaccount") != sub:
+        return unreadable(f"dydx subaccount {sub} is not funded or not listed")
+    dy_eq = dy_state.get("equity")
+    if hl_eq is None or dy_eq is None:
+        missing = ", ".join(n for n, v in (("hyperliquid", hl_eq),
+                                          ("dydx", dy_eq)) if v is None)
+        return unreadable(f"{missing} reported no equity")
+    leverage = float(config.get("trading.carry_engine.leverage", 3.0))
+    return float(pct) / 100.0 * min(float(hl_eq), float(dy_eq)) * leverage, None
 
 
 def _watchdog_alarm():
@@ -211,7 +239,16 @@ def order(name):
     # regardless of what the carry engine sized or the LLM agent requested. Closes
     # are never capped.
     if not reduce_only:
-        mcap = _margin_cap_notional()
+        mcap, refusal = _margin_cap_notional(symbol)
+        if refusal is not None:
+            logger.info("ORDER REFUSED (margin cap unreadable): %s %s",
+                        name, symbol)
+            return jsonify({
+                "submitted": False,
+                "order": {"venue": name, "symbol": symbol, "size": size,
+                          "price": price, "reduce_only": reduce_only},
+                "gate": refusal,
+            })
         notional = float(size) * float(price)
         if mcap is not None and notional > mcap:
             logger.info("ORDER REFUSED (margin cap): %s notional=%.2f cap=%.2f",
@@ -446,22 +483,27 @@ def plan_hedge_legs(short_symbol, long_symbol, size, ref_price, cross_pct,
     }
 
 
-def _effective_cap_notional():
+def _effective_cap_notional(coin):
     """The binding per-leg notional ceiling: tighter of hard cap and margin rule.
 
     /venues/<v>/order applies the margin backstop in the route, but the hedge
     opener calls the adapters directly — so it must apply the same rule here or
-    the two-leg path would silently be the weaker gate. None = uncapped.
+    the two-leg path would silently be the weaker gate.
+
+    Returns `(cap, refusal)` like _margin_cap_notional; a cap of None with no
+    refusal means uncapped.
     """
+    margin, refusal = _margin_cap_notional(coin)
+    if refusal is not None:
+        return None, refusal
     caps = []
     hard = config.get("trading.executor.max_order_notional_usd",
                       DEFAULT_MAX_ORDER_NOTIONAL_USD)
     if hard is not None:
         caps.append(float(hard))
-    margin = _margin_cap_notional()
     if margin is not None:
         caps.append(float(margin))
-    return min(caps) if caps else None
+    return (min(caps) if caps else None), None
 
 
 def _leg_refused(res):
@@ -669,8 +711,12 @@ def hedge_open():
                                config.get("trading.executor.cross_pct", 0.05)))
     fill_timeout = float(body.get("fill_timeout_s",
                                   config.get("trading.executor.fill_timeout_s", 15)))
+    # The dYdX leg decides which subaccount's equity the margin rule measures.
+    dydx_symbol = short_symbol if short_venue == "dydx" else long_symbol
+    cap, cap_refusal = _effective_cap_notional(dydx_symbol)
+    if cap_refusal is not None:
+        return jsonify(opened=False, status="refused", **cap_refusal), 503
     try:
-        cap = _effective_cap_notional()
         step = _hedge_size_step(short_venue, short_symbol, long_venue, long_symbol)
         tick = _hedge_price_tick(short_venue, short_symbol, long_venue,
                                  long_symbol, ref_price)

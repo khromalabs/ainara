@@ -50,20 +50,25 @@ class _FakeHL:
 
 
 class _FakeDydx:
-    def __init__(self, equity=1000.0, raises=None):
+    def __init__(self, equity=1000.0, raises=None, funded=(0, 1, 2)):
         self._equity = equity
         self._raises = raises
+        self._funded = funded
         self.read_subaccounts = []
 
     def subaccount_for(self, symbol):
         return {"BTC": 0, "ETH": 1, "SOL": 2}.get(
             str(symbol).upper().split("-")[0], 0)
 
-    def state(self, subaccount=None):
+    def state(self, subaccount=0):
+        # Like the real adapter: an unlisted subaccount falls back to the
+        # first one rather than raising.
         self.read_subaccounts.append(subaccount)
         if self._raises:
             raise self._raises
-        st = {"positions": []}
+        st = {"positions": [],
+              "subaccount": subaccount if subaccount in self._funded
+              else self._funded[0]}
         if self._equity is not None:
             st["equity"] = self._equity
         return st
@@ -96,7 +101,7 @@ class SizingDefaultsMatchTheTemplate(unittest.TestCase):
         with patch.object(S, "config") as cfg, \
              patch.object(S, "_venue", side_effect=_venues()):
             cfg.get.side_effect = _cfg_get({})
-            self.assertEqual(S._effective_cap_notional(), 100.0)
+            self.assertEqual(S._effective_cap_notional("BTC-USD"), (100.0, None))
 
     def test_margin_rule_applies_when_unset(self):
         with patch.object(S, "config") as cfg, \
@@ -105,7 +110,78 @@ class SizingDefaultsMatchTheTemplate(unittest.TestCase):
             cfg.get.side_effect = _cfg_get(
                 {"trading.executor.max_order_notional_usd": None})
             # 20% x 100 x 3 = 60, no hard cap.
-            self.assertAlmostEqual(S._effective_cap_notional(), 60.0)
+            cap, refusal = S._effective_cap_notional("BTC-USD")
+            self.assertIsNone(refusal)
+            self.assertAlmostEqual(cap, 60.0)
+
+
+class MarginBackstopFailsClosed(unittest.TestCase):
+    """The margin rule reads the coin's own subaccount, and refuses when blind.
+
+    Before: it read subaccount 0 for every coin, and any read failure or
+    missing equity returned None, which both callers took as "no cap".
+    """
+
+    def _cap(self, coin="ETH-USD", hl=None, dydx=None, settings=None):
+        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", side_effect=_venues(hl, dydx)):
+            cfg.get.side_effect = _cfg_get(settings or {})
+            return S._margin_cap_notional(coin)
+
+    def test_reads_the_subaccount_the_coin_trades_in(self):
+        dydx = _FakeDydx()
+        cap, refusal = self._cap("ETH-USD", dydx=dydx)
+        self.assertIsNone(refusal)
+        self.assertEqual(dydx.read_subaccounts, [1])
+        dydx = _FakeDydx()
+        self._cap("SOL", dydx=dydx)
+        self.assertEqual(dydx.read_subaccounts, [2])
+
+    def test_a_venue_read_error_refuses(self):
+        cap, refusal = self._cap(dydx=_FakeDydx(raises=RuntimeError("429")))
+        self.assertIsNone(cap)
+        self.assertEqual(refusal["refused"], "margin_cap_unreadable")
+
+    def test_missing_equity_refuses(self):
+        cap, refusal = self._cap(dydx=_FakeDydx(equity=None))
+        self.assertEqual(refusal["refused"], "margin_cap_unreadable")
+        cap, refusal = self._cap(hl=_FakeHL(equity=None))
+        self.assertEqual(refusal["refused"], "margin_cap_unreadable")
+
+    def test_an_unfunded_subaccount_is_not_read_as_another(self):
+        # ETH maps to subaccount 1, which does not exist: state() answers
+        # with subaccount 0's equity, which the ETH order cannot use.
+        cap, refusal = self._cap("ETH-USD", dydx=_FakeDydx(funded=(0,)))
+        self.assertEqual(refusal["refused"], "margin_cap_unreadable")
+
+    def test_explicit_null_switches_the_rule_off(self):
+        cap, refusal = self._cap(
+            dydx=_FakeDydx(raises=RuntimeError("down")),
+            settings={"trading.max_account_margin_pct": None})
+        self.assertEqual((cap, refusal), (None, None))
+
+    def test_order_route_refuses_an_opening_order_when_blind(self):
+        client = S.app.test_client()
+        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", side_effect=_venues(
+                 dydx=_FakeDydx(raises=RuntimeError("down")))):
+            cfg.get.side_effect = _cfg_get({})
+            r = client.post("/venues/hyperliquid/order", json={
+                "symbol": "ETH", "is_buy": True, "size": 0.01,
+                "price": 3000.0, "dry_run": True})
+        body = r.get_json()
+        self.assertFalse(body["submitted"])
+        self.assertEqual(body["gate"]["refused"], "margin_cap_unreadable")
+
+    def test_hedge_open_refuses_when_blind(self):
+        client = S.app.test_client()
+        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", side_effect=_venues(
+                 dydx=_FakeDydx(raises=RuntimeError("down")))):
+            cfg.get.side_effect = _cfg_get({})
+            r = client.post("/hedge/open", json={
+                "short_venue": "hyperliquid", "long_venue": "dydx",
+                "short_symbol": "ETH", "long_symbol": "ETH-USD",
+                "size": 0.01, "ref_price": 3000.0, "dry_run": True})
+        self.assertEqual(r.status_code, 503)
+        self.assertEqual(r.get_json()["refused"], "margin_cap_unreadable")
 
 
 if __name__ == "__main__":
