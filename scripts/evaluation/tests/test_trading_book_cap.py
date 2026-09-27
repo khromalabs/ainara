@@ -136,5 +136,73 @@ class BookCapCheck(unittest.TestCase):
             self.assertIn("book-wide exposure cap", result["detail"])
 
 
+class _OrderVenue(_FakeVenue):
+    """A venue that records orders instead of placing them."""
+
+    def __init__(self, positions=None):
+        super().__init__(positions)
+        self.orders = []
+
+    def place_order(self, symbol, is_buy, size, price, **kw):
+        self.orders.append((symbol, size, kw))
+        return {"submitted": False, "gate": {"refused": "dry_run"}}
+
+
+class OrderRouteAppliesTheBookCap(unittest.TestCase):
+    """/venues/<v>/order must not walk the book past its ceilings.
+
+    Before: the route checked only the per-order caps, so the book-wide
+    position-count and notional limits could be exceeded one order at a time.
+    """
+
+    HELD = [{"coin": "BTC", "szi": -0.001, "mark_px": 65000.0},
+            {"coin": "ETH", "szi": 0.03, "mark_px": 3000.0}]
+
+    def _order(self, venue, body, max_positions=2, max_notional=None):
+        fake = _OrderVenue(self.HELD)
+
+        def get(key, default=None):
+            if key == "trading.max_concurrent_positions":
+                return max_positions
+            if key == "trading.max_book_notional_usd":
+                return max_notional
+            return default
+
+        with patch.object(S, "config") as cfg,              patch.object(S, "_venue", return_value=fake),              patch.object(S, "_margin_cap_notional",
+                          return_value=(None, None)):
+            cfg.get.side_effect = get
+            r = S.app.test_client().post(f"/venues/{venue}/order", json={
+                "is_buy": True, "dry_run": True, **body})
+        return r.get_json(), fake
+
+    def test_a_new_coin_past_the_count_cap_is_refused(self):
+        res, fake = self._order("hyperliquid", {"symbol": "SOL", "size": 0.1,
+                                                "price": 150.0})
+        self.assertEqual(res["gate"]["refused"], "book_cap")
+        self.assertEqual(fake.orders, [])
+
+    def test_topping_up_a_held_coin_is_not_a_new_position(self):
+        for venue, symbol in (("hyperliquid", "ETH"), ("dydx", "ETH-USD")):
+            res, fake = self._order(venue, {"symbol": symbol, "size": 0.01,
+                                            "price": 3000.0})
+            self.assertNotEqual((res.get("gate") or {}).get("refused"),
+                                "book_cap", venue)
+            self.assertEqual(len(fake.orders), 1, venue)
+
+    def test_the_notional_cap_is_applied_per_order(self):
+        # $65 + $90 already open; $60 more crosses a $200 ceiling.
+        res, fake = self._order("hyperliquid",
+                                {"symbol": "ETH", "size": 0.02, "price": 3000.0},
+                                max_positions=None, max_notional=200.0)
+        self.assertEqual(res["gate"]["refused"], "book_cap")
+        self.assertIn("max_book_notional_usd", res["gate"]["detail"])
+
+    def test_reduce_only_orders_are_never_book_capped(self):
+        res, fake = self._order("hyperliquid", {"symbol": "SOL", "size": 0.1,
+                                                "price": 150.0,
+                                                "reduce_only": True})
+        self.assertEqual(len(fake.orders), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

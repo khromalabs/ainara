@@ -264,6 +264,19 @@ def order(name):
                                f"cap ${mcap:,.2f} (trading.max_account_margin_pct)."),
                 },
             })
+        # The book-wide gate /hedge/open applies. This route used to check only
+        # the per-order caps, so the position-count and book-notional ceilings
+        # could be walked past one order at a time: each order was within its
+        # own cap, and nothing looked at the total.
+        book_refusal = _book_cap_check(size, price, already_open=symbol)
+        if book_refusal:
+            logger.info("ORDER REFUSED (book-wide cap): %s", book_refusal)
+            return jsonify({
+                "submitted": False,
+                "order": {"venue": name, "symbol": symbol, "size": size,
+                          "price": price, "reduce_only": reduce_only},
+                "gate": {"refused": "book_cap", **book_refusal},
+            })
     logger.info(
         "ORDER %s %s %s size=%s px=%s reduce_only=%s dry_run=%s",
         name, symbol, "buy" if is_buy else "sell", size, price, reduce_only, dry_run,
@@ -542,7 +555,7 @@ def _book_totals(hl_positions):
     return count, notional
 
 
-def _book_cap_check(size, ref_price):
+def _book_cap_check(size, ref_price, already_open=None):
     """Book-wide gate: refuse a new open if it would push concurrent positions
     or total notional over the configured ceiling. Independent of, and in
     addition to, _effective_cap_notional() above — that bounds ONE order;
@@ -551,8 +564,14 @@ def _book_cap_check(size, ref_price):
     is ever armed.
 
     Returns None if the open may proceed, or a dict of extra jsonify() kwargs
-    describing the refusal. Called AFTER the "only open from flat" preflight,
-    so every position this reads belongs to some OTHER coin.
+    describing the refusal.
+
+    /hedge/open calls it after its "only open from flat" preflight, so every
+    position it reads belongs to some other coin. /venues/<v>/order has no
+    such preflight and may add to a coin already held, so it passes that
+    symbol as `already_open`: when Hyperliquid (the book-wide view, since it
+    carries one leg of every hedge) already holds the coin, the order tops up
+    an existing position and does not count as a new one.
     """
     max_positions = config.get("trading.max_concurrent_positions", 5)
     max_notional = config.get("trading.max_book_notional_usd")
@@ -567,11 +586,17 @@ def _book_cap_check(size, ref_price):
         return {"detail": "could not read hyperliquid state to check the"
                           f" book-wide exposure cap: {e}",
                 "book": {"error": str(e)}}
-    count, notional = _book_totals(hl_state.get("positions"))
+    positions = hl_state.get("positions")
+    new_positions = 1
+    if already_open and any(
+            _coin_key(p.get("coin")) == _coin_key(already_open)
+            and abs(p.get("szi") or 0) > 0 for p in (positions or [])):
+        new_positions = 0
+    count, notional = _book_totals(positions)
     book = {"open_positions": count, "book_notional_usd": round(notional, 2)}
-    if max_positions is not None and count + 1 > int(max_positions):
+    if max_positions is not None and count + new_positions > int(max_positions):
         return {"detail": (f"opening this coin would bring concurrent"
-                           f" positions to {count + 1}, exceeding"
+                           f" positions to {count + new_positions}, exceeding"
                            f" trading.max_concurrent_positions"
                            f" ({int(max_positions)})"),
                 "book": book}
