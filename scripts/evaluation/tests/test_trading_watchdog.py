@@ -26,6 +26,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")))
@@ -671,6 +672,72 @@ class WatchdogHonoursDryRun(unittest.TestCase):
         wd.guard_once()
         self.assertFalse(wd.hl.reduced[0]["dry_run"])
         self.assertFalse(wd.dydx.reduced[0]["dry_run"])
+
+
+class RuntimeFilesAreWrittenAtomically(unittest.TestCase):
+    """No reader may see the alarm or heartbeat file empty or half-written.
+
+    Before: open(path, "w") truncated first. A torn alarm read as "no alarm"
+    on /health; a torn heartbeat read as a dead watchdog to the scheduler.
+    """
+
+    def setUp(self):
+        from executor import runtime as R
+        self.R = R
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "f.json")
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write("original")
+
+    def _read(self):
+        with open(self.path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_replaces_the_contents_and_leaves_no_temp_file(self):
+        self.R.write_text_atomic(self.path, "new")
+        self.assertEqual(self._read(), "new")
+        self.assertEqual(os.listdir(self.dir), ["f.json"])
+
+    def test_a_failed_write_keeps_the_original_whole(self):
+        with self.assertRaises(TypeError):
+            self.R.write_text_atomic(self.path, None)
+        self.assertEqual(self._read(), "original")
+        self.assertEqual(os.listdir(self.dir), ["f.json"])
+
+    def test_a_transient_sharing_violation_is_retried(self):
+        real, calls = os.replace, []
+
+        def flaky(src, dst):
+            calls.append(1)
+            if len(calls) < 3:
+                raise PermissionError("sharing violation")
+            real(src, dst)
+
+        with patch.object(self.R.os, "replace", flaky),              patch.object(self.R.time, "sleep", lambda s: None):
+            self.R.write_text_atomic(self.path, "new")
+        self.assertEqual(self._read(), "new")
+        self.assertEqual(len(calls), 3)
+
+    def test_a_persistent_permission_error_raises_and_cleans_up(self):
+        def denied(src, dst):
+            raise PermissionError("denied")
+
+        with patch.object(self.R.os, "replace", denied),              patch.object(self.R.time, "sleep", lambda s: None):
+            with self.assertRaises(PermissionError):
+                self.R.write_text_atomic(self.path, "new")
+        self.assertEqual(self._read(), "original")
+        self.assertEqual(os.listdir(self.dir), ["f.json"])
+
+    def test_the_watchdog_writes_both_files_through_it(self):
+        wd = W.Watchdog(_FakeHL(), _FakeDydx(), _Cfg())
+        wd.alarm_file = os.path.join(self.dir, "alarm.json")
+        wd.heartbeat_file = os.path.join(self.dir, "hb.txt")
+        written = []
+        with patch.object(W, "write_text_atomic",
+                          lambda p, t: written.append(p)):
+            wd._write_alarm_file({"alarm": "x"})
+            wd._write_heartbeat()
+        self.assertEqual(written, [wd.alarm_file, wd.heartbeat_file])
 
 
 if __name__ == "__main__":

@@ -50,6 +50,7 @@ import tempfile
 import time
 
 from executor.notify import Notifier
+from executor.runtime import write_text_atomic
 
 logger = logging.getLogger("executor.watchdog")
 
@@ -684,8 +685,10 @@ class Watchdog:
 
     def _write_alarm_file(self, payload):
         try:
-            with open(self.alarm_file, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, default=str)
+            # Atomic: the daemon polls this file, and a torn read there comes
+            # back as "no alarm" in the middle of an emergency.
+            write_text_atomic(self.alarm_file,
+                              json.dumps(payload, default=str))
         except Exception as e:  # never let alarm plumbing kill the guard loop
             logger.error("watchdog: could not write alarm file %s: %s",
                          self.alarm_file, e)
@@ -1178,8 +1181,9 @@ class Watchdog:
         ping is the opposite: see run().
         """
         try:
-            with open(self.heartbeat_file, "w", encoding="utf-8") as fh:
-                fh.write(str(time.time()))
+            # Atomic: the scheduler reads an empty heartbeat as a dead
+            # watchdog and restarts it.
+            write_text_atomic(self.heartbeat_file, str(time.time()))
         except Exception as e:
             logger.warning("watchdog: could not write heartbeat %s: %s",
                            self.heartbeat_file, e)
