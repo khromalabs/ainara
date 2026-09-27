@@ -49,8 +49,8 @@ import os
 import time
 
 from executor.notify import Notifier
-from executor.runtime import (alarm_path, heartbeat_path, state_path,
-                              write_text_atomic)
+from executor.runtime import (active_leases, alarm_path, heartbeat_path,
+                              state_path, write_text_atomic)
 
 logger = logging.getLogger("executor.watchdog")
 
@@ -471,6 +471,25 @@ class Watchdog:
             return report
         broken = [a for a in report["actions"]
                   if a["type"] == "close_leg" and a.get("reason") == "broken_hedge"]
+        # A coin under the daemon's opening lease is a hedge being built, not a
+        # broken one. The debounce alone was not enough: confirm_polls polls
+        # (each the venue reads plus the interval) is the same order as the
+        # daemon's fill_timeout_s, so a slow open could be flattened mid-build.
+        # Held unconditionally, and its streak does not advance.
+        opening = self._opening_leases()
+        mid_open = [a for a in broken
+                    if str(a.get("coin") or "").upper().split("-")[0] in opening]
+        if mid_open:
+            broken = [a for a in broken if a not in mid_open]
+            for a in mid_open:
+                self._broken_streak.pop(a.get("coin"), None)
+            report["actions"] = [a for a in report["actions"]
+                                 if a not in mid_open]
+            report["opening"] = {
+                "held": sorted({a.get("coin") for a in mid_open}),
+                "note": "the daemon holds an opening lease on this coin"}
+            logger.info("watchdog: %s mid-open (daemon lease); not acting",
+                        ", ".join(sorted({str(a.get("coin")) for a in mid_open})))
         broken_coins = {a.get("coin") for a in broken}
         # Reset the streak for any coin no longer broken this poll.
         for coin in list(self._broken_streak):
@@ -977,6 +996,18 @@ class Watchdog:
             if s:
                 steps.append(float(s))
         return max(steps) if steps else None
+
+    def _opening_leases(self):
+        """Coins the daemon is opening right now; empty if unreadable.
+
+        Unreadable means the watchdog falls back to its debounce alone, as it
+        did before leases existed, rather than holding every coin.
+        """
+        try:
+            return active_leases(self.config)
+        except Exception as e:
+            logger.warning("watchdog: could not read opening leases: %s", e)
+            return set()
 
     def _cooldown_left(self, stamps, coin, seconds):
         """Seconds until `coin` may be acted on again, or 0 if it is due now.

@@ -862,5 +862,71 @@ class ShaveStateSurvivesARestart(unittest.TestCase):
         self.assertEqual(len(wd.hl.reduced), 1)
 
 
+class OpeningLeases(unittest.TestCase):
+    """The daemon marks a coin mid-open; the watchdog leaves it alone.
+
+    Before: the watchdog's debounce was the only protection, and it is of the
+    same order as the daemon's fill window.
+    """
+
+    def setUp(self):
+        from executor import runtime as R
+        self.R = R
+        self.cfg = _Cfg(confirm_polls=1)
+
+    def test_acquire_release_and_symbol_normalisation(self):
+        token = self.R.acquire_lease(self.cfg, "eth-usd", 60)
+        self.assertEqual(self.R.active_leases(self.cfg), {"ETH"})
+        self.R.release_lease(token)
+        self.assertEqual(self.R.active_leases(self.cfg), set())
+        self.R.release_lease(token)  # twice is harmless
+        self.R.release_lease(None)
+
+    def test_an_expired_lease_is_ignored_then_swept(self):
+        self.R.acquire_lease(self.cfg, "BTC", 0)
+        self.assertEqual(self.R.active_leases(self.cfg), set())
+        self.R.acquire_lease(self.cfg, "SOL", 60)
+        names = os.listdir(self.R.lease_dir(self.cfg))
+        self.assertEqual([n.split(".")[0] for n in names], ["SOL"])
+
+    def test_unrelated_files_are_ignored(self):
+        d = self.R.lease_dir(self.cfg)
+        os.makedirs(d)
+        for name in ("notes.txt", "BTC.lease", "btc.99999999999999.lease"):
+            open(os.path.join(d, name), "w").close()
+        self.assertEqual(self.R.active_leases(self.cfg), set())
+
+    def _wd(self):
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008)), _FakeDydx(), self.cfg)
+        wd.mode = "active"
+        return wd
+
+    def test_a_leased_coin_is_not_closed_and_its_streak_does_not_advance(self):
+        wd = self._wd()
+        token = self.R.acquire_lease(self.cfg, "BTC", 60)
+        try:
+            rep = wd.guard_once()
+        finally:
+            self.R.release_lease(token)
+        self.assertEqual(wd.hl.reduced, [])
+        self.assertEqual(rep["opening"]["held"], ["BTC"])
+        self.assertNotIn("BTC", wd._broken_streak)
+
+    def test_the_coin_is_guarded_again_once_the_lease_ends(self):
+        wd = self._wd()
+        token = self.R.acquire_lease(self.cfg, "BTC", 60)
+        wd.guard_once()
+        self.R.release_lease(token)
+        wd.guard_once()
+        self.assertEqual(len(wd.hl.reduced), 1)
+
+    def test_an_expired_lease_does_not_disarm_the_guard(self):
+        # A daemon that died mid-open leaves its lease behind; it expires.
+        self.R.acquire_lease(self.cfg, "BTC", 0)
+        wd = self._wd()
+        wd.guard_once()
+        self.assertEqual(len(wd.hl.reduced), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ is replaced with a fake, and config reads are stubbed.
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -29,8 +30,15 @@ from executor import compliance as C  # noqa: E402
 from executor import server as S  # noqa: E402
 
 
+# Runtime files (opening leases, the alarm) resolve under data.directory.
+# Default it to a scratch directory so no test touches the real data dir.
+_DATA_DIR = tempfile.mkdtemp(prefix="ainara-server-tests-")
+
+
 def _cfg_get(settings):
     """A config.get that returns `settings[key]`, else the caller's default."""
+    settings = {"data.directory": _DATA_DIR, **settings}
+
     def get(key, default=None):
         return settings.get(key, default)
     return get
@@ -447,6 +455,48 @@ class HealthReadsTheWatchdogsAlarmFile(unittest.TestCase):
         with patch.object(S, "config") as cfg:
             cfg.get.side_effect = _cfg_get(settings)
             self.assertEqual(S._watchdog_alarm()["alarm"], "broken_hedge")
+
+
+class LiveOpensHoldALease(unittest.TestCase):
+    """/hedge/open tells the watchdog which coin it is building."""
+
+    def _post(self, body, settings, seen):
+        from executor import runtime as R
+
+        class Cfg:
+            def get(self, key, default=None):
+                return settings.get(key, default)
+
+        def fake_open(b):
+            seen.append(R.active_leases(Cfg()))
+            return {"opened": False}
+
+        with patch.object(S, "config") as cfg,              patch.object(S, "_hedge_open", side_effect=fake_open):
+            cfg.get.side_effect = _cfg_get(settings)
+            S.app.test_client().post("/hedge/open", json=body)
+        return R.active_leases(Cfg())
+
+    def test_a_live_open_holds_the_lease_until_it_returns(self):
+        seen = []
+        settings = {"data.directory": __import__("tempfile").mkdtemp()}
+        after = self._post({"short_symbol": "ETH", "dry_run": False},
+                           settings, seen)
+        self.assertEqual(seen, [{"ETH"}])
+        self.assertEqual(after, set())
+
+    def test_a_dry_run_takes_no_lease(self):
+        seen = []
+        settings = {"data.directory": __import__("tempfile").mkdtemp()}
+        self._post({"short_symbol": "ETH"}, settings, seen)
+        self.assertEqual(seen, [set()])
+
+    def test_an_unwritable_lease_does_not_block_the_open(self):
+        seen = []
+        with patch.object(S, "acquire_lease", side_effect=OSError("ro")):
+            self._post({"short_symbol": "ETH", "dry_run": False},
+                       {"data.directory": __import__("tempfile").mkdtemp()},
+                       seen)
+        self.assertEqual(len(seen), 1)  # the open still ran
 
 
 if __name__ == "__main__":

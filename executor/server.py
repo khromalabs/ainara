@@ -44,7 +44,7 @@ from executor.compliance import (DEFAULT_MAX_ACCOUNT_MARGIN_PCT,
                                  DEFAULT_MAX_ORDER_NOTIONAL_USD)
 from executor.config import ExecutorConfig
 from executor.notify import Notifier
-from executor.runtime import alarm_path
+from executor.runtime import acquire_lease, alarm_path, release_lease
 from executor.venues.dydx import DydxExecutor
 from executor.venues.hyperliquid import HyperliquidExecutor
 
@@ -919,6 +919,11 @@ def hedge_open():
     open from flat" check before either had placed a leg, and both opened.
     A second request is refused rather than queued: waiting would only let it
     run the flat check after the first open, where it would be refused anyway.
+
+    A live open also holds an opening lease on the coin (executor/runtime.py)
+    for its whole window. The lock above serializes opens inside this process;
+    the lease tells the watchdog, a separate process, that the coin is being
+    built and that one leg on and the other not yet is not a broken hedge.
     """
     body = request.get_json(force=True, silent=True) or {}
     coin = _coin_key(body.get("short_symbol") or body.get("long_symbol"))
@@ -927,10 +932,34 @@ def hedge_open():
         logger.info("HEDGE REFUSED (open already in progress): %s", coin)
         return jsonify(opened=False, status="refused", refused="already_opening",
                        detail=f"an open for {coin} is already in progress"), 409
+    lease = None
     try:
+        if body.get("dry_run", True) is False and coin:
+            lease = _take_opening_lease(coin, body)
         return _hedge_open(body)
     finally:
+        release_lease(lease)
         lock.release()
+
+
+def _take_opening_lease(coin, body):
+    """Lease `coin` for the longest a live open can take, or None on failure.
+
+    Two fill windows plus the unwind margin, the same bound the executor
+    client allows for the request. A lease that cannot be written is logged
+    and the open goes ahead under the watchdog's debounce alone, which is how
+    every open ran before leases existed.
+    """
+    fill_timeout = float(body.get("fill_timeout_s",
+                                  config.get("trading.executor.fill_timeout_s",
+                                             15)))
+    try:
+        return acquire_lease(config, coin, 2 * fill_timeout + 30)
+    except Exception as e:
+        logger.error("HEDGE: could not take the opening lease for %s (%s); the"
+                     " watchdog's debounce is the only thing keeping it from"
+                     " acting mid-open", coin, e)
+        return None
 
 
 def _hedge_open(body):

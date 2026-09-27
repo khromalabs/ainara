@@ -32,12 +32,15 @@ the scheduler (main venv) imports this too.
 import contextlib
 import os
 import platform
+import re
 import tempfile
 import time
 
 ALARM_FILENAME = "watchdog_alarm.json"
 HEARTBEAT_FILENAME = "watchdog_heartbeat.txt"
 STATE_FILENAME = "watchdog_state.json"
+LEASE_DIRNAME = "opening_leases"
+_LEASE_NAME = re.compile(r"^(?P<coin>[A-Z0-9]+)\.(?P<expires_ms>\d+)\.lease$")
 
 
 def default_data_dir():
@@ -87,6 +90,70 @@ def state_path(config):
     """The watchdog's durable shave state. trading.watchdog.state_file pins it."""
     return (config.get("trading.watchdog.state_file")
             or os.path.join(runtime_dir(config), STATE_FILENAME))
+
+
+# ---------------------------------------------------------------------------
+# Opening leases: the daemon telling the watchdog "this coin is mid-open".
+#
+# While /hedge/open is between its two legs, the coin looks exactly like a
+# broken hedge. The watchdog's only protection used to be its debounce
+# (confirm_polls polls, and a poll takes the venue reads plus the interval),
+# which is of the same order as the daemon's fill_timeout_s, so a slow open
+# could be flattened by the guard while the daemon was still building it.
+#
+# Each lease is an empty file whose NAME carries everything, <COIN>.<expires
+# epoch ms>.lease, so a reader never parses content a writer might be halfway
+# through, and nothing needs locking. An expired lease is ignored, so a daemon
+# that dies mid-open cannot leave the guard disarmed for that coin.
+# ---------------------------------------------------------------------------
+
+def _lease_coin(symbol):
+    return str(symbol or "").upper().split("-")[0].strip()
+
+
+def lease_dir(config):
+    return os.path.join(runtime_dir(config), LEASE_DIRNAME)
+
+
+def acquire_lease(config, coin, ttl_s):
+    """Mark `coin` as mid-open for `ttl_s` seconds. Returns a token for
+    release_lease. Raises OSError when the lease cannot be written."""
+    directory = lease_dir(config)
+    os.makedirs(directory, exist_ok=True)
+    now_ms = int(time.time() * 1000)
+    # Sweep leases a crashed daemon left behind. Already ignored by readers;
+    # this only stops them accumulating.
+    for name in os.listdir(directory):
+        m = _LEASE_NAME.match(name)
+        if m and int(m.group("expires_ms")) <= now_ms:
+            with contextlib.suppress(OSError):
+                os.remove(os.path.join(directory, name))
+    expires_ms = now_ms + int(float(ttl_s) * 1000)
+    path = os.path.join(directory, f"{_lease_coin(coin)}.{expires_ms}.lease")
+    with open(path, "x", encoding="utf-8"):
+        pass
+    return path
+
+
+def release_lease(token):
+    """Drop a lease taken by acquire_lease. Never raises."""
+    if token:
+        with contextlib.suppress(OSError):
+            os.remove(token)
+
+
+def active_leases(config, now=None):
+    """Coins with an unexpired opening lease. Raises OSError if unreadable."""
+    directory = lease_dir(config)
+    if not os.path.isdir(directory):
+        return set()
+    now_ms = int((time.time() if now is None else now) * 1000)
+    coins = set()
+    for name in os.listdir(directory):
+        m = _LEASE_NAME.match(name)
+        if m and int(m.group("expires_ms")) > now_ms:
+            coins.add(m.group("coin"))
+    return coins
 
 # A Windows reader holding the destination open makes os.replace fail with a
 # sharing violation for a few microseconds; a short bounded retry clears it.
