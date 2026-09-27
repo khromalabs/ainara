@@ -37,6 +37,7 @@ from scripts.evaluation.tests._executor_env import (  # noqa: E402
 # failing to import.
 require_executor_deps()
 
+from executor.compliance import check_submission  # noqa: E402
 from executor.errors import VenueStateUnavailable  # noqa: E402
 from executor.venues import cross_to_tick, tick_decimals  # noqa: E402
 from executor.venues import dydx as D  # noqa: E402
@@ -286,7 +287,7 @@ class SubaccountIsolation(unittest.TestCase):
             return object(), object()
 
         dy._signer = signer
-        asyncio.run(dy.place_market_reduce("SOL-USD", False, 0.1))
+        asyncio.run(dy.place_market_reduce("SOL-USD", False, 0.1, dry_run=False))
         self.assertEqual(seen["subaccount"], 2)  # SOL -> 2, not 0
 
     def test_open_orders_can_resolve_the_subaccount_from_a_market(self):
@@ -470,7 +471,7 @@ class CloseLimitsNeverZero(unittest.TestCase):
         dy.oracle_price = lambda m: oracle
         dy.price_tick = lambda m, ref_price=None: tick
         res = asyncio.run(dy.place_market_reduce(
-            "DOGE-USD", is_buy, 100))
+            "DOGE-USD", is_buy, 100, dry_run=False))
         return seen.get("price"), res
 
     def test_dydx_close_of_a_long_sells_above_zero_on_the_tick(self):
@@ -485,6 +486,120 @@ class CloseLimitsNeverZero(unittest.TestCase):
         px, res = self._dydx_close(0.0, 0.00001, is_buy=True)
         self.assertIsNone(px)
         self.assertFalse(res["submitted"])
+
+
+class _NoAckCfg(_Cfg):
+    def jurisdiction_acknowledged(self):
+        return False
+
+
+def _stub_dydx_order_path(dy, seen):
+    """Stub the node/market/signer so an order reaches a recorder, not a venue."""
+    class _Mkt:
+        def order_id(self, *a):
+            return "oid"
+
+        def order(self, *a, **kw):
+            seen["sent"] = True
+            return "proto"
+
+    class _Node:
+        async def latest_block_height(self):
+            return 10
+
+        async def place_order(self, *a, **kw):
+            return type("R", (), {"tx_response":
+                                  type("T", (), {"code": 0})()})()
+
+    async def node():
+        return _Node()
+
+    async def signer(n):
+        return object(), object()
+
+    dy._node, dy._signer = node, signer
+    dy._market = lambda m: _Mkt()
+    dy.oracle_price = lambda m: 100.0
+    dy.price_tick = lambda m, ref_price=None: 1.0
+    dy.mode = "permissioned"
+
+
+class ReduceOnlyJurisdictionGate(unittest.TestCase):
+    """A close must reach both venues or neither.
+
+    Before: HL's close went through check_submission and was refused on
+    mainnet without the acknowledgement, while dYdX's close never called the
+    gate. A watchdog flatten then closed dYdX and left HL naked.
+    """
+
+    def test_gate_exempts_reduce_only_from_the_jurisdiction_check(self):
+        cfg = _NoAckCfg()
+        self.assertEqual(check_submission(cfg, "mainnet", False)["refused"],
+                         "jurisdiction_not_acknowledged")
+        self.assertIsNone(check_submission(cfg, "mainnet", False,
+                                           reduce_only=True))
+
+    def test_gate_still_refuses_reduce_only_in_dry_run(self):
+        for net in ("mainnet", "testnet"):
+            gate = check_submission(_Cfg(), net, True, reduce_only=True)
+            self.assertEqual(gate["refused"], "dry_run", net)
+
+    def test_hyperliquid_opening_refused_close_allowed(self):
+        hl = HyperliquidExecutor(_NoAckCfg())
+        sent = []
+        hl._exchange = lambda: type("X", (), {
+            "order": lambda self, *a, **kw: sent.append(kw) or {"ok": 1}})()
+        opening = hl.place_order("BTC", True, 0.001, 50000.0, dry_run=False)
+        self.assertEqual(opening["gate"]["refused"],
+                         "jurisdiction_not_acknowledged")
+        self.assertEqual(sent, [])
+        closing = hl.place_order("BTC", True, 0.001, 50000.0,
+                                 reduce_only=True, tif="Ioc", dry_run=False)
+        self.assertTrue(closing["submitted"])
+        self.assertEqual(sent, [{"reduce_only": True}])
+
+    def test_dydx_opening_refused_close_allowed(self):
+        import asyncio
+        dy = D.DydxExecutor(_NoAckCfg())
+        seen = {}
+        _stub_dydx_order_path(dy, seen)
+        opening = asyncio.run(dy.place_order("BTC-USD", True, 0.001, 50000.0,
+                                             dry_run=False))
+        self.assertEqual(opening["gate"]["refused"],
+                         "jurisdiction_not_acknowledged")
+        self.assertNotIn("sent", seen)
+        closing = asyncio.run(dy.place_market_reduce("BTC-USD", True, 0.001,
+                                                     dry_run=False))
+        self.assertTrue(closing["submitted"])
+        self.assertTrue(seen["sent"])
+
+    def test_dydx_close_honours_dry_run(self):
+        # This path used to submit whatever dry_run said: it had no gate.
+        import asyncio
+        dy = D.DydxExecutor(_Cfg())
+        seen = {}
+        _stub_dydx_order_path(dy, seen)
+        res = asyncio.run(dy.place_market_reduce("BTC-USD", True, 0.001,
+                                                 dry_run=True))
+        self.assertFalse(res["submitted"])
+        self.assertEqual(res["gate"]["refused"], "dry_run")
+        self.assertNotIn("sent", seen)
+
+    def test_dydx_close_requires_an_explicit_dry_run(self):
+        import asyncio
+        dy = D.DydxExecutor(_Cfg())
+        with self.assertRaises(TypeError):
+            asyncio.run(dy.place_market_reduce("BTC-USD", True, 0.001))
+
+    def test_hyperliquid_close_honours_dry_run(self):
+        hl = HyperliquidExecutor(_Cfg())
+        sent = []
+        hl._exchange = lambda: type("X", (), {
+            "order": lambda self, *a, **kw: sent.append(kw)})()
+        res = hl.place_order("BTC", True, 0.001, 50000.0, reduce_only=True,
+                             tif="Ioc", dry_run=True)
+        self.assertEqual(res["gate"]["refused"], "dry_run")
+        self.assertEqual(sent, [])
 
 
 if __name__ == "__main__":

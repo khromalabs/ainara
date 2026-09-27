@@ -488,7 +488,8 @@ class DydxExecutor:
         cap = check_order_cap(self.config, float(size) * float(price), reduce_only)
         if cap is not None:
             return {"submitted": False, "order": order, "gate": cap}
-        gate = check_submission(self.config, self.network, dry_run)
+        gate = check_submission(self.config, self.network, dry_run,
+                                reduce_only=reduce_only)
         if gate is not None:
             return {"submitted": False, "order": order, "gate": gate}
         if self.mode != "permissioned":
@@ -512,13 +513,27 @@ class DydxExecutor:
         return {"submitted": code == 0, "order": order, "tx_code": code,
                 "client_id": client_id, "good_til_block_time": gtbt}
 
-    async def place_market_reduce(self, market, is_buy, size, slippage=0.1):
+    async def place_market_reduce(self, market, is_buy, size, slippage=0.1, *,
+                                  dry_run):
         """Flatten/reduce a position with a SHORT_TERM IOC reduce-only order.
 
         dYdX rejects reduce_only on resting (stateful) orders (code 9003) — it
         requires IOC/FOK — so a close must use this short-term, immediately
         crossing path rather than place_order().
+
+        Goes through check_submission like every other order. It used to call
+        no gate at all, so it ignored both dry_run and the mainnet gate that
+        the Hyperliquid close honours. `dry_run` is keyword-only with no
+        default so a caller that forgets it fails with a TypeError instead of
+        quietly submitting.
         """
+        order = {"venue": "dydx", "network": self.network, "market": market,
+                 "side": "buy" if is_buy else "sell", "size": size,
+                 "reduce_only": True, "mode": self.mode}
+        gate = check_submission(self.config, self.network, dry_run,
+                                reduce_only=True)
+        if gate is not None:
+            return {"submitted": False, "order": order, "gate": gate}
         node = await self._node()
         mkt = self._market(market)
         wallet, tx_options = await self._signer(node)

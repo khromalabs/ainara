@@ -184,7 +184,8 @@ class HyperliquidExecutor:
                               reduce_only)
         if cap is not None:
             return {"submitted": False, "order": order, "gate": cap}
-        gate = check_submission(self.config, self.network, dry_run)
+        gate = check_submission(self.config, self.network, dry_run,
+                                reduce_only=reduce_only)
         if gate is not None:
             return {"submitted": False, "order": order, "gate": gate}
         resp = self._exchange().order(

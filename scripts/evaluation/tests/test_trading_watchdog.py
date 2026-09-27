@@ -91,7 +91,7 @@ class _FakeHL:
         return self._step
 
     def reduce(self, coin, size=None, dry_run=False):
-        self.reduced.append({"coin": coin, "size": size})
+        self.reduced.append({"coin": coin, "size": size, "dry_run": dry_run})
         return {"submitted": True, "order": {"coin": coin, "size": size}}
 
     def flatten(self, coin, dry_run=False):
@@ -110,8 +110,12 @@ class _FakeDydx:
     def size_increment(self, market):
         return self._step
 
-    async def place_market_reduce(self, market, is_buy, size, slippage=0.1):
-        self.reduced.append({"coin": market, "is_buy": is_buy, "size": size})
+    async def place_market_reduce(self, market, is_buy, size, slippage=0.1, *,
+                                  dry_run):
+        # dry_run is keyword-only with no default, like the real adapter, so a
+        # call site that forgets it fails here too.
+        self.reduced.append({"coin": market, "is_buy": is_buy, "size": size,
+                             "dry_run": dry_run})
         return {"submitted": True, "tx_code": 0}
 
 

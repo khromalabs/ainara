@@ -597,7 +597,8 @@ def _close_leg(venue_name, symbol):
         return {"closed": True, "note": "no position to close"}
     is_buy = float(pos["size"]) < 0
     return _resolve(v.place_market_reduce(symbol, is_buy,
-                                          abs(float(pos["size"]))))
+                                          abs(float(pos["size"])),
+                                          dry_run=False))
 
 
 def _cancel_resting(venue_name, symbol, leg_res):

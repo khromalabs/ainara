@@ -970,7 +970,7 @@ class Watchdog:
         is_buy = float(pos["size"]) < 0  # buy to reduce a short
         return self._safe(
             lambda: _run_coro(self.dydx.place_market_reduce(
-                pos["coin"], is_buy, size)), venue, "reduce")
+                pos["coin"], is_buy, size, dry_run=False)), venue, "reduce")
 
     def _reduce_both(self, act, findings):
         """De-risk a hedge whose leg is near liquidation, keeping it delta-neutral.
@@ -1134,7 +1134,8 @@ class Watchdog:
                     res = self._try_close(
                         key,
                         lambda p=pos: _run_coro(self.dydx.place_market_reduce(
-                            p["coin"], is_buy, abs(p["size"]))),
+                            p["coin"], is_buy, abs(p["size"]),
+                            dry_run=False)),
                         findings or [])
                     done.append({"action": act, "result": res})
                 else:

@@ -25,7 +25,8 @@ the layers below would have refused.
 Gates, in order:
   1. dry_run  -> never submits; constructs/signs only. Default True.
   2. testnet  -> submission allowed (play money); jurisdiction ack NOT required.
-  3. mainnet  -> submission requires trading.jurisdiction_acknowledged: true.
+  3. mainnet  -> submission requires trading.jurisdiction_acknowledged: true,
+                 except for reduce-only orders (see check_submission).
 
 The jurisdiction flag is a NOTICE, not a compliance control (see the Orakle-side
 _compliance.py). It confers no permission or protection.
@@ -62,10 +63,20 @@ def check_order_cap(config, notional_usd, reduce_only):
     return None
 
 
-def check_submission(config, network, dry_run):
+def check_submission(config, network, dry_run, reduce_only=False):
     """Return None if submission may proceed, else a refusal dict.
 
     Callers must treat a non-None return as a hard stop.
+
+    `reduce_only` orders skip the mainnet jurisdiction gate, the same way
+    check_order_cap never caps them: the gate exists to stop NEW exposure, and
+    refusing a close only strands whatever is already open. Before this, the
+    Hyperliquid close went through the gate and the dYdX close did not call
+    it at all, so a watchdog flatten without the acknowledgement closed one
+    leg and was refused on the other, turning a hedge into a naked position.
+
+    `dry_run` still refuses reduce-only orders. It means "do not touch the
+    venue", not "stay under a limit".
     """
     if dry_run:
         return {
@@ -75,7 +86,7 @@ def check_submission(config, network, dry_run):
     if network == "testnet":
         return None
     if network == "mainnet":
-        if config.jurisdiction_acknowledged():
+        if reduce_only or config.jurisdiction_acknowledged():
             return None
         return {
             "refused": "jurisdiction_not_acknowledged",
