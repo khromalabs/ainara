@@ -166,12 +166,14 @@ to actually flatten a naked leg, set:
 
 ```yaml
 trading:
+  dry_run: false
   watchdog:
     mode: active
 ```
 
-On startup it prints its mode. `mode=active` = armed. If you see the monitor-mode
-warning, stop and fix the config — you'd be running without the safety net.
+On startup it prints its mode and whether its orders are live. `mode=active` with
+`orders LIVE` = armed. If you see the monitor-mode warning, or `orders DRY RUN`,
+stop and fix the config: you'd be running without the safety net.
 
 ### What it does about each risk
 

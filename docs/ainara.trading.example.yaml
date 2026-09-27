@@ -62,6 +62,12 @@ trading:
   # substitute for checking whether you may use these venues at all.
   jurisdiction_acknowledged: false
 
+  # Gates the WATCHDOG's orders (unset counts as true). Entries and exits are
+  # governed separately, by the dry_run each plan step sends to the daemon. While
+  # this is true an active watchdog alarms on a broken or near-liquidation hedge
+  # but sends no close or shave. Set false for a live desk.
+  dry_run: true
+
   # ---- sizing. SET BOTH EXPLICITLY. -----------------------------------------
   # Effective size per leg = min(margin rule, hard cap), floored to the coarser
   # venue step. Closing orders are NEVER capped — a size limit must never be able
@@ -115,6 +121,8 @@ trading:
     # reduce_fraction: 0.5            # how much of each leg one shave takes
     # reduce_cooldown_seconds: 300    # minimum gap between shaves on one coin
     # confirm_polls: 3                # broken-hedge sightings before acting
+    # act_in_dry_run: false           # true arms the guard even while
+    #                                 # trading.dry_run is true
 
   # ---- off-box alerting. Set this before running unattended. -----------------
   # Everything above escalates locally — a log line, an alarm file, a /health field —

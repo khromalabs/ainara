@@ -352,6 +352,17 @@ class Watchdog:
         self.config = config
         w = config.get("trading.watchdog", {}) or {}
         self.mode = w.get("mode", "monitor")  # 'monitor' | 'active'
+        # trading.dry_run gates the guard's own orders. Every close used to go
+        # out with dry_run hardcoded False (and the dYdX close had no gate at
+        # all), so an active watchdog on a desk the operator believed was dry
+        # placed real orders. A refused close now takes the same failed-attempt
+        # path as any other: counted, alarmed, escalated, because "a naked leg
+        # needed closing and dry_run stopped it" is something to be told about.
+        # Arming the guard while entries stay dry is legitimate, so it has its
+        # own explicitly named switch rather than being reachable by accident.
+        self.act_in_dry_run = bool(w.get("act_in_dry_run", False))
+        self.dry_run = (bool(config.get("trading.dry_run", True))
+                        and not self.act_in_dry_run)
         self.interval = float(w.get("interval_seconds", 5))
         self.liq_critical_pct = float(w.get("liq_critical_pct", 5.0))
         self.size_tolerance_pct = float(w.get("size_tolerance_pct", 15.0))
@@ -965,12 +976,14 @@ class Watchdog:
         """Send one reduce-only order: `qty` (None = the whole leg) off `pos`."""
         if venue == "hyperliquid":
             return self._safe(
-                lambda: self.hl.reduce(pos["coin"], qty), venue, "reduce")
+                lambda: self.hl.reduce(pos["coin"], qty, dry_run=self.dry_run),
+                venue, "reduce")
         size = abs(float(pos["size"])) if qty is None else qty
         is_buy = float(pos["size"]) < 0  # buy to reduce a short
         return self._safe(
             lambda: _run_coro(self.dydx.place_market_reduce(
-                pos["coin"], is_buy, size, dry_run=False)), venue, "reduce")
+                pos["coin"], is_buy, size, dry_run=self.dry_run)),
+            venue, "reduce")
 
     def _reduce_both(self, act, findings):
         """De-risk a hedge whose leg is near liquidation, keeping it delta-neutral.
@@ -1115,7 +1128,8 @@ class Watchdog:
                     # this cannot drift from /hedge/close's version.
                     res = self._try_close(
                         key,
-                        lambda p=pos: self.hl.flatten(p["coin"]),
+                        lambda p=pos: self.hl.flatten(p["coin"],
+                                                      dry_run=self.dry_run),
                         findings or [])
                     done.append({"action": act, "result": res})
                 else:
@@ -1135,7 +1149,7 @@ class Watchdog:
                         key,
                         lambda p=pos: _run_coro(self.dydx.place_market_reduce(
                             p["coin"], is_buy, abs(p["size"]),
-                            dry_run=False)),
+                            dry_run=self.dry_run)),
                         findings or [])
                     done.append({"action": act, "result": res})
                 else:
@@ -1170,10 +1184,25 @@ class Watchdog:
             logger.warning("watchdog: could not write heartbeat %s: %s",
                            self.heartbeat_file, e)
 
+    def _describe_orders(self):
+        """One line saying whether this process's orders reach a venue."""
+        if not self.dry_run:
+            why = (" (trading.watchdog.act_in_dry_run)"
+                   if self.act_in_dry_run else "")
+            return f"orders LIVE{why}"
+        return ("orders DRY RUN (trading.dry_run): risks are alarmed but no"
+                " close or shave is sent; set trading.dry_run: false, or"
+                " trading.watchdog.act_in_dry_run: true, to arm the guard")
+
     def run(self):
         logger.info("watchdog starting: mode=%s interval=%ss heartbeat=%s",
                     self.mode, self.interval, self.heartbeat_file)
         logger.info("watchdog: %s", self.notifier.describe())
+        orders = self._describe_orders()
+        if self.mode == "active" and self.dry_run:
+            logger.warning("watchdog: %s", orders)
+        else:
+            logger.info("watchdog: %s", orders)
         # Before anything else: an alarm file sitting here was not written by this
         # process. Claim it so it cannot masquerade as a live emergency this loop
         # is raising, and so the first clean poll retires it.
@@ -1182,7 +1211,7 @@ class Watchdog:
         # to learn now rather than during the first emergency.
         self.notifier.send(
             "Ainara watchdog: started",
-            f"mode={self.mode}, poll={self.interval}s,"
+            f"mode={self.mode}, poll={self.interval}s, {orders},"
             f" liq_critical={self.liq_critical_pct}%,"
             f" reduce={self.reduce_fraction:.0%} per shave,"
             f" hl_book_margin warn/critical="

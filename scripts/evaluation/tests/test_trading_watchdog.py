@@ -50,15 +50,26 @@ def dy_pos(coin, size, liq_dist=None, liq_note="not liquidatable by price alone"
             "liq_note": liq_note}
 
 
-class _Cfg:
-    """Minimal config stub. `overrides` feeds trading.watchdog."""
+_UNSET = object()
 
-    def __init__(self, **overrides):
+
+class _Cfg:
+    """Minimal config stub. `overrides` feeds trading.watchdog.
+
+    `dry_run` is trading.dry_run. It defaults to False, a live desk, which is
+    what every test here was written against; pass _UNSET to model a config
+    that never sets the key.
+    """
+
+    def __init__(self, dry_run=False, **overrides):
         self._w = overrides
+        self._dry_run = dry_run
 
     def get(self, key, default=None):
         if key == "trading.watchdog":
             return self._w
+        if key == "trading.dry_run":
+            return default if self._dry_run is _UNSET else self._dry_run
         if key == "trading.notify":
             return {}  # notifier inert: no webhook, no dead-man ping
         return default
@@ -601,6 +612,65 @@ class DebounceIsolation(unittest.TestCase):
                           dydx(dy_pos("BTC-USD", 0.0008), dy_pos("ETH-USD", 0.02)))
         self.wd._debounce_broken_hedge(healed)
         self.assertNotIn("ETH", self.wd._broken_streak)
+
+
+class WatchdogHonoursDryRun(unittest.TestCase):
+    """trading.dry_run reaches every order the guard sends.
+
+    Before: closes and shaves went out with dry_run hardcoded False, so
+    `mode: active` on a desk meant to be dry placed real orders.
+    """
+
+    def _wd(self, hl_positions, dy_positions, dry_run, **cfg):
+        wd = W.Watchdog(_FakeHL(*hl_positions), _FakeDydx(*dy_positions),
+                        _Cfg(dry_run=dry_run, confirm_polls=1,
+                             reduce_cooldown_seconds=0, **cfg))
+        wd.mode = "active"
+        wd.alarm_file = os.path.join(tempfile.mkdtemp(), "alarm.json")
+        return wd
+
+    def test_unset_means_dry_run(self):
+        wd = self._wd([], [], dry_run=_UNSET)
+        self.assertTrue(wd.dry_run)
+        self.assertIn("DRY RUN", wd._describe_orders())
+
+    def test_explicit_false_is_live(self):
+        wd = self._wd([], [], dry_run=False)
+        self.assertFalse(wd.dry_run)
+        self.assertEqual(wd._describe_orders(), "orders LIVE")
+
+    def test_act_in_dry_run_arms_the_guard(self):
+        wd = self._wd([], [], dry_run=True, act_in_dry_run=True)
+        self.assertFalse(wd.dry_run)
+        self.assertIn("act_in_dry_run", wd._describe_orders())
+
+    def test_broken_hedge_close_carries_dry_run_on_both_venues(self):
+        # HL leg naked: the close goes to HL.
+        wd = self._wd([hl_pos("BTC", -0.0008)], [], dry_run=True)
+        wd.guard_once()
+        self.assertTrue(wd.hl.reduced)
+        self.assertTrue(all(r["dry_run"] for r in wd.hl.reduced))
+        # dYdX leg naked: the close goes to dYdX.
+        wd = self._wd([], [dy_pos("BTC-USD", 0.0008)], dry_run=True)
+        wd.guard_once()
+        self.assertTrue(wd.dydx.reduced)
+        self.assertTrue(all(r["dry_run"] for r in wd.dydx.reduced))
+
+    def test_near_liquidation_shave_carries_dry_run(self):
+        wd = self._wd([hl_pos("BTC", -0.0008, liq_dist=3.0)],
+                      [dy_pos("BTC-USD", 0.0008)], dry_run=True)
+        wd.guard_once()
+        self.assertEqual(len(wd.hl.reduced), 1)
+        self.assertEqual(len(wd.dydx.reduced), 1)
+        self.assertTrue(wd.hl.reduced[0]["dry_run"])
+        self.assertTrue(wd.dydx.reduced[0]["dry_run"])
+
+    def test_live_desk_sends_live_orders(self):
+        wd = self._wd([hl_pos("BTC", -0.0008, liq_dist=3.0)],
+                      [dy_pos("BTC-USD", 0.0008)], dry_run=False)
+        wd.guard_once()
+        self.assertFalse(wd.hl.reduced[0]["dry_run"])
+        self.assertFalse(wd.dydx.reduced[0]["dry_run"])
 
 
 if __name__ == "__main__":

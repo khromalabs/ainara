@@ -156,6 +156,7 @@ The `network` key per venue selects which credential block and which chain is us
 | `trading.carry_engine.exit_threshold_annual_pct` | `4.0` | The position closes when the smoothed spread decays back inside this band (or flips sign). Defaults to the entry threshold. |
 | `trading.carry_engine.smoothing_span_hours` | `336` | EMA span (~14 days) for the funding signal. The strategy trades the **smoothed** spread, never the raw one — do not set this tiny. |
 | `trading.watchdog.mode` | `monitor` | `monitor` = report risks only. `active` = **auto-flatten** a broken hedge and **auto-shave** a near-liquidation one. Run `active` for any unattended operation. |
+| `trading.dry_run` | `true` | Gates the **watchdog's** orders. While true, an `active` watchdog alarms but sends nothing. Set `false` on a live desk, or set `trading.watchdog.act_in_dry_run: true` to arm the guard while entries stay dry. Entries and exits are gated by the `dry_run` each plan step sends. |
 | `trading.notify.webhook_url` | *(unset)* | Where alarms are pushed (ntfy / Discord / Slack / any HTTP endpoint). Unset = alarms never leave this machine. |
 | `trading.notify.heartbeat_url` | *(unset)* | Dead-man's switch: pinged after every successful check, so an external monitor alerts when the watchdog goes quiet. **Set this for any unattended run.** |
 | `trading.dydx.subaccounts` | *(unset)* | Coin → dYdX subaccount map for position isolation, e.g. `{BTC: 0, ETH: 1, SOL: 2}`. Unset = every coin shares subaccount 0. **Required for holding more than one coin at a time** — see below. |
@@ -165,7 +166,8 @@ The `network` key per venue selects which credential block and which chain is us
 > If `max_order_notional_usd` is unset there is **no hard notional ceiling**, and if
 > `max_account_margin_pct` is unset the sizing rule falls back to 50%. Smaller is
 > safer; start low. Likewise, `watchdog.mode` defaults to `monitor` (report-only) —
-> set it to `active` for unattended runs.
+> set it to `active` for unattended runs, and set `trading.dry_run: false` so the
+> active watchdog's orders actually reach the venues.
 
 Advanced/optional knobs exist too (`executor.fill_timeout_s`, `executor.cross_pct`,
 `carry_engine.fee_hyperliquid` / `fee_dydx`, and several `watchdog.*` timings); the
