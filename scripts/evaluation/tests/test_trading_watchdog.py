@@ -989,5 +989,51 @@ class RefusedShavesDoNotSpendTheBudget(unittest.TestCase):
         self.assertEqual(wd._reduce_attempts["BTC"], 1)
 
 
+class ABlindLoopStopsReportingHealthy(unittest.TestCase):
+    """A loop that keeps failing to assess must stop freshening its heartbeat.
+
+    Before: the local heartbeat was written after every iteration, so a
+    guard that could not assess at all read as healthy to the supervisor.
+    """
+
+    def _wd(self, **cfg):
+        wd = W.Watchdog(_FakeHL(), _FakeDydx(), _Cfg(**cfg))
+        self.beats = []
+        wd._write_heartbeat = lambda: self.beats.append(1)
+        return wd
+
+    def _fail(self, wd):
+        def boom():
+            raise RuntimeError("venue down")
+        wd.guard_once = boom
+
+    def test_heartbeat_is_withheld_after_the_limit(self):
+        wd = self._wd(heartbeat_max_consecutive_failures=2)
+        self._fail(wd)
+        for _ in range(5):
+            wd._run_once()
+        self.assertEqual(len(self.beats), 2)  # tolerated two, then withheld
+
+    def test_one_blip_is_tolerated(self):
+        wd = self._wd()
+        real = wd.guard_once
+        self._fail(wd)
+        wd._run_once()
+        wd.guard_once = real
+        wd._run_once()
+        self.assertEqual(len(self.beats), 2)
+        self.assertEqual(wd._consecutive_failures, 0)
+
+    def test_a_recovery_resumes_the_heartbeat(self):
+        wd = self._wd(heartbeat_max_consecutive_failures=1)
+        real = wd.guard_once
+        self._fail(wd)
+        for _ in range(3):
+            wd._run_once()
+        wd.guard_once = real
+        wd._run_once()
+        self.assertEqual(len(self.beats), 2)  # first failure, then recovery
+
+
 if __name__ == "__main__":
     unittest.main()

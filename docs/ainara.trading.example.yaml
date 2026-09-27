@@ -129,6 +129,9 @@ trading:
     # confirm_polls: 3                # broken-hedge sightings before acting
     # act_in_dry_run: false           # true arms the guard even while
     #                                 # trading.dry_run is true
+    # heartbeat_max_consecutive_failures: 3   # failed checks in a row before the
+    #                                 # heartbeat is withheld and the scheduler
+    #                                 # restarts the watchdog
     # state_file: "..."               # shave cooldowns + attempt counts kept
     #                                 # across restarts; default
     #                                 # <data.directory>/executor/watchdog_state.json

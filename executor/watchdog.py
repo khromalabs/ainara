@@ -394,6 +394,16 @@ class Watchdog:
         # testnet book while the console cheerfully logged "BROKEN HEDGE" as though
         # it were handling it. Count consecutive failures and get loud.
         self.escalate_after = int(w.get("escalate_after", 3))
+        # The local heartbeat means "the loop is turning", so one failed
+        # assessment (a venue API blip) must not get the watchdog restarted and
+        # its retry state thrown away. But it used to be written after EVERY
+        # iteration, so a loop failing to assess forever still looked healthy
+        # to the scheduler, and only the off-box dead-man ping (if configured)
+        # told the truth. After this many consecutive failures it is withheld,
+        # so the supervisor restarts the loop.
+        self.heartbeat_max_consecutive_failures = int(
+            w.get("heartbeat_max_consecutive_failures", 3))
+        self._consecutive_failures = 0
         self.alarm_file = alarm_path(config)
         # Liveness heartbeat. The watchdog has no HTTP surface, so a supervisor
         # (the scheduler's managed-services layer) can only tell it is alive by a
@@ -1351,30 +1361,42 @@ class Watchdog:
             severity="info")
         self.notifier.heartbeat(force=True)
         while True:
-            ok, report = True, None
-            try:
-                report = self.guard_once()
-            except Exception as e:  # never let the guard die silently
-                ok = False
-                logger.error("watchdog loop error: %s", e)
-                # A loop that cannot ASSESS is a loop that is not guarding, and the
-                # local heartbeat below still reads healthy — so this push, and the
-                # withheld dead-man ping, are the only signals that say so.
-                self.notifier.send_event(
-                    "guard_loop_error",
-                    "[CRITICAL] Ainara watchdog: guard loop failing",
-                    f"guard_once raised {type(e).__name__}: {e}. The position is"
-                    f" UNGUARDED until this clears.")
-            self._write_heartbeat()  # after guard, so it reflects a live loop
-            # Only ping the dead-man switch after an assessment that actually SAW
-            # both venues. Pinging unconditionally would tell the external monitor
-            # "all good" while the loop spins blind against a dead venue API —
-            # turning the one check that survives this machine into a rubber stamp.
-            # A blind loop is a loop that is not guarding, so it withholds the ping
-            # exactly like a crashed one: silence is the alarm.
-            if ok and not (report or {}).get("unreadable"):
-                self.notifier.heartbeat()
+            self._run_once()
             time.sleep(self.interval)
+
+    def _run_once(self):
+        """One guard iteration: assess and act, then the liveness signals."""
+        ok, report = True, None
+        try:
+            report = self.guard_once()
+        except Exception as e:  # never let the guard die silently
+            ok = False
+            logger.error("watchdog loop error: %s", e)
+            # A loop that cannot ASSESS is a loop that is not guarding. This
+            # push, the withheld dead-man ping and, after repeated failures,
+            # the withheld local heartbeat are the signals that say so.
+            self.notifier.send_event(
+                "guard_loop_error",
+                "[CRITICAL] Ainara watchdog: guard loop failing",
+                f"guard_once raised {type(e).__name__}: {e}. The position is"
+                f" UNGUARDED until this clears.")
+        self._consecutive_failures = 0 if ok else self._consecutive_failures + 1
+        if self._consecutive_failures <= self.heartbeat_max_consecutive_failures:
+            self._write_heartbeat()  # after guard, so it reflects a live loop
+        elif self._consecutive_failures == (
+                self.heartbeat_max_consecutive_failures + 1):
+            logger.error(
+                "watchdog: guard_once has failed %s times in a row; withholding"
+                " the heartbeat so the supervisor restarts this loop",
+                self._consecutive_failures)
+        # Only ping the dead-man switch after an assessment that actually SAW
+        # both venues. Pinging unconditionally would tell the external monitor
+        # "all good" while the loop spins blind against a dead venue API —
+        # turning the one check that survives this machine into a rubber stamp.
+        # A blind loop is a loop that is not guarding, so it withholds the ping
+        # exactly like a crashed one: silence is the alarm.
+        if ok and not (report or {}).get("unreadable"):
+            self.notifier.heartbeat()
 
 
 def main():
