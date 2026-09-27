@@ -48,6 +48,7 @@ from v4_proto.dydxprotocol.clob.order_pb2 import Order
 
 from executor.compliance import check_order_cap, check_submission
 from executor.errors import VenueStateUnavailable
+from executor.venues import cross_to_tick
 
 logger = logging.getLogger(__name__)
 
@@ -523,7 +524,16 @@ class DydxExecutor:
         wallet, tx_options = await self._signer(node)
         height = await node.latest_block_height()
         oracle = self.oracle_price(market)
-        px = round(oracle * (1 + slippage) if is_buy else oracle * (1 - slippage))
+        if not oracle or float(oracle) <= 0:
+            return {"submitted": False,
+                    "error": f"cannot price close for {market}: no usable"
+                             " oracle price; refusing to send an order at 0"}
+        raw = float(oracle) * ((1 + slippage) if is_buy else (1 - slippage))
+        # Snap to the market's tickSize in the crossing direction. This used
+        # to be round(raw), an integer: 0 under $1, which the protocol clamps
+        # to one subtick instead of rejecting, so a close buy rests unfilled
+        # and a close sell sweeps the book.
+        px = cross_to_tick(raw, is_buy, self.price_tick(market))
         client_id = random.randint(0, MAX_CLIENT_ID)
         sub = self.subaccount_for(market)
         order_id = mkt.order_id(self.account_address, sub, client_id,

@@ -24,6 +24,7 @@ to sign, and the master account address for info reads. Reads go over the public
 """
 
 import logging
+import math
 
 import requests
 from eth_account import Account
@@ -31,8 +32,25 @@ from hyperliquid.exchange import Exchange
 
 from executor.compliance import check_order_cap, check_submission
 from executor.errors import VenueStateUnavailable
+from executor.venues import cross_to_tick
 
 logger = logging.getLogger(__name__)
+
+
+def _five_sig_fig_tick(price):
+    """HL's five-significant-figure price increment at `price`, or None.
+
+    The fallback when price_tick() cannot read szDecimals: it ignores the
+    decimal-places cap, so it can be finer than the real tick, but a venue
+    rejects an off-grid price loudly rather than filling it at 0.
+    """
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    return 10 ** (math.floor(math.log10(price)) - 4)
 
 BASE_URL = {
     "testnet": "https://api.hyperliquid-testnet.xyz",
@@ -259,7 +277,12 @@ class HyperliquidExecutor:
                     "error": f"cannot price close for {coin}: no usable mark or "
                              "mid — refusing to send an order at 0"}
         limit = float(px) * (1.05 if is_buy else 0.95)
-        return self.place_order(coin, is_buy, qty, round(limit),
+        # Snap to the tick at the LIMIT price, not the mark: HL's
+        # significant-figure grid depends on the price actually submitted.
+        # This used to be round(limit), an integer, so 0 under $1.
+        tick = self.price_tick(coin, limit) or _five_sig_fig_tick(limit)
+        limit = cross_to_tick(limit, is_buy, tick)
+        return self.place_order(coin, is_buy, qty, limit,
                                 reduce_only=True, tif="Ioc", dry_run=dry_run)
 
     def flatten(self, coin, dry_run=False):

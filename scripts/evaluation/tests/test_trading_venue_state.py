@@ -38,6 +38,7 @@ from scripts.evaluation.tests._executor_env import (  # noqa: E402
 require_executor_deps()
 
 from executor.errors import VenueStateUnavailable  # noqa: E402
+from executor.venues import cross_to_tick, tick_decimals  # noqa: E402
 from executor.venues import dydx as D  # noqa: E402
 from executor.venues.hyperliquid import HyperliquidExecutor  # noqa: E402
 
@@ -351,6 +352,139 @@ class HyperliquidStateFailsLoud(unittest.TestCase):
         self.assertEqual(st["positions"], [])
         self.assertIsNone(st["usdc_spot"])
         self.assertEqual(calls["n"], 2)
+
+
+class CrossToTick(unittest.TestCase):
+    """Protective closes must round onto the tick, and never to zero."""
+
+    def test_sub_dollar_sell_on_a_whole_dollar_tick_is_not_zero(self):
+        # floor(0.475 / 1.0) is 0: a sell at 0 would sweep the book.
+        self.assertGreater(cross_to_tick(0.475, False, 1.0), 0)
+        self.assertEqual(cross_to_tick(0.475, False, 1.0), 0.475)
+
+    def test_buy_ceils_and_sell_floors(self):
+        self.assertEqual(cross_to_tick(0.4751, True, 0.001), 0.476)
+        self.assertEqual(cross_to_tick(0.4759, False, 0.001), 0.475)
+        self.assertEqual(cross_to_tick(101.01, True, 0.1), 101.1)
+        self.assertEqual(cross_to_tick(101.09, False, 0.1), 101.0)
+
+    def test_a_price_already_on_the_grid_is_not_nudged(self):
+        for is_buy in (True, False):
+            self.assertEqual(cross_to_tick(0.475, is_buy, 0.001), 0.475)
+            self.assertEqual(cross_to_tick(64000.0, is_buy, 1.0), 64000.0)
+            self.assertEqual(cross_to_tick(0.3, is_buy, 0.1), 0.3)
+
+    def test_an_unusable_tick_returns_the_input(self):
+        for tick in (None, 0, 0.0, -1, "junk"):
+            self.assertEqual(cross_to_tick(0.475, False, tick), 0.475, tick)
+
+    def test_tick_decimals(self):
+        self.assertEqual(tick_decimals(0.001), 3)
+        self.assertEqual(tick_decimals(1), 0)
+        self.assertEqual(tick_decimals(0.5), 1)
+
+
+class CloseLimitsNeverZero(unittest.TestCase):
+    """Both venues' close paths, priced for a market trading under $1.
+
+    Before: HL sent round(limit) and dYdX round(oracle * (1 +/- slip)), both
+    integers, so each of these closes went out at a limit of 0 or 1.
+    """
+
+    def test_hyperliquid_close_of_a_long_sells_above_zero_on_the_tick(self):
+        hl = HyperliquidExecutor(_Cfg())
+        hl.state = lambda: {"positions": [
+            {"coin": "DOGE", "szi": 100.0, "mark_px": 0.5}]}
+        hl._info = lambda body: {"universe": [{"name": "DOGE",
+                                               "szDecimals": 0}]}
+        sent = {}
+
+        def place_order(coin, is_buy, size, limit_px, **kw):
+            sent.update(is_buy=is_buy, px=limit_px, kw=kw)
+            return {"submitted": False}
+
+        hl.place_order = place_order
+        hl.reduce("DOGE")
+        self.assertFalse(sent["is_buy"])
+        self.assertTrue(sent["kw"]["reduce_only"])
+        # 0.5 * 0.95 = 0.475, floored to HL's 0.00001 grid at that price.
+        self.assertAlmostEqual(sent["px"], 0.475, places=9)
+
+    def test_hyperliquid_close_of_a_short_buys_above_the_mark(self):
+        hl = HyperliquidExecutor(_Cfg())
+        hl.state = lambda: {"positions": [
+            {"coin": "DOGE", "szi": -100.0, "mark_px": 0.5}]}
+        hl._info = lambda body: {"universe": [{"name": "DOGE",
+                                               "szDecimals": 0}]}
+        sent = {}
+        hl.place_order = lambda coin, is_buy, size, limit_px, **kw: sent.update(
+            is_buy=is_buy, px=limit_px) or {}
+        hl.reduce("DOGE")
+        self.assertTrue(sent["is_buy"])
+        self.assertAlmostEqual(sent["px"], 0.525, places=9)
+
+    def test_hyperliquid_close_still_prices_when_meta_is_unreadable(self):
+        hl = HyperliquidExecutor(_Cfg())
+        hl.state = lambda: {"positions": [
+            {"coin": "DOGE", "szi": 100.0, "mark_px": 0.5}]}
+
+        def info(body):
+            raise requests.ConnectionError("meta down")
+
+        hl._info = info
+        sent = {}
+        hl.place_order = lambda coin, is_buy, size, limit_px, **kw: sent.update(
+            px=limit_px) or {}
+        hl.reduce("DOGE")
+        self.assertGreater(sent["px"], 0.4)
+
+    def _dydx_close(self, oracle, tick, is_buy):
+        import asyncio
+        dy = D.DydxExecutor(_Cfg())
+        seen = {}
+
+        class _Mkt:
+            def order_id(self, *a):
+                return "oid"
+
+            def order(self, oid, otype, side, size, price, *a, **kw):
+                seen["price"] = price
+                return "proto"
+
+        class _Node:
+            async def latest_block_height(self):
+                return 10
+
+            async def place_order(self, *a, **kw):
+                return type("R", (), {"tx_response":
+                                      type("T", (), {"code": 0})()})()
+
+        async def node():
+            return _Node()
+
+        async def signer(n):
+            return object(), object()
+
+        dy._node, dy._signer = node, signer
+        dy._market = lambda m: _Mkt()
+        dy.oracle_price = lambda m: oracle
+        dy.price_tick = lambda m, ref_price=None: tick
+        res = asyncio.run(dy.place_market_reduce(
+            "DOGE-USD", is_buy, 100))
+        return seen.get("price"), res
+
+    def test_dydx_close_of_a_long_sells_above_zero_on_the_tick(self):
+        px, _ = self._dydx_close(0.5, 0.00001, is_buy=False)
+        self.assertAlmostEqual(px, 0.45, places=9)  # 0.5 * 0.9
+
+    def test_dydx_close_of_a_short_buys_on_the_tick(self):
+        px, _ = self._dydx_close(0.5, 0.00001, is_buy=True)
+        self.assertAlmostEqual(px, 0.55, places=9)  # 0.5 * 1.1
+
+    def test_dydx_close_refuses_without_an_oracle_price(self):
+        px, res = self._dydx_close(0.0, 0.00001, is_buy=True)
+        self.assertIsNone(px)
+        self.assertFalse(res["submitted"])
 
 
 if __name__ == "__main__":
