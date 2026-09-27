@@ -721,5 +721,96 @@ class InheritedWatchdogAlarm(unittest.TestCase):
         self.assertTrue(self.wd._alarm_published)
 
 
+def _iso(ms):
+    return P._iso_from_ms(ms).replace("+00:00", "Z")
+
+
+class _Json:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class HistoryReadsArePaged(unittest.TestCase):
+    """Fills and funding must cover the whole window, not the first page.
+
+    Before: each was one request (dYdX limit=100, Hyperliquid up to its silent
+    row cap), so a longer hold silently lost its oldest rows.
+    """
+
+    HOUR = 3_600_000
+
+    def test_dydx_funding_walks_every_page(self):
+        now = 1_800_000_000_000
+        rows = [{"ticker": "BTC-USD", "createdAt": _iso(now - i * self.HOUR),
+                 "payment": "0.01"} for i in range(250)]  # newest first
+        seen_params = []
+
+        def get(url, params=None, timeout=None):
+            seen_params.append(dict(params))
+            page = params.get("page", 0)
+            start = max(page - 1, 0) * 100  # page 1 repeats the first request
+            return _Json({"fundingPayments": rows[start:start + 100]})
+
+        from unittest.mock import patch
+        with patch.object(P.requests, "get", get):
+            out = TradingPortfolio()._funding_dydx(
+                "BTC", now - 300 * self.HOUR, "dydx1addr", "https://idx")
+        self.assertEqual(len(out), 250)
+        self.assertEqual(seen_params[0]["ticker"], "BTC-USD")
+
+    def test_dydx_fills_walk_back_until_the_window_starts(self):
+        now = 1_800_000_000_000
+        fills = [{"market": "ETH-USD", "createdAt": _iso(now - i * self.HOUR),
+                  "size": "0.01", "side": "BUY", "price": "3000",
+                  "fee": "0"} for i in range(260)]
+
+        def get(url, params=None, timeout=None):
+            before = params.get("createdBeforeOrAt")
+            idx = 0 if before is None else next(
+                i for i, f in enumerate(fills) if f["createdAt"] == before)
+            return _Json({"fills": fills[idx:idx + 100]})
+
+        from unittest.mock import patch
+        p = TradingPortfolio()
+        p._target = lambda venue: ("mainnet", "dydx1addr")
+        with patch.object(P.requests, "get", get):
+            rows = p._raw_fills_dydx("ETH", now - 200 * self.HOUR)
+        self.assertEqual(len(rows), 201)  # hours 0..200 inclusive
+        self.assertEqual(rows, sorted(rows, key=lambda r: r["t"]))
+
+    def test_hyperliquid_funding_walks_past_the_row_cap(self):
+        start = 1_700_000_000_000
+        rows = [{"time": start + i * self.HOUR,
+                 "delta": {"coin": "SOL", "usdc": "0.01"}} for i in range(1200)]
+
+        def post(url, json=None, timeout=None):
+            later = [r for r in rows if r["time"] >= json["startTime"]]
+            return _Json(later[:500])  # userFunding's cap
+
+        from unittest.mock import patch
+        later = (start + 5000 * self.HOUR) / 1000
+        with patch.object(P.requests, "post", post), \
+             patch.object(P.time, "time", lambda: later):
+            out = TradingPortfolio()._funding_hl("SOL", start, "0xaddr",
+                                                 "mainnet")
+        self.assertEqual(len(out), 1200)
+
+    def test_a_walk_is_bounded(self):
+        counter = {"n": 0}
+
+        def get(url, params=None, timeout=None):
+            counter["n"] += 1
+            return _Json({"rows": [{"createdAt": _iso(1_900_000_000_000),
+                                    "n": counter["n"]}]})
+
+        from unittest.mock import patch
+        with patch.object(P.requests, "get", get):
+            P._dydx_history("u", {}, "rows", 0, lambda n, _o: {"page": n})
+        self.assertEqual(counter["n"], P._MAX_HISTORY_PAGES)
+
+
 if __name__ == "__main__":
     unittest.main()

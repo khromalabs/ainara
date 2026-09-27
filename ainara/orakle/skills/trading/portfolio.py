@@ -44,6 +44,7 @@ cent against the venues' own settled payments.
 """
 
 import datetime
+import json
 import logging
 import time
 from typing import Annotated, Any, Dict, List, Literal, Optional
@@ -133,6 +134,91 @@ _DYDX_INDEXER = {
     "mainnet": "https://indexer.dydx.trade",
     "testnet": "https://indexer.v4testnet.dydx.exchange",
 }
+
+# ---------------------------------------------------------------------------
+# Paged history reads.
+#
+# Every fills and funding read used to be ONE request: dYdX's with limit=100,
+# Hyperliquid's up to the endpoint's silent row cap (500 for userFunding, 2000
+# for userFillsByTime). dYdX's 100 funding rows are about four days of one
+# hourly market, and Hyperliquid's 500 funding rows cover every coin held, so
+# about a week at three coins. A trade held longer lost its oldest payments
+# and fills without any sign, and its realized rate came out lower the longer
+# it was held. These walk the whole window instead.
+#
+# Bounded: a walk stops on a page with nothing new, and at _MAX_HISTORY_PAGES
+# whatever happens.
+# ---------------------------------------------------------------------------
+_MAX_HISTORY_PAGES = 60
+
+
+def _row_key(row):
+    """Identity of a history row, to drop the overlap between pages.
+
+    The whole row rather than a chosen field: overlapping pages repeat rows
+    byte for byte, and a hand-picked key such as (time, coin) would silently
+    merge two distinct payments that share a millisecond.
+    """
+    return json.dumps(row, sort_keys=True, default=str)
+
+
+def _hl_history(network, req_type, extra, start_ms, timeout=20):
+    """All rows of a Hyperliquid time-windowed history endpoint, oldest first.
+
+    Moves `startTime` up to the newest row seen and asks again. It moves to
+    that row's own millisecond, not one past it, so a row sharing it is not
+    skipped (the duplicate is dropped instead), and it stops when a page adds
+    nothing or reaches the present, so no per-endpoint cap is assumed.
+    """
+    out, seen, start = [], set(), int(start_ms)
+    now = int(time.time() * 1000)
+    for _ in range(_MAX_HISTORY_PAGES):
+        rows = requests.post(_HL_INFO[network], json={
+            "type": req_type, "startTime": start, **extra},
+            timeout=timeout).json()
+        if not isinstance(rows, list) or not rows:
+            break
+        fresh = [r for r in rows if _row_key(r) not in seen]
+        seen.update(_row_key(r) for r in fresh)
+        out.extend(fresh)
+        last = max(int(r["time"]) for r in rows)
+        if not fresh or last >= now:
+            break
+        start = last
+    out.sort(key=lambda r: int(r["time"]))
+    return out
+
+
+def _dydx_history(url, params, rows_key, since_ms, cursor, timeout=20):
+    """All rows of a dYdX indexer history endpoint back to `since_ms`.
+
+    The indexer returns newest first. `cursor(page_number, oldest_row)` gives
+    the params for the next page: fills walk back with createdBeforeOrAt,
+    fundingPayments by page number. Two pages in a row with nothing new end
+    the walk; one is tolerated because the first numbered page may repeat the
+    unnumbered first request, depending on whether pages count from 0 or 1.
+    Filter by ticker in `params`, so the row limit applies to the market being
+    measured instead of to every market before filtering.
+    """
+    out, seen, extra, barren = [], set(), {}, 0
+    for page_number in range(1, _MAX_HISTORY_PAGES + 1):
+        page = requests.get(url, params={**params, **extra},
+                            timeout=timeout).json().get(rows_key) or []
+        if not page:
+            break
+        fresh = [r for r in page if _row_key(r) not in seen]
+        seen.update(_row_key(r) for r in fresh)
+        out.extend(fresh)
+        barren = 0 if fresh else barren + 1
+        if barren >= 2:
+            break
+        stamps = [_iso_ms(r["createdAt"]) for r in page if r.get("createdAt")]
+        if stamps and min(stamps) < since_ms:
+            break
+        extra = cursor(page_number, page[-1]) or {}
+        if not extra:
+            break
+    return out
 
 
 def _dydx_subaccount_for(coin):
@@ -992,9 +1078,8 @@ class TradingPortfolio(Skill):
     def _raw_fills_hl(self, coin, since_ms):
         """Normalized HL fills for `coin` since `since_ms`, oldest→newest."""
         network, addr = self._target("hyperliquid")
-        fills = requests.post(_HL_INFO[network], json={
-            "type": "userFillsByTime", "user": addr, "startTime": since_ms,
-        }, timeout=20).json()
+        fills = _hl_history(network, "userFillsByTime", {"user": addr},
+                            since_ms)
         rows = []
         for f in fills:
             if f.get("coin") != coin:
@@ -1015,10 +1100,13 @@ class TradingPortfolio(Skill):
         network, addr = self._target("dydx")
         indexer = _DYDX_INDEXER[network]
         market = f"{coin}-USD"
-        fills = requests.get(
-            f"{indexer}/v4/fills?address={addr}"
-            f"&subaccountNumber={_dydx_subaccount_for(coin)}&limit=100",
-            timeout=20).json().get("fills", [])
+        fills = _dydx_history(
+            f"{indexer}/v4/fills",
+            {"address": addr, "subaccountNumber": _dydx_subaccount_for(coin),
+             "ticker": market, "limit": 100},
+            "fills", since_ms,
+            cursor=lambda _n, oldest: ({"createdBeforeOrAt": oldest["createdAt"]}
+                                       if oldest.get("createdAt") else None))
         rows = []
         for f in fills:
             t = _iso_ms(f["createdAt"])
@@ -1156,17 +1244,18 @@ class TradingPortfolio(Skill):
                 "coverage": _fill_coverage(legs)}
 
     def _funding_hl(self, coin, since_ms, addr, network):
-        rows = requests.post(_HL_INFO[network], json={
-            "type": "userFunding", "user": addr, "startTime": since_ms,
-        }, timeout=20).json()
+        rows = _hl_history(network, "userFunding", {"user": addr}, since_ms)
         return [(int(r["time"]), float(r["delta"]["usdc"]))
                 for r in rows if r.get("delta", {}).get("coin") == coin]
 
     def _funding_dydx(self, coin, since_ms, addr, indexer):
-        rows = requests.get(
-            f"{indexer}/v4/fundingPayments?address={addr}"
-            f"&subaccountNumber={_dydx_subaccount_for(coin)}&limit=100",
-            timeout=20).json().get("fundingPayments", [])
+        rows = _dydx_history(
+            f"{indexer}/v4/fundingPayments",
+            {"address": addr, "subaccountNumber": _dydx_subaccount_for(coin),
+             "ticker": f"{coin}-USD", "limit": 100},
+            "fundingPayments", since_ms,
+            # fundingPayments pages by number rather than by a time cursor.
+            cursor=lambda n, _oldest: {"page": n})
         out = []
         for r in rows:
             if r.get("ticker") != f"{coin}-USD":
