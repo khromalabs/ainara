@@ -52,9 +52,6 @@ def dy_pos(coin, size, liq_dist=None, liq_note="not liquidatable by price alone"
 
 
 _UNSET = object()
-# Runtime files (alarm, heartbeat) resolve under data.directory; keep every
-# test's inside a scratch directory, never the operator's real data dir.
-_DATA_DIR = tempfile.mkdtemp(prefix="ainara-watchdog-tests-")
 
 
 class _Cfg:
@@ -68,6 +65,11 @@ class _Cfg:
     def __init__(self, dry_run=False, **overrides):
         self._w = overrides
         self._dry_run = dry_run
+        # Runtime files (alarm, heartbeat, shave state) resolve under
+        # data.directory. One scratch directory per config keeps them out of
+        # the operator's real data dir and stops shave state persisted by one
+        # test leaking into the next; reuse a config to model a restart.
+        self._data_dir = tempfile.mkdtemp(prefix="ainara-watchdog-tests-")
 
     def get(self, key, default=None):
         if key == "trading.watchdog":
@@ -75,7 +77,7 @@ class _Cfg:
         if key == "trading.dry_run":
             return default if self._dry_run is _UNSET else self._dry_run
         if key == "data.directory":
-            return _DATA_DIR
+            return self._data_dir
         if key.startswith("trading.watchdog."):
             return self._w.get(key[len("trading.watchdog."):], default)
         if key == "trading.notify":
@@ -756,7 +758,7 @@ class RuntimeFilesLiveInTheDataDirectory(unittest.TestCase):
     def test_defaults_are_under_data_directory_not_temp(self):
         from executor import runtime as R
         cfg = _Cfg()
-        want = os.path.join(_DATA_DIR, "executor")
+        want = os.path.join(cfg._data_dir, "executor")
         self.assertEqual(os.path.dirname(R.alarm_path(cfg)), want)
         self.assertEqual(os.path.dirname(R.heartbeat_path(cfg)), want)
         self.assertNotEqual(os.path.dirname(R.alarm_path(cfg)),
@@ -788,6 +790,76 @@ class RuntimeFilesLiveInTheDataDirectory(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.dirname(path)))
         R.write_text_atomic(path, "1")
         self.assertTrue(os.path.exists(path))
+
+
+class ShaveStateSurvivesARestart(unittest.TestCase):
+    """A restarted watchdog keeps the shave cooldown and attempt budget.
+
+    Before: both were in-memory dicts, so the supervisor restarting the
+    watchdog mid-incident re-armed every cooldown and refilled every budget.
+    """
+
+    def _wd(self, cfg):
+        wd = W.Watchdog(_FakeHL(hl_pos("BTC", -0.0008, liq_dist=3.0)),
+                        _FakeDydx(dy_pos("BTC-USD", 0.0008)), cfg)
+        wd.mode = "active"
+        return wd
+
+    def _shave_result(self, wd):
+        rep = wd.guard_once()
+        return next(e["result"] for e in rep["executed"]
+                    if e["action"]["type"] == "reduce_both")
+
+    def test_the_cooldown_holds_across_a_restart(self):
+        cfg = _Cfg()
+        self.assertEqual(self._shave_result(self._wd(cfg))["plan"], "reduce")
+        restarted = self._wd(cfg)  # same config, new process
+        self.assertEqual(self._shave_result(restarted)["skipped"], "cooldown")
+        self.assertEqual(restarted.hl.reduced, [])
+
+    def test_the_attempt_budget_holds_across_a_restart(self):
+        cfg = _Cfg(reduce_cooldown_seconds=0, reduce_max_attempts=2)
+        wd = self._wd(cfg)
+        self._shave_result(wd)
+        self._shave_result(wd)
+        restarted = self._wd(cfg)
+        self.assertEqual(self._shave_result(restarted)["plan"], "close_hedge")
+
+    def test_a_shortened_cooldown_applies_at_once(self):
+        cfg = _Cfg()
+        self._shave_result(self._wd(cfg))
+        cfg._w["reduce_cooldown_seconds"] = 0
+        self.assertEqual(self._shave_result(self._wd(cfg))["plan"], "reduce")
+
+    def _write_state(self, cfg, coins):
+        from executor.runtime import state_path, write_text_atomic
+        write_text_atomic(state_path(cfg), json.dumps({"coins": coins}))
+
+    def test_an_unreadable_state_file_starts_empty(self):
+        cfg = _Cfg()
+        from executor.runtime import state_path, write_text_atomic
+        write_text_atomic(state_path(cfg), "{not json")
+        wd = self._wd(cfg)
+        self.assertEqual((wd._reduce_at, wd._reduce_attempts), ({}, {}))
+        self.assertEqual(self._shave_result(wd)["plan"], "reduce")
+
+    def test_future_and_day_old_stamps_are_ignored(self):
+        import time as _t
+        cfg = _Cfg()
+        self._write_state(cfg, {
+            "BTC": {"reduce_at": _t.time() + 3600, "reduce_attempts": 1},
+            "ETH": {"reduce_at": _t.time() - 2 * 86400}})
+        wd = self._wd(cfg)
+        self.assertNotIn("BTC", wd._reduce_at)
+        self.assertNotIn("ETH", wd._reduce_at)
+        self.assertEqual(wd._reduce_attempts, {"BTC": 1})
+
+    def test_an_unwritable_state_file_does_not_stop_the_guard(self):
+        # A directory where the file should be: every write fails.
+        cfg = _Cfg(state_file=tempfile.mkdtemp())
+        wd = self._wd(cfg)
+        self.assertEqual(self._shave_result(wd)["plan"], "reduce")
+        self.assertEqual(len(wd.hl.reduced), 1)
 
 
 if __name__ == "__main__":

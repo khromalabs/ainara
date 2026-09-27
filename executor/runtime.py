@@ -37,6 +37,7 @@ import time
 
 ALARM_FILENAME = "watchdog_alarm.json"
 HEARTBEAT_FILENAME = "watchdog_heartbeat.txt"
+STATE_FILENAME = "watchdog_state.json"
 
 
 def default_data_dir():
@@ -80,6 +81,12 @@ def heartbeat_path(config):
     """The watchdog's heartbeat file. trading.watchdog.heartbeat_file pins it."""
     return (config.get("trading.watchdog.heartbeat_file")
             or os.path.join(runtime_dir(config), HEARTBEAT_FILENAME))
+
+
+def state_path(config):
+    """The watchdog's durable shave state. trading.watchdog.state_file pins it."""
+    return (config.get("trading.watchdog.state_file")
+            or os.path.join(runtime_dir(config), STATE_FILENAME))
 
 # A Windows reader holding the destination open makes os.replace fail with a
 # sharing violation for a few microseconds; a short bounded retry clears it.

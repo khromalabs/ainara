@@ -49,7 +49,8 @@ import os
 import time
 
 from executor.notify import Notifier
-from executor.runtime import alarm_path, heartbeat_path, write_text_atomic
+from executor.runtime import (alarm_path, heartbeat_path, state_path,
+                              write_text_atomic)
 
 logger = logging.getLogger("executor.watchdog")
 
@@ -431,9 +432,17 @@ class Watchdog:
         # from the hedge, not that the shave was too small. Stop trimming and close
         # the coin outright — no carry is worth riding into a liquidation.
         self.reduce_max_attempts = int(w.get("reduce_max_attempts", 3))
+        # The cooldown stamps and the shave budget bound how much of a position
+        # the guard may remove, so they are persisted: kept only in memory, a
+        # restarted watchdog (the supervisor doing its job mid-incident) came
+        # back with every cooldown expired and every budget full, and could
+        # shave the same coin again at once. Stamps are WALL-CLOCK seconds,
+        # since monotonic time means nothing to a different process.
+        self.state_file = state_path(config)
         self._reduce_at = {}
         self._reduce_attempts = {}
         self._rebalance_at = {}
+        self._load_state()
         # Off-box alerting. Everything above escalates LOCALLY — a log line, the
         # alarm file, a /health field — and all three go quiet together when the box
         # sleeps, loses network, or the supervisor dies. See notify.py: push covers
@@ -635,9 +644,11 @@ class Watchdog:
         bounds shaving to one per cooldown even if liq distance flaps across the
         threshold poll after poll.
         """
+        budget_reset = False
         for coin in report.get("coins") or []:
             if f"near_liquidation:{coin}" not in seen:
                 if self._reduce_attempts.pop(coin, None):
+                    budget_reset = True
                     logger.info("watchdog: %s left the liquidation band — shave"
                                 " budget reset", coin)
                 for key in (f"reduce_failed:{coin}", f"reduce_exhausted:{coin}"):
@@ -651,6 +662,9 @@ class Watchdog:
         live = set(report.get("coins") or [])
         for coin in [c for c in self._reduce_attempts if c not in live]:
             self._reduce_attempts.pop(coin, None)
+            budget_reset = True
+        if budget_reset:
+            self._save_state()
         for key, a in list(self._risk_alarms.items()):
             if a.get("origin") == "action" and a.get("coin") \
                     and a["coin"] not in live:
@@ -965,12 +979,74 @@ class Watchdog:
         return max(steps) if steps else None
 
     def _cooldown_left(self, stamps, coin, seconds):
-        """Seconds until `coin` may be acted on again, or 0 if it is due now."""
+        """Seconds until `coin` may be acted on again, or 0 if it is due now.
+
+        Stamps, not deadlines, are stored, so a cooldown the operator shortens
+        applies at once, including to a stamp from before a restart.
+        """
         last = stamps.get(coin)
         if last is None:
             return 0.0
-        left = seconds - (time.monotonic() - last)
+        left = seconds - (time.time() - last)
         return round(left, 1) if left > 0 else 0.0
+
+    def _load_state(self):
+        """Restore persisted shave stamps and attempt counts, best-effort.
+
+        A missing, unreadable or malformed file means nothing survived, never
+        a reason to stop guarding. A stamp in the future (beyond a minute of
+        clock skew) is dropped rather than holding the shave path off until
+        then; one older than a day is history, and the coin starts a new
+        episode with its full budget.
+        """
+        now = time.time()
+        try:
+            if not os.path.exists(self.state_file):
+                return
+            with open(self.state_file, encoding="utf-8") as fh:
+                coins = (json.load(fh) or {}).get("coins") or {}
+        except Exception as e:
+            logger.warning(
+                "watchdog: state file %s unreadable (%s); starting without it."
+                " Shave cooldowns and attempt counts from before this restart"
+                " are lost.", self.state_file, e)
+            return
+        for coin, entry in coins.items():
+            if not isinstance(entry, dict):
+                continue
+            try:
+                attempts = max(int(entry.get("reduce_attempts") or 0), 0)
+                stamps = {key: float(entry.get(key) or 0.0)
+                          for key in ("reduce_at", "rebalance_at")}
+            except (TypeError, ValueError):
+                continue
+            for key, stamp in stamps.items():
+                if not stamp or stamp > now + 60 or now - stamp > 86400:
+                    continue
+                target = (self._reduce_at if key == "reduce_at"
+                          else self._rebalance_at)
+                target[coin] = stamp
+            if attempts:
+                self._reduce_attempts[coin] = attempts
+        if coins:
+            logger.info("watchdog: restored shave state for %s from %s",
+                        sorted(coins), self.state_file)
+
+    def _save_state(self):
+        """Persist the shave stamps and attempt counts. Never raises."""
+        coins = {}
+        for coin in (set(self._reduce_at) | set(self._reduce_attempts)
+                     | set(self._rebalance_at)):
+            coins[coin] = {"reduce_at": self._reduce_at.get(coin),
+                           "reduce_attempts": self._reduce_attempts.get(coin, 0),
+                           "rebalance_at": self._rebalance_at.get(coin)}
+        try:
+            write_text_atomic(self.state_file, json.dumps(
+                {"written_at": time.time(), "coins": coins}))
+        except Exception as e:
+            logger.error("watchdog: could not write state file %s (%s); this"
+                         " episode's shave cooldown and budget will not survive"
+                         " a restart", self.state_file, e)
 
     def _reduce_leg(self, venue, pos, qty):
         """Send one reduce-only order: `qty` (None = the whole leg) off `pos`."""
@@ -1031,8 +1107,9 @@ class Watchdog:
         results = {}
         for venue in order:
             results[venue] = self._reduce_leg(venue, positions[venue], qty)
-        self._reduce_at[coin] = time.monotonic()
+        self._reduce_at[coin] = time.time()
         self._reduce_attempts[coin] = attempts + 1
+        self._save_state()
 
         failed = sorted(v for v, r in results.items() if self._close_failed(r))
         out = {"plan": plan, "qty": qty, "size_step": step, "sequence": order,
@@ -1080,7 +1157,8 @@ class Watchdog:
                                 " fix it", "size_step": step}
         pos = hl_pos if venue == "hyperliquid" else dy_pos
         res = self._reduce_leg(venue, pos, qty)
-        self._rebalance_at[coin] = time.monotonic()
+        self._rebalance_at[coin] = time.time()
+        self._save_state()
         out = {"plan": "trim", "venue": venue, "qty": qty, "size_step": step,
                "result": res}
         if self._close_failed(res):
