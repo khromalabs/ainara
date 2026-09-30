@@ -16,4 +16,4 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
-from .. import __version__, __version_info__
+from ..framework import __version__, __version_info__

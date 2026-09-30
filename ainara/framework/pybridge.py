@@ -37,7 +37,7 @@ from flask_cors import CORS
 from flask_sock import Sock
 from jsonschema import Draft7Validator
 
-from ainara import __version__
+from ainara.framework import __version__
 from ainara.framework.auth import AuthManager
 from ainara.framework.backup import BackupManager
 from ainara.framework.chat_manager import ChatManager

@@ -47,7 +47,6 @@ nexus_src = os.path.join(project_root, "ainara", "nexus")
 nexus_staged_root = os.path.join(project_root, "build", "nexus_staged")
 nexus_staged = os.path.join(nexus_staged_root, "ainara", "nexus")
 nexus_obfuscated_root = os.path.join(project_root, "build", "nexus_obfuscated")
-nexus_obfuscated = os.path.join(nexus_obfuscated_root, "nexus")
 
 supporters_src = os.path.join(project_root, "supporters")
 supporters_rendered_root = os.path.join(project_root, "build", "supporters_rendered")
@@ -77,6 +76,30 @@ pyarmor_common_args = [
     "--exclude", "*/generate_",
     "--exclude", "*/.*",
 ]
+
+
+def _strip_namespace_inits() -> None:
+    """Remove PEP 420 namespace markers from the staged nexus tree.
+
+    No __init__.py may exist at nexus/ level or at vendor level directly
+    under it; bundle level and deeper keep theirs. The host repo is
+    namespace-native after Stage 1, so this is normally a no-op — it
+    guards against stale or symlinked source trees reintroducing the
+    markers and breaking the installable-app extraction layout.
+    """
+    removed = []
+    top_init = os.path.join(nexus_staged, "__init__.py")
+    if os.path.isfile(top_init):
+        os.remove(top_init)
+        removed.append(os.path.relpath(top_init, project_root))
+    for entry in sorted(os.listdir(nexus_staged)):
+        vendor_dir = os.path.join(nexus_staged, entry)
+        vendor_init = os.path.join(vendor_dir, "__init__.py")
+        if os.path.isdir(vendor_dir) and os.path.isfile(vendor_init):
+            os.remove(vendor_init)
+            removed.append(os.path.relpath(vendor_init, project_root))
+    if removed:
+        print(f"[_obfuscate] Stripped namespace __init__.py: {', '.join(removed)}")
 
 
 def obfuscate(edition: str) -> None:
@@ -134,6 +157,7 @@ def obfuscate(edition: str) -> None:
     # Stage the nexus tree (so public edition can strip supporters domains)
     os.makedirs(nexus_staged_root)
     shutil.copytree(nexus_src, nexus_staged, symlinks=False)
+    _strip_namespace_inits()
 
     if not supporters:
         ataria_staged = os.path.join(nexus_staged, "khromalabs", "ataria")
@@ -175,8 +199,19 @@ def obfuscate(edition: str) -> None:
         check=True,
         cwd=project_root,
     )
-    if not os.path.isdir(nexus_obfuscated):
-        raise FileNotFoundError(f"PyArmor output not found at {nexus_obfuscated}")
+    # PyArmor 9 mirrors a regular package's basename under -O
+    # (nexus_obfuscated/nexus/...), but a namespace-package input — no
+    # __init__.py at the input root, our Stage-1 layout — is written with
+    # its contents directly under the -O root. Normalize both shapes.
+    wrapped = os.path.join(nexus_obfuscated_root, "nexus")
+    if os.path.isdir(wrapped):
+        nexus_output_dir = wrapped
+    elif os.path.isdir(nexus_obfuscated_root):
+        nexus_output_dir = nexus_obfuscated_root
+    else:
+        raise FileNotFoundError(
+            f"PyArmor output not found under {nexus_obfuscated_root}"
+        )
 
     # Obfuscate the rendered supporters package
     supporters_obfuscated_dir = None
@@ -196,7 +231,23 @@ def obfuscate(edition: str) -> None:
     os.makedirs(supporters_compiled_root, exist_ok=True)
     nexus_dest = os.path.join(supporters_compiled_root, "ainara", "nexus")
     os.makedirs(os.path.dirname(nexus_dest), exist_ok=True)
-    shutil.copytree(nexus_obfuscated, nexus_dest)
+    # pyarmor_runtime_* siblings live at the -O root and ship separately
+    # (spec collects them to _internal root); never leak into ainara/nexus.
+    shutil.copytree(
+        nexus_output_dir,
+        nexus_dest,
+        ignore=shutil.ignore_patterns("pyarmor_runtime_*"),
+    )
+
+    shipped = [f for _, _, files in os.walk(nexus_dest)
+               for f in files if f.endswith(".py")]
+    if not shipped:
+        print("[_obfuscate] shipped 0 obfuscated scripts (empty nexus tree)")
+        if supporters:
+            raise FileNotFoundError(
+                "supporters edition: compiled nexus tree is empty — "
+                "staging lost the bundles; aborting"
+            )
 
     if supporters:
         shutil.copytree(supporters_obfuscated_dir, supporters_compiled)
