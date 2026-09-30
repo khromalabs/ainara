@@ -140,8 +140,8 @@ Still pending from Day 1 (not blockers for the commit):
 ## 5. Revised roadmap (supersedes old §3)
 
 1. **✅ Stage 1 — namespace conversion + version single-sourcing** (this commit).
-2. **Stage 2 — multi-root runtime + config-driven dev apps (NEXT, host repo):**
-   - 2.1 `config.py`: `get_nexus_base_paths() -> List[Path]` — primary root first
+2. **Stage 2 — multi-root runtime + config-driven dev apps (2.1–2.3 ✅; NEXT: ataria restructure, then 2.4):**
+   - 2.1 `config.py`: `get_nexus_base_paths() -> List[Path]` — dev > installed > primary
      (keep `get_nexus_base_path()`), then each installed app's
      `<data_dir>/nexus/.apps/<app_id>/ainara/nexus` portion; skip `.`/`_`-prefixed
      and `cache`; needs `List` import.
@@ -149,14 +149,22 @@ Still pending from Day 1 (not blockers for the commit):
      (accept old ctor arg but unused); mkdir fallback only for primary root when not
      frozen; **prepend app site-roots to `sys.path`** (guard `path.parent.name == "ainara"`,
      reverse order so primary ends up first, dedupe) — before any `discover()`.
-   - 2.3 `discover()`: wrap vendor scan in `for root in self.nexus_paths:`; per-root
-     `is_dir()` guard + log; rename the existing local `root` (register-nexus-root
-     block) to `root_name` to avoid shadowing.
+   - 2.3 ✅ `discover()` now scans every root from `get_nexus_base_paths()`
+     (dev > installed > primary) instead of only the primary alias, with
+     per-root `is_dir()`/`OSError` guards and `sorted()` scan order. Fixes the
+     latent accumulation bug: `BasePythonSkillProvider.discover()` resets
+     `self.capabilities` on every call, so the old update-into-self pattern
+     kept only the last-scanned bundle; skills now accumulate into a local
+     `all_caps` dict. `seen_bundles` gives `(vendor, bundle)` first-wins
+     semantics across roots (a bundle yielding zero skills in a higher root
+     does not fall back). register-nexus-root local `root` renamed to
+     `root_name` to avoid shadowing the loop variable. Verified A/B/C: 8 → 9
+     → 8 skills with the `testlab/demoapp` fixture (see §5c).
    - 2.4 **Dev mode via config, replacing the symlink**: e.g. config key
      `nexus.dev_apps` mapping app-id → source repo path, surfaced as extra roots
      (mechanism shared with 2.1). **OPEN:** config.yaml entry vs `.apps/dev.json`
      as the original note proposed — decide; lean config.yaml (ConfigManager
-     already handles user config).
+     already handles user config). (blocked on ataria restructure — §5b)
    - 2.5 `pybridge /docs/list` + `serve_docs`: iterate all roots.
    - Unchanged: `manager.py`, `serve_component`, `skills.py`.
    - Verify: empty `.apps/` → identical skill counts; test app
@@ -189,6 +197,47 @@ Still pending from Day 1 (not blockers for the commit):
   `_scripts/` stays at the repo root, outside the payload (Q3 option 1).
 - **§3 validation script had a buggy assert** (`hasattr(ainara,'__file__')`
   is a false negative on Python ≥3.9); fixed in §3 above.
+
+## 5c. Stage 2.3 fixture (re-creatable artifact for 2.5 `/docs/list` work)
+
+Installed-app fixture under the platform data dir; portable to the Windows
+`Saved Games` layout via `config.get_exact('data.directory')`:
+
+```bash
+APPS_ROOT="$(python -c "from ainara.framework.config import config; from pathlib import Path; print(Path(config.get_exact('data.directory')) / 'nexus' / '.apps')")"
+mkdir -p "$APPS_ROOT/testapp/ainara/nexus/testlab/demoapp/hello"
+printf '"""testlab demoapp - Stage 2.3 multi-root verification fixture."""\n' \
+  > "$APPS_ROOT/testapp/ainara/nexus/testlab/demoapp/__init__.py"
+cat > "$APPS_ROOT/testapp/ainara/nexus/testlab/demoapp/hello/world.py" <<'EOF'
+"""Demo skill for Stage 2.3: proves skills accumulate across Nexus roots."""
+
+from ainara.framework.skill import Skill
+
+
+class TestlabDemoappHelloWorld(Skill):
+    """Say hello from a second (installed-app) Nexus root."""
+
+    @property
+    def matcher_info(self) -> str:
+        return "Say hello from the testlab demoapp fixture."
+
+    def run(self) -> dict:
+        return {"greeting": "hello from testlab/demoapp"}
+EOF
+```
+
+Layout: `hello/` needs no `__init__.py` (PEP 420 portion); the bundle-level
+`__init__.py` is included because that's the canonical bundle layout (Stage-1
+validation asserts it for ataria, and Stage 3's PyArmor story depends on it).
+Class name is dictated by discovery: `Testlab` + `Demoapp` + `Hello` + `World`
+→ skill id `testlab_demoapp_hello_world`.
+
+Teardown (mandatory — the fixture lives outside the repo and would silently
+change every future baseline if left in place):
+
+```bash
+rm -rf "$APPS_ROOT/testapp"
+```
 
 ## 6. Open questions to settle early in Day 2
 

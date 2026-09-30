@@ -144,119 +144,161 @@ class NexusSkillProvider(BasePythonSkillProvider):
         return properties
 
     def discover(self) -> Dict[str, Dict[str, Any]]:
-        """Discover and load skills from Nexus bundles."""
-        self.capabilities = {}
-        logger.info(f"Scanning for Nexus bundles in: {self.nexus_path}")
+        """Discover and load skills from Nexus bundles across all roots.
 
-        for vendor_dir in self.nexus_path.iterdir():
-            if not vendor_dir.is_dir() or vendor_dir.name.startswith(
-                ("_", ".")
-            ):
-                logger.info(f"Skipping: {vendor_dir}")
+        Roots are scanned in ``self.nexus_paths`` order (dev > installed >
+        primary). The first root that contains a (vendor, bundle) pair owns
+        it; copies in lower-precedence roots are skipped. Skills accumulate
+        in a local dict because ``super().discover()`` resets
+        ``self.capabilities`` on every call (with the old pattern, only the
+        last-scanned bundle would have survived a multi-root scan).
+        """
+        all_caps: Dict[str, Dict[str, Any]] = {}
+        seen_bundles: set = set()
+
+        for root in self.nexus_paths:
+            if not root.is_dir():
+                logger.warning(
+                    f"Nexus root does not exist or is not a directory,"
+                    f" skipping: {root}"
+                )
                 continue
+            try:
+                # sorted(): iterdir() order is filesystem-dependent; a
+                # deterministic scan order keeps logs and verification
+                # reproducible across runs and machines.
+                vendor_entries = sorted(root.iterdir())
+            except OSError as e:
+                # Installed roots are user-space content; one unreadable
+                # root must not zero out the whole provider.
+                logger.warning(f"Cannot list Nexus root '{root}': {e} — skipping root")
+                continue
+            logger.info(f"Scanning for Nexus bundles in: {root}")
 
-            for bundle_dir in vendor_dir.iterdir():
-                if not bundle_dir.is_dir() or bundle_dir.name.startswith(
+            for vendor_dir in vendor_entries:
+                if not vendor_dir.is_dir() or vendor_dir.name.startswith(
                     ("_", ".")
                 ):
+                    logger.info(f"Skipping: {vendor_dir}")
                     continue
 
-                prefix_module = (
-                    f"ainara.nexus.{vendor_dir.name}.{bundle_dir.name}"
-                )
-                logger.info(f"Scanning for Nexus bundles for: {prefix_module}")
+                for bundle_dir in sorted(vendor_dir.iterdir()):
+                    if not bundle_dir.is_dir() or bundle_dir.name.startswith(
+                        ("_", ".")
+                    ):
+                        continue
 
-                # External Nexus roots must be registered BEFORE skill
-                # instantiation so that `Skill._get_config_prefix()` can
-                # derive the correct full config keys from `__module__`.
-                if not prefix_module.startswith("ainara."):
-                    root = prefix_module.split(".")[0]
-                    register_nexus_root(root, f"skills.nexus.{root}")
-
-                bundle_caps = super().discover(
-                    bundle_dir,
-                    prefix_module,
-                    class_name_prefix=vendor_dir.name.capitalize()
-                    + bundle_dir.name.capitalize(),
-                    capability_type="nexus",
-                )
-
-                if bundle_caps:
-                    # Add vendor and bundle info to all skills in this bundle
-                    # This is done for all skills, regardless of whether they have a UI component.
-                    for cap_data in bundle_caps.values():
-                        cap_data["vendor"] = vendor_dir.name
-                        cap_data["bundle"] = bundle_dir.name
-
-                    # If skills were found, look for a UI components directory
-                    ui_components_path = bundle_dir / "_components"
-                    if ui_components_path.is_dir():
+                    # First-wins: the highest-precedence root that CONTAINS
+                    # the bundle owns it, even if it yields zero skills —
+                    # never silently fall back to a lower-precedence copy
+                    # (that would mask dev-tree errors).
+                    bundle_key = (vendor_dir.name, bundle_dir.name)
+                    if bundle_key in seen_bundles:
                         logger.info(
-                            "Found UI components for bundle"
-                            f" '{bundle_dir.name}' at: {ui_components_path}"
+                            f"Skipping '{vendor_dir.name}/{bundle_dir.name}'"
+                            f" in {root}: already loaded from a"
+                            " higher-precedence root"
                         )
-                        # Add ui info to each capability, verifying component existence
-                        for cap_id, cap_data in bundle_caps.items():
-                            # Derive component name from skill ID by convention
-                            skill_prefix = (
-                                f"{vendor_dir.name}_{bundle_dir.name}_"
-                            )
-                            if not cap_id.startswith(skill_prefix):
-                                logger.warning(
-                                    f"Skill ID '{cap_id}' does not follow the"
-                                    " expected naming convention"
-                                    f" '{skill_prefix}...' and will not be"
-                                    " linked to a UI component."
-                                )
-                                continue
+                        continue
+                    seen_bundles.add(bundle_key)
 
-                            component_base_name = cap_id[len(skill_prefix):]
-                            # Convert snake_case to PascalCase
-                            component_name = "".join(
-                                word.capitalize()
-                                for word in component_base_name.split("_")
-                            )
+                    prefix_module = (
+                        f"ainara.nexus.{vendor_dir.name}.{bundle_dir.name}"
+                    )
+                    logger.info(f"Scanning for Nexus bundles for: {prefix_module}")
 
-                            # Verify component directory exists
-                            component_dir = (
-                                ui_components_path / component_name
-                            ).resolve()
-                            if component_dir.is_dir():
-                                # This skill has a verified UI component
-                                cap_data["ui"] = {
-                                    "component": component_name,
-                                }
-                                # ui_path is for internal use by serve_component
-                                cap_data["ui_path"] = str(ui_components_path)
-                                logger.info(
-                                    f"Associated skill '{cap_id}'"
-                                    f" ({ui_components_path}) with component"
-                                    f" '{component_name}'"
-                                )
-                            else:
-                                logger.warning(
-                                    f"Skill '{cap_id}' found, but"
-                                    " corresponding component directory"
-                                    f" '{component_dir}' not found. This skill"
-                                    " will not have a UI component."
-                                )
-                                # Not necessary to make this distinction to a
-                                # UI-less nexus skill
-                                # cap_data["type"] = "skill"
-                    else:
-                        logger.info(
-                            "No '_components' directory found for bundle"
-                            f" '{bundle_dir.name}'."
-                        )
+                    # External Nexus roots must be registered BEFORE skill
+                    # instantiation so that `Skill._get_config_prefix()` can
+                    # derive the correct full config keys from `__module__`.
+                    if not prefix_module.startswith("ainara."):
+                        root_name = prefix_module.split(".")[0]
+                        register_nexus_root(root_name, f"skills.nexus.{root_name}")
 
-                    self._collect_bundle_config_params(
-                        vendor_dir.name,
-                        bundle_dir.name,
+                    bundle_caps = super().discover(
+                        bundle_dir,
                         prefix_module,
+                        class_name_prefix=vendor_dir.name.capitalize()
+                        + bundle_dir.name.capitalize(),
+                        capability_type="nexus",
                     )
 
-                    self.capabilities.update(bundle_caps)
+                    if bundle_caps:
+                        # Add vendor and bundle info to all skills in this bundle
+                        # This is done for all skills, regardless of whether they have a UI component.
+                        for cap_data in bundle_caps.values():
+                            cap_data["vendor"] = vendor_dir.name
+                            cap_data["bundle"] = bundle_dir.name
 
+                        # If skills were found, look for a UI components directory
+                        ui_components_path = bundle_dir / "_components"
+                        if ui_components_path.is_dir():
+                            logger.info(
+                                "Found UI components for bundle"
+                                f" '{bundle_dir.name}' at: {ui_components_path}"
+                            )
+                            # Add ui info to each capability, verifying component existence
+                            for cap_id, cap_data in bundle_caps.items():
+                                # Derive component name from skill ID by convention
+                                skill_prefix = (
+                                    f"{vendor_dir.name}_{bundle_dir.name}_"
+                                )
+                                if not cap_id.startswith(skill_prefix):
+                                    logger.warning(
+                                        f"Skill ID '{cap_id}' does not follow the"
+                                        " expected naming convention"
+                                        f" '{skill_prefix}...' and will not be"
+                                        " linked to a UI component."
+                                    )
+                                    continue
+
+                                component_base_name = cap_id[len(skill_prefix):]
+                                # Convert snake_case to PascalCase
+                                component_name = "".join(
+                                    word.capitalize()
+                                    for word in component_base_name.split("_")
+                                )
+
+                                # Verify component directory exists
+                                component_dir = (
+                                    ui_components_path / component_name
+                                ).resolve()
+                                if component_dir.is_dir():
+                                    # This skill has a verified UI component
+                                    cap_data["ui"] = {
+                                        "component": component_name,
+                                    }
+                                    # ui_path is for internal use by serve_component
+                                    cap_data["ui_path"] = str(ui_components_path)
+                                    logger.info(
+                                        f"Associated skill '{cap_id}'"
+                                        f" ({ui_components_path}) with component"
+                                        f" '{component_name}'"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Skill '{cap_id}' found, but"
+                                        " corresponding component directory"
+                                        f" '{component_dir}' not found. This skill"
+                                        " will not have a UI component."
+                                    )
+                                    # Not necessary to make this distinction to a
+                                    # UI-less nexus skill
+                                    # cap_data["type"] = "skill"
+                        else:
+                            logger.info(
+                                "No '_components' directory found for bundle"
+                                f" '{bundle_dir.name}'."
+                            )
+
+                        self._collect_bundle_config_params(
+                            vendor_dir.name,
+                            bundle_dir.name,
+                            prefix_module,
+                        )
+
+                        all_caps.update(bundle_caps)
+
+        self.capabilities = all_caps
         logger.info(f"Loaded {len(self.capabilities)} nexus skills.")
         return self.capabilities
 
