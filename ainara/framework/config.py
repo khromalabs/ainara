@@ -28,7 +28,7 @@ import yaml
 import json
 import platform
 from jsonschema import Draft7Validator
-from typing import Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -711,6 +711,79 @@ class ConfigManager:
             return Path(sys._MEIPASS) / "ainara" / "nexus"
         # Development fallback: config.py is in ainara/framework/ → one level up is ainara/
         return Path(__file__).resolve().parents[1] / "nexus"
+
+    def get_nexus_base_paths(self) -> List[Path]:
+        """Return all Nexus bundle roots, in precedence order.
+
+        Order (first wins on merge):
+          1. Dev roots declared in ``nexus.dev_apps`` (app_id -> source repo).
+          2. Installed apps under ``<data.directory>/nexus/.apps/<app_id>``.
+          3. The primary root from :meth:`get_nexus_base_path` (last).
+
+        Each entry is the ``ainara/nexus`` portion of the app's tree. Missing
+        or malformed entries are skipped with a warning; the primary root is
+        always returned so callers can rely on a non-empty list.
+        """
+        roots: List[Path] = []
+
+        # 1. Dev roots from config (nexus.dev_apps: {app_id: /path/to/repo})
+        dev_apps = self._get_unscoped("nexus.dev_apps", {}) or {}
+        if isinstance(dev_apps, dict):
+            for app_id, value in dev_apps.items():
+                if not value:
+                    continue
+                try:
+                    root = Path(str(value)).expanduser().resolve()
+                except Exception as e:
+                    logger.warning(
+                        f"nexus.dev_apps[{app_id!r}]: invalid path {value!r} ({e}) — skipping"
+                    )
+                    continue
+                portion = root / "ainara" / "nexus"
+                if not portion.is_dir():
+                    logger.warning(
+                        f"nexus.dev_apps[{app_id!r}]: expected {portion} to exist — skipping"
+                    )
+                    continue
+                roots.append(portion)
+        else:
+            logger.warning(
+                "nexus.dev_apps must be a mapping of app_id -> path; ignoring"
+            )
+
+        # 2. Installed apps under <data.directory>/nexus/.apps/
+        data_dir = self._get_unscoped("data.directory")
+        if data_dir:
+            apps_dir = Path(str(data_dir)).expanduser() / "nexus" / ".apps"
+            if apps_dir.is_dir():
+                for entry in sorted(apps_dir.iterdir()):
+                    name = entry.name
+                    if name.startswith(".") or name.startswith("_") or name == "cache":
+                        continue
+                    if not entry.is_dir():
+                        continue
+                    portion = entry / "ainara" / "nexus"
+                    if portion.is_dir():
+                        roots.append(portion)
+            else:
+                logger.debug(f"No installed nexus apps directory at {apps_dir}")
+
+        # 3. Primary root last (custom nexus.path or bundled/dev default)
+        roots.append(self.get_nexus_base_path())
+
+        # Dedupe by resolved path, first occurrence wins (dev > installed > primary)
+        seen = set()
+        deduped: List[Path] = []
+        for r in roots:
+            try:
+                key = str(r.resolve())
+            except Exception:
+                key = str(r)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(r)
+        return deduped
 
     def needs_load(self):
         """Check if the config file has been modified since last load"""

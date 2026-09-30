@@ -49,9 +49,39 @@ class NexusSkillProvider(BasePythonSkillProvider):
         # Ensure .mjs files are served with the correct MIME type (fixes Windows issue)
         mimetypes.add_type("application/javascript", ".mjs")
 
+        self.nexus_paths = config.get_nexus_base_paths()
+        # Primary alias: discover() stays single-root until the multi-root
+        # scan lands; the alias keeps existing callers working unchanged.
         self.nexus_path = config.get_nexus_base_path()
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         self.bundle_config_params = {}
+
+        # Prepend each app's site-root (the directory containing `ainara/`)
+        # to sys.path so `import ainara.nexus.<vendor>.<bundle>` resolves
+        # for dev and installed apps. Reversed + insert(0) yields the same
+        # precedence as self.nexus_paths (dev first, primary last).
+        for root in reversed(self.nexus_paths):
+            if root.parent.name == "ainara":
+                site_root = root.parent.parent
+                try:
+                    resolved = str(site_root.resolve())
+                except Exception:
+                    continue
+                # '' (cwd) must resolve so the repo root dedupes in dev;
+                # None is skipped defensively.
+                existing = {
+                    str(Path(p).resolve()) for p in sys.path
+                    if p is not None
+                }
+                if resolved not in existing:
+                    sys.path.insert(0, resolved)
+        importlib.invalidate_caches()
+
+        logger.info(
+            f"Nexus roots (precedence order): "
+            f"{[str(p) for p in self.nexus_paths]}"
+        )
+
         if not self.nexus_path.is_dir():
             logger.warning(
                 f"Nexus path '{self.nexus_path}' does not exist or is not a"

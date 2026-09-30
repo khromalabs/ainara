@@ -78,7 +78,7 @@ echo "=== git state ==="; git status --short
 # 1.1–1.3 version single-sourcing
 python -c "from ainara.framework import __version__, __version_info__; assert __version__=='0.11.0'" \
   && ok "framework version" || bad "framework version"
-python -c "import ainara; assert not hasattr(ainara,'__version__') and not hasattr(ainara,'__file__')" \
+python -c "import ainara; assert not hasattr(ainara,'__version__') and getattr(ainara,'__file__',None) is None" \
   && ok "ainara is a namespace" || bad "ainara not namespace"
 grep -rnE "from ainara import|ainara\.__version__" --include="*.py" . | grep -q . \
   && bad "old version consumers remain" || ok "no old version consumers"
@@ -175,6 +175,20 @@ Still pending from Day 1 (not blockers for the commit):
    `.edition` marker, supporters branches, ataria materialization, the symlink)
    from `_build.py`, `_obfuscate.py`, `servers.spec`; host ships no nexus app code.
 5. **Stage 5 (deferred):** Polaris UI install flow; auth/perks UI; Lit protocol.
+
+## 5b. Day-2 decisions (locked)
+
+- **Precedence is dev > installed > primary everywhere.** This supersedes
+  §5-2.2's "reverse order so primary ends up first" wording; the runtime
+  prepends site-roots in reverse of `nexus_paths` so the *first* entry
+  (dev) ends up at `sys.path[0]`.
+- **`nexus.dev_apps` value = repo root containing the `ainara/nexus`
+  portion** (not the `ainara/nexus` dir itself). The runtime appends
+  `/ainara/nexus` internally.
+- **Ataria repo restructure to that layout is required before 2.4.**
+  `_scripts/` stays at the repo root, outside the payload (Q3 option 1).
+- **§3 validation script had a buggy assert** (`hasattr(ainara,'__file__')`
+  is a false negative on Python ≥3.9); fixed in §3 above.
 
 ## 6. Open questions to settle early in Day 2
 
