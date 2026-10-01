@@ -44,6 +44,12 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if not os.path.isdir(os.path.join(project_root, "ainara")):
     raise SystemExit(f"{project_root} does not look like the project root (no ainara/)")
 
+# `python scripts/_obfuscate.py` puts scripts/ on sys.path, not the CWD;
+# stdin probes (`python -`) get the CWD instead. The lazy config import in
+# _resolve_ataria_source() needs the repo root explicitly.
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 nexus_src = os.path.join(project_root, "ainara", "nexus")
 nexus_staged_root = os.path.join(project_root, "build", "nexus_staged")
 nexus_staged = os.path.join(nexus_staged_root, "ainara", "nexus")
