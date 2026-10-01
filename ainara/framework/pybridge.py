@@ -49,6 +49,7 @@ from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
+from ainara.framework.nexus_apps import resolve_app_payload
 from ainara.framework.notifications import NotificationManager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
 from ainara.framework.vault import (
@@ -729,13 +730,32 @@ def _iter_docs_sites(nexus_paths):
     """Collect doc sites across all Nexus roots, in precedence order.
 
     First-wins on (publisher, application): the highest-precedence root
-    containing the app directory owns its docs even when its site/ is
-    missing — same no-silent-fallback semantics as skill discovery.
+    containing the app owns its docs even when its site/ is missing — same
+    no-silent-fallback semantics as skill discovery.
+
+    Root shapes: app repos (``<root>/payload/nexus.json``, site under
+    ``payload/``), installed bundles (``<root>/nexus.json``, site at the
+    top), and the legacy vendor-layout primary root
+    (``<root>/<vendor>/<app>/site``).
     """
     sites = []
     seen = set()
+
+    def _consider(publisher, application, bundle_dir):
+        key = (publisher, application)
+        if key in seen:
+            return
+        seen.add(key)
+        if (bundle_dir / "site" / "index.html").is_file():
+            sites.append({"publisher": publisher, "application": application})
+
     for base in nexus_paths:
         if not base.is_dir():
+            continue
+        app = resolve_app_payload(base)
+        if app:
+            vendor, name, bundle_dir = app
+            _consider(vendor, name, bundle_dir)
             continue
         try:
             vendor_entries = sorted(base.iterdir())
@@ -747,14 +767,7 @@ def _iter_docs_sites(nexus_paths):
             for app_dir in sorted(vendor_dir.iterdir()):
                 if not app_dir.is_dir() or app_dir.name.startswith(("_", ".")):
                     continue
-                key = (vendor_dir.name, app_dir.name)
-                if key in seen:
-                    continue
-                seen.add(key)
-                if (app_dir / "site" / "index.html").is_file():
-                    sites.append(
-                        {"publisher": vendor_dir.name, "application": app_dir.name}
-                    )
+                _consider(vendor_dir.name, app_dir.name, app_dir)
     sites.sort(key=lambda s: (s["publisher"], s["application"]))
     return sites
 
@@ -768,6 +781,13 @@ def _resolve_docs_site(nexus_paths, publisher: str, application: str):
     if ".." in publisher or ".." in application:
         return None
     for base in nexus_paths:
+        app = resolve_app_payload(base)
+        if app:
+            vendor, name, bundle_dir = app
+            if (vendor, name) == (publisher, application):
+                site_dir = bundle_dir / "site"
+                return site_dir if site_dir.is_dir() else None
+            continue
         app_dir = base / publisher / application
         if app_dir.is_dir():
             site_dir = app_dir / "site"

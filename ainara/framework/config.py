@@ -30,6 +30,8 @@ import platform
 from jsonschema import Draft7Validator
 from typing import List, Optional
 
+from ainara.framework.nexus_apps import resolve_app_payload
+
 logger = logging.getLogger(__name__)
 
 _NEXUS_MODULE_PREFIXES = [
@@ -713,16 +715,22 @@ class ConfigManager:
         return Path(__file__).resolve().parents[1] / "nexus"
 
     def get_nexus_base_paths(self) -> List[Path]:
-        """Return all Nexus bundle roots, in precedence order.
+        """Return all Nexus app roots, in precedence order.
 
         Order (first wins on merge):
-          1. Dev roots declared in ``nexus.dev_apps`` (app_id -> source repo).
-          2. Installed apps under ``<data.directory>/nexus/.apps/<app_id>``.
-          3. The primary root from :meth:`get_nexus_base_path` (last).
+          1. Dev roots declared in ``nexus.dev_apps`` (app_id -> app repo).
+          2. Installed apps under ``<data.directory>/nexus/.apps/<app_id>``
+             (bundle contents at the top level).
+          3. The primary root from :meth:`get_nexus_base_path` (last;
+             legacy vendor layout: ``<vendor>/<bundle>`` subdirectories).
 
-        Each entry is the ``ainara/nexus`` portion of the app's tree. Missing
-        or malformed entries are skipped with a warning; the primary root is
-        always returned so callers can rely on a non-empty list.
+        Each entry is an **app root**: either an app repo (``payload/
+        nexus.json``), an installed bundle (``nexus.json`` at top), or the
+        legacy vendor-layout primary root. Identity (vendor/bundle) comes
+        from each app's manifest, never from directory names. Missing,
+        malformed or non-app entries are skipped with a warning; the
+        primary root is always returned so callers can rely on a
+        non-empty list.
         """
         roots: List[Path] = []
 
@@ -739,13 +747,15 @@ class ConfigManager:
                         f"nexus.dev_apps[{app_id!r}]: invalid path {value!r} ({e}) — skipping"
                     )
                     continue
-                portion = root / "ainara" / "nexus"
-                if not portion.is_dir():
+                app = resolve_app_payload(root)
+                if not app:
                     logger.warning(
-                        f"nexus.dev_apps[{app_id!r}]: expected {portion} to exist — skipping"
+                        f"nexus.dev_apps[{app_id!r}]: {root} is not a Nexus"
+                        " app (expected payload/nexus.json or nexus.json)"
+                        " — skipping"
                     )
                     continue
-                roots.append(portion)
+                roots.append(root)
         else:
             logger.warning(
                 "nexus.dev_apps must be a mapping of app_id -> path; ignoring"
@@ -762,9 +772,12 @@ class ConfigManager:
                         continue
                     if not entry.is_dir():
                         continue
-                    portion = entry / "ainara" / "nexus"
-                    if portion.is_dir():
-                        roots.append(portion)
+                    if not resolve_app_payload(entry):
+                        logger.debug(
+                            f"Skipping non-bundle installed app dir: {entry}"
+                        )
+                        continue
+                    roots.append(entry)
             else:
                 logger.debug(f"No installed nexus apps directory at {apps_dir}")
 
