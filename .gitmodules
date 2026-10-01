@@ -1,0 +1,3 @@
+[submodule "ainara/nexus/khromalabs/ataria"]
+	path = ainara/nexus/khromalabs/ataria
+	url = khromalabs:ataria.git

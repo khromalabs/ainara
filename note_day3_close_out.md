@@ -228,3 +228,27 @@ OPEN DECISIONS (answer before drafting the pack script):
 - Wheel = at most an internal transport; never pip-installed; no interpreter
   requirements at user level.
 - `AuthManager` degrades to public mode without `supporters.auth_core`.
+
+---
+
+## 11. Addendum — ataria materialized as a git submodule (supersedes §1 symlink facts)
+
+- Host pins ataria via `.gitmodules` + gitlink @ `46d459b` (absorbed gitdir,
+  URL `khromalabs:ataria.git` verified reachable). Materialization is now
+  tracked and reproducible: `git submodule update --init`.
+- **P1 role split (harness-verified):** submodule mount = pinned reference +
+  chat transport; runtime truth = `nexus.dev_apps`. A (dev_apps set): 8/8
+  exact frozen-baseline IDs + first-wins skip on the mount. B (unset): 0
+  skills — footgun: mount present without dev_apps silently yields nothing
+  (extends §7 observability: warn on 0-skill bundles).
+- The mount exposes the repo ROOT, not the payload — depth-2 glob sees only
+  `_scripts/*.py`. Builds must never copytree the mount root unfiltered.
+- New gotchas: (a) harnesses MUST use the project venv interpreter — bare
+  `python` (3.14) lacks bundle deps and fakes import failures; (b) discovery
+  INSTANTIATES skills — real side effects (keyring, API keys, caches);
+  (c) `check-ignore` consults the index by default — use `--no-index` on
+  tracked paths (reconciles §4/#4).
+- Q3: `plans/store/` = archived, excluded; only top-level `plans/*.yaml` pack.
+- Q5: artifact root == bundle root; manifest stays `nexus.json` (§6.4
+  `manifest.json` amended) — `platform_utils` traversal expects that name.
+- Next: `_obfuscate.py` bundle-source resolution, then Stage 3 pack script.
