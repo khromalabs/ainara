@@ -1,53 +1,58 @@
-# RESUME NOTE — Nexus Apps decoupling (Stage 3 in progress)
+# RESUME NOTE — Nexus Apps decoupling (Stage 3a COMPLETE; next: Stage 3b pack.py)
 
-**Supersedes** `note_day3_close_out.md` (removed in the same commit; content
-consolidated here) and all scratch `script*.sh`. Single source of truth.
-**How to resume:** run `scripts/nexus_state_check.sh` (§11), add the files in
-§9 to the chat, answer §6's four open questions, then follow §8 in order.
-Never batch stages — apply → verify → proceed.
+Single source of truth. Stage 3a adopted the `payload/` bundle layout
+(D1–D3 decisions below). **How to resume:** run
+`scripts/nexus_state_check.sh` (§11), then follow §8 in order. Never batch
+stages — apply → verify → proceed.
 
 ---
 
 ## 1. TL;DR — where we are
 
-- **Stages 1, 2.1–2.5 COMPLETE** (multi-root discovery, dev_apps precedence,
-  pybridge docs). Ainara `dev012` @ `4b800686`; ataria `master` @ `46d459b`.
-- **Ataria materialized in the host as a GIT SUBMODULE** (gitlink @ `46d459b`,
-  absorbed gitdir, URL `khromalabs:ataria.git` verified reachable) — commit
-  `25e31824`. Role split (P1, harness-verified): mount = pinned reference +
-  chat transport; **runtime truth = `nexus.dev_apps`** (8/8 frozen baseline).
-- **`_obfuscate.py` is submodule-safe** (payload-source resolution `d0e83b04`
-  + script-mode sys.path fix `4e4a1bbc`). Full supporters run GREEN: license
-  guards 8/8, PyArmor clean, staged tree == allowlist, leak count 0.
-- **D-B minisign CLOSED:** real binary `/usr/bin/minisign`, roundtrip OK.
-- **NEXT: Stage 3 — `_scripts/pack.py` in the ataria repo.** Schema drafted
-  (§6); FOUR answers pending before implementation.
+- **Stages 1, 2.1–2.5 and 3a COMPLETE.** Stage 3a replaced the nested
+  `ainara/nexus/khromalabs/ataria/` payload with a **flat `payload/`
+  bundle dir** (byte-for-byte what ships); repo root = dev material.
+- Bundle identity/namespace is **manifest-derived**: `provider` + `name`
+  → `ainara.nexus.<vendor>.<bundle>`, registered at runtime via
+  `framework/nexus_apps.register_bundle_namespace()` (stdlib-only,
+  importlib alias — no physical nesting anywhere).
+- App-root contract: dev repo = `payload/nexus.json`; installed app =
+  `nexus.json` at top (bundle-at-top, D2). Primary root keeps legacy
+  vendor layout with a physical-bundle guard (D3: submodule mount stays
+  inert; `_scripts` import-noise footgun dead twice over).
+- The separate dev checkout was deleted (single-copy layout): the
+  submodule mount IS the dev_apps target (probed 8/8, first-wins).
+- Frozen baseline unchanged: 8 skill IDs; runtime import paths unchanged;
+  config keys unchanged.
+- Full supporters run GREEN post-3a (`Artifacts ready`, leak-free,
+  PyArmor confirmed). mkdocs docs SOURCE (`docs/`) was lost with the old
+  dev checkout (never tracked); last generated `site/` bridged into
+  `payload/site` — skill pages regenerate via docs_hook when needed.
+- **NEXT: Stage 3b — `_scripts/pack.py` in the ataria repo** (§6; schema
+  approved with payload/ layout; Q3 creatorId still pending).
 
 ## 2. Commit ledger
 
 ### ainara repo (branch dev012)
 | Commit | Subject |
 |---|---|
-| `9ea0e9f3` | Stage 1 — `__version__` → ainara.framework, PEP 420 namespaces |
-| `fbf68753` | Stage 2.1+2.2 — `get_nexus_base_paths()` + sys.path prepending |
-| `1a2de1ad` | Stage 2.3 — multi-root `discover()`, first-wins `seen_bundles` |
-| `3464a841` | Stage 2.5 — pybridge multi-root docs |
-| `067918e9` | note_day3_close_out added, old notes removed |
-| `25e31824` | ataria as git submodule (transitional, P1) + old note §11 |
-| `d0e83b04` | obfuscate: payload-source resolution, submodule-safe staging |
-| `dc1474dd` | old note §12 |
-| `4e4a1bbc` | fix: repo root on sys.path for script-mode config import |
-| `4b800686` | old note §13 |
-| *(pending)* | Stage 3 handoff — this note + state-check script |
+| *(Stage 1–2 rows as before: `9ea0e9f3`, `fbf68753`, `1a2de1ad`, `3464a841`, `067918e9`, `25e31824`, `d0e83b04`, `dc1474dd`, `4e4a1bbc`, `4b800686`)* | |
+| `698cdc37` | Stage 3 handoff — consolidated note + state-check script |
+| `88f24144` | state-check ATARIA_DEV → submodule mount (single-copy layout) |
+| `a1a859c5` | payload-based app resolution + namespace aliasing (3a) |
+| `0ef54636` | _obfuscate payload resolution for 3a layout |
+| *(pending)* | Stage 3a close-out — gitlink bump + note update |
 
-### ataria repo (branch master) — UNCHANGED all session
+### ataria repo (branch master)
 | Commit | Subject |
 |---|---|
 | `46d459b` | refactor: adopt Nexus app payload layout |
+| `a92687d` | refactor: adopt flat payload/ bundle layout (3a Phase 1) |
+| `7c6358a` | fix(tools): payload-layout dev tooling + .gitignore (3a Phase 3) |
 
-## 3. Verified facts (observed — do not re-derive)
+## 3. Verified facts (observed post-3a — do not re-derive)
 
-- **Frozen baseline (8 sorted nexus skill IDs):**
+- **Frozen baseline (8 sorted nexus skill IDs) UNCHANGED:**
   ```
   khromalabs_ataria_charts_candles
   khromalabs_ataria_crypto_analysis
@@ -58,25 +63,26 @@ Never batch stages — apply → verify → proceed.
   khromalabs_ataria_crypto_tradingworkbook
   khromalabs_ataria_dashboards_controlpanel
   ```
-- **Submodule harness:** A (dev_apps set) = 8/8 exact baseline, dev root
-  first, first-wins skip line on the primary scan. B (unset) = 0 skills with
-  `_scripts/*.py` import noise — the documented footgun.
-- **Obfuscate resolution harness:** dev_apps set → dev nested payload,
-  artifacts complete; dev_apps None → mount nested payload (fresh clone:
-  missing `providers_registry.json`, `skills_metadata.json`, `site/` — the
-  artifact guard fires by design). Resolution NEVER returns a repo root.
-- **Full supporters run post-fix:** `Artifacts ready`; staged tree is exactly
-  `charts/ _components/ crypto/ dashboards/ __init__.py nexus.json
-  providers_registry.json site/ skills_metadata.json`; leak count 0.
-- **UI components:** only `ChartsCandles` + `DashboardsControlpanel` exist in
-  `_components/`; the 6 crypto-skill "component not found" warnings are
-  genuine pre-existing absences (deferred question, §7).
-- **Discovery instantiates skills** → real side effects observed: keyring
-  reads, API-key loads (`CCXTTradingProvider: Using api_key 0x81...`), cache
-  sweeps. Harness A is not side-effect-free.
+- **Post-3a harness results (Gate 2/3, all GREEN):** discovery A 8/8 via
+  payload alias; discovery B 0 skills with ZERO import noise (vendor-mode
+  physical-bundle guard fires on the mount); `resolve_app_payload` unit
+  checks (dev repo / installed bundle-at-top / non-app); alias import spot
+  checks land under `payload/`; pybridge docs endpoints handle app roots +
+  fixture installed bundle; `_resolve_ataria_source` both configs →
+  `<mount>/payload`; registries regenerate 8 skills / 3 providers; full
+  supporters run `Artifacts ready`, leak-free, PyArmor 9.2.7 header
+  confirmed in shipped tree.
+- **Payload tree (tracked):** `charts/ crypto/ dashboards/ _components/
+  __init__.py nexus.json plans/` (2 runtime plans). Repo root = dev
+  material: `plans/store/` (3 yamls, structurally excluded), docs_hook.py,
+  generate_registries.py, mkdocs.yml, generate_docs.sh, _scripts/, *.md.
+- **Compiled-host trees exclude `plans/` by ignore pattern** (zip
+  distributes plans, not the host build). Data files (nexus.json, site/,
+  registries) ship from the plain `ataria_compiled` datas; obfuscated code
+  from `supporters_compiled/ainara/nexus` — pre-existing spec design.
 - Earlier verified facts carried: 2.3 A/B/C fixture runs, 2.4 both modes,
   2.5 helper harness + frozen HTTP smoke (`/docs/list`), namespace mechanics
-  (retroactive `ainara.__path__` extension works in dev AND frozen).
+  (now via aliasing; retroactive extension no longer used).
 
 ## 4. Gotchas (consolidated — do not re-derive)
 
@@ -85,35 +91,38 @@ Never batch stages — apply → verify → proceed.
 2. skills.py: instantiation failures are logged but NOT appended to
    `load_errors` (only import failures are) — deferred fix.
 3. Bureau loads plans ONLY from `<config_dir>/bureau/`, never nexus bundles;
-   ataria `plans/*.yaml` are templates (pack: manifest `plans:` array).
-4. `.gitignore` never affects tracked files.
+   payload `plans/` are templates seeded on first install (manifest
+   `plans: [...]`); `plans/store/` stays repo-root dev material.
+4. `.gitignore` never affects tracked files; **this machine's global
+   gitignore has `*.gitignore`** — ataria's `.gitignore` needed `git add -f`
+   (host repo tracks its own the same way).
 5. PyArmor 9 with a REGULAR package input is the safe path (bundle-level
-   `__init__.py` exists in the payload).
+   `__init__.py` exists in the payload; exec'd by the alias registration).
 6. `_obfuscate.py` copytrees whatever is physically at the resolved source —
-   payload hygiene matters; ignore patterns now cover `__pycache__`,
-   `*.pyc`, `.pytest_cache`.
-7. `skills_metadata.json`, `providers_registry.json`, `site/` are gitignored
-   generated artifacts; a fresh ataria clone lacks them (guards + pack
-   preflight handle this).
-8. `docs/` = mkdocs SOURCE at the ataria repo root; `site/` is generated.
+   ignore patterns cover `__pycache__`, `*.pyc`, `.pytest_cache`, `plans`.
+7. `skills_metadata.json`, `providers_registry.json`, `site/` are generated
+   artifacts (now gitignored in ataria); fresh ataria clones lack them
+   (guards + pack preflight handle this).
+8. mkdocs docs SOURCE (`docs/`) was LOST with the deleted dev checkout
+   (never tracked); `payload/site` is the last generated build, bridged.
+   Skill doc pages regenerate via docs_hook; hand-written pages would need
+   rebuilding from scratch if the source isn't backed up elsewhere.
 9. Harness patterns: config-derived paths; temp-config copy for dev_apps
    (never edit the real config); import module-level helpers, not servers.
 10. Strict-count patch guards + idempotent re-runs + `git reflog` checks.
 11. **Harnesses MUST pin `./venv/bin/python`** — bare `python` (3.14, no
     aiohttp) fakes bundle import failures (6/8 false "broken" once).
-12. **Discovery is not side-effect-free** (see §3) — keep out of CI without
-    acknowledging keyring/API-key reads.
+12. **Discovery is not side-effect-free** (keyring reads, API-key loads,
+    cache sweeps) — keep out of CI without acknowledging this.
 13. **`git check-ignore` consults the index by default** — tracked paths
     always exit 1; use `--no-index` to test rules.
 14. **`python scripts/x.py` → sys.path[0] = scripts/, NOT the CWD**;
     `python -` → CWD. Probes pass where real script runs fail; host scripts
     importing host code must insert project_root explicitly.
-15. **A submodule mounts the repo ROOT, never a subdirectory** — the mount
-    root's depth-2 glob sees only `_scripts/*.py`; the nested payload is
-    invisible to discovery. Builds must never copytree the mount root.
-16. **APPLY blocks stay gated:** commits `d0e83b04`/`dc1474dd` landed despite
-    a failed gate (process slip); fixed forward via `4e4a1bbc`. Never commit
-    on a failed gate again.
+15. RESOLVED (3a): the submodule-mount/root-scan footguns — vendor-mode
+    physical-bundle guard + payload/ boundary killed them structurally and
+    mechanically. Submodule mount stays INERT (pinned reference only).
+16. **APPLY blocks stay gated:** never commit on a failed gate.
 17. Cosmetic: subprocess stdout appears before the parent's own prints under
     capture (block buffering) — not an ordering bug.
 
@@ -129,59 +138,74 @@ Never batch stages — apply → verify → proceed.
 - Every turn that needs terminal work gets ONE "Commands to run" block,
   INSPECT read-only first, APPLY gated on green output.
 
-## 6. Stage 3 — pack script (schema drafted; implementation pending)
+## 6. Stage 3b — pack script (schema APPROVED; implementation pending)
 
 `_scripts/pack.py` (ataria repo, standalone, zero ainara imports):
 
 ```
 --polaris-version X.Y.Z  required → requiresPolaris ">=X.Y.Z"
+--ainara-root <path>     required for P1 (docs_hook needs the host framework;
+                         generate_registries takes the same arg)
 --out dist/   --sign sk.sec (optional)   --no-generate (trust existing site/registries)
-P0 preflight : payload markers; nexus.json lint (required fields, semver,
-               creatorId != placeholder — HARD fail)
-P1 generate  : generate_registries.py (cwd=payload, new --ainara-root/
-               --vendor/--bundle args); mkdocs build --site-dir <payload>/site
-P2 assemble  : stage/ = allowlist copy + plans/*.yaml (top-level only,
-               store/ excluded) + nexus.json augmented (requiresPolaris,
-               plans: [...])
-P3 zip       : dist/ataria-<version>.zip — ARTIFACT ROOT == BUNDLE ROOT
+--gen-keys (one-time; release keypair only at first real signed pack —
+           never stored in any repo; a THROWAWAY test keypair verifies P4/P5 now)
+P0 preflight : payload markers (charts+crypto+nexus.json); nexus.json lint
+               (required fields, semver, creatorId != placeholder — HARD fail)
+P1 generate : generate_registries.py (cwd=payload, --ainara-root); mkdocs
+               build --site-dir <payload>/site (docs SOURCE lost — §4-8 —
+               unless restored, reuse the bridged site/)
+P2 assemble : copytree payload/ (artifact root == bundle root); nexus.json
+               augmented (requiresPolaris, plans: [...payload/plans/*.yaml])
+P3 zip       : dist/ataria-<version>.zip
 P4 sign      : minisign detached .minisig (whole artifact)
-P5 verify    : roundtrip; unzip listing == allowlist EXACT set; lint; sha256
+P5 verify    : roundtrip; unzip listing == payload listing EXACT set (minus
+               bytecode noise, plus generated artifacts); lint; sha256
 ```
 
-**FOUR answers needed before implementation:**
-1. **Q5 nod** — approve schema + artifact-root==bundle-root tree + manifest
-   stays named `nexus.json` (new fields inside its `manifest` object).
-2. **`docs_hook.py`** — add to chat: last unknown for P1 (does it need
-   PROJECT_ROOT / the host ainara checkout? `generate_docs.sh` hardcodes it).
-3. **`creatorId`** — replace `YOUR_SOLANA_PUBLIC_KEY_HERE` with the real
-   pubkey in ataria's `nexus.json` (preferred) or a `--creator-id` pack flag?
-4. **Keypair** — generate the real minisign keypair now (`pack.py
-   --gen-keys`, one-time) or defer until first signed pack?
+**Decisions already locked (D1–D3 + schema):** plans live INSIDE the payload
+(`payload/plans/`, ship in the zip; installer seeds `<config_dir>/bureau/`
+first install only); `plans/store/` stays repo-root dev material; manifest
+stays named `nexus.json` (new fields inside its `manifest` object); installed
+apps = bundle-at-top; no allowlist convention — the payload boundary is
+structural, P5 asserts rather than selects.
+
+**ONE answer still pending:**
+- **Q3 `creatorId`** — replace `YOUR_SOLANA_PUBLIC_KEY_HERE` with the real
+  pubkey in ataria's `payload/nexus.json` (preferred; pack lint hard-fails on
+  the placeholder). Waiting for the pubkey from the user.
+
+(Resolved: Q1 schema approved; Q2 docs_hook DOES need the host ainara
+checkout → `--ainara-root`/`PROJECT_ROOT`; Q4 test keypair now, release key
+at first signed pack.)
 
 ## 7. Deferred small items
 
-- skills.py: append instantiation failures to `load_errors`; skip
-  `_`-prefixed SUBdirectories in the skill glob (today `_scripts/*.py` is
-  import-attempted on every scan).
-- Warn on 0-skill bundles (submodule-without-dev_apps footgun).
+- skills.py: append instantiation failures to `load_errors`; (the
+  `_`-prefixed-dir scan issue is RESOLVED structurally by 3a — dev material
+  is outside the payload and the vendor-mode guard skips non-bundles).
+- Warn on 0-skill bundles (submodule-without-dev_apps footgun now inert; the
+  mount is a pinned reference by design — 0 skills without dev_apps is
+  EXPECTED, so this item may be droppable).
 - nexus.py: `register_nexus_root` branch is dead code (`prefix_module`
   always starts with `ainara.`) — cleanup candidate.
 - 6 crypto skills have no UI components — confirm intended.
-- Residual verifications: `ls build/ataria_compiled/ainara/nexus/khromalabs/ataria`;
-  spec `_required_trees` existence check; optional
-  `POLARIS_TARGET=pybridge` frozen build (or after Stage 4 wiring).
+- **Restore ataria mkdocs docs source** (`docs/`) or accept the bridged
+  generated `site/` (§4-8).
+- Residual verifications: optional `POLARIS_TARGET=pybridge` frozen build
+  (namespace aliasing in frozen mode is the one path not exercised — build
+  output placement is unchanged, but verify before Stage 4 wiring).
 - Host build-time dev_apps story for Stage 4; post-Stage-4 cleanups (mkdir
-  fallback in `NexusSkillProvider.__init__`, drop host `ainara/nexus` tree).
+  fallback in `NexusSkillProvider.__init__`, drop host `ainara/nexus` tree,
+  vendor-layout primary root retirement).
 - Scratch `script*.sh` deletion (backups exist elsewhere).
 
 ## 8. Resume checklist (in order)
 
-1. Run `scripts/nexus_state_check.sh` → expect GREEN (or update EXPECT_*).
-2. Add §9 files to the chat.
-3. Answer the four §6 questions.
-4. Implement `pack.py` → review → verify (pack → allowlist → lint → sign
-   roundtrip → sha256).
-5. Then Stage 4 (installer + host build cleanup) and Stage 5 (Polaris UI
+1. Run `scripts/nexus_state_check.sh` → expect GREEN (post-3a EXPECTs).
+2. Obtain the real Solana pubkey → set `payload/nexus.json` creatorId (Q3).
+3. Implement `pack.py` (§6) → review → verify (pack → exact-set assert →
+   lint → sign roundtrip with TEST keypair → sha256).
+4. Then Stage 4 (installer + host build cleanup) and Stage 5 (Polaris UI
    install flow; auth/perks UI; Lit protocol) per §10.
 
 ## 9. Files to add to the chat at next session

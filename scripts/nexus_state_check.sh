@@ -20,9 +20,9 @@ PY="$REPO/venv/bin/python"
 [ -x "$PY" ] || { echo "FATAL: venv python not found at $PY"; exit 2; }
 
 EXPECT_AINARA_BRANCH=dev012
-EXPECT_AINARA_HEAD=4b800686
-EXPECT_ATARIA_HEAD=46d459b
-EXPECT_GITLINK=46d459b
+EXPECT_AINARA_HEAD=0ef54636
+EXPECT_ATARIA_HEAD=7c6358a
+EXPECT_GITLINK=7c6358a
 # Single-copy layout: the dev checkout was deleted; the submodule mount is
 # now BOTH the pinned reference and the dev_apps target (probed 8/8, first-wins).
 ATARIA_DEV="$REPO/ainara/nexus/khromalabs/ataria"   # = submodule mount = nexus.dev_apps value
@@ -165,10 +165,10 @@ case "$RA_RES" in
   NONE)
     bad "resolve A: resolver returned None — dev_apps payload not resolved" ;;
   *)
-    if [ -d "$RA_RES/charts" ] && [ ! -d "$RA_RES/plans" ]; then
+    if [ -d "$RA_RES/charts" ] && [ -d "$RA_RES/plans" ] && [ -f "$RA_RES/nexus.json" ]; then
       ok "resolve(dev_apps) = payload, never repo root"
     else
-      bad "resolve A: '$RA_RES' fails payload markers (charts present, plans absent)"
+      bad "resolve A: '$RA_RES' fails payload markers (charts+plans+nexus.json present)"
     fi
     [ "$RA_ARTS" = "builtin" ] \
       && warn "ATARIA_GENERATED_ARTIFACTS not on _obfuscate — builtin artifact list used"
@@ -189,13 +189,13 @@ case "$RB_RES" in
   NONE)
     bad "resolve B: resolver returned None — nothing resolved without dev_apps" ;;
   *)
-    if [ ! -d "$RB_RES/plans" ]; then
+    if [ -d "$RB_RES/charts" ] && [ -d "$RB_RES/plans" ] && [ -f "$RB_RES/nexus.json" ]; then
       ok "resolve(real config) = payload, never repo root"
     else
-      bad "resolve B: '$RB_RES' looks like a repo root (plans/ present)"
+      bad "resolve B: '$RB_RES' fails payload markers (charts+plans+nexus.json present)"
     fi
     case "$MB" in
-      "") warn "real-config-resolved payload has ALL artifacts (fresh-clone assumption changed)" ;;
+      "") ok "real-config payload has all artifacts (canonical working copy)" ;;
       *providers_registry*|*skills_metadata*|*site*) ok "artifact guard fires loudly by design: $MB" ;;
       *) warn "unexpected MISSING set: $MB" ;;
     esac ;;
@@ -213,7 +213,7 @@ else
 fi
 
 echo "=== S6: Stage 3 pack prerequisites =========================="
-CID="$("$PY" - "$ATARIA_DEV/ainara/nexus/khromalabs/ataria/nexus.json" <<'PYEOF' 2>/dev/null
+CID="$("$PY" - "$ATARIA_DEV/payload/nexus.json" <<'PYEOF' 2>/dev/null
 import json, sys
 d = json.load(open(sys.argv[1]))          # tolerate manifest nested or flat
 print((d.get("manifest") or d).get("creatorId", ""))
@@ -221,9 +221,9 @@ PYEOF
 )"
 [ -n "$CID" ] && [ "$CID" != "YOUR_SOLANA_PUBLIC_KEY_HERE" ] \
   && ok "creatorId set" || warn "creatorId placeholder — pack lint will hard-fail (§6)"
-PLANS="$(ls "$ATARIA_DEV"/plans/*.yaml 2>/dev/null | wc -l)"
-[ "$PLANS" = "2" ] && ok "plans/*.yaml = 2 (store/ excluded per Q3)" \
-  || warn "plans top-level count = $PLANS (expected 2)"
+PLANS="$(ls "$ATARIA_DEV"/payload/plans/*.yaml 2>/dev/null | wc -l)"
+[ "$PLANS" = "2" ] && ok "payload/plans/*.yaml = 2 (store/ at repo root, excluded structurally)" \
+  || warn "payload/plans top-level count = $PLANS (expected 2)"
 
 echo
 echo "RESULT: $PASS pass / $FAIL fail / $WARN warn"
