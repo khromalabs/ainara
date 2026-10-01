@@ -164,7 +164,7 @@ Still pending from Day 1 (not blockers for the commit):
      `nexus.dev_apps` mapping app-id → source repo path, surfaced as extra roots
      (mechanism shared with 2.1). **OPEN:** config.yaml entry vs `.apps/dev.json`
      as the original note proposed — decide; lean config.yaml (ConfigManager
-     already handles user config). (blocked on ataria restructure — §5b)
+     already handles user config). (RESOLVED 2.4: verified with nexus.dev_apps; symlink retired)
    - 2.5 `pybridge /docs/list` + `serve_docs`: iterate all roots.
    - Unchanged: `manager.py`, `serve_component`, `skills.py`.
    - Verify: empty `.apps/` → identical skill counts; test app
@@ -241,13 +241,13 @@ rm -rf "$APPS_ROOT/testapp"
 
 ## 6. Open questions to settle early in Day 2
 
-1. Dev-app mapping location: config.yaml (`nexus.dev_apps`) vs `.apps/dev.json`.
+1. Dev-app mapping location: **RESOLVED — config.yaml (`nexus.dev_apps`)** (2.4 verified).
 2. Bundle format: wheel (rich metadata, extraction is stdlib-simple) vs plain
    signed zip — recommend wheel as transport, never pip-installed.
 3. Does the host keep an `ainara/nexus` dir at all after Stage 2 (empty namespace
    root for merging, or does `sys.path` prepending make it unnecessary)?
 4. Keep or delete the in-tree symlink `ainara/nexus/khromalabs/ataria -> ../../ataria`
-   once config-driven dev roots work (keep until 2.4 verified).
+   once config-driven dev roots work (retired after 2.4 verification — see §9).
 
 ## 7. Files to add to the chat at session start
 
@@ -268,3 +268,23 @@ rm -rf "$APPS_ROOT/testapp"
 - Confirm deletions with `git status --short`, never assume.
 - Ask for file contents before drafting edits (true file state beats summaries).
 - User-level compiled app: no pip / no interpreter / no CLI assumptions, ever.
+
+## 9. Day-3 addenda (Stage 2.4 session)
+
+- **plans/ placement RESOLVED:** Bureau loads Conductor plans from
+  `<config_dir>/bureau/` (bureau/server.py: `get_default_config_paths()[0].parent / "bureau"`),
+  never from nexus bundles → ataria `plans/` are dev source templates; stays at repo root.
+- **Dev symlink was TRACKED** (mode 120000); `.gitignore`'s `ainara/nexus/*` only
+  affects untracked paths. Retirement = normal tracked deletion (this commit).
+- **Payload stray artifacts (deferred):** `build/`, `dist/`, `docs/`, `__pycache__/`
+  sit inside `ainara/nexus/khromalabs/ataria` (all gitignored). Pre-existing;
+  `_obfuscate` copytree bundles them. Clean before Stage 3 packaging; its
+  containment allowlist is the permanent fix. `docs/` nature (generated vs mkdocs
+  source) still to classify.
+- **skills.py observability gap (deferred):** skill *instantiation* failures are
+  logged but not appended to `load_errors` (only import failures are) — hid the
+  2.3 fixture bug.
+- **2.4 verification:** with `nexus.dev_apps: {ataria: <repo>}` — dev root FIRST in
+  precedence log, first-wins skip logged on the primary scan, 8 IDs == frozen
+  baseline, file_path served from the ataria repo; after symlink retirement:
+  same 8 IDs from the dev root alone.
