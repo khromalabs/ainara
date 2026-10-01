@@ -264,3 +264,14 @@ OPEN DECISIONS (answer before drafting the pack script):
 - Harness note: the resolve-only probe does NOT exercise the artifact guard
   (it lives in `obfuscate()`); full runs need an AINARA_CONFIG temp file with
   `nexus.dev_apps` set (real config lacks it).
+
+## 13. Addendum — sys.path gotcha in host scripts (fixes §12 follow-up)
+
+- `python scripts/x.py` → sys.path[0] = scripts/ (NOT the CWD); `python -`
+  → sys.path[0] = CWD. Harness probes therefore pass where real script
+  runs fail. Host scripts importing host code must insert project_root
+  explicitly (done in _obfuscate.py; fixes d0e83b04).
+- Commits d0e83b04 + dc1474dd landed despite the failed full-run gate
+  (process slip); fix-forward commit follows. Resolution logic itself was
+  harness-proven (A: dev payload, artifacts complete; B: mount nested
+  payload, never a repo root).
