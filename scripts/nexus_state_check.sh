@@ -21,8 +21,8 @@ PY="$REPO/venv/bin/python"
 
 EXPECT_AINARA_BRANCH=dev012
 EXPECT_AINARA_HEAD=0ef54636
-EXPECT_ATARIA_HEAD=7c6358a
-EXPECT_GITLINK=7c6358a
+EXPECT_ATARIA_HEAD=64bd5a3
+EXPECT_GITLINK=64bd5a3
 # Single-copy layout: the dev checkout was deleted; the submodule mount is
 # now BOTH the pinned reference and the dev_apps target (probed 8/8, first-wins).
 ATARIA_DEV="$REPO/ainara/nexus/khromalabs/ataria"   # = submodule mount = nexus.dev_apps value
