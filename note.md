@@ -165,7 +165,7 @@ Still pending from Day 1 (not blockers for the commit):
      (mechanism shared with 2.1). **OPEN:** config.yaml entry vs `.apps/dev.json`
      as the original note proposed — decide; lean config.yaml (ConfigManager
      already handles user config). (RESOLVED 2.4: verified with nexus.dev_apps; symlink retired)
-   - 2.5 `pybridge /docs/list` + `serve_docs`: iterate all roots.
+   - 2.5 ✅ `pybridge /docs/list` + `serve_docs`: multi-root via module-level helpers `_iter_docs_sites`/`_resolve_docs_site` (strict first-wins ownership on (publisher, application) dir presence, no fallback).
    - Unchanged: `manager.py`, `serve_component`, `skills.py`.
    - Verify: empty `.apps/` → identical skill counts; test app
      `.apps/testapp/ainara/nexus/testlab/demoapp/` (fresh vendor) → both load;
@@ -313,3 +313,17 @@ rm -rf "$APPS_ROOT/testapp"
   the mkdir fallback in NexusSkillProvider.__init__ (recreates it empty in
   dev) and get_nexus_base_paths() always appending the primary (harmless
   when missing — is_dir() guard, proven in today's runs).
+
+## 10. Stage 2.5 record (Day 3, observed)
+
+- Helpers at module level in ainara/framework/pybridge.py; routes are thin
+  wrappers (HTTP layer unexercised in harness — create_app() is heavy;
+  optional manual smoke: run pybridge, curl /docs/list).
+- Ownership = strict first-wins on (publisher, application) directory
+  presence, mirroring skill discovery: owning root without site/ yields
+  absent/404 instead of falling back (no version mixing). Alternative
+  (first root WITH a site wins) rejected for §5b consistency.
+- Verified with testapp site fixture: 3-root coexistence — khromalabs/ataria
+  listed exactly once and OWNED by the dev root; testlab/demoapp listed and
+  resolved from the installed root; traversal guard holds; teardown restored
+  the baseline.

@@ -725,6 +725,56 @@ def check_download_capability():
         }
 
 
+def _iter_docs_sites(nexus_paths):
+    """Collect doc sites across all Nexus roots, in precedence order.
+
+    First-wins on (publisher, application): the highest-precedence root
+    containing the app directory owns its docs even when its site/ is
+    missing — same no-silent-fallback semantics as skill discovery.
+    """
+    sites = []
+    seen = set()
+    for base in nexus_paths:
+        if not base.is_dir():
+            continue
+        try:
+            vendor_entries = sorted(base.iterdir())
+        except OSError:
+            continue
+        for vendor_dir in vendor_entries:
+            if not vendor_dir.is_dir() or vendor_dir.name.startswith(("_", ".")):
+                continue
+            for app_dir in sorted(vendor_dir.iterdir()):
+                if not app_dir.is_dir() or app_dir.name.startswith(("_", ".")):
+                    continue
+                key = (vendor_dir.name, app_dir.name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if (app_dir / "site" / "index.html").is_file():
+                    sites.append(
+                        {"publisher": vendor_dir.name, "application": app_dir.name}
+                    )
+    sites.sort(key=lambda s: (s["publisher"], s["application"]))
+    return sites
+
+
+def _resolve_docs_site(nexus_paths, publisher: str, application: str):
+    """Site dir for (publisher, application) per first-wins ownership.
+
+    Returns None when no root contains the app, or when the owning root
+    has no generated site/ (no fallback to lower-precedence copies).
+    """
+    if ".." in publisher or ".." in application:
+        return None
+    for base in nexus_paths:
+        app_dir = base / publisher / application
+        if app_dir.is_dir():
+            site_dir = app_dir / "site"
+            return site_dir if site_dir.is_dir() else None
+    return None
+
+
 def create_app():
     llm = create_llm_backend(config.get("llm", {}))
     app.llm = llm
@@ -1256,22 +1306,8 @@ def create_app():
 
     @app.route("/docs/list", methods=["GET"])
     def docs_list():
-        """Return list of available documentation sites."""
-        base = config.get_nexus_base_path()
-        sites = []
-        if base.is_dir():
-            for vendor_dir in base.iterdir():
-                if not vendor_dir.is_dir() or vendor_dir.name.startswith(("_", ".")):
-                    continue
-                for app_dir in vendor_dir.iterdir():
-                    if not app_dir.is_dir() or app_dir.name.startswith(("_", ".")):
-                        continue
-                    if (app_dir / "site" / "index.html").is_file():
-                        sites.append({
-                            "publisher": vendor_dir.name,
-                            "application": app_dir.name,
-                        })
-        return jsonify(sites)
+        """Return list of available documentation sites across all Nexus roots."""
+        return jsonify(_iter_docs_sites(config.get_nexus_base_paths()))
 
     @app.route("/docs/<publisher>/<application>/", defaults={"filename": "index.html"})
     @app.route("/docs/<publisher>/<application>/<path:filename>")
@@ -1279,9 +1315,10 @@ def create_app():
         """Serve static documentation files for a given publisher/application."""
         if ".." in publisher or ".." in application or ".." in filename:
             return jsonify({"error": "Invalid path"}), 400
-        base = config.get_nexus_base_path()
-        site_dir = base / publisher / application / "site"
-        if not site_dir.is_dir():
+        site_dir = _resolve_docs_site(
+            config.get_nexus_base_paths(), publisher, application
+        )
+        if site_dir is None:
             return jsonify({"error": "Documentation site not found"}), 404
         return send_from_directory(str(site_dir), filename)
 
