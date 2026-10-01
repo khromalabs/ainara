@@ -288,3 +288,28 @@ rm -rf "$APPS_ROOT/testapp"
   precedence log, first-wins skip logged on the primary scan, 8 IDs == frozen
   baseline, file_path served from the ataria repo; after symlink retirement:
   same 8 IDs from the dev root alone.
+- **2.4 wrap-up (Day 3, final):** Q1 decision — dev symlink kept LOCAL-ONLY
+  (untracked, hidden by `ainara/nexus/*`). Facts recorded: gitignore never
+  affects tracked files — the old link WAS tracked (mode 120000, almost
+  certainly `git add -f`), which is why re-point commit 41b78c53 worked
+  without -f. Retirement commit 6a549666 stands as the shared-history record;
+  each dev machine recreates the link locally (`ln -sfn
+  <ataria>/ainara/nexus/khromalabs/ataria ainara/nexus/khromalabs/ataria`)
+  or uses `nexus.dev_apps`. Both modes re-verified: dev_apps coexistence
+  (dev root first, first-wins skip on the primary scan) and symlink-only
+  (8 sorted IDs via the primary root) — identical baselines.
+- **Stage 3 design input (agreed):** template plans ship in Nexus bundles —
+  manifest v1 gains optional `plans: [...]`; the installer seeds
+  `<config_dir>/bureau/` on FIRST install only, never overwrites user edits;
+  host `resources/examples` keeps host-native examples only; the ataria repo
+  keeps canonical plan sources (production config-dir symlink = stopgap).
+- **Payload hygiene (done):** `build/`, `dist/` removed; `__pycache__`
+  regenerates on every dev import — removed again and verification harnesses
+  now run with `PYTHONDONTWRITEBYTECODE=1`; `docs/` identified as mkdocs
+  SOURCE and moved to the ataria root (generator output-path follow-up
+  non-blocking, see 46d459b).
+- **§6-3 answer (Stage 4 input):** the host repo's `ainara/nexus` dev tree
+  can be removed once the host ships no nexus app code; cleanup items then:
+  the mkdir fallback in NexusSkillProvider.__init__ (recreates it empty in
+  dev) and get_nexus_base_paths() always appending the primary (harmless
+  when missing — is_dir() guard, proven in today's runs).
