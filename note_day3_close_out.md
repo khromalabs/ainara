@@ -252,3 +252,15 @@ OPEN DECISIONS (answer before drafting the pack script):
 - Q5: artifact root == bundle root; manifest stays `nexus.json` (§6.4
   `manifest.json` amended) — `platform_utils` traversal expects that name.
 - Next: `_obfuscate.py` bundle-source resolution, then Stage 3 pack script.
+
+## 12. Addendum — _obfuscate.py payload-source resolution (submodule-safe)
+
+- Materialize + staging resolve the ataria PAYLOAD via
+  `_resolve_ataria_source()`: dev_apps (root or nested) > host realpath >
+  mount's nested payload. Never a repo root. Loud failure on absent payload
+  or missing generated artifacts (nexus.json, registries, site).
+- Supporters staging re-copies the resolved payload only; public staging
+  unchanged. Copytree ignores `__pycache__/.pytest_cache/*.pyc`.
+- Harness note: the resolve-only probe does NOT exercise the artifact guard
+  (it lives in `obfuscate()`); full runs need an AINARA_CONFIG temp file with
+  `nexus.dev_apps` set (real config lacks it).
