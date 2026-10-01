@@ -23,7 +23,9 @@ EXPECT_AINARA_BRANCH=dev012
 EXPECT_AINARA_HEAD=4b800686
 EXPECT_ATARIA_HEAD=46d459b
 EXPECT_GITLINK=46d459b
-ATARIA_DEV="/home/ruben/lab/src/ataria"   # per-machine; = nexus.dev_apps value
+# Single-copy layout: the dev checkout was deleted; the submodule mount is
+# now BOTH the pinned reference and the dev_apps target (probed 8/8, first-wins).
+ATARIA_DEV="$REPO/ainara/nexus/khromalabs/ataria"   # = submodule mount = nexus.dev_apps value
 
 BASELINE_IDS=(
   khromalabs_ataria_charts_candles
@@ -53,7 +55,7 @@ else
   bad "ainara HEAD $HEAD does NOT contain anchor $EXPECT_AINARA_HEAD (rebase/reset?)"
 fi
 
-if [ -d "$ATARIA_DEV/.git" ]; then
+if [ -e "$ATARIA_DEV/.git" ]; then   # gitfile, not dir (absorbed gitdir)
   AH="$(git -C "$ATARIA_DEV" rev-parse HEAD)"
   if git -C "$ATARIA_DEV" merge-base --is-ancestor "$EXPECT_ATARIA_HEAD" "$AH" 2>/dev/null; then
     ok "ataria HEAD ${AH:0:8} contains ledger anchor $EXPECT_ATARIA_HEAD"
