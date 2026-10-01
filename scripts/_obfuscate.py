@@ -125,37 +125,40 @@ def _is_ataria_payload(path: str) -> bool:
 def _resolve_ataria_source() -> Optional[str]:
     """Resolve the ataria payload source, mirroring discovery precedence.
 
-    Order (first payload-shaped hit wins):
-      1. nexus.dev_apps['ataria'] — repo root or payload directly (runtime
-         truth; the dev checkout also carries the gitignored generated
-         artifacts the PyInstaller spec requires).
-      2. Host bundle path via realpath — legacy payload-pointing symlink
-         or real payload dir.
-      3. Host submodule mount's nested payload
-         (<mount>/ainara/nexus/khromalabs/ataria) — fresh clones.
-    Never returns a repo ROOT: builds must not ingest plans/, _scripts/,
-    docs/ or a nested duplicate payload (note §11).
+    Candidates (first payload-shaped hit wins):
+      1. nexus.dev_apps['ataria'] — an app root under the Stage 3a
+         contract: app repo (bundle at <repo>/payload) or installed-style
+         dir with the bundle at the top. The dev checkout also carries
+         the gitignored generated artifacts the PyInstaller spec
+         requires.
+      2. Host submodule mount (<mount>/payload) — fresh clones.
+
+    Resolution goes through framework.nexus_apps.resolve_app_payload, so
+    it can never return a repo ROOT: dev material (plans/, _scripts/,
+    docs/) is structurally outside the payload (Stage 3a).
     """
     from ainara.framework.config import config
+    from ainara.framework.nexus_apps import resolve_app_payload
 
-    candidates = []  # (label, path)
+    candidates = []  # (label, app_root)
 
     dev_root = (config.get("nexus.dev_apps") or {}).get("ataria")
     if dev_root:
-        dev_root = os.path.abspath(os.path.expanduser(str(dev_root)))
-        candidates.append(("nexus.dev_apps (payload)", dev_root))
-        candidates.append(("nexus.dev_apps (nested payload)", os.path.join(
-            dev_root, "ainara", "nexus", "khromalabs", "ataria")))
+        candidates.append((
+            "nexus.dev_apps",
+            os.path.abspath(os.path.expanduser(str(dev_root))),
+        ))
 
     host_bundle = os.path.join(nexus_src, "khromalabs", "ataria")
-    candidates.append(("host bundle (realpath)", os.path.realpath(host_bundle)))
-    candidates.append(("host bundle (nested payload)", os.path.join(
-        host_bundle, "ainara", "nexus", "khromalabs", "ataria")))
+    candidates.append(("host submodule mount", os.path.realpath(host_bundle)))
 
-    for label, path in candidates:
-        if _is_ataria_payload(path):
-            print(f"[_obfuscate] ataria source: {label} -> {path}")
-            return path
+    for label, root in candidates:
+        app = resolve_app_payload(root)
+        if app:
+            payload = str(app[2])
+            if _is_ataria_payload(payload):
+                print(f"[_obfuscate] ataria source: {label} -> {payload}")
+                return payload
     return None
 
 
@@ -206,9 +209,10 @@ def obfuscate(edition: str) -> None:
     if ataria_source is None:
         raise FileNotFoundError(
             "No usable ataria payload found. Set nexus.dev_apps['ataria'] to "
-            "the dev checkout, or materialize the payload at "
-            f"{os.path.join(nexus_src, 'khromalabs', 'ataria')} (charts/, "
-            "crypto/, dashboards/ must sit directly inside it)."
+            "the app repo (bundle at <repo>/payload), or materialize the "
+            "payload at "
+            f"{os.path.join(nexus_src, 'khromalabs', 'ataria', 'payload')} "
+            "(charts/, crypto/, dashboards/ must sit directly inside it)."
         )
     missing = [
         name for name in ATARIA_GENERATED_ARTIFACTS
@@ -226,7 +230,11 @@ def obfuscate(edition: str) -> None:
         ataria_source,
         ataria_compiled,
         symlinks=False,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+        # plans/ ships via the pack artifact (manifest plans: [...]), never
+        # inside the compiled host bundle.
+        ignore=shutil.ignore_patterns(
+            "__pycache__", "*.pyc", ".pytest_cache", "plans"
+        ),
     )
     print(f"[_obfuscate] Materialized ataria into {ataria_compiled}")
 
@@ -249,7 +257,11 @@ def obfuscate(edition: str) -> None:
             ataria_source,
             ataria_staged,
             symlinks=False,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+            # plans/ excluded for the same reason as the ataria_compiled
+            # materialization above.
+            ignore=shutil.ignore_patterns(
+                "__pycache__", "*.pyc", ".pytest_cache", "plans"
+            ),
         )
 
     # Render the closed-source supporters package with the real build secret,
