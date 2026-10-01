@@ -38,6 +38,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+from typing import Optional
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if not os.path.isdir(os.path.join(project_root, "ainara")):
@@ -102,6 +103,56 @@ def _strip_namespace_inits() -> None:
         print(f"[_obfuscate] Stripped namespace __init__.py: {', '.join(removed)}")
 
 
+ATARIA_PAYLOAD_MARKERS = ("charts", "crypto", "dashboards")
+ATARIA_GENERATED_ARTIFACTS = (
+    "nexus.json", "providers_registry.json", "skills_metadata.json", "site",
+)
+
+
+def _is_ataria_payload(path: str) -> bool:
+    """True if path is the bundle payload itself (not a repo root)."""
+    return os.path.isdir(path) and all(
+        os.path.isdir(os.path.join(path, d)) for d in ATARIA_PAYLOAD_MARKERS
+    )
+
+
+def _resolve_ataria_source() -> Optional[str]:
+    """Resolve the ataria payload source, mirroring discovery precedence.
+
+    Order (first payload-shaped hit wins):
+      1. nexus.dev_apps['ataria'] — repo root or payload directly (runtime
+         truth; the dev checkout also carries the gitignored generated
+         artifacts the PyInstaller spec requires).
+      2. Host bundle path via realpath — legacy payload-pointing symlink
+         or real payload dir.
+      3. Host submodule mount's nested payload
+         (<mount>/ainara/nexus/khromalabs/ataria) — fresh clones.
+    Never returns a repo ROOT: builds must not ingest plans/, _scripts/,
+    docs/ or a nested duplicate payload (note §11).
+    """
+    from ainara.framework.config import config
+
+    candidates = []  # (label, path)
+
+    dev_root = (config.get("nexus.dev_apps") or {}).get("ataria")
+    if dev_root:
+        dev_root = os.path.abspath(os.path.expanduser(str(dev_root)))
+        candidates.append(("nexus.dev_apps (payload)", dev_root))
+        candidates.append(("nexus.dev_apps (nested payload)", os.path.join(
+            dev_root, "ainara", "nexus", "khromalabs", "ataria")))
+
+    host_bundle = os.path.join(nexus_src, "khromalabs", "ataria")
+    candidates.append(("host bundle (realpath)", os.path.realpath(host_bundle)))
+    candidates.append(("host bundle (nested payload)", os.path.join(
+        host_bundle, "ainara", "nexus", "khromalabs", "ataria")))
+
+    for label, path in candidates:
+        if _is_ataria_payload(path):
+            print(f"[_obfuscate] ataria source: {label} -> {path}")
+            return path
+    return None
+
+
 def obfuscate(edition: str) -> None:
     supporters = edition == "supporters"
     print(f"[_obfuscate] Edition: {edition}")
@@ -143,29 +194,57 @@ def obfuscate(edition: str) -> None:
                 "regenerate — NOTE: this invalidates all existing tokens."
             )
 
-    # Materialize the ataria tree. In development it is often a symlink to a
-    # sibling checkout that lives OUTSIDE project_root; the build container
-    # only mounts project_root, so the link would be dangling inside /work.
-    # Dereference it into build/ and let the spec read from there.
-    ataria_src = os.path.join(nexus_src, "khromalabs", "ataria")
-    if os.path.isdir(ataria_src):          # follows the symlink
-        os.makedirs(os.path.dirname(ataria_compiled), exist_ok=True)
-        shutil.copytree(os.path.realpath(ataria_src), ataria_compiled,
-                        symlinks=False)
-        print(f"[_obfuscate] Materialized ataria into {ataria_compiled}")
+    # Materialize the ataria PAYLOAD into build/ so the (containerized) spec
+    # can read it. Resolution precedence mirrors discovery (note §11).
+    ataria_source = _resolve_ataria_source()
+    if ataria_source is None:
+        raise FileNotFoundError(
+            "No usable ataria payload found. Set nexus.dev_apps['ataria'] to "
+            "the dev checkout, or materialize the payload at "
+            f"{os.path.join(nexus_src, 'khromalabs', 'ataria')} (charts/, "
+            "crypto/, dashboards/ must sit directly inside it)."
+        )
+    missing = [
+        name for name in ATARIA_GENERATED_ARTIFACTS
+        if not os.path.exists(os.path.join(ataria_source, name))
+    ]
+    if missing:
+        raise FileNotFoundError(
+            f"ataria payload {ataria_source} is missing generated artifacts: "
+            f"{missing}. Regenerate (generate_registries.py with "
+            "cwd=<payload>; 'mkdocs build --site-dir <payload>/site' from the "
+            "repo root) or point nexus.dev_apps at the dev checkout."
+        )
+    os.makedirs(os.path.dirname(ataria_compiled), exist_ok=True)
+    shutil.copytree(
+        ataria_source,
+        ataria_compiled,
+        symlinks=False,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+    )
+    print(f"[_obfuscate] Materialized ataria into {ataria_compiled}")
 
     # Stage the nexus tree (so public edition can strip supporters domains)
     os.makedirs(nexus_staged_root)
     shutil.copytree(nexus_src, nexus_staged, symlinks=False)
     _strip_namespace_inits()
 
-    if not supporters:
-        ataria_staged = os.path.join(nexus_staged, "khromalabs", "ataria")
-        if os.path.islink(ataria_staged) or os.path.exists(ataria_staged):
-            if os.path.islink(ataria_staged):
-                os.remove(ataria_staged)
-            else:
-                shutil.rmtree(ataria_staged)
+    # Whatever the host bundle entry is (symlink, real dir, submodule mount),
+    # the staged tree must contain ONLY the resolved payload — never repo
+    # junk (plans/, _scripts/, docs/) or a nested duplicate payload. The
+    # staged copy is only needed for the supporters obfuscation pass.
+    ataria_staged = os.path.join(nexus_staged, "khromalabs", "ataria")
+    if os.path.islink(ataria_staged):
+        os.remove(ataria_staged)
+    elif os.path.exists(ataria_staged):
+        shutil.rmtree(ataria_staged)
+    if supporters:
+        shutil.copytree(
+            ataria_source,
+            ataria_staged,
+            symlinks=False,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+        )
 
     # Render the closed-source supporters package with the real build secret,
     # then inject license guards into the staged nexus tree.
