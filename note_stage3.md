@@ -138,45 +138,46 @@ stages — apply → verify → proceed.
 - Every turn that needs terminal work gets ONE "Commands to run" block,
   INSPECT read-only first, APPLY gated on green output.
 
-## 6. Stage 3b — pack script (schema APPROVED; implementation pending)
+## 6. Stage 3b — pack script (COMPLETE: `64bd5a3`)
 
-`_scripts/pack.py` (ataria repo, standalone, zero ainara imports):
+`_scripts/pack.py` (ataria repo, standalone, zero ainara imports) —
+implemented and verified:
 
 ```
 --polaris-version X.Y.Z  required → requiresPolaris ">=X.Y.Z"
---ainara-root <path>     required for P1 (docs_hook needs the host framework;
-                         generate_registries takes the same arg)
---out dist/   --sign sk.sec (optional)   --no-generate (trust existing site/registries)
---gen-keys (one-time; release keypair only at first real signed pack —
-           never stored in any repo; a THROWAWAY test keypair verifies P4/P5 now)
-P0 preflight : payload markers (charts+crypto+nexus.json); nexus.json lint
-               (required fields, semver, creatorId != placeholder — HARD fail)
-P1 generate : generate_registries.py (cwd=payload, --ainara-root); mkdocs
-               build --site-dir <payload>/site (docs SOURCE lost — §4-8 —
-               unless restored, reuse the bridged site/)
-P2 assemble : copytree payload/ (artifact root == bundle root); nexus.json
-               augmented (requiresPolaris, plans: [...payload/plans/*.yaml])
-P3 zip       : dist/ataria-<version>.zip
-P4 sign      : minisign detached .minisig (whole artifact)
-P5 verify    : roundtrip; unzip listing == payload listing EXACT set (minus
-               bytecode noise, plus generated artifacts); lint; sha256
+--ainara-root <path>     P1 only ($PROJECT_ROOT fallback); --no-generate skips P1
+--out dist/   --sign sk.sec (optional; pubkey expected as <name>.pub)
+--gen-keys [--no-password]  keypair into .pack-keys/ (no-password = TEST ONLY)
+--allow-placeholder          creatorId lint downgrade (dev/test only)
+P0 preflight : payload markers (charts+crypto+dashboards+nexus.json); manifest
+               lint (fields, semver, creatorId base58-32 — HARD fail unless
+               --allow-placeholder; exit 1 verified)
+P1 generate : generate_registries.py (cwd=payload); mkdocs --site-dir
+               payload/site (BLOCKED until docs source restored or bridged)
+P2 assemble : copytree payload (artifact root == bundle root); nexus.json
+               augmented (requiresPolaris, plans [...]); payload never modified
+P3 zip       : dist/ataria-<version>.zip (deterministic sorted walk)
+P4 sign      : minisign detached .minisig over the whole artifact
+P5 verify    : sha256 (+ .sha256 file); extract roundtrip; zip listing ==
+               payload-derived expected set EXACTLY + staging agreement;
+               re-lint extracted manifest (requiresPolaris, plans array);
+               minisign -V
 ```
 
-**Decisions already locked (D1–D3 + schema):** plans live INSIDE the payload
-(`payload/plans/`, ship in the zip; installer seeds `<config_dir>/bureau/`
-first install only); `plans/store/` stays repo-root dev material; manifest
-stays named `nexus.json` (new fields inside its `manifest` object); installed
-apps = bundle-at-top; no allowlist convention — the payload boundary is
-structural, P5 asserts rather than selects.
+**Verification results (Gate, GREEN):** full run with test keypair
+(`.pack-keys/ataria-test.*`, unencrypted — throwaway): dist/ataria-0.1.0.zip
+(119 files, ~1.03 MB, top-level == 10 expected entries), requiresPolaris
+`>=0.11.0`, plans array == extracted plans/, signature roundtrip OK, exit 0;
+negative test exit 1 without --allow-placeholder.
 
-**ONE answer still pending:**
-- **Q3 `creatorId`** — replace `YOUR_SOLANA_PUBLIC_KEY_HERE` with the real
-  pubkey in ataria's `payload/nexus.json` (preferred; pack lint hard-fails on
-  the placeholder). Waiting for the pubkey from the user.
+**Q3 creatorId**: real pubkey still pending; until then pack with
+`--allow-placeholder` for dev/test ONLY — the artifact carries the
+placeholder and says so loudly. When the pubkey arrives: edit
+`payload/nexus.json`, pack WITHOUT the flag.
 
-(Resolved: Q1 schema approved; Q2 docs_hook DOES need the host ainara
-checkout → `--ainara-root`/`PROJECT_ROOT`; Q4 test keypair now, release key
-at first signed pack.)
+(Resolved: Q1 placeholder-in-the-meantime via --allow-placeholder; Q2
+--ainara-root; Q4 test keypair now at `.pack-keys/`, release keypair at
+first real signed pack — encrypted, NEVER in any repo.)
 
 ## 7. Deferred small items
 
@@ -202,9 +203,10 @@ at first signed pack.)
 ## 8. Resume checklist (in order)
 
 1. Run `scripts/nexus_state_check.sh` → expect GREEN (post-3a EXPECTs).
-2. Obtain the real Solana pubkey → set `payload/nexus.json` creatorId (Q3).
-3. Implement `pack.py` (§6) → review → verify (pack → exact-set assert →
-   lint → sign roundtrip with TEST keypair → sha256).
+2. Obtain the real Solana pubkey → set `payload/nexus.json` creatorId (Q3);
+   re-pack WITHOUT `--allow-placeholder`; generate the ENCRYPTED release
+   keypair (never in any repo) and re-sign.
+3. Optionally restore ataria mkdocs `docs/` source to unblock P1.
 4. Then Stage 4 (installer + host build cleanup) and Stage 5 (Polaris UI
    install flow; auth/perks UI; Lit protocol) per §10.
 
