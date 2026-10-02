@@ -1,5 +1,14 @@
 # FORENSIC NOTE — Nexus Apps decoupling, Stages 3a + 3b (session of 2026-10-01)
 
+> **POST-SESSION REVIEW FINDING (next session):** the Stage 3b pack
+> artifact ships **plaintext, unobfuscated, unguarded** code — `pack.py`
+> has no obfuscation or license-guard stage, and no gate asserted the
+> opposite (the Gate 3 "PyArmor header" check belonged to the frozen
+> supporters tree, a different artifact). Consequence: editions are
+> retired entirely (host `0343fc90`, `20b5815e`); protection moves into
+> the pack pipeline as manifest-declared optional stages. `dist/ataria-0.1.0.zip`
+> is pre-protection and must not ship. See the §USER APPENDIX thread.
+
 Companion to `note_stage3.md` (forward-looking resume note). This document is
 the historical/audit record of one working session: what was found, decided,
 changed, verified, and what went wrong along the way. Written for later

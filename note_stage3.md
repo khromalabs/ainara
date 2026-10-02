@@ -1,5 +1,15 @@
 # RESUME NOTE — Nexus Apps decoupling (Stage 3a COMPLETE; next: Stage 3b pack.py)
 
+> **SUPERSEDED (post-3b review session):** the public/supporters edition
+> system and the embedded-ataria frozen build are RETIRED. Nexus App
+> bundles are the only distribution vehicle for protected content; the
+> host app ships fully open (servers.spec/_build.py cleaned, `_obfuscate.py`
+> deleted, `supporters` symlink removed — host `20b5815e`). Obfuscation
+> and license-guard injection move into each bundle's pack pipeline
+> (ataria `scripts/pack.py`, manifest-declared `protection`, closed
+> tooling externalized to `~/lab/src/ainara_supporters`). References to
+> editions, supporters datas and `_obfuscate` below are historical.
+
 Single source of truth. Stage 3a adopted the `payload/` bundle layout
 (D1–D3 decisions below). **How to resume:** run
 `scripts/nexus_state_check.sh` (§11), then follow §8 in order. Never batch
