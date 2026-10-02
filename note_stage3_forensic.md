@@ -290,3 +290,27 @@ cd ainara/nexus/khromalabs/ataria
 minisign -Vm dist/ataria-0.1.0.zip \
   -P RWTad3jP4FCQu2ggpaxmWVR+VtipBIcS+/fy3/MWPMt+DDCQZ3/OfJuM
 ```
+
+## USER APPENDIX
+
+Reorganized a bit the ataria submodule: `plans/store` is now `drafts/plans`,
+moved some scripts in root to `scripts/` as well, updated `pack.py` to use the new path,
+new `notes/` subdir and moved notes there. New structure (only modified files,
+didn't touch `payload/`):
+.
+./scripts
+./scripts/sentinel_entry_analyst_sketch.py
+./scripts/pack.py
+./scripts/sentinel_analysis.py
+./scripts/docs_hook.py
+./scripts/generate_registries.py
+./scripts/mkdocs.yml
+./scripts/generate_docs.sh
+./notes
+./notes/pyarmor_integration_summary.md
+./notes/REFACTORING_NOTES.md
+./drafts
+./drafts/plans
+./drafts/plans/sentinel_trading_restricted.yaml
+./drafts/plans/sentinel_trading_template.yaml
+./drafts/plans/sentinel_trading_asset.yaml
