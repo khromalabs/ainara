@@ -1497,6 +1497,15 @@ function appSetupEventHandlers() {
         shell.openExternal(`${pybridgeUrl}/auth/portal`);
     });
 
+    // Generic external opener (Nexus subscription portals, explorer links)
+    ipcMain.on('open-external', (_event, url) => {
+        if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+            shell.openExternal(url);
+        } else {
+            Logger.warn('open-external: rejected URL', url);
+        }
+    });
+
     // Handle closing the setup wizard (full or re-auth)
     ipcMain.on('close-setup-window', async () => {
         Logger.info('close-setup-window event');

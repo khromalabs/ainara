@@ -51,6 +51,11 @@ from ainara.framework.llm import create_llm_backend
 from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
 from ainara.framework.nexus_apps import read_manifest, resolve_app_payload
+from ainara.framework.nexus_installer import (
+    InstallerError,
+    install_source,
+    resolve_source,
+)
 from ainara.framework.nexus_licensing import (
     SubscriptionManager,
     verify_manifest_identity,
@@ -1236,20 +1241,31 @@ def create_app():
         if not sep or not vendor or not application:
             return "Missing app parameter (expected vendor/app)", 400
         found = _find_nexus_bundle(vendor, application)
-        if not found:
-            return f"Nexus app '{app_id}' not found", 404
-        v, a, payload_dir, manifest = found
-        protection = manifest.get("protection") or {}
-        if protection.get("mode") != "nft-license":
-            return f"Nexus app '{app_id}' is not license-gated", 400
+        doc_targets = None
+        if found:
+            v, a, payload_dir, manifest = found
+            protection = manifest.get("protection") or {}
+            if protection.get("mode") != "nft-license":
+                return f"Nexus app '{app_id}' is not license-gated", 400
+            version = manifest.get("version") or ""
+        else:
+            # Not installed: subscribe pre-install using doc-provided
+            # targets (passed by the UI from a verified resolve response)
+            collection = request.args.get("collection", "").strip()
+            creator = request.args.get("creator", "").strip()
+            if not collection and not creator:
+                return f"Nexus app '{app_id}' not found", 404
+            v, a = vendor, application
+            version = request.args.get("version", "")
         if not subscription_manager.available:
             return "Licensing backend unavailable", 503
         try:
             message = subscription_manager.subscription_message(v, a)
         except ValueError as e:
             return str(e), 400
-        version = manifest.get("version") or ""
-        bundle_label = f"{v}/{a}" + (f" v{version}" if version else "")
+        bundle_label = request.args.get("label") or (
+            f"{v}/{a}" + (f" v{version}" if version else "")
+        )
         return TemplateManager().render(
             "framework.nexus_subscription.portal",
             {
@@ -1281,17 +1297,26 @@ def create_app():
                 400,
             )
         found = _find_nexus_bundle(vendor, application)
-        if not found:
-            return jsonify({"success": False, "message": "Nexus app not found"}), 404
-        v, a, payload_dir, manifest = found
-        protection = manifest.get("protection") or {}
-        if protection.get("mode") != "nft-license":
-            return (
-                jsonify({"success": False, "message": "App is not license-gated"}),
-                400,
-            )
+        if found:
+            v, a, payload_dir, manifest = found
+            protection = manifest.get("protection") or {}
+            if protection.get("mode") != "nft-license":
+                return (
+                    jsonify({"success": False, "message": "App is not license-gated"}),
+                    400,
+                )
+            creator_id = manifest.get("creatorId")
+        else:
+            # Pre-install subscription: targets from the verified doc,
+            # passed explicitly by the UI
+            creator_id = data.get("creator")
+            collection = data.get("collection")
+            if not (collection or creator_id):
+                return jsonify({"success": False, "message": "Nexus app not found"}), 404
+            protection = {"mode": "nft-license", "collection": collection or ""}
+            v, a = vendor, application
         success, msg, info = subscription_manager.verify_subscription(
-            v, a, protection, manifest.get("creatorId"),
+            v, a, protection, creator_id,
             wallet, signature, message,
         )
         result = {"success": success, "message": msg}
@@ -1314,6 +1339,51 @@ def create_app():
         except ValueError as e:
             return jsonify({"success": False, "message": str(e)}), 400
         return jsonify({"success": ok})
+
+    @app.route("/nexus/install/resolve", methods=["POST"])
+    def nexus_install_resolve():
+        """Fetch + verify the bundle doc for a name/source and return the
+        UI summary (no download)."""
+        source = (request.get_json(silent=True) or {}).get("source", "")
+        try:
+            summary = resolve_source(source)
+        except InstallerError as e:
+            return jsonify({"ok": False, "reason": e.reason, "message": str(e)}), 400
+        installed = _find_nexus_bundle(summary["vendor"], summary["app"])
+        summary["installed_version"] = (
+            installed[3].get("version") if installed else None
+        )
+        if summary["gated"]:
+            summary["subscription"] = subscription_manager.get_status(
+                summary["vendor"], summary["app"]
+            )
+        return jsonify(summary)
+
+    @app.route("/nexus/install", methods=["POST"])
+    def nexus_install():
+        """Install (or update) a Nexus app from its name-addressed doc:
+        verify -> download -> verify artifact -> atomic swap."""
+        source = (request.get_json(silent=True) or {}).get("source", "")
+        data_dir = config.get("data.directory")
+        if not data_dir:
+            return (
+                jsonify({"ok": False, "reason": "no_data_dir",
+                         "message": "Data directory not configured"}),
+                503,
+            )
+        apps_dir = Path(str(data_dir)).expanduser() / "nexus" / ".apps"
+
+        def subscription_ok(vendor, app):
+            return subscription_manager.get_status(vendor, app).get(
+                "subscribed"
+            ) is True
+
+        try:
+            result = install_source(source, apps_dir, subscription_ok)
+        except InstallerError as e:
+            status = 409 if e.reason == "subscription_required" else 400
+            return jsonify({"ok": False, "reason": e.reason, "message": str(e)}), status
+        return jsonify(result)
 
     @app.route("/config/status", methods=["GET"])
     def get_config_status():
