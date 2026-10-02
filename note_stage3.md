@@ -7,7 +7,7 @@
 > deleted, `supporters` symlink removed — host `20b5815e`). Obfuscation
 > and license-guard injection move into each bundle's pack pipeline
 > (ataria `scripts/pack.py`, manifest-declared `protection`, closed
-> tooling externalized to `~/lab/src/ainara_supporters`). References to
+> tooling externalized to `~/lab/src/ainara_licensing`). References to
 > editions, supporters datas and `_obfuscate` below are historical.
 
 Single source of truth. Stage 3a adopted the `payload/` bundle layout

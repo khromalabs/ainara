@@ -27,7 +27,7 @@ from ainara.framework.nexus_licensing import (  # noqa: E402
     verify_manifest_identity,
 )
 
-LICENSING_ROOT = "/home/ruben/lab/src/ainara_supporters"
+LICENSING_ROOT = "/home/ruben/lab/src/ainara_licensing"
 WALLET = "9xzW4bYLhMq8fKbVHbB7Yt9E6jLdVmHhVdPzH4CwKq8A"
 
 

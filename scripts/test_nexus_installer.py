@@ -39,7 +39,7 @@ from ainara.framework.nexus_installer import (  # noqa: E402
 from ainara.framework.nexus_licensing import canonical_manifest_bytes  # noqa: E402
 from ainara.framework.nexus_licensing import verify_manifest_identity  # noqa: E402
 
-os.environ["AINARA_NEXUS_LICENSING_PATH"] = "/home/ruben/lab/src/ainara_supporters"
+os.environ["AINARA_NEXUS_LICENSING_PATH"] = "/home/ruben/lab/src/ainara_licensing"
 os.environ["AINARA_BUILD_SECRET"] = base64.b64encode(
     secrets.token_bytes(32)
 ).decode()
