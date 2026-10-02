@@ -30,6 +30,7 @@ import signal
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
@@ -49,7 +50,11 @@ from ainara.framework.health_monitor import HealthMonitor
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.llm.litellm import LiteLLM
 from ainara.framework.logging_setup import logging_manager
-from ainara.framework.nexus_apps import resolve_app_payload
+from ainara.framework.nexus_apps import read_manifest, resolve_app_payload
+from ainara.framework.nexus_licensing import (
+    SubscriptionManager,
+    verify_manifest_identity,
+)
 from ainara.framework.notifications import NotificationManager
 from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
 from ainara.framework.vault import (
@@ -951,6 +956,10 @@ def create_app():
     # Now AuthManager always has access to storage, even if memory is disabled
     auth_manager = AuthManager(system_storage)
 
+    # 3b. Initialize Nexus subscription licensing (fail-closed adapter over
+    # the closed core; see framework/nexus_licensing.py)
+    subscription_manager = SubscriptionManager(system_storage)
+
     # Initialize GREENMemories
     green_memories = None
     user_profile_summary = None
@@ -1143,6 +1152,168 @@ def create_app():
             )
 
         return jsonify(auth_manager.is_authorized())
+
+    # ------------------------------------------------------------------
+    # Nexus apps & bundle subscriptions
+    # ------------------------------------------------------------------
+
+    def _iter_nexus_bundles():
+        """Yield (vendor, app, payload_dir, manifest) for every discovered
+        Nexus bundle; first occurrence wins on identity dedup. Legacy
+        vendor-layout roots are skipped (not app-shaped)."""
+        seen = set()
+        for root in config.get_nexus_base_paths():
+            resolved = resolve_app_payload(root)
+            if not resolved:
+                continue
+            vendor, application, payload_dir = resolved
+            key = f"{vendor}/{application}"
+            if key in seen:
+                continue
+            seen.add(key)
+            manifest = read_manifest(Path(payload_dir) / "nexus.json")
+            if not manifest:
+                continue
+            yield vendor, application, Path(payload_dir), manifest
+
+    def _find_nexus_bundle(vendor, application):
+        vendor = (vendor or "").strip().lower()
+        application = (application or "").strip().lower()
+        for v, a, payload_dir, manifest in _iter_nexus_bundles():
+            if v == vendor and a == application:
+                return v, a, payload_dir, manifest
+        return None
+
+    @app.route("/nexus/apps", methods=["GET"])
+    def nexus_apps():
+        """Discovered Nexus bundles with protection and subscription state.
+        Identity verification (manifest ed25519 signature vs creatorId) is
+        surfaced but not yet enforced at this endpoint."""
+        apps = []
+        for vendor, application, payload_dir, manifest in _iter_nexus_bundles():
+            protection = manifest.get("protection") or {}
+            gated = protection.get("mode") == "nft-license"
+            identity_ok, identity_reason = verify_manifest_identity(manifest)
+            entry = {
+                "vendor": vendor,
+                "app": application,
+                "version": manifest.get("version"),
+                "description": manifest.get("description"),
+                "protection": protection.get("mode") or "open",
+                "gated": gated,
+                "identity_verified": identity_ok,
+                "identity_reason": identity_reason,
+                "source": "dev" if payload_dir.name == "payload" else "installed",
+                "path": str(payload_dir),
+            }
+            if gated:
+                try:
+                    entry["message"] = subscription_manager.subscription_message(
+                        vendor, application
+                    )
+                    entry["subscription"] = subscription_manager.get_status(
+                        vendor, application
+                    )
+                except ValueError as e:
+                    entry["message"] = None
+                    entry["subscription"] = {
+                        "subscribed": False,
+                        "reason": "invalid_identity",
+                        "detail": str(e),
+                    }
+            apps.append(entry)
+        return jsonify(apps)
+
+    @app.route("/nexus/subscription/portal", methods=["GET"])
+    def nexus_subscription_portal():
+        """Per-bundle wallet-signing portal (opened in the user's browser)."""
+        from ainara.framework.template_manager import TemplateManager
+
+        app_id = request.args.get("app", "")
+        vendor, sep, application = app_id.partition("/")
+        vendor = vendor.strip().lower()
+        application = application.strip().lower()
+        if not sep or not vendor or not application:
+            return "Missing app parameter (expected vendor/app)", 400
+        found = _find_nexus_bundle(vendor, application)
+        if not found:
+            return f"Nexus app '{app_id}' not found", 404
+        v, a, payload_dir, manifest = found
+        protection = manifest.get("protection") or {}
+        if protection.get("mode") != "nft-license":
+            return f"Nexus app '{app_id}' is not license-gated", 400
+        if not subscription_manager.available:
+            return "Licensing backend unavailable", 503
+        try:
+            message = subscription_manager.subscription_message(v, a)
+        except ValueError as e:
+            return str(e), 400
+        version = manifest.get("version") or ""
+        bundle_label = f"{v}/{a}" + (f" v{version}" if version else "")
+        return TemplateManager().render(
+            "framework.nexus_subscription.portal",
+            {
+                "auth_message": message,
+                "bundle_label": bundle_label,
+                "vendor": v,
+                "app": a,
+            },
+        )
+
+    @app.route("/nexus/subscription/verify", methods=["POST"])
+    def nexus_subscription_verify():
+        """Portal callback: verify wallet signature + NFT targets and issue
+        the per-bundle subscription token + receipt code."""
+        if not subscription_manager.available:
+            return (
+                jsonify({"success": False, "message": "Licensing backend unavailable"}),
+                503,
+            )
+        data = request.get_json(silent=True) or {}
+        wallet = data.get("wallet")
+        signature = data.get("signature")
+        message = data.get("message")
+        vendor = (data.get("vendor") or "").strip().lower()
+        application = (data.get("app") or "").strip().lower()
+        if not all([wallet, signature, message, vendor, application]):
+            return (
+                jsonify({"success": False, "message": "Missing parameters"}),
+                400,
+            )
+        found = _find_nexus_bundle(vendor, application)
+        if not found:
+            return jsonify({"success": False, "message": "Nexus app not found"}), 404
+        v, a, payload_dir, manifest = found
+        protection = manifest.get("protection") or {}
+        if protection.get("mode") != "nft-license":
+            return (
+                jsonify({"success": False, "message": "App is not license-gated"}),
+                400,
+            )
+        success, msg, info = subscription_manager.verify_subscription(
+            v, a, protection, manifest.get("creatorId"),
+            wallet, signature, message,
+        )
+        result = {"success": success, "message": msg}
+        if info:
+            result["code"] = info.get("code")
+            result["expires_at"] = info.get("expires_at")
+            result["wallet"] = info.get("wallet")
+        return jsonify(result), (200 if success else 403)
+
+    @app.route("/nexus/subscription/<vendor>/<application>", methods=["DELETE"])
+    def nexus_subscription_revoke(vendor, application):
+        """Local unsubscribe: clears the bundle's stored license state."""
+        if not subscription_manager.available:
+            return (
+                jsonify({"success": False, "message": "Licensing backend unavailable"}),
+                503,
+            )
+        try:
+            ok = subscription_manager.revoke(vendor, application)
+        except ValueError as e:
+            return jsonify({"success": False, "message": str(e)}), 400
+        return jsonify({"success": ok})
 
     @app.route("/config/status", methods=["GET"])
     def get_config_status():
