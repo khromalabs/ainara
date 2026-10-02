@@ -10,7 +10,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Polaris** – Electron desktop frontend (system tray app, rich chat UI)
 - **Orakle** – Flask REST API backend that hosts the skills/tools system and manages LLM routing
 - **PyBridge** – Flask REST API backend that exposes the Python backend functionality (Chat Manager, GREEN Memories=long term dynamic context memory system, meaning: Generatively Reinforced Evolving Embeddings Network, Faster Whisper STT and Kokoro TTS interfaces, Orakle Middleware for client side execution of skills, etc)
-**Bureau** – Agents and Agents orchestration plan server.
+- **Bureau** – Agents and Agents orchestration plan server.
+
+Plus **Nexus Apps**: third-party bundleable skill/UI applications (see the "Nexus Apps & Subscriptions" section below). Polaris ships as a single fully open-source edition; there is no edition/wallet gate — licensing exists only per-Nexus-bundle.
 
 ### OUTDATED:
 - **Kommander** – Alternative CLI interface (legacy/WIP/very outdated)
@@ -67,6 +69,19 @@ The services script handles virtualenv activation, health-check polling, and log
 There is no unified test runner. Tests are individual scripts:
 
 ```bash
+# Nexus state check (submodule pins, discovery, payload, pack prereqs)
+bash scripts/nexus_state_check.sh
+
+# Nexus licensing seam + installer protocol gates (offline)
+python scripts/test_nexus_licensing.py
+python scripts/test_nexus_installer.py
+
+# Closed licensing core suite (private checkout; 21 offline checks)
+python <licensing-checkout>/tests/test_auth_core.py
+
+# Full protected pack run is the pack pipeline gate (see the bundle
+# repo's notes/pack_and_install.md)
+
 # Middleware/integration tests
 python scripts/evaluation/tests/test_orakle_middleware.py
 
@@ -76,6 +91,9 @@ python scripts/test_coinmarketcap.py
 python scripts/other/test_stt.py
 python scripts/other/test_cuda.py
 ```
+
+`nexus_state_check.sh` anchors (EXPECT_GITLINK etc.) must be advanced
+with every submodule pin commit — a RED state check blocks further work.
 
 ## Building Standalone Executables
 
@@ -107,6 +125,10 @@ pyinstaller scripts/pyinstaller/servers.spec
   - `mcp_client_manager.py` – Model Context Protocol integration
   - `orakle_client.py` / `orakle_middleware.py` – Client-side Orakle communication
   - `pybridge.py` – Bridge server between frontend and Python backend
+  - `nexus_apps.py` – Bundle payload resolution + namespace registration (stdlib-only)
+  - `nexus_licensing.py` – Subscription licensing seam + manifest identity verification
+  - `nexus_installer.py` – Name-addressed remote install (protocol v0)
+  - `capabilities/nexus.py` – Nexus skill discovery
   - `skill.py` – Base `Skill` class all skills inherit from
   - `template_manager.py` – Mustache (`.mu`) prompt templates
 
@@ -137,6 +159,11 @@ Also via **Ollama** for local LLM support.
 
 Config lives at `~/.config/ainara/ainara.yaml` (Linux) with platform-specific equivalents on macOS/Windows. Managed via `ainara/framework/config.py` — supports deep-merging, schema validation, and sensitive-key masking. Never commit the user config file.
 
+Nexus-related keys: `nexus.path` (primary root), `nexus.dev_apps`
+(app_id → app repo; takes PRECEDENCE over installed apps — leave empty
+in the real config to test installed copies), and `data.directory`
+(installed apps live under `<data.directory>/nexus/.apps/`).
+
 ### Adding a New Core Skill
 
 1. Create a new `.py` file in the appropriate `ainara/orakle/skills/<category>/` subdirectory.
@@ -147,3 +174,37 @@ Config lives at `~/.config/ainara/ainara.yaml` (Linux) with platform-specific eq
 ### Adding a New User Skill
 
 Skills can be added in `users_skills > directory` (as per ainara.yaml config) without needing to touch the core skills, skills there will be prefixed in the Orakle `/capabilities` endpoint with `user_`. Nexus interfaces (web components) are available for user skills as well.
+
+## Nexus Apps & Subscriptions
+
+Nexus Apps are vendor bundles of skills/UI discovered from `nexus.json`
+manifests. Contracts that must not be broken:
+
+- **Layout**: app repos carry the bundle in `payload/` (repo = dev
+  material); installed apps have the bundle at their top level under
+  `<data.directory>/nexus/.apps/<vendor>.<app>/`. Identity (`provider` +
+  `name`) is manifest-derived, never directory-derived; first-wins dedup
+  across `nexus.dev_apps` → installed apps → primary root.
+- **Identity scheme (byte-identical across implementations — pack.py,
+  nexus_sign.py, framework/nexus_licensing.py)**: canonical JSON (sorted
+  keys, compact separators, `signature` field excluded) signed with the
+  creator's ed25519 Solana key; verified against `manifest.creatorId`.
+  Fail-closed: missing/invalid signature = untrusted.
+- **Licensing**: per-bundle subscriptions only. The closed core
+  (`nexuslicensing.auth_core.NexusSubscriptionCore`, optional import,
+  absent in public checkouts → fail-closed) issues machine-bound,
+  app-bound tokens; Polaris has NO app-level auth (the Supporters
+  Edition and its `/auth/*` endpoints are fully retired).
+- **Install protocol v0**: `https://<host>/.well-known/nexus-app.json`
+  (default TLD `.nexus`), doc self-signed by `creatorId`; installer
+  verifies doc identity → artifact sha256 → inner manifest identity →
+  atomic swap. Platform tags match pack.py (`linux-x86_64`, `win-amd64`,
+  ...), `universal` fallback.
+- **Pack pipeline** (in each bundle repo): P0 lint → P1 registries →
+  P2 stage/augment → **P2a identity signing (unconditional)** → P2b
+  guard injection + PyArmor (protected only) → P3 zip → P4 minisign →
+  P5 verify. See the bundle repo's `notes/pack_and_install.md`.
+- **Guard contract**: `inject_license_guards.py` (licensing checkout)
+  extracts `_machine_id`, `_derive_key`, `_machine_hash`,
+  `_verify_session_token` + `TOKEN_VERSION`, `KDF_INFO`,
+  `TOKEN_MAX_AGE` from `auth_core.py` — those symbol names are frozen.

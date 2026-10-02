@@ -7,7 +7,7 @@
 
 Core elements:
 
-- **ORAKLE Engine**: Client-side AI skills (function calling) hybrid matching framework. Designed to run flawlesslly both with big LLM providers, and small LLM local systems.
+- **ORAKLE Engine**: Client-side AI skills (function calling) hybrid matching framework. Designed to run flawlessly both with big LLM providers, and small LLM local systems.
 - **GREEN Memory**: Generatively Reinforced Evolving Embeddings Network. True relational persistence (Subconscious processing).
 - **NEXUS Skills**: AI-Driven skills mixing data and template based interface generation.
 - **Bureau agents Orchestrator**: Orakle powered agents server, runs individual agentic tasks or DAG agent orchestration plans.
@@ -15,7 +15,7 @@ Core elements:
 
 Ainara is a modular AI integration platform that reimagines human-computer interaction through natural conversation, made with components which work together to create intelligent companions that collaborate helping with tasks, generating insights, and transforming how people work with technology through voice and intuitive interfaces.
 
-It differentiates itself from other projects with its "user-first" philosophy. Skills can be both local or accessed remotelly via the MCP protocol. The AI model can be either local or remote.
+It differentiates itself from other projects with its "user-first" philosophy. Skills can be both local or accessed remotely via the MCP protocol. The AI model can be either local or remote.
 
 Polaris creates a truly AI collaborating-companion experience. Conversations are not session-based; user interactions with the LLM are recorded permanently as a continuous conversation (though users can choose to disable the memory feature at any moment).
 
@@ -43,6 +43,25 @@ A modern desktop-integrated application that provides:
 - Real-time skill execution feedback
 - System tray presence for quick access
 - Cross-platform support (Linux, Windows, macOS)
+
+### PyBridge
+A REST API bridge that exposes the Python backend functionality to the frontend:
+- Chat manager and persistent memory (GREEN Memories)
+- Speech interfaces (STT/TTS)
+- Orakle middleware for client-side skill execution
+- Encrypted secret vault on top of the OS keystore
+
+### Bureau
+An agents orchestration server:
+- Individual agentic tasks and DAG-based agent orchestration plans
+- Scheduled execution of agent plans (Sentinel mode)
+
+## Nexus Apps
+Beyond the built-in skills, Ainara can run **Nexus Apps**: third-party bundles of AI skills with their own configuration and interfaces. Apps are installed from within the application simply by typing their name or address — no app listing, no accounts:
+
+- **Verified developers**: every bundle is signed with the developer's Solana key; the signature is verified against the on-chain identity before anything is downloaded or run. Explorer links let you check who you are dealing with.
+- **Local license verification**: apps that require a subscription verify ownership of the developer's NFT collection directly against public blockchain state on your machine. No activation server, no callbacks, no telemetry.
+- **Fail-closed updates**: updates are downloaded, hash-verified and atomically swapped by the app itself.
 
 ## Available Skills
 
@@ -147,7 +166,7 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 An alternative way to run the backend services with no UI frontend for scheduled agentic jobs
 
 ```bash
-# Start Buraeau+Orakle
+# Start Bureau+Orakle
 scripts/scheduler.py
 
 # stop all services
@@ -170,7 +189,7 @@ Dual-licensed under [LGPL-3.0](LICENSE.LGPL) (open source) and commercial terms 
 
 ## The Nexus Market
 
-The Ainara Project will use the Solana $AINARA utility token in a coming up distributed app store platform, for a new type of applications called Nexus as described in: https://ainara.app/AINARA_NEXUS_APPS_PLATFORM_V1_1.pdf
+The in-app Nexus Apps mechanism described above is the foundation of a coming up distributed app store platform. The Ainara Project will use the Solana $AINARA utility token in that platform, for a new type of applications called Nexus as described in: https://ainara.app/AINARA_NEXUS_APPS_PLATFORM_V1_1.pdf
 
 The token is meant for application publishers it will *NEVER* be in any way a requirement for platform users.
 
