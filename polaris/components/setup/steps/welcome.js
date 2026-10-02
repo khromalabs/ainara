@@ -18,9 +18,6 @@
 
 let initialized = false;
 
-const isPublicEdition =
-    new URLSearchParams(window.location.search).get('edition') === 'public';
-
 function setupTosListeners(config, updateButtonVisibility, tosVersion) {
     const tosCheckbox = document.getElementById('terms-accept-btn');
     const openModalLink = document.getElementById('open-tos-modal');
@@ -70,87 +67,6 @@ function setupTosListeners(config, updateButtonVisibility, tosVersion) {
     });
 }
 
-async function setupAuthListeners(config, ipcRenderer, updateButtonVisibility) {
-    const verifyBtn = document.getElementById('verify-wallet-btn');
-    const walletInput = document.getElementById('wallet-address-input');
-    const statusMsg = document.getElementById('auth-status-message');
-    const authContainer = document.getElementById('auth-container');
-
-    // Hide the manual input if it exists
-    if (walletInput) walletInput.style.display = 'none';
-
-    let pollingInterval = null;
-    let verified = await checkSolanaLogin();
-
-    if (!verified) {
-        verifyBtn.textContent = "Login with Solana Wallet";
-        verifyBtn.addEventListener('click', async () => {
-            // 1. Open the portal
-            ipcRenderer.send('open-auth-portal');
-            verifyBtn.disabled = true;
-            verifyBtn.textContent = "Waiting for browser login...";
-            statusMsg.textContent = "Please complete login in your browser...";
-            statusMsg.className = "info-message";
-            // 2. Start polling for success
-            if (pollingInterval) clearInterval(pollingInterval);
-            pollingInterval = setInterval(checkSolanaLogin, 2000);
-        });
-    }
-
-    async function checkSolanaLogin() {
-        try {
-            const response = await fetch(config.get('pybridge.api_url') + '/auth/status');
-            const status = await response.json();
-
-            if (status.authorized) {
-                let keystoreAvailable = true;
-                let hasMasterKey = false;
-                try {
-                    const vaultStatus = await fetch(config.get('pybridge.api_url') + '/vault/status').then(r => r.json());
-                    keystoreAvailable = !!vaultStatus.keystore_available;
-                    hasMasterKey = !!vaultStatus.has_master_key;
-                } catch (e) {
-                    console.warn('Vault status check failed', e);
-                }
-
-                if (!keystoreAvailable) {
-                    // Keystore missing/locked; continue but warn.
-                    if (pollingInterval) clearInterval(pollingInterval);
-                    statusMsg.textContent = 'Wallet verified, but the OS keystore is unavailable. Sensitive values will remain plaintext.';
-                    statusMsg.className = "warning-message";
-                    authContainer.classList.add('verified');
-                    verifyBtn.textContent = "Verified";
-                    updateButtonVisibility();
-                    return true;
-                }
-
-                if (!hasMasterKey) {
-                    // Authorized before the vault existed -> require a fresh login.
-                    if (pollingInterval) clearInterval(pollingInterval);
-                    statusMsg.textContent = 'Wallet verified, but your secret vault has not been created yet. Please login again to secure your secrets.';
-                    statusMsg.className = "warning-message";
-                    authContainer.classList.remove('verified');
-                    verifyBtn.disabled = false;
-                    verifyBtn.textContent = "Login with Solana Wallet";
-                    updateButtonVisibility();
-                    return false;
-                }
-
-                if (pollingInterval) clearInterval(pollingInterval);
-                statusMsg.textContent = `Success! Wallet verified: ${status.wallet}`;
-                statusMsg.className = "success-message";
-                authContainer.classList.add('verified');
-                verifyBtn.textContent = "Verified";
-                updateButtonVisibility();
-                return true;
-            }
-            return false;
-        } catch (e) {
-            console.error("Auth polling error", e);
-        }
-    }
-}
-
 module.exports = {
     id: 'welcome',
 
@@ -159,15 +75,10 @@ module.exports = {
         initialized = true;
 
         setupTosListeners(ctx.config, ctx.updateButtonVisibility, ctx.TOS_VERSION);
-        if (!isPublicEdition) {
-            await setupAuthListeners(ctx.config, ctx.ipcRenderer, ctx.updateButtonVisibility);
-        }
     },
 
     validate(ctx) {
-        const authContainer = document.getElementById('auth-container');
         const tosCheckbox = document.getElementById('terms-accept-btn');
-        return (isPublicEdition || authContainer?.classList.contains('verified'))
-            && !!tosCheckbox?.checked;
+        return !!tosCheckbox?.checked;
     }
 };

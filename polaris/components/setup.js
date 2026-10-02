@@ -57,8 +57,6 @@ const modifiedFields = {
 const { TOS_VERSION } = require('../framework/constants');
 
 const urlParams = new URLSearchParams(window.location.search);
-const isReauthMode = urlParams.get('mode') === 'reauth';
-const isPublicEdition = urlParams.get('edition') === 'public';
 
 async function refreshLLMStepButtonState() {
     const nextBtn = document.getElementById('main-next-btn');
@@ -89,10 +87,8 @@ function updateButtonVisibility() {
     const currentStep = steps[currentStepIndex];
 
     if (currentStep === 'welcome') {
-        const isWalletVerified = isPublicEdition ||
-            document.getElementById('auth-container').classList.contains('verified');
         const isTosAccepted = document.getElementById('terms-accept-btn').checked;
-        nextBtn.disabled = !(isWalletVerified && isTosAccepted);
+        nextBtn.disabled = !isTosAccepted;
     } else if (currentStep === 'llm') {
         // Defer to backend config: only enable Next if a provider is actually
         // configured and selected. Start disabled and let the async check refine
@@ -455,46 +451,10 @@ function updateLLMStepTitle() {
 
 // Initialize the UI
 document.addEventListener('DOMContentLoaded', async () => {
-    if (isPublicEdition) {
-        // Public edition: no wallet/NFT gate; hide the verification UI.
-        document.getElementById('auth-container').style.display = 'none';
-    }
     setupEventListeners();
     updateLLMStepTitle();
     await stepModules.welcome.init(ctx);
     updateButtonVisibility();
-
-    if (isReauthMode) {
-        // Hide everything except the auth section
-        document.querySelector('.setup-steps').style.display = 'none';
-        document.querySelector('.button-row').style.display = 'none';
-        document.getElementById('tos-container').style.display = 'none';
-        document.getElementById('tos-update-notice').style.display = 'none';
-
-        // Retitle the window
-        document.querySelector('.setup-header h1').textContent = 'License Re-verification';
-
-        // Center and compact the auth box
-        const authContainer = document.getElementById('auth-container');
-        authContainer.style.marginTop = '20px';
-        authContainer.style.maxWidth = '400px';
-        authContainer.style.marginLeft = 'auto';
-        authContainer.style.marginRight = 'auto';
-
-        // Update the descriptive text
-        const authText = authContainer.querySelector('p');
-        if (authText) {
-            authText.textContent = 'Your license token is missing or expired. Please verify your wallet to continue.';
-        }
-
-        // When wallet verification succeeds, tell main to close this window
-        const observer = new MutationObserver(() => {
-            if (authContainer.classList.contains('verified')) {
-                ipcRenderer.send('license-verified');
-            }
-        });
-        observer.observe(authContainer, { attributes: true, attributeFilter: ['class'] });
-    }
 
     const finishPanel = document.getElementById('finish-panel');
     if (finishPanel) {
