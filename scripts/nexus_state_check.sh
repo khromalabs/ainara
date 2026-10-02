@@ -21,8 +21,8 @@ PY="$REPO/venv/bin/python"
 
 EXPECT_AINARA_BRANCH=dev012
 EXPECT_AINARA_HEAD=0ef54636
-EXPECT_ATARIA_HEAD=64bd5a3
-EXPECT_GITLINK=64bd5a3
+EXPECT_ATARIA_HEAD=2308263d
+EXPECT_GITLINK=2308263d
 # Single-copy layout: the dev checkout was deleted; the submodule mount is
 # now BOTH the pinned reference and the dev_apps target (probed 8/8, first-wins).
 ATARIA_DEV="$REPO/ainara/nexus/khromalabs/ataria"   # = submodule mount = nexus.dev_apps value
@@ -126,90 +126,53 @@ B_IDS="${B_IDS#IDS:}"
 [ -z "$B_IDS" ] && ok "B (real config): 0 skills — footgun state as documented" \
   || warn "B returned '$B_IDS' (real config has dev_apps/other roots now)"
 
-echo "=== S4: _obfuscate payload resolution ======================="
-resolve_probe () {   # $1 = config path for AINARA_CONFIG
-  OBSCRIPT_DIR="$REPO/scripts" AINARA_CONFIG="$1" "$PY" - 2>"$TMP_ERR" <<'PYEOF'
+echo "=== S4: framework payload resolution ========================"
+# Root-driven probe of the Stage 3a contract: the resolver must yield the
+# payload, never the repo root. (Replaces the retired _obfuscate probe —
+# resolution is a framework feature; obfuscation now lives in pack.py.)
+PROBE_OUT="$(PROBE_ROOT="$ATARIA_DEV" "$PY" - 2>"$TMP_ERR" <<'PYEOF'
 import os, sys, traceback
-sys.path.insert(0, os.environ["OBSCRIPT_DIR"])
 try:
-    import _obfuscate as OB          # module import; do NOT import names
+    from ainara.framework.nexus_apps import resolve_app_payload
+    app = resolve_app_payload(os.environ["PROBE_ROOT"])
 except BaseException:
-    sys.stdout.write("RES:IMPORT_FAILED\n")
     traceback.print_exc()
     sys.exit(3)
-try:
-    p = OB._resolve_ataria_source()
-except BaseException:
-    sys.stdout.write("RES:RAISED\n")
-    traceback.print_exc()
-    sys.exit(4)
-sys.stdout.write("RES:" + (p or "NONE") + "\n")
-arts = getattr(OB, "ATARIA_GENERATED_ARTIFACTS", None)
-if arts is None:
-    arts = ["nexus.json", "providers_registry.json", "skills_metadata.json", "site"]
-    sys.stdout.write("ARTS:builtin\n")
-else:
-    sys.stdout.write("ARTS:module\n")
-sys.stdout.write("MISS:" + ",".join(
-    n for n in arts if not os.path.exists(os.path.join(p, n))) + "\n")
+payload = str(app[2]) if app else ""
+print(payload or "NONE")
+arts = ["nexus.json", "providers_registry.json", "skills_metadata.json", "site"]
+print("MISS:" + ",".join(
+    n for n in arts if not payload or not os.path.exists(os.path.join(payload, n))))
 PYEOF
-}
-RA="$(resolve_probe "$TMP_CFG")"
-RA_RES="$(sed -n 's/^RES://p' <<<"$RA")"
-RA_ARTS="$(sed -n 's/^ARTS://p' <<<"$RA")"
-MA="$(sed -n 's/^MISS://p' <<<"$RA")"
+)"
+RA_RES="$(sed -n 1p <<<"$PROBE_OUT")"
+MA="$(sed -n 's/^MISS://p' <<<"$PROBE_OUT")"
 case "$RA_RES" in
-  IMPORT_FAILED|RAISED|"")
-    bad "resolve A: probe failed (${RA_RES:-no output}) — stderr tail:"
+  ""|NONE)
+    bad "resolve: probe failed or returned NONE — payload not resolved; stderr tail:"
     tail -n 8 "$TMP_ERR" | sed 's/^/        /' ;;
-  NONE)
-    bad "resolve A: resolver returned None — dev_apps payload not resolved" ;;
   *)
     if [ -d "$RA_RES/charts" ] && [ -d "$RA_RES/plans" ] && [ -f "$RA_RES/nexus.json" ]; then
-      ok "resolve(dev_apps) = payload, never repo root"
+      ok "resolve(dev_apps root) = payload, never repo root"
     else
-      bad "resolve A: '$RA_RES' fails payload markers (charts+plans+nexus.json present)"
+      bad "resolve: '$RA_RES' fails payload markers (charts+plans+nexus.json present)"
     fi
-    [ "$RA_ARTS" = "builtin" ] \
-      && warn "ATARIA_GENERATED_ARTIFACTS not on _obfuscate — builtin artifact list used"
     if [ -z "$MA" ]; then
-      ok "dev payload artifacts complete (full run will proceed)"
+      ok "dev payload artifacts complete"
     else
-      warn "dev payload missing artifacts: $MA (regen before full run)"
+      warn "dev payload missing artifacts: $MA (regen before pack)"
     fi ;;
 esac
 
-RB="$(resolve_probe "$REAL_CFG")"
-RB_RES="$(sed -n 's/^RES://p' <<<"$RB")"
-MB="$(sed -n 's/^MISS://p' <<<"$RB")"
-case "$RB_RES" in
-  IMPORT_FAILED|RAISED|"")
-    bad "resolve B: probe failed (${RB_RES:-no output}) — stderr tail:"
-    tail -n 8 "$TMP_ERR" | sed 's/^/        /' ;;
-  NONE)
-    bad "resolve B: resolver returned None — nothing resolved without dev_apps" ;;
-  *)
-    if [ -d "$RB_RES/charts" ] && [ -d "$RB_RES/plans" ] && [ -f "$RB_RES/nexus.json" ]; then
-      ok "resolve(real config) = payload, never repo root"
-    else
-      bad "resolve B: '$RB_RES' fails payload markers (charts+plans+nexus.json present)"
-    fi
-    case "$MB" in
-      "") ok "real-config payload has all artifacts (canonical working copy)" ;;
-      *providers_registry*|*skills_metadata*|*site*) ok "artifact guard fires loudly by design: $MB" ;;
-      *) warn "unexpected MISSING set: $MB" ;;
-    esac ;;
-esac
-
-echo "=== S5: build outputs (informational) ======================="
-BP="build/ataria_compiled/ainara/nexus/khromalabs/ataria"
-if [ -d "$BP" ]; then
-  LEAKS="$(find build/ataria_compiled build/nexus_staged -name plans -o -name _scripts -o -name docs 2>/dev/null | wc -l)"
-  [ "$LEAKS" = "0" ] && ok "build trees leak-free (plans/_scripts/docs: 0)" \
-    || bad "repo junk leaked into build trees: $LEAKS"
-  echo "      payload: $(ls "$BP" | tr '\n' ' ')"
+echo "=== S5: bundle dist artifact (informational) ================"
+ZIP="$(ls "$ATARIA_DEV"/dist/ataria-*.zip 2>/dev/null | head -1)"
+if [ -n "$ZIP" ] && [ -f "$ZIP.minisig" ] && [ -f "$ZIP.sha256" ]; then
+  ok "dist artifact present: $(basename "$ZIP") (+ sig + sha256)"
+  warn "artifact predates the pack obfuscation stage — verify before shipping"
+elif [ -n "$ZIP" ]; then
+  warn "dist artifact present but signature files missing: $(basename "$ZIP")"
 else
-  warn "no build outputs (expected on fresh resume; run the full pipeline)"
+  warn "no dist artifact (run the pack pipeline to produce one)"
 fi
 
 echo "=== S6: Stage 3 pack prerequisites =========================="

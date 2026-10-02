@@ -58,35 +58,6 @@ def _venv_python(root):
     return os.path.join(root, "venv", "bin", "python")
 
 
-def _has_pyarmor(python_exe):
-    """True when a `pyarmor` launcher sits next to `python_exe`.
-
-    PyArmor installs its console script into the same bin/ as the
-    interpreter it belongs to; its presence is our proxy for "this is
-    the licensed environment".
-    """
-    name = "pyarmor.exe" if sys.platform == "win32" else "pyarmor"
-    return os.path.isfile(os.path.join(os.path.dirname(python_exe), name))
-
-
-def find_obfuscation_python(explicit=None):
-    """Pick the interpreter that runs scripts/_obfuscate.py.
-
-    Priority:
-      1. --obfuscate-python / POLARIS_OBFUSCATE_PYTHON  (trusted verbatim)
-      2. <project_root>/venv                            (auto-detected)
-      3. sys.executable                                 (last resort)
-    Returns None if no auto candidate has PyArmor installed.
-    """
-    chosen = explicit or os.environ.get("POLARIS_OBFUSCATE_PYTHON")
-    if chosen:
-        return chosen
-    for cand in (_venv_python(PROJECT_ROOT), sys.executable):
-        if _has_pyarmor(cand):
-            return cand
-    return None
-
-
 def build_builder_image():
     """Build (or reuse, via layer cache) the Ubuntu 22.04 builder image.
 
@@ -111,7 +82,7 @@ def run_container_build():
     run_command([
         "docker", "run", "--rm", "--init",
         "-v", f"{project_root}:/work", "-w", "/work",
-        "-e", "POLARIS_EDITION", "-e", "POLARIS_TARGET",
+        "-e", "POLARIS_TARGET",
         "-u", f"{os.getuid()}:{os.getgid()}",
         BUILDER_IMAGE,
         "/bin/bash", "-c", CONTAINER_BUILD_SCRIPT,
@@ -251,8 +222,7 @@ def check_dependencies():
     return True
 
 
-def build_executables(force=False, target="all", use_container=False, smoke=False,
-                      obfuscate_python=None):
+def build_executables(force=False, target="all", use_container=False, smoke=False):
     """Build the server executables (joined bundle or a single target)."""
     if use_container and sys.platform != "linux":
         print("Error: --container builds require a Linux host (docker + uid mapping).")
@@ -289,27 +259,6 @@ def build_executables(force=False, target="all", use_container=False, smoke=Fals
         # Host dependency check only applies to native builds; the
         # container installs its own environment from requirements.txt.
         return False
-
-    # Host stage: obfuscation (licensed PyArmor and the build secret stay
-    # on the host; the container only consumes build/supporters_compiled/).
-    # The interpreter is discovered, not inherited from the caller's shell:
-    # the licensed PyArmor lives in ./venv, and _build.py may be started
-    # from a different (e.g. system) Python.
-    obf_exe = find_obfuscation_python(obfuscate_python)
-    if not obf_exe:
-        print(
-            "Error: no interpreter with the licensed PyArmor found.\n"
-            f"  Looked in: {_venv_python(PROJECT_ROOT)}, {sys.executable}\n"
-            "  Install PyArmor into ./venv, or pass --obfuscate-python "
-            "<path> (or set POLARIS_OBFUSCATE_PYTHON)."
-        )
-        return False
-    obf_ver = subprocess.check_output(
-        [obf_exe, "-c", "import sys;print('%d.%d' % sys.version_info[:2])"],
-        text=True,
-    ).strip()
-    print(f"\n=== Obfuscation stage (host: {obf_exe} — Python {obf_ver}) ===\n")
-    run_command([obf_exe, os.path.join("scripts", "_obfuscate.py")])
 
     if use_container:
         print("\n=== PyInstaller stage (glibc 2.35 container) ===\n")
@@ -348,16 +297,6 @@ if __name__ == "__main__":
         help="Force rebuild even if executables already exist",
     )
     parser.add_argument(
-        "-e",
-        "--edition",
-        choices=["public", "supporters"],
-        default=None,
-        help=(
-            "Distribution edition (public|supporters). "
-            "Required unless POLARIS_EDITION is set."
-        ),
-    )
-    parser.add_argument(
         "-t",
         "--target",
         choices=["all", "orakle", "pybridge", "bureau", "sentinel"],
@@ -384,25 +323,8 @@ if __name__ == "__main__":
             "(ubuntu:22.04) and fail on loader/import errors."
         ),
     )
-    parser.add_argument(
-        "--obfuscate-python",
-        default=None,
-        help=(
-            "Interpreter that has the licensed PyArmor installed. "
-            "Default: ./venv/bin/python, falling back to the current "
-            "interpreter. Overrides POLARIS_OBFUSCATE_PYTHON."
-        ),
-    )
     args = parser.parse_args()
 
-    edition = args.edition or os.environ.get("POLARIS_EDITION")
-    if edition not in ("public", "supporters"):
-        if args.edition is None and "POLARIS_EDITION" not in os.environ:
-            parser.error(
-                "edition is required (use -e/--edition or set POLARIS_EDITION)"
-            )
-        parser.error(f"Invalid edition: {edition!r} (expected 'public' or 'supporters')")
-    os.environ["POLARIS_EDITION"] = edition
     os.environ["POLARIS_TARGET"] = args.target
 
     sys.exit(0 if build_executables(
@@ -410,5 +332,4 @@ if __name__ == "__main__":
         target=args.target,
         use_container=args.container,
         smoke=args.smoke_test,
-        obfuscate_python=args.obfuscate_python,
     ) else 1)

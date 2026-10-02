@@ -17,10 +17,14 @@ sys.path.insert(0, SPECPATH)
 from _shadowed_libs import SHADOWED_RUNTIME_LIBS
 
 # Fast track to test a server (dist output):
-#   1) scripts/_obfuscate.py    (host, licensed PyArmor)
-#   2) POLARIS_EDITION=supporters POLARIS_TARGET=orakle \
-#          pyinstaller --distpath dist --workpath build/pyi scripts/pyinstaller/servers.spec
-# or simply:  scripts/_build.py -e supporters -t orakle
+#   POLARIS_TARGET=orakle pyinstaller --distpath dist --workpath build/pyi \
+#       scripts/pyinstaller/servers.spec
+# or simply:  scripts/_build.py -t orakle
+#
+# NOTE (editions retired): the host app ships fully open. Protected Nexus
+# App content (obfuscation, license guards) lives exclusively in external
+# bundle artifacts produced by each app repo's pack pipeline (e.g. ataria
+# scripts/pack.py) and is installed at runtime — never embedded here.
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())
@@ -29,52 +33,12 @@ project_root = os.path.abspath(os.getcwd())
 if not os.path.exists(os.path.join(project_root, 'ainara')):
     raise ValueError(f"Calculated project_root {project_root} does not contain 'ainara' directory. Ensure the build is run from the project root.")
 
-nexus_obfuscated_root = os.path.join(project_root, 'build', 'nexus_obfuscated')
-supporters_obfuscated_root = os.path.join(project_root, 'build', 'supporters_obfuscated')
-supporters_compiled_root = os.path.join(project_root, 'build', 'supporters_compiled')
-supporters_compiled = os.path.join(supporters_compiled_root, 'supporters')
-ataria_compiled = os.path.join(
-    project_root, 'build', 'ataria_compiled', 'ainara', 'nexus', 'khromalabs', 'ataria'
-)
-
 # Optional single-server build mode.
 # Set POLARIS_TARGET=orakle|pybridge|bureau|sentinel to build only that server.
 BUILD_TARGET = os.environ.get("POLARIS_TARGET", "all").strip().lower()
 if BUILD_TARGET not in ("all", "orakle", "pybridge", "bureau", "sentinel"):
     raise SystemExit(f"Unknown POLARIS_TARGET: {BUILD_TARGET!r}")
 print(f"[servers.spec] Build target(s): {BUILD_TARGET}")
-
-# --- Edition & pre-obfuscated artifacts ----------------------------------
-# Obfuscation (staging, license-guard injection, PyArmor) runs on the HOST
-# via scripts/_obfuscate.py: the licensed PyArmor install and the build
-# secret never enter the build container. This spec only consumes that
-# output, so it can run inside the manylinux_2_28 container that pins our
-# glibc floor.
-EDITION = os.environ.get("POLARIS_EDITION", "public").strip().lower()
-if EDITION not in ("public", "supporters"):
-    raise SystemExit(f"Unknown POLARIS_EDITION: {EDITION!r}")
-SUPPORTERS = EDITION == "supporters"
-print(f"[servers.spec] Building '{EDITION}' edition")
-
-# Runtime marker read by the Polaris UI to decide whether the wallet/NFT
-# gate applies. Written once per build; ships at the root of _internal.
-_edition_marker = os.path.join(project_root, 'build', '.edition')
-os.makedirs(os.path.dirname(_edition_marker), exist_ok=True)
-with open(_edition_marker, 'w') as _f:
-    _f.write(EDITION + "\n")
-
-_required_trees = [
-    os.path.join(supporters_compiled_root, 'ainara', 'nexus'),
-    ataria_compiled,
-]
-if SUPPORTERS:
-    _required_trees.append(supporters_compiled)
-for _tree in _required_trees:
-    if not os.path.isdir(_tree):
-        raise FileNotFoundError(
-            f"{_tree} not found — run scripts/_obfuscate.py first "
-            f"(scripts/_build.py runs it automatically)."
-        )
 
 block_cipher = None
 
@@ -126,7 +90,6 @@ packages_to_collect_data_from = [
     'kokoro_onnx',
     'language_tags',
     'espeakng_loader',
-    'pyarmor_runtime',
 ]
 
 # Define rules for platform-specific data files that need special handling.
@@ -198,10 +161,6 @@ if system == "Linux":
 # Define platform-specific excludes for packages that should not be bundled
 # on certain operating systems, even if they are present in the environment.
 platform_excludes = []
-# Never let modulegraph collect the PLAIN supporters source (it lives at
-# <root>/supporters with the __BUILD_SECRET__ placeholder). Supporters
-# ships the obfuscated tree via datas; public ships nothing.
-platform_excludes.append('supporters')
 if system == "Windows":
     platform_excludes.append('uvloop')
     platform_excludes.append('triton')
@@ -209,39 +168,13 @@ if system == "Windows":
 
 # Common data files for both executables
 common_datas = [
-    (_edition_marker, '.'),
     (os.path.join(project_root, 'ainara/framework'), 'ainara/framework'),
     (os.path.join(project_root, 'ainara/templates'), 'ainara/templates'),
     (os.path.join(project_root, 'resources'), 'resources'),
-    (os.path.join(ataria_compiled, 'nexus.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(ataria_compiled, 'providers_registry.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(ataria_compiled, 'skills_metadata.json'), 'ainara/nexus/khromalabs/ataria'),
-    (os.path.join(ataria_compiled, 'site'), 'ainara/nexus/khromalabs/ataria/site'),
     *datas,
     *package_datas,
     *datas_from_hooks
 ]
-
-# The obfuscated trees contain a per-build runtime like pyarmor_runtime_*
-# PyInstaller must ship that directory at the top level of _internal so 
-#`from pyarmor_runtime_XXXX import ...` can resolve.
-for _root in (nexus_obfuscated_root, supporters_obfuscated_root):
-    if not os.path.isdir(_root):
-        continue
-    for _entry in os.listdir(_root):
-        if _entry.startswith("pyarmor_runtime") and os.path.isdir(os.path.join(_root, _entry)):
-            common_datas.append((os.path.join(_root, _entry), _entry))
-
-# Obfuscated nexus tree ships to ALL servers (validated above). In the
-# public edition the tree simply lacks the supporters domains.
-common_datas.append(
-    (os.path.join(supporters_compiled_root, 'ainara', 'nexus'), 'ainara/nexus')
-)
-
-if SUPPORTERS:
-    if not os.path.isdir(supporters_compiled):
-        raise FileNotFoundError("Supporters build requires the obfuscated supporters package")
-    common_datas.append((supporters_compiled, 'supporters'))
 
 # Common hidden imports for both executables
 common_imports = [
@@ -315,7 +248,6 @@ common_imports = [
     'tree_sitter',
     'tree_sitter_javascript',
     'tree_sitter_python',
-    'pyarmor_runtime',
 
     # Dependencies for MCP
     'mcp',
@@ -371,14 +303,6 @@ common_imports = [
 # common_imports += collect_submodules('transformers')
 common_imports += collect_submodules('chromadb')
 
-if SUPPORTERS:
-    # The supporters.auth_core module is shipped as data/obfuscated and is
-    # never analyzed by PyInstaller, so its imports are not discovered.
-    # Force-include the Solana stack (including the native solders binary).
-    common_imports += collect_submodules('solana')
-    common_imports += collect_submodules('solders')
-    binaries += collect_dynamic_libs('solana')
-    binaries += collect_dynamic_libs('solders')
 # # Add all opentelemetry modules, a complex dependency of chromadb
 # common_imports += collect_submodules('opentelemetry')
 # collect_submodules('sentence_transformers')
