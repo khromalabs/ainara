@@ -218,7 +218,7 @@ function showSetupWizard(validationErrors = []) {
         iconPath: iconPath,
         hasShadow: false
     });
-    setupWindow.openDevTools();
+    // setupWindow.openDevTools();
 
     // If the user closes the setup wizard from the taskbar/Alt+F4,
     // quit the whole app so hidden services are not left running.
