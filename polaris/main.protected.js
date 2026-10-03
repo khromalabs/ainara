@@ -218,7 +218,7 @@ function showSetupWizard(validationErrors = []) {
         iconPath: iconPath,
         hasShadow: false
     });
-    // setupWindow.openDevTools();
+    setupWindow.openDevTools();
 
     // If the user closes the setup wizard from the taskbar/Alt+F4,
     // quit the whole app so hidden services are not left running.
@@ -1377,6 +1377,22 @@ function appSetupEventHandlers() {
             shell.openExternal(url);
         } else {
             Logger.warn('open-external: rejected URL', url);
+        }
+    });
+
+    // Restart Orakle so a freshly installed Nexus App's skills/properties
+    // are discovered (capabilities discovery runs at server startup)
+    ipcMain.on('nexus:reload-orakle', async (event) => {
+        try {
+            Logger.info('Nexus: restarting Orakle to pick up installed bundle');
+            await ServiceManager.restartService(ServiceManager.services.orakle);
+            Logger.info('Nexus: Orakle restarted');
+        } catch (e) {
+            Logger.error('Nexus: Orakle restart failed:', e);
+        } finally {
+            if (event.sender && !event.sender.isDestroyed()) {
+                event.sender.send('nexus:orakle-reloaded');
+            }
         }
     });
 

@@ -54,6 +54,7 @@ from ainara.framework.nexus_installer import (
     InstallerError,
     install_source,
     resolve_source,
+    uninstall_app,
 )
 from ainara.framework.nexus_licensing import (
     SubscriptionManager,
@@ -1303,6 +1304,23 @@ def create_app():
             status = 409 if e.reason == "subscription_required" else 400
             return jsonify({"ok": False, "reason": e.reason, "message": str(e)}), status
         return jsonify(result)
+
+    @app.route("/nexus/app/<vendor>/<application>", methods=["DELETE"])
+    def nexus_app_uninstall(vendor, application):
+        """Remove an installed bundle. The subscription token is kept (a
+        reinstall does not need to re-subscribe)."""
+        data_dir = config.get("data.directory")
+        if not data_dir:
+            return (
+                jsonify({"ok": False, "reason": "no_data_dir",
+                         "message": "Data directory not configured"}),
+                503,
+            )
+        apps_dir = Path(str(data_dir)).expanduser() / "nexus" / ".apps"
+        try:
+            return jsonify(uninstall_app(apps_dir, vendor, application))
+        except InstallerError as e:
+            return jsonify({"ok": False, "reason": e.reason, "message": str(e)}), 400
 
     @app.route("/config/status", methods=["GET"])
     def get_config_status():

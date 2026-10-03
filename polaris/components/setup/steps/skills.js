@@ -1158,17 +1158,16 @@ function renderNexusAppHeader(state) {
     if (state.gated) {
         const sub = state.subscription || {};
         if (sub.subscribed) {
-            const until = sub.expires_at ? new Date(sub.expires_at).toLocaleDateString() : '';
-            bits.push(`<span class="nexus-badge nexus-badge-ok">Subscription active${until ? ` until ${until}` : ''}</span>`);
+            bits.push(`<span class="nexus-badge nexus-badge-ok" title="Continuous access while your NFT is held — verified on-chain periodically, no action needed">Subscription active</span>`);
             if (sub.code) bits.push(`<span class="nexus-badge nexus-badge-code" title="Subscription receipt">${escapeHtml(sub.code)}</span>`);
         } else {
             const reasons = {
-                no_subscription: 'Not subscribed',
-                tampered_or_invalid: 'Subscription invalid — please verify again',
+                no_subscription: 'NFT ownership required — verify your wallet',
+                tampered_or_invalid: 'Verification invalid — verify your wallet again',
                 licensing_unavailable: 'Licensing backend unavailable',
                 invalid_identity: 'Invalid bundle identity',
             };
-            bits.push(`<span class="nexus-badge nexus-badge-warn">${escapeHtml(reasons[sub.reason] || 'Not subscribed')}</span>`);
+            bits.push(`<span class="nexus-badge nexus-badge-warn">${escapeHtml(reasons[sub.reason] || 'NFT ownership required')}</span>`);
         }
     } else {
         bits.push('<span class="nexus-badge">Open app</span>');
@@ -1182,9 +1181,9 @@ function renderNexusAppHeader(state) {
 
     const actions = [];
     if (state.gated && !(state.subscription && state.subscription.subscribed)) {
-        actions.push(`<button type="button" class="nexus-subscribe-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Subscribe with wallet</button>`);
+        actions.push(`<button type="button" class="nexus-subscribe-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Verify wallet</button>`);
     }
-    actions.push(`<button type="button" class="nexus-unsubscribe-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Unsubscribe</button>`);
+    actions.push(`<button type="button" class="nexus-uninstall-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Uninstall</button>`);
 
     return `
         <div class="nexus-app-state">
@@ -1201,10 +1200,10 @@ function renderNexusAddBox() {
         <div class="nexus-add-box">
             <h4 style="margin:0 0 6px 0;">Add a Nexus App</h4>
             <p style="margin:0 0 10px 0;font-size:0.9em;color:#666;">
-                Enter the app name or address (e.g. <code>ataria</code> or <code>ataria.nexus</code>).
+                Enter the app name or address (e.g. <code>myapp</code> or <code>myapp.nexus</code>).
             </p>
             <div style="display:flex;gap:8px;">
-                <input type="text" id="nexus-add-input" placeholder="ataria" autocomplete="off" style="flex:1;padding:8px 10px;border:1px solid #ddd;border-radius:6px;">
+                <input type="text" id="nexus-add-input" placeholder="myapp" autocomplete="off" style="flex:1;padding:8px 10px;border:1px solid #ddd;border-radius:6px;">
                 <button type="button" id="nexus-add-btn" class="btn">Find app</button>
             </div>
             <div id="nexus-resolve-result"></div>
@@ -1220,7 +1219,7 @@ function renderNexusRemoteCard(s) {
     bits.push(`<strong>${escapeHtml(capitalize(s.app))}</strong> <span style="color:#888;">(${escapeHtml(capitalize(s.vendor))})</span>`);
     bits.push(`<span class="nexus-badge">v${escapeHtml(s.latest)}</span>`);
     if (s.gated) {
-        bits.push('<span class="nexus-badge nexus-badge-warn">Requires subscription</span>');
+        bits.push('<span class="nexus-badge nexus-badge-warn">Requires NFT ownership</span>');
         const sub = s.subscription || {};
         if (sub.subscribed) bits.push('<span class="nexus-badge nexus-badge-ok">Subscription active</span>');
     } else {
@@ -1232,16 +1231,13 @@ function renderNexusRemoteCard(s) {
     }
 
     const actions = [];
-    const needsSubscribe = s.gated && !(s.subscription && s.subscription.subscribed);
-    if (needsSubscribe) {
-        actions.push(`<button type="button" class="nexus-remote-subscribe-btn" data-vendor="${escapeHtml(s.vendor)}" data-app="${escapeHtml(s.app)}" data-collection="${escapeHtml(s.collection || '')}" data-creator="${escapeHtml(s.creatorId || '')}" data-version="${escapeHtml(s.latest)}">Subscribe with wallet</button>`);
-    }
     const actionLabel = !s.installed_version ? 'Install' : (compareVersions(s.latest, s.installed_version) > 0 ? `Update to v${escapeHtml(s.latest)}` : 'Reinstall');
-    actions.push(`<button type="button" class="nexus-install-btn" data-source="${escapeHtml(s.source_host || '')}" ${needsSubscribe ? 'disabled title="Subscribe first"' : ''}>${actionLabel}</button>`);
+    actions.push(`<button type="button" class="nexus-install-btn" data-source="${escapeHtml(s.source_host || '')}">${actionLabel}</button>`);
 
     return `
         <div class="nexus-remote-card" data-source="${escapeHtml(s.source_host || '')}">
             <div class="nexus-app-badges">${bits.join(' ')}</div>
+            ${s.gated ? '<div class="nexus-remote-desc">NFT ownership (verified on-chain) is required to install this app and to keep it running. Verify with your wallet below if needed.</div>' : ''}
             ${s.description ? `<div class="nexus-remote-desc">${escapeHtml(s.description)}</div>` : ''}
             ${nexusExplorerLinks({ creatorId: s.creatorId, collection: s.collection })}
             <div class="nexus-app-actions">${actions.join(' ')}</div>
@@ -1478,18 +1474,19 @@ function setupNexusLifecycleListeners(ctx) {
                 return;
             }
 
-            // Subscribe (installed app): portal reads the local manifest
+            // Verify wallet (installed app, lapsed): portal reads the
+            // local manifest; on success the card flips back to active
             const subBtn = e.target.closest('.nexus-subscribe-btn');
             if (subBtn) {
                 const vendor = subBtn.dataset.vendor, app = subBtn.dataset.app;
                 const container = subBtn.closest('.nexus-app-state');
                 openExternal(portalUrl({ vendor, app }, true));
-                setStatus(container, 'Waiting for subscription (complete the sign in your browser)…', 'info-message');
+                setStatus(container, 'Waiting for wallet verification (complete the sign in your browser)…', 'info-message');
                 const started = Date.now();
                 const timer = setInterval(async () => {
                     if (Date.now() - started > 180000) {
                         clearInterval(timer);
-                        setStatus(container, 'Subscription check timed out — try again.', 'error-message');
+                        setStatus(container, 'Verification timed out — try again.', 'error-message');
                         return;
                     }
                     try {
@@ -1508,83 +1505,104 @@ function setupNexusLifecycleListeners(ctx) {
                 return;
             }
 
-            // Unsubscribe
-            const unsubBtn = e.target.closest('.nexus-unsubscribe-btn');
+            // Uninstall: remove the app; the NFT and subscription state
+            // remain (a reinstall does not need to re-subscribe)
+            const unsubBtn = e.target.closest('.nexus-uninstall-btn');
             if (unsubBtn) {
                 const vendor = unsubBtn.dataset.vendor, app = unsubBtn.dataset.app;
-                if (!confirm(`Remove the local subscription for ${vendor}/${app}?`)) return;
+                if (!confirm(`Uninstall ${vendor}/${app}? Your NFT and subscription remain valid — reinstalling later won't require verifying again.`)) return;
                 try {
-                    await fetch(`${pybridgeUrl}/nexus/subscription/${vendor}/${app}`, { method: 'DELETE' });
+                    await fetch(`${pybridgeUrl}/nexus/app/${vendor}/${app}`, { method: 'DELETE' });
                     refreshUI();
                 } catch (err) {
-                    alert('Unsubscribe failed: ' + err.message);
+                    alert('Uninstall failed: ' + err.message);
                 }
                 return;
             }
 
-            // Subscribe (remote card, pre-install): doc-provided targets
-            const remoteSubBtn = e.target.closest('.nexus-remote-subscribe-btn');
-            if (remoteSubBtn) {
-                const card = remoteSubBtn.closest('.nexus-remote-card');
-                const source = card.dataset.source;
-                const s = {
-                    vendor: remoteSubBtn.dataset.vendor,
-                    app: remoteSubBtn.dataset.app,
-                    collection: remoteSubBtn.dataset.collection,
-                    creatorId: remoteSubBtn.dataset.creator,
-                    latest: remoteSubBtn.dataset.version,
-                };
-                openExternal(portalUrl(s, false));
-                setStatus(card, 'Waiting for subscription (complete the sign in your browser)…', 'info-message');
-                const started = Date.now();
-                const timer = setInterval(async () => {
-                    if (Date.now() - started > 180000) {
-                        clearInterval(timer);
-                        setStatus(card, 'Subscription check timed out — try again.', 'error-message');
-                        return;
-                    }
-                    try {
-                        const st = await resolveSource(source);
-                        if (st.subscription && st.subscription.subscribed) {
-                            clearInterval(timer);
-                            setStatus(card, 'Subscription active! You can install now.', 'success-message');
-                            const installBtn = card.querySelector('.nexus-install-btn');
-                            if (installBtn) installBtn.disabled = false;
-                        }
-                    } catch (err) { /* keep polling */ }
-                }, 2000);
-                return;
-            }
-
-            // Install / Update / Reinstall
+            // Install / Update / Reinstall — subscribes first (portal +
+            // poll) when the app is gated and the wallet isn't verified
             const installBtn = e.target.closest('.nexus-install-btn');
             if (installBtn && !installBtn.disabled) {
                 const source = installBtn.dataset.source;
                 const card = installBtn.closest('.nexus-remote-card');
                 if (!source) return;
                 installBtn.disabled = true;
-                setStatus(card, 'Downloading and verifying…', 'info-message');
-                try {
-                    const resp = await fetch(pybridgeUrl + '/nexus/install', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ source })
-                    });
-                    const data = await resp.json();
-                    if (data.ok) {
-                        setStatus(card, `Installed ${data.vendor}/${data.app} v${data.version}.`, 'success-message');
-                        setTimeout(refreshUI, 800);
-                    } else if (data.reason === 'subscription_required') {
-                        setStatus(card, 'Subscription required — subscribe first, then install.', 'error-message');
-                        installBtn.disabled = false;
-                    } else {
-                        setStatus(card, data.message || 'Install failed.', 'error-message');
+
+                const waitForSubscription = (s) => new Promise((resolve) => {
+                    setStatus(card, 'NFT ownership required — complete the wallet sign, the app will install automatically…', 'info-message');
+                    const started = Date.now();
+                    const timer = setInterval(async () => {
+                        if (Date.now() - started > 300000) {
+                            clearInterval(timer);
+                            resolve(false);
+                            return;
+                        }
+                        try {
+                            const st = await resolveSource(source);
+                            if (st.subscription && st.subscription.subscribed) {
+                                clearInterval(timer);
+                                resolve(true);
+                            }
+                        } catch (err) { /* keep polling */ }
+                    }, 2000);
+                });
+
+                const waitForCapabilities = (vendor, app) => new Promise((resolve) => {
+                    const orakleUrl = ctx.config.get('orakle.api_url');
+                    const started = Date.now();
+                    const timer = setInterval(async () => {
+                        if (Date.now() - started > 180000) { clearInterval(timer); resolve(); return; }
+                        try {
+                            const props = await fetch(orakleUrl + '/capabilities?view=properties').then(r => r.json());
+                            if (Object.keys(props || {}).some(k => k.includes(`.nexus.${vendor}.${app}`))) {
+                                clearInterval(timer);
+                                resolve();
+                            }
+                        } catch (err) { /* keep polling */ }
+                    }, 2000);
+                });
+
+                (async () => {
+                    try {
+                        setStatus(card, 'Checking requirements…', 'info-message');
+                        const s = await resolveSource(source);
+                        if (s.ok === false) {
+                            setStatus(card, s.message || 'Lookup failed.', 'error-message');
+                            installBtn.disabled = false;
+                            return;
+                        }
+                        const needsSubscribe = s.gated && !(s.subscription && s.subscription.subscribed);
+                        if (needsSubscribe) {
+                            openExternal(portalUrl(s, false));
+                            const okSub = await waitForSubscription(s);
+                            if (!okSub) {
+                                setStatus(card, 'Subscription timed out — try again.', 'error-message');
+                                installBtn.disabled = false;
+                                return;
+                            }
+                        }
+                        setStatus(card, 'Downloading and verifying…', 'info-message');
+                        const resp = await fetch(pybridgeUrl + '/nexus/install', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ source })
+                        });
+                        const data = await resp.json();
+                        if (data.ok) {
+                            setStatus(card, `Installed ${data.vendor}/${data.app} v${data.version}. Reloading skills…`, 'success-message');
+                            ctx.ipcRenderer.send('nexus:reload-orakle');
+                            await waitForCapabilities(data.vendor, data.app);
+                            refreshUI();
+                        } else {
+                            setStatus(card, data.message || 'Install failed.', 'error-message');
+                            installBtn.disabled = false;
+                        }
+                    } catch (err) {
+                        setStatus(card, 'Install failed: ' + err.message, 'error-message');
                         installBtn.disabled = false;
                     }
-                } catch (err) {
-                    setStatus(card, 'Install failed: ' + err.message, 'error-message');
-                    installBtn.disabled = false;
-                }
+                })();
                 return;
             }
         });

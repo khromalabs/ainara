@@ -270,6 +270,25 @@ def _atomic_swap(staging: Path, target: Path):
         shutil.rmtree(backup, ignore_errors=True)
 
 
+def uninstall_app(apps_dir, vendor: str, app: str) -> dict:
+    """Remove an installed bundle. The subscription token is kept: a
+    reinstall does not need to re-subscribe."""
+    vendor = (vendor or "").strip().lower()
+    app = (app or "").strip().lower()
+    if not NAME_RE.match(vendor) or not NAME_RE.match(app):
+        raise InstallerError("invalid_source", f"Invalid bundle id: {vendor}/{app}")
+    apps_dir = Path(apps_dir)
+    target = apps_dir / f"{vendor}.{app}"
+    # path safety: only ever remove inside .apps/, and only bundle-shaped dirs
+    if apps_dir.resolve() not in target.resolve().parents:
+        raise InstallerError("invalid_source", "Refusing to remove outside .apps")
+    if not target.is_dir() or not (target / "nexus.json").is_file():
+        raise InstallerError("not_installed", f"{vendor}/{app} is not installed")
+    shutil.rmtree(target)
+    logger.info(f"Nexus app uninstalled: {vendor}/{app} ({target})")
+    return {"ok": True, "vendor": vendor, "app": app}
+
+
 def install_source(source: str, apps_dir, subscription_ok=None) -> dict:
     """Full install: fetch doc -> gate check -> download -> verify ->
     extract -> verify inner manifest -> atomic swap. ``subscription_ok``
