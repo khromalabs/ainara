@@ -150,8 +150,18 @@ class SubscriptionManager:
 
     def __init__(self, storage_backend):
         self.storage = storage_backend
-        core_cls = _import_core()
-        self._core = core_cls(storage_backend) if core_cls else None
+        try:
+            core_cls = _import_core()
+            self._core = core_cls(storage_backend) if core_cls else None
+        except Exception as e:
+            # The core loads its build secret at import time; a missing or
+            # broken setup must degrade to fail-closed, never take down
+            # Pybridge startup.
+            logger.error(
+                f"Nexus licensing core failed to load: {e} — running "
+                "fail-closed (gated bundles cannot subscribe)."
+            )
+            self._core = None
         if self._core is None:
             logger.warning(
                 "Nexus licensing backend unavailable — license-gated "

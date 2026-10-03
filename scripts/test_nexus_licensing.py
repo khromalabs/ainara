@@ -121,6 +121,24 @@ def test_fail_closed():
             os.environ["AINARA_NEXUS_LICENSING_PATH"] = saved
 
 
+def test_crash_resilience():
+    """Core found but broken (no build secret) -> manager degrades to
+    fail-closed; Pybridge startup must never crash on licensing."""
+    saved_secret = os.environ.pop("AINARA_BUILD_SECRET", None)
+    os.environ["AINARA_NEXUS_LICENSING_PATH"] = LICENSING_ROOT
+    try:
+        mgr = SubscriptionManager(FakeStorage())
+        assert mgr.available is False, "broken core must degrade, not raise"
+        ok, msg, info = mgr.verify_subscription(
+            "a", "b", {}, None, WALLET, [1], "m"
+        )
+        assert ok is False and info is None
+        print("ok  core present but broken -> fail-closed, no startup crash")
+    finally:
+        if saved_secret is not None:
+            os.environ["AINARA_BUILD_SECRET"] = saved_secret
+
+
 def test_delegation():
     os.environ["AINARA_NEXUS_LICENSING_PATH"] = LICENSING_ROOT
     os.environ["AINARA_BUILD_SECRET"] = base64.b64encode(
@@ -183,4 +201,5 @@ def test_delegation():
 if __name__ == "__main__":
     test_identity()
     test_fail_closed()
+    test_crash_resilience()
     test_delegation()
