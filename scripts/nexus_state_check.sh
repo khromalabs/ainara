@@ -88,6 +88,16 @@ git check-ignore -q --no-index ainara/nexus/khromalabs/ataria \
   && ok "gitignore rule active (--no-index probe)" \
   || bad ".gitignore ainara/nexus/* rule missing (gotcha §4-4/13)"
 
+# Pybridge route contract: the six /nexus endpoints (Stage B/C) must stay
+# registered — a bulk deletion regression once orphaned them (gotcha: a
+# route is not an import-time artifact; only source-level checks catch it)
+NEXUS_ROUTES=$(grep -c '@app.route("/nexus' ainara/framework/pybridge.py || true)
+if [ "$NEXUS_ROUTES" -ge 6 ]; then
+  ok "pybridge /nexus route contract ($NEXUS_ROUTES routes)"
+else
+  bad "pybridge /nexus routes missing (found $NEXUS_ROUTES, need >=6)"
+fi
+
 echo "=== S2: interpreter & tools ================================="
 echo "      venv: $("$PY" --version 2>&1)"
 "$PY" -c "import aiohttp" 2>/dev/null && ok "bundle deps importable (aiohttp)" \

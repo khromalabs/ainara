@@ -416,7 +416,12 @@ function goToPreviousStep() {
     // Initialize the previous step if it has a module
     const prevModule = stepModules[steps[currentStepIndex]];
     if (prevModule && typeof prevModule.init === 'function') {
-        prevModule.init(ctx).catch(err => console.error('Error initializing previous step:', err));
+        // Some step modules use a sync init() (returns undefined) — only
+        // chain .catch on real promises
+        const result = prevModule.init(ctx);
+        if (result instanceof Promise) {
+            result.catch(err => console.error('Error initializing previous step:', err));
+        }
     }
 
     updateButtonVisibility();
