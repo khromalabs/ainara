@@ -92,11 +92,6 @@ echo "=== S2: interpreter & tools ================================="
 echo "      venv: $("$PY" --version 2>&1)"
 "$PY" -c "import aiohttp" 2>/dev/null && ok "bundle deps importable (aiohttp)" \
   || bad "aiohttp missing in venv — discovery A will fail"
-if command -v minisign >/dev/null 2>&1 && minisign -h 2>&1 | head -1 | grep -q "^Usage:"; then
-  ok "minisign real binary"
-else
-  warn "minisign unusable (D-B regression?)"
-fi
 
 echo "=== S3: discovery A/B (A: keyring/API-key side effects) ====="
 REAL_CFG="$("$PY" -c "from ainara.framework.config import config; print(config.get_default_config_paths()[0])")"

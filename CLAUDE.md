@@ -202,8 +202,8 @@ manifests. Contracts that must not be broken:
   ...), `universal` fallback.
 - **Pack pipeline** (in each bundle repo): P0 lint → P1 registries →
   P2 stage/augment → **P2a identity signing (unconditional)** → P2b
-  guard injection + PyArmor (protected only) → P3 zip → P4 minisign →
-  P5 verify. See the bundle repo's `notes/pack_and_install.md`.
+  guard injection + PyArmor (protected only) → P3 zip → P5 verify.
+  See the bundle repo's `notes/pack_and_install.md`.
 - **Guard contract**: `inject_license_guards.py` (licensing checkout)
   extracts `_machine_id`, `_derive_key`, `_machine_hash`,
   `_verify_session_token` + `TOKEN_VERSION`, `KDF_INFO`,
