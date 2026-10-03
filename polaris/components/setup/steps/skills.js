@@ -975,6 +975,18 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
                 color: #dc3545;
                 font-weight: bold;
             }
+            .nexus-search-options {
+                margin-top: 8px;
+                font-size: 0.88em;
+            }
+            .nexus-search-options label {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                cursor: pointer;
+                color: #555;
+                user-select: none;
+            }
 
             /* Nexus subscriptions & install (Stage C) */
             .nexus-add-box {
@@ -1117,6 +1129,9 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
                 autocomplete="off"
             >
             <div id="nexus-search-status"></div>
+            <div class="nexus-search-options">
+                <label><input type="checkbox" id="nexus-modified-toggle"> Show only modified properties</label>
+            </div>
         </div>
         <div class="nexus-apps-list">${appsHtml || ''}</div>
     `;
@@ -1373,16 +1388,19 @@ function setupNexusListeners(ctx) {
 
     const searchInput = document.getElementById('nexus-search-input');
     if (searchInput) {
-        searchInput.addEventListener('input', () => {
+        const modifiedToggle = document.getElementById('nexus-modified-toggle');
+
+        const applyNexusFilters = () => {
             const rawQuery = searchInput.value.trim();
             const query = rawQuery.toLowerCase();
             const statusEl = document.getElementById('nexus-search-status');
             const allItems = Array.from(document.querySelectorAll('.nexus-param-item'));
+            const onlyModified = !!(modifiedToggle && modifiedToggle.checked);
 
-            // Clear search: show everything again
-            if (!query) {
+            // Nothing active: show everything again
+            if (!query && !onlyModified) {
                 resetNexusSearchVisibility();
-                if (statusEl) statusEl.textContent = '';
+                if (statusEl) { statusEl.textContent = ''; statusEl.classList.remove('too-many'); }
                 return;
             }
 
@@ -1391,12 +1409,13 @@ function setupNexusListeners(ctx) {
 
             allItems.forEach(item => {
                 const haystack = (item.dataset.search || '').toLowerCase();
-                const matches = tokens.every(token => haystack.includes(token));
-                item.style.display = matches ? '' : 'none';
-                if (matches) matchCount++;
+                const matchesSearch = tokens.every(token => haystack.includes(token));
+                const visible = matchesSearch && (!onlyModified || item.classList.contains('modified'));
+                item.style.display = visible ? '' : 'none';
+                if (visible) matchCount++;
             });
 
-            if (matchCount > NEXUS_SEARCH_MAX_RESULTS) {
+            if (query && matchCount > NEXUS_SEARCH_MAX_RESULTS) {
                 // Too many matches: hide everything and ask the user to narrow down
                 allItems.forEach(item => { item.style.display = 'none'; });
                 if (statusEl) {
@@ -1405,18 +1424,19 @@ function setupNexusListeners(ctx) {
                 }
             } else {
                 if (statusEl) {
-                    if (matchCount === 0) {
-                        statusEl.textContent = 'No matching properties.';
-                    } else {
-                        statusEl.textContent = `${matchCount} result${matchCount === 1 ? '' : 's'}`;
-                    }
+                    statusEl.textContent = matchCount === 0
+                        ? 'No matching properties.'
+                        : `${matchCount} result${matchCount === 1 ? '' : 's'}`;
                     statusEl.classList.remove('too-many');
                 }
             }
 
             updateNexusSkillSummaries();
             refreshNexusContainerVisibility();
-        });
+        };
+
+        searchInput.addEventListener('input', applyNexusFilters);
+        if (modifiedToggle) modifiedToggle.addEventListener('change', applyNexusFilters);
     }
 
     setupNexusLifecycleListeners(ctx);
@@ -1512,8 +1532,29 @@ function setupNexusLifecycleListeners(ctx) {
                 const vendor = unsubBtn.dataset.vendor, app = unsubBtn.dataset.app;
                 if (!confirm(`Uninstall ${vendor}/${app}? Your NFT and subscription remain valid — reinstalling later won't require verifying again.`)) return;
                 try {
-                    await fetch(`${pybridgeUrl}/nexus/app/${vendor}/${app}`, { method: 'DELETE' });
-                    refreshUI();
+                    const resp = await fetch(`${pybridgeUrl}/nexus/app/${vendor}/${app}`, { method: 'DELETE' });
+                    const data = await resp.json();
+                    if (!data.ok) {
+                        alert('Uninstall failed: ' + (data.message || 'unknown error'));
+                        return;
+                    }
+                    // Mirror the install flow: reload Orakle so the app's
+                    // skills/properties disappear, then refresh the step
+                    const orakleUrl = ctx.config.get('orakle.api_url');
+                    setStatus(unsubBtn.closest('.nexus-app').querySelector('.nexus-app-state') || unsubBtn.parentElement,
+                        'Uninstalled. Reloading…', 'info-message');
+                    ctx.ipcRenderer.send('nexus:reload-orakle');
+                    const started = Date.now();
+                    const timer = setInterval(async () => {
+                        if (Date.now() - started > 180000) { clearInterval(timer); refreshUI(); return; }
+                        try {
+                            const props = await fetch(orakleUrl + '/capabilities?view=properties').then(r => r.json());
+                            if (!Object.keys(props || {}).some(k => k.includes(`.nexus.${vendor}.${app}`))) {
+                                clearInterval(timer);
+                                refreshUI();
+                            }
+                        } catch (err) { /* keep polling */ }
+                    }, 2000);
                 } catch (err) {
                     alert('Uninstall failed: ' + err.message);
                 }
