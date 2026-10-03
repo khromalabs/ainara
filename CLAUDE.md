@@ -194,7 +194,9 @@ manifests. Contracts that must not be broken:
   (`nexuslicensing.auth_core.NexusSubscriptionCore`, optional import,
   absent in public checkouts → fail-closed) issues machine-bound,
   app-bound tokens; Polaris has NO app-level auth (the Supporters
-  Edition and its `/auth/*` endpoints are fully retired).
+  Edition and its `/auth/*` endpoints are fully retired). Source runs
+  need `AINARA_NEXUS_LICENSING_PATH` pointing at the closed licensing
+  checkout; packaged builds ship the compiled package.
 - **Install protocol v0**: `https://<host>/.well-known/nexus-app.json`
   (default TLD `.nexus`), doc self-signed by `creatorId`; installer
   verifies doc identity → artifact sha256 → inner manifest identity →

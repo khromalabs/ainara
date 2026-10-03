@@ -1172,7 +1172,7 @@ def create_app():
             v, a = vendor, application
             version = request.args.get("version", "")
         if not subscription_manager.available:
-            return "Licensing backend unavailable", 503
+            return "Licensing backend unavailable (closed core not loaded). For source runs set AINARA_NEXUS_LICENSING_PATH to the closed licensing checkout; packaged builds ship the compiled nexuslicensing package.", 503
         try:
             message = subscription_manager.subscription_message(v, a)
         except ValueError as e:
@@ -1196,7 +1196,7 @@ def create_app():
         the per-bundle subscription token + receipt code."""
         if not subscription_manager.available:
             return (
-                jsonify({"success": False, "message": "Licensing backend unavailable"}),
+                jsonify({"success": False, "message": "Licensing backend unavailable (closed core not loaded). For source runs set AINARA_NEXUS_LICENSING_PATH to the closed licensing checkout; packaged builds ship the compiled nexuslicensing package."}),
                 503,
             )
         data = request.get_json(silent=True) or {}
@@ -1245,7 +1245,7 @@ def create_app():
         """Local unsubscribe: clears the bundle's stored license state."""
         if not subscription_manager.available:
             return (
-                jsonify({"success": False, "message": "Licensing backend unavailable"}),
+                jsonify({"success": False, "message": "Licensing backend unavailable (closed core not loaded). For source runs set AINARA_NEXUS_LICENSING_PATH to the closed licensing checkout; packaged builds ship the compiled nexuslicensing package."}),
                 503,
             )
         try:

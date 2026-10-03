@@ -158,6 +158,10 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 ### Environment Variables
 
 - `AINARA_USE_SOURCE=1`: Use source to boot backend services.
+- `AINARA_NEXUS_LICENSING_PATH`: Path to the closed licensing checkout
+  (`ainara_licensing`), needed for source runs so Nexus bundle
+  subscriptions can be issued; packaged builds ship the compiled
+  `nexuslicensing` package and don't need it.
 - `AINARA_LOG_ELECTRON=1`: Capture all Electron output into /tmp/electron.log
 - `AINARA_SENTINEL_MODE=1`: Start Polaris in alternative Sentinel-only mode, runs Bureau+Orakle for scheduled agents orchestrated plans execution.
 
