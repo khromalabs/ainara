@@ -37,6 +37,8 @@
         const VENDOR = "{{vendor}}";
         const APP = "{{app}}";
         const MESSAGE = "{{auth_message}}";
+        const COLLECTION = "{{collection}}";
+        const CREATOR = "{{creator}}";
 
         async function connectAndSign() {
             const status = document.getElementById('status');
@@ -73,7 +75,9 @@
                         app: APP,
                         wallet: publicKey,
                         signature: Array.from(signedMessage.signature),
-                        message: MESSAGE
+                        message: MESSAGE,
+                        collection: COLLECTION,
+                        creator: CREATOR
                     })
                 });
 

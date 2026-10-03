@@ -1187,6 +1187,11 @@ def create_app():
                 "bundle_label": bundle_label,
                 "vendor": v,
                 "app": a,
+                # pre-install targets: echoed back by the portal so
+                # /nexus/subscription/verify can issue without a local
+                # manifest (fail-closed if neither is present)
+                "collection": request.args.get("collection", "").strip(),
+                "creator": request.args.get("creator", "").strip(),
             },
         )
 
