@@ -1153,7 +1153,7 @@ function nexusExplorerLinks(state) {
     }
     if (state.collection) {
         links.push(
-            `<span class="nexus-trust-label">collection</span> ` +
+            `<span class="nexus-trust-label">NFT collection</span> ` +
             `<span class="nexus-addr" title="${escapeHtml(state.collection)}">${escapeHtml(shortAddr(state.collection))}</span>` +
             ` <a href="#" class="nexus-explorer-link" data-kind="token" data-addr="${escapeHtml(state.collection)}">view on explorer</a>`
         );
@@ -1173,7 +1173,7 @@ function renderNexusAppHeader(state) {
     if (state.gated) {
         const sub = state.subscription || {};
         if (sub.subscribed) {
-            bits.push(`<span class="nexus-badge nexus-badge-ok" title="Continuous access while your NFT is held — verified on-chain periodically, no action needed">Subscription active</span>`);
+            bits.push(`<span class="nexus-badge nexus-badge-ok" title="Continuous access while your NFT is held — verified on-chain periodically, no action needed">NFT validated</span>`);
             if (sub.code) bits.push(`<span class="nexus-badge nexus-badge-code" title="Subscription receipt">${escapeHtml(sub.code)}</span>`);
         } else {
             const reasons = {
@@ -1189,9 +1189,9 @@ function renderNexusAppHeader(state) {
     }
 
     if (state.identity_verified) {
-        bits.push('<span class="nexus-badge nexus-badge-ok" title="Manifest signed by the creator\'s Solana key">Identity verified</span>');
+        bits.push('<span class="nexus-badge nexus-badge-ok" title="Manifest signed by the creator\'s Solana key">Verified author</span>');
     } else {
-        bits.push(`<span class="nexus-badge nexus-badge-warn" title="${escapeHtml(state.identity_reason || '')}">Identity unverified</span>`);
+        bits.push(`<span class="nexus-badge nexus-badge-warn" title="${escapeHtml(state.identity_reason || '')}">Unverified author</span>`);
     }
 
     const actions = [];
@@ -1236,7 +1236,7 @@ function renderNexusRemoteCard(s) {
     if (s.gated) {
         bits.push('<span class="nexus-badge nexus-badge-warn">Requires NFT ownership</span>');
         const sub = s.subscription || {};
-        if (sub.subscribed) bits.push('<span class="nexus-badge nexus-badge-ok">Subscription active</span>');
+        if (sub.subscribed) bits.push('<span class="nexus-badge nexus-badge-ok">NFT validated</span>');
     } else {
         bits.push('<span class="nexus-badge">Open app</span>');
     }
