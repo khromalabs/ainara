@@ -115,7 +115,10 @@ class NexusSkillProvider(BasePythonSkillProvider):
 
     def discover(self) -> Dict[str, Dict[str, Any]]:
         """Discover and load skills from Nexus bundles."""
-        self.capabilities = {}
+        # Accumulated here, not in self.capabilities: the base discover() called
+        # once per bundle below starts by resetting self.capabilities, so with
+        # more than one bundle only the last one scanned would survive.
+        discovered: Dict[str, Dict[str, Any]] = {}
         logger.info(f"Scanning for Nexus bundles in: {self.nexus_path}")
 
         for vendor_dir in self.nexus_path.iterdir():
@@ -225,8 +228,9 @@ class NexusSkillProvider(BasePythonSkillProvider):
                         prefix_module,
                     )
 
-                    self.capabilities.update(bundle_caps)
+                    discovered.update(bundle_caps)
 
+        self.capabilities = discovered
         logger.info(f"Loaded {len(self.capabilities)} nexus skills.")
         return self.capabilities
 
