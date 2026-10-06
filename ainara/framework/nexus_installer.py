@@ -79,7 +79,7 @@ class InstallerError(Exception):
 
 def current_platform_tag() -> str:
     """Same convention as ataria pack.py: linux-x86_64 / darwin-arm64 /
-    win-amd64 / ..."""
+    win-x86_64 / ..."""
     os_name = {"linux": "linux", "darwin": "darwin", "win32": "win"}.get(
         sys.platform, sys.platform
     )

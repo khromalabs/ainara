@@ -159,9 +159,19 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 
 - `AINARA_USE_SOURCE=1`: Use source to boot backend services.
 - `AINARA_NEXUS_LICENSING_PATH`: Path to the closed licensing checkout
-  (`ainara_licensing`), needed for source runs so Nexus bundle
+  (`ainara_licensing`) — DEVELOPER source runs only, so Nexus bundle
   subscriptions can be issued; packaged builds ship the compiled
-  `nexuslicensing` package and don't need it.
+  `nexuslicensing` package and don't need it. End users running from
+  source should instead install the prebuilt private wheel once (no env
+  var and no secret file needed afterwards; the normal import path takes
+  precedence):
+  `pip install https://downloads.ainara.app/nexuslicensing/nexuslicensing-<ver>-py3-none-<platform>.whl`
+  (platforms: `win_amd64`, `linux_x86_64`, `macosx_11_0_x86_64`,
+  `macosx_11_0_arm64`; check the published `.sha256`). This is a
+  PLATFORM-level runtime, shared by every license-gated Nexus app (any
+  vendor, any NFT series — series are declared per-app in each bundle's
+  manifest), and it is only needed for gated bundles — open bundles
+  work with no licensing setup at all.
 - `AINARA_LOG_ELECTRON=1`: Capture all Electron output into /tmp/electron.log
 - `AINARA_SENTINEL_MODE=1`: Start Polaris in alternative Sentinel-only mode, runs Bureau+Orakle for scheduled agents orchestrated plans execution.
 
@@ -174,8 +184,7 @@ An alternative way to run the backend services with no UI frontend for scheduled
 scripts/scheduler.py
 
 # stop all services
-(press Control+C to quit)
-```
+
 The services script handles virtualenv activation, health-check polling, and log tailing (same log directories as Polaris).
 
 ## Requirements

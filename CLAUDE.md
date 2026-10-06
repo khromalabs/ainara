@@ -200,7 +200,7 @@ manifests. Contracts that must not be broken:
 - **Install protocol v0**: `https://<host>/.well-known/nexus-app.json`
   (default TLD `.nexus`), doc self-signed by `creatorId`; installer
   verifies doc identity → artifact sha256 → inner manifest identity →
-  atomic swap. Platform tags match pack.py (`linux-x86_64`, `win-amd64`,
+  atomic swap. Platform tags match pack.py (`linux-x86_64`, `win-x86_64`,
   ...), `universal` fallback.
 - **Pack pipeline** (in each bundle repo): P0 lint → P1 registries →
   P2 stage/augment → **P2a identity signing (unconditional)** → P2b
