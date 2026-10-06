@@ -60,7 +60,7 @@ SQLAlchemy==2.0.46
 fastembed===0.7.4
 openwakeword @ git+https://github.com/khromalabs/openWakeWord.git@tag_v0.6.0
 trafilatura==2.0.0
-speexdsp_ns==0.1.2
+speexdsp_ns==0.1.2 ; sys_platform == "linux"
 keyring==25.7.0
 # fix weird dependency error
 setuptools<82
