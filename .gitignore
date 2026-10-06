@@ -19,3 +19,6 @@ scripts/migration/drop_*/cache*.json
 scripts/migration/drop_*/sugar.log
 scripts/pyinstaller/runtime_hook.py
 static/
+node_modules/
+venv/
+.venv/
