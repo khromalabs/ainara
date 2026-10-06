@@ -31,6 +31,7 @@ from typing import Any, Dict, Optional  # List,
 
 from ainara.bureau.plan import (
     BUILTIN_STATIC_ROOTS,
+    STATIC_PLACEHOLDER_RE,
     Plan,
     PlanValidationError,
     StepNode,
@@ -265,7 +266,8 @@ class Conductor:
     # ------------------------------------------------------------------
 
     def trigger_plan(
-        self, plan_name: str, avoid_if: Optional[Any] = None
+        self, plan_name: str, avoid_if: Optional[Any] = None,
+        variables: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Attempt to start a plan run.  Returns ``(run_id, error_str)``
@@ -274,9 +276,26 @@ class Conductor:
         * ``"plan_not_found"``   – no plan with that name is loaded
         * ``"already_running"``  – the plan's lock is held; run in progress
         * ``"avoid_condition_met:<blocking_plan>"`` – a plan specified in avoid_if is running
+        * ``"invalid_variables:<reason>"`` – the per-run override was rejected
+
+        ``variables`` overrides values of the plan's own ``variables`` for
+        this run only (e.g. ``{"city": "Bilbao"}`` to point one plan at a
+        different input). Only names the plan already declares may be
+        overridden, and only with scalars: a misspelled name would otherwise
+        run silently with the plan's default value.
+
+        The lock stays per plan name, so two runs of one plan never overlap
+        whatever their overrides, and ``avoid_if`` keeps meaning "any run of
+        that plan".
         """
         if plan_name not in self.plans:
             return None, "plan_not_found"
+
+        override_error = self._check_variable_override(
+            self.plans[plan_name], variables
+        )
+        if override_error:
+            return None, f"invalid_variables:{override_error}"
 
         lock = self._locks.get(plan_name)
         if lock is None:
@@ -302,7 +321,7 @@ class Conductor:
         run_id = str(uuid.uuid4())[:8]
         thread = threading.Thread(
             target=self._execute_plan,
-            args=(plan_name, run_id, lock),
+            args=(plan_name, run_id, lock, dict(variables or {})),
             name=f"conductor-{plan_name}-{run_id}",
             daemon=True,
         )
@@ -314,7 +333,8 @@ class Conductor:
     # ------------------------------------------------------------------
 
     def _execute_plan(
-        self, plan_name: str, run_id: str, lock: threading.Lock
+        self, plan_name: str, run_id: str, lock: threading.Lock,
+        variables: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Orchestrate the full DAG execution for a single plan run.
@@ -325,7 +345,9 @@ class Conductor:
 
         # --- Static bindings snapshot (variables + config aliases) ---
         # Resolved once per run; mid-run config reloads do not affect it.
-        bindings, bindings_error = self._build_static_bindings(plan, log_prefix)
+        bindings, bindings_error = self._build_static_bindings(
+            plan, log_prefix, variables
+        )
         scratchpad = Scratchpad(
             max_chars=plan.scratchpad_max_chars, static_bindings=bindings
         )
@@ -669,14 +691,44 @@ class Conductor:
         self.plan_status[plan_name].pop("current_run_id", None)
         lock.release()
 
+    @staticmethod
+    def _check_variable_override(
+        plan: Plan, variables: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Return why a per-run ``variables`` override is unusable, or None.
+
+        Same value rules as the plan's own ``variables`` (scalars, no chained
+        ``{{$...}}``), plus: every name must already be declared by the plan.
+        """
+        if variables is None:
+            return None
+        if not isinstance(variables, dict):
+            return "must be a mapping of name -> scalar"
+        unknown = sorted(str(k) for k in variables if k not in plan.variables)
+        if unknown:
+            return (
+                f"plan '{plan.name}' declares no variable(s) {unknown};"
+                f" declared: {sorted(plan.variables)}"
+            )
+        for name, value in variables.items():
+            if value is None or isinstance(value, (dict, list)):
+                return f"variable '{name}' must be a scalar"
+            if isinstance(value, str) and STATIC_PLACEHOLDER_RE.search(value):
+                return f"variable '{name}' contains a {{{{$...}}}} reference"
+        return None
+
     def _build_static_bindings(
-        self, plan: Plan, log_prefix: str
+        self,
+        plan: Plan,
+        log_prefix: str,
+        overrides: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """
         Snapshot plan variables and resolve config aliases once per run.
 
         Returns ``(StaticBindings, error_or_None)``. Aliases are resolved
         immediately so a broken alias aborts the run before any step runs.
+        *overrides* is the run's validated ``trigger_plan(variables=...)``.
         """
         config_root: dict = {}
         if self.config_manager is not None:
@@ -709,11 +761,15 @@ class Conductor:
 
         # Built-in time/language bindings come from the shared
         # default_template_context() — the same values .mu templates get.
-        # Plan variables win on collision (same precedence as render()).
+        # Plan variables win on collision (same precedence as render()), and
+        # a run's overrides win over the plan's own values.
+        if overrides:
+            logger.info("%s Variable overrides: %s", log_prefix, overrides)
         bindings = StaticBindings(
             variables={
                 **default_template_context(),
                 **plan.variables,
+                **(overrides or {}),
             },
             aliases=aliases,
             alias_targets=dict(plan.config_aliases),
@@ -900,7 +956,16 @@ class Conductor:
             end_time = datetime.now(timezone.utc)
             duration = end_time - start_time
 
-            reports_dir = Path(self.config_manager.get_default_log_dir()) / "bureau" / "reports"
+            # Honour the configured (local-first) logging.directory like every
+            # other log; only fall back to the platform default when the key is
+            # unset. Forensic reports carry run detail, so they follow the
+            # same local-disk rule as the rest of the logs.
+            log_base = (self.config_manager.get("logging.directory")
+                        if self.config_manager else None)
+            reports_dir = (
+                Path(log_base) if log_base
+                else Path(self.config_manager.get_default_log_dir())
+            ) / "bureau" / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
             timestamp_str = start_time.astimezone().strftime("%Y%m%d_%H%M")
             report_name = f"plan_{plan_name}-{timestamp_str}-{run_id}.md"

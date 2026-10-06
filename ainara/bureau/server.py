@@ -389,9 +389,13 @@ def initialize_components():
 
     # 6. Initialize the Conductor
     global conductor
-    config_paths = config_manager.get_default_config_paths()
+    # Derive the plans dir from the config file that was actually loaded, so
+    # that an AINARA_CONFIG override points the Conductor at the same config
+    # directory every other component uses.
     plans_dir = (
-        Path(config_paths[0]).parent / "bureau" if config_paths else None
+        Path(config_manager.config_file_path).parent / "bureau"
+        if config_manager.config_file_path
+        else None
     )
 
     if plans_dir:
@@ -778,17 +782,33 @@ def trigger_conductor_plan(plan_name):
 
     Returns 202 with ``run_id`` on success.
     Returns 404 if the plan is unknown, 409 if it is already running or blocked by avoid_if.
+    Returns 400 if a ``variables`` override names a variable the plan does not
+    declare, or is not a mapping of scalars.
     """
     if conductor is None:
         return jsonify({"error": "Conductor not initialized"}), 503
 
     data = request.get_json(silent=True) or {}
     avoid_if = data.get("avoid_if")
+    # Optional per-run overrides of the plan's own `variables` (e.g.
+    # {"coin": "ETH"}); the Conductor rejects names the plan does not declare.
+    variables = data.get("variables")
 
-    run_id, error = conductor.trigger_plan(plan_name, avoid_if=avoid_if)
+    run_id, error = conductor.trigger_plan(
+        plan_name, avoid_if=avoid_if, variables=variables)
 
     if error == "plan_not_found":
         return jsonify({"error": f"Plan '{plan_name}' not found"}), 404
+    if error and error.startswith("invalid_variables:"):
+        return (
+            jsonify(
+                {
+                    "error": error.split(":", 1)[1],
+                    "plan_name": plan_name,
+                }
+            ),
+            400,
+        )
     if error == "already_running":
         return (
             jsonify(

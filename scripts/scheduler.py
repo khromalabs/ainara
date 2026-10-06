@@ -607,12 +607,19 @@ def restart_service(service_name, cmd, log_file, health_url, sched_config):
 # ---------------------------------------------------------------------------
 # Plan triggering
 # ---------------------------------------------------------------------------
-def trigger_plan(plan_name, bureau_url, avoid_if=None):
-    """Trigger a plan execution via Bureau API."""
+def trigger_plan(plan_name, bureau_url, avoid_if=None, variables=None):
+    """Trigger a plan execution via Bureau API.
+
+    variables (a flat dict) overrides values of the plan's own `variables`
+    for this run only, so one plan can be run with different inputs. Bureau
+    refuses names the plan does not declare.
+    """
     url = f"{bureau_url}/v1/conductor/plans/{plan_name}/run"
     body = {}
     if avoid_if:
         body["avoid_if"] = avoid_if
+    if variables:
+        body["variables"] = variables
     try:
         response = requests.post(url, json=body or None, timeout=30)
         if response.status_code == 200 or response.status_code == 202:
@@ -668,10 +675,24 @@ def build_scheduler(schedules, bureau_url):
                 day_of_week=parts[4],
             )
             avoid_if = plan_config.get("avoid_if")
+            # Optional per-schedule overrides, so the same plan can be
+            # scheduled more than once with different inputs: `plan` names
+            # the plan to run (defaulting to the schedule key, which stays
+            # the job id) and `variables` overrides its declared variables.
+            if "vars" in plan_config:
+                # The old key. Ignoring it would run the plan's defaults under
+                # a schedule the operator believes overrides them.
+                log_error(
+                    f"Plan '{plan_name}' uses 'vars:', which was renamed to"
+                    " 'variables:'. Not scheduling it until the key is renamed."
+                )
+                continue
+            variables = plan_config.get("variables")
+            target_plan = plan_config.get("plan", plan_name)
             scheduler.add_job(
                 trigger_plan,
                 trigger=trigger,
-                args=[plan_name, bureau_url, avoid_if],
+                args=[target_plan, bureau_url, avoid_if, variables],
                 id=plan_name,
                 name=f"Plan: {plan_name}",
                 replace_existing=True,
@@ -904,6 +925,15 @@ def parse_args():
             "(used with --run-plan)"
         ),
     )
+    parser.add_argument(
+        "--var",
+        metavar="NAME=VALUE",
+        action="append",
+        help=(
+            "Override one of the plan's declared variables for this run; "
+            "repeatable (used with --run-plan)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -975,8 +1005,16 @@ def main():
             avoid_if = [p.strip() for p in args.avoid_if.split(",")]
         else:
             avoid_if = (schedules.get(args.run_plan) or {}).get("avoid_if")
+        variables = {}
+        for item in args.var or []:
+            name, sep, value = item.partition("=")
+            if not sep or not name.strip():
+                log_error(f"--var expects NAME=VALUE, got '{item}'")
+                sys.exit(2)
+            variables[name.strip()] = value.strip()
         success = trigger_plan(
-            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if
+            args.run_plan, sched_config["bureau_url"], avoid_if=avoid_if,
+            variables=variables or None,
         )
         sys.exit(0 if success else 1)
 
