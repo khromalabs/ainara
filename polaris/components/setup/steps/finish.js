@@ -55,6 +55,12 @@ async function init(ctx) {
         comringNotificationsCheckbox.checked = config.get('ui.comringNotifications');
     }
 
+    const autoStartCheckbox = document.getElementById('auto-start-checkbox');
+    if (autoStartCheckbox) {
+        autoStartCheckbox.addEventListener('change', markFinishModified);
+        autoStartCheckbox.checked = config.get('startup.autoStart', false);
+    }
+
     const backupDirectoryInput = document.getElementById('backup-directory-input');
     const browseBackupDirectoryBtn = document.getElementById('browse-backup-directory-btn');
 
@@ -237,6 +243,12 @@ async function saveFinishStepConfig(ctx) {
             backendConfig.backup.directory = backupDirectory;
             backendConfig.backup.enabled = !!backupDirectory;
             await api.saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
+        }
+
+        if (modifiedFields.finish.has('auto-start-checkbox')) {
+            config.set('startup.autoStart', document.getElementById('auto-start-checkbox').checked);
+            // Notify the main process to apply the setting immediately
+            ctx.ipcRenderer.send('set-auto-start');
         }
 
         if (modifiedFields.finish.has('wakeword-checkbox')) {

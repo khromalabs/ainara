@@ -129,16 +129,15 @@ let trayState = null;
 let trayListening = null;
 let trayNotifications = null;
 
-// TODO delayed to v0.10
-// function applyAutoStartSetting() {
-//     const autoStartEnabled = config.get('startup.autoStart', false);
-//     Logger.info(`Applying auto-start setting. Enabled: ${autoStartEnabled}`);
-//     // This API is cross-platform and handles the underlying OS specifics.
-//     app.setLoginItemSettings({
-//         openAtLogin: autoStartEnabled,
-//         path: app.getPath('exe') // This is used by Windows and ignored by others.
-//     });
-// }
+function applyAutoStartSetting() {
+    const autoStartEnabled = config.get('startup.autoStart', false);
+    Logger.info(`Applying auto-start setting. Enabled: ${autoStartEnabled}`);
+    // This API is cross-platform and handles the underlying OS specifics.
+    app.setLoginItemSettings({
+        openAtLogin: autoStartEnabled,
+        path: app.getPath('exe') // This is used by Windows and ignored by others.
+    });
+}
 
 // Check if this is the first run of the application
 function isFirstRun() {
@@ -353,6 +352,10 @@ async function appFirstInitializationTasks() {
     app.commandLine.appendSwitch('ozone-platform', 'x11');
     await app.whenReady();
 
+    // Apply auto-start setting on launch (in case it drifted, e.g. a reinstall
+    // or the user toggled it outside Ainara).
+    applyAutoStartSetting();
+
     // --- Sentinel mode fork (before any Polaris-only initialization) ---
     if (requestedSentinel.invalidEnvValue) {
         dialog.showErrorBox(
@@ -378,9 +381,6 @@ async function appFirstInitializationTasks() {
         }
         Logger.info('Sentinel mode requested but setup incomplete, running setup first');
     }
-
-    // // Apply auto-start setting on launch
-    // applyAutoStartSetting();
 
     // Initialize Ollama client
     initializeOllamaClient();
@@ -1345,10 +1345,10 @@ function appSetupEventHandlers() {
         shell.openExternal(url);
     });
 
-    // // Handle auto-start setting changes from setup wizard
-    // ipcMain.on('set-auto-start', () => {
-    //     applyAutoStartSetting();
-    // });
+    // Handle auto-start setting changes from setup wizard
+    ipcMain.on('set-auto-start', () => {
+        applyAutoStartSetting();
+    });
 
     // Handle backup directory selection from setup wizard
     ipcMain.on('select-backup-directory', async (event) => {
