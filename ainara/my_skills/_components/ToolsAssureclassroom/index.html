@@ -1,0 +1,1797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Assure1 Classroom</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #151a21; --panel-2: #1b212a; --raised: #222a35;
+    --ink: #e8edf3; --ink-dim: #aab5c3; --ink-soft: #7a8797;
+    --line: rgba(255,255,255,.08); --line-2: rgba(255,255,255,.14);
+    --good: #4ade80; --good-bg: rgba(74,222,128,.1); --bad: #f87171; --bad-bg: rgba(248,113,113,.1);
+    --gold: #e2b04a; --gold-bg: rgba(226,176,74,.12);
+    --accent: #38bdf8; --on-accent: #04202d; --code-bg: #0a0d12;
+  }
+  [data-theme="light"] {
+    --bg: #f3f5f8; --panel: #ffffff; --panel-2: #f6f8fb; --raised: #e9edf3;
+    --ink: #1b2330; --ink-dim: #46536a; --ink-soft: #6b788c;
+    --line: rgba(0,0,0,.09); --line-2: rgba(0,0,0,.16);
+    --good: #15803d; --good-bg: rgba(21,128,61,.09); --bad: #b91c1c; --bad-bg: rgba(185,28,28,.08);
+    --gold: #a16207; --gold-bg: rgba(161,98,7,.1);
+    --accent: #0369a1; --on-accent: #fff; --code-bg: #eef2f7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; font-size: 15px; line-height: 1.55; overflow: hidden; }
+  code, pre, textarea, .mono { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: .88em; }
+  .hidden { display: none !important; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn { background: var(--raised); border: 1px solid var(--line-2); border-radius: 9px; padding: 7px 13px; font-weight: 600; font-size: 14px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+  .btn.gold { background: var(--gold-bg); border-color: var(--gold); color: var(--gold); }
+  .btn.small { padding: 4px 9px; font-size: 13px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .pill { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line-2); color: var(--ink-dim); }
+  .pill.sim { border-color: var(--gold); color: var(--gold); }
+
+  /* landing (same look as the Coding Classroom: gold Ainara, soft glow) */
+  #landing { height: 100%; overflow: auto; padding: 26px 24px 50px;
+    background: radial-gradient(900px 420px at 50% -120px, rgba(226,176,74,.16), transparent 70%), radial-gradient(700px 500px at 100% 110%, rgba(56,189,248,.10), transparent 70%), var(--bg); }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  .ainara-logo { object-fit: contain; }
+  .wl-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+  .wl-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .wl-brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; }
+  .wl-bird-sm { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle, rgba(255,215,102,.32), rgba(255,215,102,0) 70%); }
+  .wl-bird-sm img { width: 36px; height: 36px; filter: drop-shadow(0 2px 6px rgba(226,176,74,.55)); }
+  .wl-name em { font-style: normal; font-weight: 700; color: var(--gold); }
+  .wl-total { font-size: 13.5px; color: var(--ink-dim); background: var(--panel); border: 1px solid var(--line-2); border-radius: 99px; padding: 6px 14px; white-space: nowrap; }
+  .wl-total strong { color: var(--gold); font-size: 15px; }
+  #landing h1 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -.02em; margin-bottom: 6px; }
+  #landing .lead { color: var(--ink-dim); font-size: 16px; max-width: 780px; margin-bottom: 16px; }
+  .wl-say { display: flex; align-items: center; gap: 14px; margin: 4px 0 16px; padding: 10px 18px 10px 10px; border-radius: 16px; width: fit-content; max-width: 100%;
+    background: color-mix(in srgb, #d9a53a 9%, var(--panel)); border: 1px solid color-mix(in srgb, #d9a53a 38%, transparent); box-shadow: 0 12px 34px -20px rgba(217,165,58,.7); }
+  .wl-bird { width: 52px; height: 52px; flex: none; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle, rgba(255,215,102,.35), rgba(255,215,102,0) 70%); }
+  .wl-bird img { width: 44px; height: 44px; filter: drop-shadow(0 2px 6px rgba(226,176,74,.5)); }
+  .wl-say-text { display: flex; flex-direction: column; gap: 6px; }
+  .wl-say-label, .wl-section { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); font-weight: 700; }
+  .wl-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .wl-chip { font-weight: 700; font-size: 14px; color: var(--gold); background: rgba(226,176,74,.10); border: 1px solid rgba(226,176,74,.35); padding: 4px 11px; border-radius: 99px; white-space: nowrap; }
+  .wl-how { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; color: var(--ink-dim); font-size: 14px; }
+  .wl-step { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 99px; padding: 6px 14px 6px 8px; }
+  .wl-step strong { color: var(--ink); }
+  .wl-ico { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--raised); font-size: 13px; }
+  .wl-ico.gold { background: rgba(226,176,74,.18); }
+  .wl-ico img { width: 20px; height: 20px; }
+  .wl-arrow { color: var(--ink-soft); }
+  .wl-show { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 14px; margin-bottom: 24px; align-items: stretch; }
+  @media (max-width: 980px) { .wl-show { grid-template-columns: 1fr; } }
+  .ends { padding: 16px 18px; border: 1px solid var(--line-2); background: var(--panel); border-radius: 16px; }
+  .ends ul { list-style: none; margin: 10px 0 0; display: grid; gap: 11px; }
+  .ends li { position: relative; padding-left: 26px; color: var(--ink-dim); font-size: 14px; line-height: 1.45; }
+  .ends li::before { content: '✓'; position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--gold); background: rgba(226,176,74,.16); }
+  .ends li b { color: var(--ink); }
+  .courses { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 1100px) { .courses { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .courses { grid-template-columns: 1fr; } }
+  .course { text-align: left; border: 1px solid var(--line-2); background: var(--panel); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 8px; transition: transform .15s, border-color .15s; position: relative; }
+  .course:hover { transform: translateY(-2px); border-color: var(--c); }
+  .course .badge-top { position: absolute; top: 12px; right: 12px; font-size: 11px; font-weight: 700; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); padding: 3px 8px; border-radius: 99px; }
+  .course .big { font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; font-weight: 700; font-size: 21px; color: var(--c); }
+  .course h3 { font-size: 18px; }
+  .course p { color: var(--ink-dim); font-size: 14px; line-height: 1.5; }
+  .course .meta { font-size: 12.5px; color: var(--ink-soft); font-weight: 600; }
+  .course .progress-row { margin-top: auto; padding-top: 8px; display: flex; align-items: center; gap: 10px; }
+  .course .mini-bar { flex: 1; height: 5px; border-radius: 99px; background: var(--raised); overflow: hidden; }
+  .course .mini-bar i { display: block; height: 100%; background: var(--c); border-radius: 99px; }
+  .course .go { font-weight: 700; color: var(--c); font-size: 13.5px; white-space: nowrap; }
+  [data-theme="light"] .course .big, [data-theme="light"] .course .go, [data-theme="light"] .course .badge-top { color: color-mix(in srgb, var(--c) 68%, #000); }
+  #landing .foot { margin-top: 18px; color: var(--ink-soft); font-size: 13.5px; }
+  .reset-link { border: 0; background: none; color: var(--ink-soft); text-decoration: underline; font-size: 12.5px; margin-left: 10px; padding: 0; }
+  .reset-link:hover { color: var(--ink); }
+  .demo { border: 1px solid var(--line-2); border-radius: 16px; overflow: hidden; background: var(--panel); display: flex; flex-direction: column; }
+  .demo .bar1 { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: #0b72c4; color: #fff; font-weight: 700; font-size: 14px; }
+  .demo .bar1 span { font-weight: 400; opacity: .9; font-size: 13px; }
+  .demo .bar2 { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink-dim); }
+  .demo .bar2 b { color: var(--ink); font-weight: 600; border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 8px; background: var(--panel-2); }
+  .demo .clause { padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .demo .clause code { font-size: 13px; }
+  .demo .clause .n { margin-left: auto; color: var(--ink-soft); }
+  .demo .grid { border: 0; border-radius: 0; height: 216px; max-height: 216px; }
+  .demo .dots { display: flex; gap: 6px; }
+  .demo .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); cursor: pointer; }
+  .demo .dots i.on { background: var(--gold); }
+  .wl-choose { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
+  .goals-btn { font-weight: 700; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 99px; padding: 6px 14px; }
+  .goals-btn:hover { border-color: var(--gold); }
+  .goals-btn.off { opacity: .55; }
+  /* diagrams */
+  .fig { margin: 12px 0; padding: 10px 10px 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
+  .fig svg { width: 100%; height: auto; display: block; }
+  .fig figcaption { font-size: 12.5px; color: var(--ink-soft); margin-top: 6px; text-align: center; }
+  .fig rect.b { fill: var(--panel); stroke: var(--line-2); stroke-width: 1.2; }
+  .fig rect.hl { stroke: var(--accent); } .fig rect.gold { stroke: var(--gold); stroke-width: 1.8; } .fig rect.bad { stroke: #c62828; stroke-width: 1.8; } .fig rect.good { stroke: #2e9e5b; stroke-width: 1.8; }
+  .fig text { fill: var(--ink); font: 600 12px 'Inter', 'Segoe UI', system-ui, sans-serif; }
+  .fig text.s { fill: var(--ink-soft); font-weight: 400; font-size: 10.5px; }
+  .fig text.m { font: 600 15px 'JetBrains Mono', Consolas, monospace; } .fig text.op { fill: var(--accent); } .fig text.val { fill: var(--gold); } .fig text.kw { fill: var(--ink-soft); }
+  .fig path.a { stroke: var(--ink-soft); stroke-width: 1.3; fill: none; } .fig path.ahd { fill: var(--ink-soft); }
+  .fig path.u { stroke: var(--ink-soft); stroke-width: 1.2; fill: none; } .fig path.u.g { stroke: var(--gold); }
+  .fig.chart path.l1 { stroke: var(--accent); stroke-width: 2; fill: none; } .fig.chart path.l2 { stroke: #a78bfa; stroke-width: 2; fill: none; }
+  .fig.chart circle.d1 { fill: var(--accent); } .fig.chart circle.d2 { fill: #a78bfa; } .fig.chart circle.hotdot { fill: #ef6c00; stroke: #fff; stroke-width: 1.2; }
+  .fig.chart path.thr { stroke: var(--gold); stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; } .fig.chart text.thrt { fill: var(--gold); }
+  .fig.chart text.k1 { fill: var(--accent); } .fig.chart text.k2 { fill: #a78bfa; } .fig.chart text.khot { fill: #ef6c00; }
+  /* simulator widgets */
+  .rulebox { display: grid; gap: 9px; background: var(--code-bg); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; }
+  .rulebox > div { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .rulebox .lbl, .lang .lbl { font-size: 13px; color: var(--ink-dim); }
+  .rulebox input[type=number] { width: 70px; font: inherit; background: var(--panel); color: var(--ink); border: 1px solid var(--line-2); border-radius: 7px; padding: 4px 8px; }
+  .tools { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+  .tools input { flex: 1; min-width: 150px; font: inherit; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line-2); border-radius: 7px; padding: 5px 9px; }
+  tr.pick { cursor: pointer; } tr.pick:hover td { filter: brightness(1.12); }
+  tr.sel td { box-shadow: inset 0 3px 0 var(--gold), inset 0 -3px 0 var(--gold); font-weight: 700; opacity: 1 !important; }
+  /* Ainara's line in the lesson, and her caption bubble */
+  .ask-line { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-soft); flex-wrap: wrap; }
+  .ask-line img { width: 22px; height: 22px; filter: drop-shadow(0 1px 3px rgba(226,176,74,.5)); }
+  .ask-line em { font-style: normal; font-weight: 700; color: var(--gold); }
+
+  /* lesson */
+  #lessonView { height: 100%; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  header .where { flex: 1; min-width: 180px; }
+  header .where b { display: block; font-size: 15px; }
+  header .where span { color: var(--ink-soft); font-size: 12.5px; }
+  .split { flex: 1; display: grid; grid-template-columns: minmax(300px, 40%) 1fr; min-height: 0; }
+  #left, #right { overflow: auto; padding: 18px 20px 40px; }
+  #left { border-right: 1px solid var(--line); background: var(--panel); }
+  @media (max-width: 820px) { .split { grid-template-columns: 1fr; overflow: auto; } #left, #right { overflow: visible; } body { overflow: auto; } }
+  #left, #right { min-width: 0; }
+  #left td, #left th { overflow-wrap: anywhere; }
+  #left h2 { font-size: 21px; margin-bottom: 8px; letter-spacing: -.01em; }
+  #left p { margin: 9px 0; color: var(--ink-dim); }
+  #left p b, #left li b { color: var(--ink); }
+  #left ul, #left ol { margin: 8px 0 8px 20px; color: var(--ink-dim); }
+  #left table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13.5px; }
+  #left th, #left td { border: 1px solid var(--line-2); padding: 5px 8px; text-align: left; vertical-align: top; }
+  #left th { background: var(--panel-2); }
+  #left pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; font-size: 13px; margin: 9px 0; }
+  .note { border-left: 3px solid var(--accent); background: var(--panel-2); padding: 8px 12px; border-radius: 0 9px 9px 0; margin: 10px 0; color: var(--ink-dim); font-size: 14px; }
+  .note.warn { border-color: var(--gold); }
+  .terms { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .terms dt { font-weight: 700; margin-top: 7px; }
+  .terms dd { color: var(--ink-dim); font-size: 14px; }
+
+  .task { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 15px 16px; }
+  .task .kicker { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 700; }
+  .task .prompt { margin: 5px 0 11px; font-weight: 600; }
+  .lang { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  .lang .tab { padding: 3px 10px; border-radius: 7px; border: 1px solid var(--line-2); background: transparent; font-size: 13px; }
+  .lang .tab.on { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+  .lang .lbl { font-size: 12.5px; color: var(--ink-soft); }
+  textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line-2); border-radius: 9px; padding: 9px 11px; font-size: 13.5px; line-height: 1.5; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .opts { display: grid; gap: 7px; }
+  .opt { text-align: left; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 9px; padding: 8px 12px; display: flex; gap: 9px; }
+  .opt b { color: var(--accent); }
+  .opt.on { border-color: var(--accent); background: var(--raised); }
+  .opt.right { border-color: var(--gold); background: var(--gold-bg); }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .checks label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
+  select { font: inherit; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line-2); border-radius: 7px; padding: 4px 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 11px; flex-wrap: wrap; }
+  .fb { margin-top: 11px; padding: 9px 12px; border-radius: 9px; font-size: 14px; display: none; }
+  .fb.show { display: block; }
+  .fb.good { background: var(--good-bg); border: 1px solid var(--good); }
+  .fb.bad { background: var(--bad-bg); border: 1px solid var(--bad); }
+  .fb.info { background: var(--gold-bg); border: 1px solid var(--gold); }
+
+  .out { margin-top: 14px; }
+  .out .cap { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+  .out .cap b { font-size: 14px; }
+  .out .cap span { color: var(--ink-soft); font-size: 13px; }
+  .grid { border: 1px solid var(--line-2); border-radius: 9px; overflow: auto; max-height: 46vh; background: var(--panel); }
+  .grid table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+  .grid th { position: sticky; top: 0; background: var(--raised); text-align: left; padding: 5px 9px; font-weight: 700; border-bottom: 1px solid var(--line-2); }
+  .grid td { padding: 4px 9px; border-bottom: 1px solid rgba(0,0,0,.18); }
+  tr.s5 td { background: #c62828; color: #fff; } tr.s4 td { background: #ef6c00; color: #fff; }
+  tr.s3 td { background: #f9c513; color: #1b1b1b; } tr.s2 td { background: #4f8fd8; color: #fff; }
+  tr.s1 td { background: #8d7bb8; color: #fff; } tr.s0 td { background: #2e9e5b; color: #fff; }
+  tr.ack td { opacity: .62; }
+  .empty { padding: 16px; color: var(--ink-soft); text-align: center; }
+  pre.json { background: var(--code-bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; font-size: 12px; max-height: 30vh; overflow: auto; margin-top: 8px; white-space: pre; }
+  .err { color: var(--bad); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px; padding: 10px 12px; border: 1px solid var(--bad); border-radius: 9px; background: var(--bad-bg); white-space: pre-wrap; }
+
+  .menu { position: relative; }
+  .menu .drop { position: absolute; right: 0; top: 38px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 11px; padding: 6px; min-width: 250px; z-index: 20; display: none; box-shadow: 0 18px 40px -20px rgba(0,0,0,.7); }
+  .menu.open .drop { display: block; }
+  .drop button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 7px 10px; border-radius: 7px; font-size: 14px; }
+  .drop button:hover { background: var(--raised); }
+
+  .bubble { position: fixed; right: 18px; bottom: 18px; max-width: 340px; background: var(--panel); border: 1px solid var(--accent); border-radius: 14px 14px 4px 14px; padding: 11px 14px; font-size: 14px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .25s; z-index: 40; }
+  .bubble.show { opacity: 1; transform: none; pointer-events: auto; }
+  .bubble { display: flex; gap: 10px; align-items: flex-start; border-color: color-mix(in srgb, #d9a53a 55%, transparent) !important; }
+  .bubble > img { width: 30px; height: 30px; flex: none; filter: drop-shadow(0 2px 5px rgba(226,176,74,.55)); }
+  .bubble .who { font-size: 11.5px; color: var(--gold); font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
+  .bubble.talking .who::after { content: ' · speaking'; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px); background: var(--raised); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 14px; font-size: 14px; opacity: 0; transition: .25s; z-index: 50; max-width: 90vw; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .cover { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; text-align: center; z-index: 60; padding: 24px; }
+  .cover.show { display: flex; }
+  .cover h1 { margin-bottom: 8px; }
+  .cover p { color: var(--ink-dim); }
+</style>
+</head>
+<body>
+
+<div id="landing" class="hidden">
+  <div class="wrap">
+    <div class="wl-top">
+      <div class="wl-brand"><span class="wl-bird-sm"><img class="ainara-logo" alt="Ainara"></span><span class="wl-name">Assure1 Classroom <em>with Ainara</em></span></div>
+      <div class="wl-right"><span class="pill hidden" id="offlinePill">Preview mode: Ainara not connected</span><span class="pill sim">Simulator · dummy alarms only</span><div class="wl-total" id="wlTotal"></div></div>
+    </div>
+    <h1 id="hello">Learn to run the alarm list</h1>
+    <p class="lead">From reading the event list to building your own filters, displays and history searches. Every lesson ends with alarms on screen, and Ainara is beside you the whole way.</p>
+    <div class="wl-say">
+      <div class="wl-bird"><img class="ainara-logo" alt="Ainara"></div>
+      <div class="wl-say-text"><span class="wl-say-label">Stuck? Just ask Ainara</span>
+        <span class="wl-chips"><span class="wl-chip">“Check my filter”</span><span class="wl-chip">“Give me a hint”</span><span class="wl-chip">“Show me the answer”</span><span class="wl-chip">“Next lesson”</span><span class="wl-chip">“Open the sandbox”</span></span></div>
+    </div>
+    <div class="wl-how">
+      <div class="wl-step"><span class="wl-ico">📖</span><span><strong>Read</strong> a short lesson</span></div>
+      <span class="wl-arrow">→</span>
+      <div class="wl-step"><span class="wl-ico">▶</span><span><strong>Run it</strong> in the alarm simulator</span></div>
+      <span class="wl-arrow">→</span>
+      <div class="wl-step"><span class="wl-ico gold"><img class="ainara-logo" alt=""></span><span><strong>Stuck?</strong> Ask Ainara</span></div>
+    </div>
+    <div class="wl-show">
+      <div class="demo" id="demo"></div>
+      <div class="ends"><span class="wl-section">By the end you will be able to</span>
+        <ul><li><b>Build your own alarm views</b>: a filter for any team and a display to go with it</li>
+        <li><b>Explain an alarm</b>: where it came from, why it has that severity, and what is safe to change</li>
+        <li><b>Answer “what happened last week?”</b> from alarm history, with KQL and the Console</li>
+        <li><b>Handle a full morning shift</b> of mixed requests, and earn the certificate</li></ul></div>
+    </div>
+    <div class="wl-choose"><span class="wl-section">Choose a course</span><button class="goals-btn" id="recapBtn">🔁 Quick recap</button></div>
+    <div class="courses" id="courses"></div>
+    <p class="foot">Your progress saves automatically, so you can close this and pick up where you left off. Nothing here touches your real Assure1.
+      <button class="reset-link" id="themeBtn2">Light / dark</button><button class="reset-link" id="voiceBtn2"></button><button class="reset-link" id="resetBtn">Reset all progress</button></p>
+  </div>
+</div>
+
+<div id="lessonView" class="hidden">
+  <header>
+    <button class="btn small" id="homeBtn">← Courses</button>
+    <div class="where"><b id="hTitle"></b><span id="hSub"></span></div>
+    <span class="pill sim">Simulator</span>
+    <button class="btn small" id="prevBtn">‹ Prev</button>
+    <button class="btn small" id="nextBtn">Next ›</button>
+    <div class="menu" id="menu">
+      <button class="btn small" id="menuBtn">⚙</button>
+      <div class="drop">
+        <button id="voiceItem"></button>
+        <button id="testVoice">Test Ainara’s voice</button>
+        <button id="themeBtn">Light / dark</button>
+        <button id="restartBtn">Restart this course</button>
+      </div>
+    </div>
+  </header>
+  <div class="split">
+    <section id="left"></section>
+    <section id="right">
+      <div class="task" id="task"></div>
+      <div class="out" id="out"></div>
+    </section>
+  </div>
+</div>
+
+<div class="cover show" id="welcome"><div><h1>Assure1 Classroom</h1><p>Opening…</p></div></div>
+<div class="cover" id="goodbye"><div><h1>See you soon</h1><p>Your progress is saved. Say “open my Assure classroom” to carry on.</p></div></div>
+<div class="bubble" id="bubble"><img class="ainara-logo" alt=""><div><div class="who">Ainara</div><div id="bubbleTxt"></div></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+//<<ENGINE  (pure logic, no DOM: the alarm data, the three query languages and the lessons.
+//           tests/ extracts this block and runs every model answer in Node.)
+
+// ═══════════════════════════════════════════════════
+//  DUMMY DATA. Every name is made up: TST1_xxx = NGN cabinets, RAN1_xxx = RAN
+//  sites, CORE1_xxx = core routers, TX1_xxx = transmission. Never real names.
+// ═══════════════════════════════════════════════════
+const NOW = Math.floor(Date.now() / 1000);
+const SEV = ['Normal', 'Unknown', 'Info', 'Minor', 'Major', 'Critical'];
+const DEVTYPE = { TST1: 'NGN Cabinet', RAN1: 'RAN Site', CORE: 'Core Router', TX1_: 'Transmission' };
+// Node, SubNode, Severity, Summary, Ack, Count, Method, SubMethod, EventType, minutes since first seen, TicketID
+const RAW = [
+  ['RAN1_001', 'Cell-1', 5, 'Cell down: no heartbeat from sector 1', 0, 14, 'Trapd', 'SRC_A', 'cellDown', 12, ''],
+  ['RAN1_001', 'PSU-A', 4, 'Mains failure, running on battery', 0, 3, 'Trapd', 'SRC_A', 'powerFail', 95, 'TT1001'],
+  ['RAN1_002', 'Cell-2', 5, 'Cell down: no heartbeat from sector 2', 1, 2, 'Trapd', 'SRC_A', 'cellDown', 240, 'TT1002'],
+  ['RAN1_002', 'Door', 2, 'Cabinet door open', 0, 1, 'Trapd', 'SRC_A', 'doorOpen', 30, ''],
+  ['RAN1_003', 'Link-1', 4, 'Backhaul link degraded: high packet loss', 0, 57, 'Syslogd', 'SRC_B', 'linkDegraded', 400, ''],
+  ['RAN1_003', 'Temp', 3, 'High temperature warning', 0, 6, 'Trapd', 'SRC_A', 'tempHigh', 50, ''],
+  ['RAN1_004', 'Cell-1', 5, 'Cell down: no heartbeat from sector 1', 0, 1, 'Trapd', 'SRC_A', 'cellDown', 5, ''],
+  ['RAN1_004', 'Link-1', 0, 'Backhaul link restored', 0, 1, 'Syslogd', 'SRC_B', 'linkDegraded', 20, ''],
+  ['RAN1_005', 'PSU-A', 4, 'Mains failure, running on battery', 1, 8, 'Trapd', 'SRC_A', 'powerFail', 700, 'TT1003'],
+  ['RAN1_006', 'Cell-3', 3, 'Reduced capacity on sector 3', 0, 2, 'Trapd', 'SRC_A', 'cellDegraded', 130, ''],
+  ['RAN1_006', 'Link-1', 4, 'Backhaul link degraded: high packet loss', 0, 15, 'Syslogd', 'SRC_B', 'linkDegraded', 28, ''],
+  ['RAN1_007', 'Link-2', 5, 'Loss of Signal on backhaul port 2', 0, 22, 'Syslogd', 'SRC_B', 'LOS', 45, ''],
+  ['RAN1_008', 'Temp', 4, 'High temperature alarm', 0, 4, 'Trapd', 'SRC_A', 'tempHigh', 1500, ''],
+  ['TST1_001', 'Port-3', 5, 'Loss of Signal on port 3', 0, 9, 'Trapd', 'SRC_C', 'LOS', 25, ''],
+  ['TST1_001', 'Fan-1', 3, 'Fan speed low', 1, 1, 'Trapd', 'SRC_C', 'fanFail', 2000, ''],
+  ['TST1_002', 'PSU-B', 4, 'Rectifier failure', 0, 2, 'Trapd', 'SRC_C', 'powerFail', 55, 'TT1004'],
+  ['TST1_002', 'Door', 2, 'Cabinet door open', 0, 1, 'Trapd', 'SRC_C', 'doorOpen', 10, ''],
+  ['TST1_003', 'Port-1', 5, 'Loss of Signal on port 1', 1, 31, 'Trapd', 'SRC_C', 'LOS', 300, 'TT1005'],
+  ['TST1_003', 'Batt', 4, 'Battery low voltage', 0, 12, 'Trapd', 'SRC_C', 'battLow', 180, ''],
+  ['TST1_004', 'Port-7', 3, 'Remote defect indication on port 7', 0, 3, 'Trapd', 'SRC_C', 'RDI', 75, ''],
+  ['TST1_005', 'Temp', 5, 'Cabinet over temperature', 0, 5, 'Trapd', 'SRC_C', 'tempHigh', 35, ''],
+  ['TST1_005', 'Port-2', 0, 'Signal restored on port 2', 0, 1, 'Trapd', 'SRC_C', 'LOS', 15, ''],
+  ['TST1_006', 'Fan-2', 4, 'Fan failure', 0, 1, 'Trapd', 'SRC_C', 'fanFail', 600, ''],
+  ['CORE1_001', 'ge-0/0/1', 5, 'Interface down', 0, 2, 'Syslogd', 'SRC_B', 'linkDown', 8, 'TT1006'],
+  ['CORE1_001', 'BGP', 4, 'BGP neighbour down', 0, 18, 'Syslogd', 'SRC_B', 'bgpDown', 9, ''],
+  ['CORE1_002', 'CPU', 3, 'CPU utilisation above 85%', 0, 40, 'Poller', 'Threshold', 'cpuHigh', 220, ''],
+  ['CORE1_002', 'ge-0/0/4', 2, 'Interface flapping', 1, 73, 'Syslogd', 'SRC_B', 'linkFlap', 900, ''],
+  ['TX1_001', 'OTU-1', 5, 'Loss of Signal on line port', 0, 6, 'Trapd', 'SRC_D', 'LOS', 18, ''],
+  ['TX1_001', 'OTU-1', 4, 'Optical power low', 0, 11, 'Trapd', 'SRC_D', 'optLow', 320, ''],
+  ['TX1_002', 'Shelf', 3, 'Shelf temperature high', 0, 2, 'Trapd', 'SRC_D', 'tempHigh', 65, ''],
+  ['TX1_003', 'OSC', 4, 'Supervisory channel failure', 1, 4, 'Trapd', 'SRC_D', 'oscFail', 1100, 'TT1007'],
+  ['TX1_003', 'Fan-1', 1, 'Unknown trap received', 0, 1, 'Trapd', 'Unknown', 'unknown', 40, ''],
+];
+const EVENTS = RAW.map((r, i) => {
+  const first = NOW - r[9] * 60;
+  return {
+    EventID: 5001 + i, Node: r[0], SubNode: r[1], Severity: r[2], Summary: r[3], Ack: r[4], Count: r[5],
+    Method: r[6], SubMethod: r[7], EventType: r[8], EventCategory: r[2] === 0 ? 1 : 2,
+    EventKey: `${r[0]}+${r[1]}+${r[8]}`, FirstReported: first, LastReported: r[5] > 1 ? NOW - Math.round(r[9] * 60 / (r[5] + 1)) : first,
+    TicketID: r[10], OwnerName: r[4] ? 'noc_user1' : '', DeviceType: DEVTYPE[r[0].slice(0, 4)] || 'Unknown',
+    Location: 'Site ' + r[0].slice(-3), Customer: r[0].startsWith('TST1') ? 'DEMO_CUST_A' : r[0].startsWith('RAN1') ? 'DEMO_CUST_B' : 'Internal',
+  };
+});
+const FIELDS = Object.keys(EVENTS[0]);
+const DEFAULT_COLS = ['Severity', 'FirstReported', 'Node', 'SubNode', 'Summary', 'Count', 'Ack', 'SubMethod', 'TicketID'];
+
+// Alarm HISTORY (the eventanalytics-* index): 7 days, includes alarms long since cleared.
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const HISTORY = (() => {
+  const rnd = mulberry32(20261007), docs = [];
+  const weight = (r) => (r[0] === 'RAN1_003' ? 5 : r[0] === 'TST1_003' ? 4 : r[0] === 'CORE1_002' ? 3 : r[0] === 'RAN1_001' ? 3 : 1);
+  const pool = []; RAW.forEach((r) => { for (let k = 0; k < weight(r); k++) pool.push(r); });
+  for (let i = 0; i < 180; i++) {
+    const r = pool[Math.floor(rnd() * pool.length)];
+    const ts = (NOW - Math.floor(Math.pow(rnd(), 1.6) * 7 * 86400) - 90) * 1000;
+    docs.push({ _id: 'h' + (1000 + i), _ts: ts, '@timestamp': new Date(ts).toISOString(), EventID: 4000 + i, Node: r[0], SubNode: r[1], Severity: r[2], 'Severity.name': SEV[r[2]], Summary: r[3], SubMethod: r[7], Method: r[6], EventType: r[8], Ack: rnd() < 0.4 ? 1 : 0, Count: 1 + Math.floor(rnd() * 20) });
+  }
+  return docs.sort((a, b) => b._ts - a._ts);
+})();
+const H_FIELDS = ['@timestamp', 'EventID', 'Node', 'SubNode', 'Severity', 'Severity.name', 'Summary', 'SubMethod', 'Method', 'EventType', 'Ack', 'Count'];
+const H_TEXT = new Set(['Summary']);           // analysed text: word search; cannot be aggregated
+const H_NUM = new Set(['EventID', 'Severity', 'Ack', 'Count']);
+
+// ═══════════════════════════════════════════════════
+//  1. SQL WHERE clauses (event filters). MySQL-flavoured, like the real thing:
+//     case-insensitive text, % and _ wildcards in LIKE, UNIX_TIMESTAMP().
+// ═══════════════════════════════════════════════════
+function sqlFilter(text) {
+  let src = String(text || '').trim().replace(/;+\s*$/, '');
+  if (!src) return () => true;
+  if (/^\s*select\b/i.test(src)) throw new Error("Type only the condition, the part that comes after WHERE. For example: Severity = 5");
+  src = src.replace(/^\s*where\b/i, '').trim();
+  const toks = []; const re = /\s*(?:(\d+(?:\.\d+)?)|'((?:[^']|'')*)'|"((?:[^"]|"")*)"|(<>|!=|>=|<=|=|>|<|\(|\)|,|\+|-|\*)|`([^`]+)`|([A-Za-z_][A-Za-z0-9_.]*))/y;
+  let pos = 0;
+  while (pos < src.length) {
+    if (/^\s*$/.test(src.slice(pos))) break;
+    re.lastIndex = pos; const m = re.exec(src);
+    if (!m) throw new Error(`You have an error in your SQL syntax near '${src.slice(pos).trim().slice(0, 25)}'`);
+    pos = re.lastIndex;
+    if (m[1] !== undefined) toks.push({ t: 'num', v: +m[1] });
+    else if (m[2] !== undefined) toks.push({ t: 'str', v: m[2].replace(/''/g, "'") });
+    else if (m[3] !== undefined) toks.push({ t: 'str', v: m[3].replace(/""/g, '"') });
+    else if (m[4] !== undefined) toks.push({ t: 'op', v: m[4] });
+    else if (m[5] !== undefined) toks.push({ t: 'id', v: m[5] });
+    else { const w = m[6]; toks.push(/^(and|or|not|like|in|is|null|between)$/i.test(w) ? { t: 'kw', v: w.toUpperCase() } : { t: 'id', v: w }); }
+  }
+  let i = 0;
+  const peek = () => toks[i], is = (t, v) => toks[i] && toks[i].t === t && (v === undefined || toks[i].v === v);
+  const near = () => (toks[i] ? String(toks[i].v) : 'end of filter');
+  const fail = (msg) => { throw new Error(msg || `You have an error in your SQL syntax near '${near()}'`); };
+  const eat = (t, v) => { if (!is(t, v)) fail(); return toks[i++]; };
+  const fieldMap = Object.fromEntries(FIELDS.map((f) => [f.toLowerCase(), f]));
+  function atom() {
+    const k = peek(); if (!k) fail();
+    if (k.t === 'num' || k.t === 'str') { i++; return () => k.v; }
+    if (k.t === 'op' && k.v === '-') { i++; const a = atom(); return (r) => -a(r); }
+    if (k.t === 'op' && k.v === '(') { i++; const e = sum(); eat('op', ')'); return e; }
+    if (k.t === 'kw' && k.v === 'NULL') { i++; return () => null; }
+    if (k.t === 'id') {
+      i++;
+      if (is('op', '(')) {
+        i++; eat('op', ')');
+        if (/^(unix_timestamp|now)$/i.test(k.v)) return () => NOW;
+        fail(`FUNCTION ${k.v} does not exist (this classroom knows UNIX_TIMESTAMP())`);
+      }
+      const f = fieldMap[k.v.toLowerCase()];
+      if (!f) fail(`Unknown column '${k.v}' in 'where clause'`);
+      return (r) => r[f];
+    }
+    fail();
+  }
+  function prod() { let a = atom(); while (is('op', '*')) { i++; const b = atom(), x = a; a = (r) => x(r) * b(r); } return a; }
+  function sum() { let a = prod(); while (is('op', '+') || is('op', '-')) { const o = toks[i++].v, b = prod(), x = a; a = o === '+' ? (r) => +x(r) + +b(r) : (r) => x(r) - b(r); } return a; }
+  const cmp = (a, b) => {
+    if (a === null || b === null || a === undefined || b === undefined) return null;
+    const na = typeof a === 'number' ? a : (String(a).trim() !== '' && !isNaN(a) ? +a : NaN), nb = typeof b === 'number' ? b : (String(b).trim() !== '' && !isNaN(b) ? +b : NaN);
+    if (!isNaN(na) && !isNaN(nb)) return na < nb ? -1 : na > nb ? 1 : 0;
+    const sa = String(a).toLowerCase(), sb = String(b).toLowerCase(); return sa < sb ? -1 : sa > sb ? 1 : 0;
+  };
+  const likeRe = (p) => new RegExp('^' + String(p).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$', 'is');
+  function pred() {
+    if (is('op', '(')) {  // could be a bracketed condition or a bracketed value: try condition first
+      const save = i; i++;
+      try { const e = orE(); eat('op', ')'); if (!(is('op') && /^(=|!=|<>|>|>=|<|<=|\+|-|\*)$/.test(peek().v)) && !is('kw', 'LIKE') && !is('kw', 'IN')) return e; } catch (e) { /* fall through */ }
+      i = save;
+    }
+    const a = sum();
+    let neg = false;
+    if (is('kw', 'NOT')) { i++; neg = true; if (!is('kw', 'LIKE') && !is('kw', 'IN') && !is('kw', 'BETWEEN')) fail(); }
+    if (is('kw', 'LIKE')) { i++; const p = sum(); return (r) => { const v = a(r), pat = p(r); if (v === null || pat === null) return false; const ok = likeRe(pat).test(String(v)); return neg ? !ok : ok; }; }
+    if (is('kw', 'IN')) {
+      i++; eat('op', '('); const list = [sum()]; while (is('op', ',')) { i++; list.push(sum()); } eat('op', ')');
+      return (r) => { const v = a(r); const ok = list.some((x) => cmp(v, x(r)) === 0); return neg ? !ok : ok; };
+    }
+    if (is('kw', 'BETWEEN')) { i++; const lo = sum(); eat('kw', 'AND'); const hi = sum(); return (r) => { const v = a(r); const ok = cmp(v, lo(r)) >= 0 && cmp(v, hi(r)) <= 0; return neg ? !ok : ok; }; }
+    if (is('kw', 'IS')) { i++; let n = false; if (is('kw', 'NOT')) { i++; n = true; } eat('kw', 'NULL'); return (r) => { const v = a(r); const isNull = v === null || v === undefined; return n ? !isNull : isNull; }; }
+    if (is('op') && /^(=|!=|<>|>|>=|<|<=)$/.test(peek().v)) {
+      const o = toks[i++].v, b = sum();
+      return (r) => { const c = cmp(a(r), b(r)); if (c === null) return false; return o === '=' ? c === 0 : (o === '!=' || o === '<>') ? c !== 0 : o === '>' ? c > 0 : o === '>=' ? c >= 0 : o === '<' ? c < 0 : c <= 0; };
+    }
+    return (r) => { const v = a(r); return !!(typeof v === 'string' ? +v : v); };  // bare value, as MySQL does
+  }
+  function notE() { if (is('kw', 'NOT')) { i++; const e = notE(); return (r) => !e(r); } return pred(); }
+  function andE() { let a = notE(); while (is('kw', 'AND')) { i++; const b = notE(), x = a; a = (r) => x(r) && b(r); } return a; }
+  function orE() { let a = andE(); while (is('kw', 'OR')) { i++; const b = andE(), x = a; a = (r) => x(r) || b(r); } return a; }
+  const e = orE();
+  if (i < toks.length) fail();
+  return e;
+}
+
+// ═══════════════════════════════════════════════════
+//  2. KQL (the Discover search bar). Keyword values are case-sensitive, like Kibana.
+// ═══════════════════════════════════════════════════
+const wildRe = (p, flags) => new RegExp('^' + String(p).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', flags || '');
+function hMatch(doc, field, value, quoted) {
+  const v = doc[field]; if (v === undefined || v === null) return false;
+  if (H_NUM.has(field)) return String(value).includes('*') ? wildRe(value).test(String(v)) : +value === v;
+  if (H_TEXT.has(field)) {
+    const text = String(v).toLowerCase(), q = String(value).toLowerCase();
+    if (quoted) return text.includes(q);
+    const words = text.split(/[^a-z0-9%]+/).filter(Boolean);
+    return q.split(/\s+/).filter(Boolean).every((w) => (w.includes('*') ? words.some((x) => wildRe(w).test(x)) : words.includes(w.replace(/[^a-z0-9%]/g, ''))));
+  }
+  return String(value).includes('*') && !quoted ? wildRe(value).test(String(v)) : String(v) === String(value);
+}
+function kqlFilter(text) {
+  const src = String(text || '').trim();
+  if (!src || src === '*') return () => true;
+  const toks = []; const re = /\s*(?:"((?:[^"\\]|\\.)*)"|(>=|<=|>|<|:|\(|\))|([^\s():<>"]+))/y; let pos = 0;
+  while (pos < src.length) {
+    if (/^\s*$/.test(src.slice(pos))) break;
+    re.lastIndex = pos; const m = re.exec(src); if (!m) throw new Error(`KQL syntax error near '${src.slice(pos).trim().slice(0, 25)}'`);
+    pos = re.lastIndex;
+    if (m[1] !== undefined) toks.push({ t: 'str', v: m[1].replace(/\\(.)/g, '$1') });
+    else if (m[2] !== undefined) toks.push({ t: 'op', v: m[2] });
+    else toks.push(/^(and|or|not)$/i.test(m[3]) ? { t: 'kw', v: m[3].toLowerCase() } : { t: 'w', v: m[3] });
+  }
+  let i = 0; const is = (t, v) => toks[i] && toks[i].t === t && (v === undefined || toks[i].v === v);
+  const fail = (msg) => { throw new Error(msg || `KQL syntax error near '${toks[i] ? toks[i].v : 'end of search'}'`); };
+  const fieldOf = (name) => { const f = H_FIELDS.find((x) => x === name) || H_FIELDS.find((x) => x.toLowerCase() === String(name).toLowerCase().replace(/\.keyword$/, '')); if (!f) fail(`No field called '${name}' in eventanalytics-*. Field names are in the list on the left of Discover.`); return f; };
+  function val(field) {
+    if (is('op', '(')) {
+      i++; let a = val(field);
+      while (is('kw', 'or') || is('kw', 'and')) { const o = toks[i++].v, b = val(field), x = a; a = o === 'or' ? (d) => x(d) || b(d) : (d) => x(d) && b(d); }
+      if (!is('op', ')')) fail(); i++; return a;
+    }
+    if (is('kw', 'not')) { i++; const a = val(field); return (d) => !a(d); }
+    if (!is('str') && !is('w')) fail(`Expected a value after '${field} :'`);
+    const k = toks[i++]; return (d) => hMatch(d, field, k.v, k.t === 'str');
+  }
+  function prim() {
+    if (is('op', '(')) { i++; const e = orE(); if (!is('op', ')')) fail('Missing closing bracket )'); i++; return e; }
+    if (!is('str') && !is('w')) fail();
+    const k = toks[i++];
+    if (k.t === 'w' && is('op', ':')) { i++; return val(fieldOf(k.v)); }
+    if (k.t === 'w' && is('op') && /^(>=|<=|>|<)$/.test(toks[i].v)) {
+      const f = fieldOf(k.v), o = toks[i++].v; if (!is('w') && !is('str')) fail(); const raw = toks[i++].v;
+      const n = f === '@timestamp' ? esDate(raw) : +raw; if (isNaN(n)) fail(`'${raw}' is not a number`);
+      return (d) => { const v = f === '@timestamp' ? d._ts : d[f]; return o === '>=' ? v >= n : o === '<=' ? v <= n : o === '>' ? v > n : v < n; };
+    }
+    return (d) => H_FIELDS.some((f) => f !== '@timestamp' && (H_TEXT.has(f) ? hMatch(d, f, k.v, k.t === 'str') : String(d[f]).toLowerCase() === String(k.v).toLowerCase() || (String(k.v).includes('*') && wildRe(k.v, 'i').test(String(d[f])))));
+  }
+  function notE() { if (is('kw', 'not')) { i++; const e = notE(); return (d) => !e(d); } return prim(); }
+  function andE() { let a = notE(); while (is('kw', 'and')) { i++; const b = notE(), x = a; a = (d) => x(d) && b(d); } return a; }
+  function orE() { let a = andE(); while (is('kw', 'or')) { i++; const b = andE(), x = a; a = (d) => x(d) || b(d); } return a; }
+  const e = orE();
+  if (i < toks.length) fail(`Join two conditions with 'and' or 'or' (near '${toks[i].v}')`);
+  return e;
+}
+
+// ═══════════════════════════════════════════════════
+//  3. Elasticsearch query DSL (the Console). Read-only: anything but a search is refused.
+// ═══════════════════════════════════════════════════
+function esDate(v) {
+  if (typeof v === 'number') return v;
+  const s = String(v).trim(); const m = /^now(?:([+-])(\d+)([smhdwMy]))?(?:\/[smhdwMy])?$/.exec(s);
+  if (m) { const mult = { s: 1, m: 60, h: 3600, d: 86400, w: 604800, M: 2592000, y: 31536000 }[m[3]] || 0; return (NOW + (m[1] === '+' ? 1 : -1) * (+m[2] || 0) * mult) * 1000; }
+  const t = Date.parse(s); if (isNaN(t)) throw new Error(`parse_exception: failed to parse date field [${s}]`);
+  return t;
+}
+function esClause(q) {
+  if (!q || typeof q !== 'object' || Array.isArray(q)) throw new Error('parsing_exception: a query must be an object like { "match": { ... } }');
+  const keys = Object.keys(q); if (keys.length !== 1) throw new Error(`parsing_exception: a query clause needs exactly one type, got [${keys.join(', ') || 'none'}]`);
+  const type = keys[0], body = q[type];
+  const fld = (name) => { const f = String(name).replace(/\.keyword$/, ''); if (!H_FIELDS.includes(f)) return null; return f; };
+  const one = () => { const ks = Object.keys(body || {}); if (ks.length !== 1) throw new Error(`parsing_exception: [${type}] needs one field`); const raw = body[ks[0]]; return [fld(ks[0]), raw, ks[0]]; };
+  if (type === 'match_all') return () => true;
+  if (type === 'match_none') return () => false;
+  if (type === 'match' || type === 'match_phrase') { const [f, raw] = one(); const v = raw && typeof raw === 'object' ? raw.query : raw; return (d) => !!f && hMatch(d, f, v, type === 'match_phrase'); }
+  if (type === 'term') { const [f, raw, name] = one(); const v = raw && typeof raw === 'object' ? raw.value : raw; return (d) => !!f && (H_TEXT.has(f) && !/\.keyword$/.test(name) ? String(d[f]).toLowerCase().split(/[^a-z0-9]+/).includes(String(v)) : String(d[f]) === String(v)); }
+  if (type === 'terms') { const [f, raw] = one(); if (!Array.isArray(raw)) throw new Error('parsing_exception: [terms] needs a list of values'); return (d) => !!f && raw.some((v) => String(d[f]) === String(v)); }
+  if (type === 'wildcard' || type === 'prefix') { const [f, raw] = one(); let v = raw && typeof raw === 'object' ? (raw.value || raw.wildcard) : raw; if (type === 'prefix') v += '*'; const re = wildRe(v); return (d) => !!f && re.test(String(d[f])); }
+  if (type === 'exists') { const f = fld(body.field); return (d) => !!f && d[f] !== undefined && d[f] !== ''; }
+  if (type === 'range') {
+    const [f, raw, name] = one(); if (!raw || typeof raw !== 'object') throw new Error('parsing_exception: [range] needs gte / gt / lte / lt');
+    const conv = (x) => (f === '@timestamp' ? esDate(x) : +x); const lim = {}; ['gte', 'gt', 'lte', 'lt'].forEach((k) => { if (raw[k] !== undefined) lim[k] = conv(raw[k]); });
+    if (!Object.keys(lim).length) throw new Error(`parsing_exception: [range] on [${name}] needs gte / gt / lte / lt`);
+    return (d) => { if (!f) return false; const v = f === '@timestamp' ? d._ts : d[f]; return (lim.gte === undefined || v >= lim.gte) && (lim.gt === undefined || v > lim.gt) && (lim.lte === undefined || v <= lim.lte) && (lim.lt === undefined || v < lim.lt); };
+  }
+  if (type === 'bool') {
+    const arr = (x) => (x === undefined ? [] : Array.isArray(x) ? x : [x]).map(esClause);
+    const bad = Object.keys(body || {}).find((k) => !['must', 'filter', 'should', 'must_not', 'minimum_should_match'].includes(k)); if (bad) throw new Error(`parsing_exception: [bool] does not support [${bad}]`);
+    const must = arr(body.must).concat(arr(body.filter)), should = arr(body.should), not = arr(body.must_not);
+    const min = body.minimum_should_match !== undefined ? +body.minimum_should_match : (must.length ? 0 : (should.length ? 1 : 0));
+    return (d) => must.every((c) => c(d)) && !not.some((c) => c(d)) && should.filter((c) => c(d)).length >= min;
+  }
+  throw new Error(`parsing_exception: no [query] registered for [${type}] (this classroom knows match_all, match, match_phrase, term, terms, wildcard, prefix, range, exists, bool)`);
+}
+function esRun(text) {
+  let src = String(text || '').trim(); if (!src) throw new Error('Type a request, for example:\nGET eventanalytics-*/_search\n{ "query": { "match_all": {} } }');
+  let method = 'GET', path = 'eventanalytics-*/_search';
+  const m = /^(GET|POST|PUT|DELETE|HEAD|PATCH)\s+(\S+)\s*/i.exec(src);
+  if (m) { method = m[1].toUpperCase(); path = m[2].replace(/^\//, ''); src = src.slice(m[0].length).trim(); }
+  if (/^_cat\/indices/i.test(path) && method === 'GET') {
+    const day = (n) => new Date((NOW - n * 86400) * 1000).toISOString().slice(0, 10).replace(/-/g, '.');
+    const rows = [0, 1, 2, 3, 4, 5, 6].map((n) => { const c = HISTORY.filter((d) => Math.floor((NOW * 1000 - d._ts) / 86400000) === n).length; return `green  open   eventanalytics-${day(n)}   1   1   ${String(c).padStart(6)}   ${String((c * 1.7 + 12).toFixed(1)).padStart(7)}kb`; });
+    return { kind: 'cat', text: 'health status index                        pri rep docs.count store.size\n' + rows.join('\n'), hits: [], total: HISTORY.length };
+  }
+  const isSearch = /(^|\/)_search(\?.*)?$/.test(path) || /(^|\/)_count(\?.*)?$/.test(path);
+  if (!isSearch || !['GET', 'POST'].includes(method)) throw new Error(`BLOCKED: ${method} ${path}\nThis classroom console is read-only. On the real system that request could change or delete alarm history. Stick to GET …/_search while you learn.`);
+  const index = path.split('/')[0];
+  if (index !== '_search' && index !== '_all' && !wildRe(index.replace(/,.*/, '')).test('eventanalytics-2026.10.07') ) throw new Error(`index_not_found_exception: no such index [${index}] (try eventanalytics-*)`);
+  let body = {};
+  if (src) { try { body = JSON.parse(src); } catch (e) { throw new Error(`json_parse_exception: ${e.message}\nCheck for a missing comma, quote or closing brace.`); } }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('parsing_exception: the request body must be a JSON object');
+  const bad = Object.keys(body).find((k) => !['query', 'size', 'from', 'sort', 'aggs', 'aggregations', '_source', 'track_total_hits', 'profile'].includes(k)); if (bad) throw new Error(`parsing_exception: Unknown key for a search request [${bad}]`);
+  const test = body.query ? esClause(body.query) : () => true;
+  let docs = HISTORY.filter(test);
+  if (body.sort) {
+    const specs = (Array.isArray(body.sort) ? body.sort : [body.sort]).map((s) => { if (typeof s === 'string') return [s, 'asc']; const k = Object.keys(s)[0]; const v = s[k]; return [k, typeof v === 'string' ? v : (v && v.order) || 'asc']; });
+    docs = docs.slice().sort((a, b) => { for (const [k, dir] of specs) { const f = k.replace(/\.keyword$/, ''); const x = f === '@timestamp' ? a._ts : a[f], y = f === '@timestamp' ? b._ts : b[f]; if (x !== y) return (x < y ? -1 : 1) * (dir === 'desc' ? -1 : 1); } return 0; });
+  }
+  const size = body.size === undefined ? 10 : +body.size; if (isNaN(size) || size < 0) throw new Error('illegal_argument_exception: [size] must be 0 or more');
+  const hits = docs.slice(+body.from || 0, (+body.from || 0) + size);
+  const out = { kind: 'search', total: docs.length, hits, aggs: null };
+  const aggs = body.aggs || body.aggregations;
+  if (aggs) {
+    out.aggs = {};
+    Object.entries(aggs).forEach(([name, a]) => {
+      if (!a || !a.terms) throw new Error(`parsing_exception: aggregation [${name}]: this classroom knows { "terms": { "field": ..., "size": ... } }`);
+      const f = String(a.terms.field || '').replace(/\.keyword$/, '');
+      if (!H_FIELDS.includes(f)) throw new Error(`aggregation [${name}]: no field [${a.terms.field}]`);
+      if (H_TEXT.has(f) && !/\.keyword$/.test(a.terms.field)) throw new Error(`illegal_argument_exception: Fielddata is disabled on text fields by default. [${f}] is analysed text: aggregate on [${f}.keyword] instead.`);
+      const counts = {}; docs.forEach((d) => { counts[d[f]] = (counts[d[f]] || 0) + 1; });
+      out.aggs[name] = Object.entries(counts).map(([key, n]) => ({ key: H_NUM.has(f) ? +key : key, doc_count: n })).sort((x, y) => y.doc_count - x.doc_count || (String(x.key) < String(y.key) ? -1 : 1)).slice(0, a.terms.size === undefined ? 10 : +a.terms.size);
+    });
+  }
+  return out;
+}
+function esJson(res) {
+  const src = (d) => { const o = {}; H_FIELDS.forEach((f) => { o[f] = d[f]; }); return o; };
+  const o = { took: 3, timed_out: false, hits: { total: { value: res.total, relation: 'eq' }, hits: res.hits.map((d) => ({ _index: 'eventanalytics-' + d['@timestamp'].slice(0, 10).replace(/-/g, '.'), _id: d._id, _source: src(d) })) } };
+  if (res.aggs) o.aggregations = Object.fromEntries(Object.entries(res.aggs).map(([k, b]) => [k, { buckets: b }]));
+  return JSON.stringify(o, null, 2);
+}
+
+// A task with a base filter (a filter group's restriction): the answer is ANDed onto it.
+const fullQuery = (T, text) => (T && T.base ? (String(text || '').trim() ? `(${T.base}) AND (${text})` : T.base) : text);
+// One entry point for all three languages. Never throws.
+function runQuery(lang, text) {
+  try {
+    if (lang === 'sql') { const f = sqlFilter(text); const rows = EVENTS.filter(f); return { ok: true, lang, rows, ids: rows.map((r) => r.EventID), total: rows.length, of: EVENTS.length }; }
+    if (lang === 'kql') { const f = kqlFilter(text); const rows = HISTORY.filter(f); return { ok: true, lang, rows, ids: rows.map((r) => r._id), total: rows.length, of: HISTORY.length }; }
+    const res = esRun(text);
+    return { ok: true, lang: 'es', rows: res.hits, ids: res.hits.map((r) => r._id), total: res.total, of: HISTORY.length, aggs: res.aggs, cat: res.kind === 'cat' ? res.text : null, json: res.kind === 'cat' ? null : esJson(res) };
+  } catch (e) { return { ok: false, lang, error: e.message || String(e), rows: [], ids: [], total: 0 }; }
+}
+// Does the learner's query give the same alarms as the model answer? Any wording that
+// returns the same rows is right, so there is never just one accepted spelling.
+function compare(lang, mine, model) {
+  if (!mine.ok) return { correct: false, msg: mine.error };
+  if (model.aggs) {
+    if (!mine.aggs) return { correct: false, msg: 'This one needs an aggregation ("aggs") so the answer comes back as counts per group.' };
+    const a = Object.values(mine.aggs)[0] || [], b = Object.values(model.aggs)[0] || [];
+    const same = a.length === b.length && a.every((x, i) => String(x.key) === String(b[i].key) && x.doc_count === b[i].doc_count);
+    if (!same) return { correct: false, msg: `Your groups don't match the target yet: you got ${a.length} group${a.length === 1 ? '' : 's'}${a[0] ? ` (top: ${a[0].key} = ${a[0].doc_count})` : ''}; the target has ${b.length}. Check the field, the size and the query that narrows the alarms first.` };
+    if (mine.ids.length !== model.ids.length) return { correct: false, msg: `The counts are right. Now set "size" so the reply lists ${model.ids.length} individual alarm${model.ids.length === 1 ? '' : 's'} (you have ${mine.ids.length}).` };
+    return { correct: true };
+  }
+  if (lang === 'es' && model.ids.length < model.total) {  // "any N alarms": the right query and the right size
+    if (mine.total !== model.total) return { correct: false, msg: `Your query matches ${mine.total} alarms; the target matches ${model.total}. Check the "query" part.` };
+    if (mine.ids.length !== model.ids.length) return { correct: false, msg: `The query is right. Now set "size" so the reply lists ${model.ids.length} alarm${model.ids.length === 1 ? '' : 's'} (yours lists ${mine.ids.length}).` };
+    return { correct: true };
+  }
+  if (lang === 'es' && mine.total > mine.ids.length) return { correct: false, msg: `Your query matches ${mine.total} alarms but "size" only lists ${mine.ids.length} of them. The target matches ${model.total}. Check the conditions, and make "size" big enough.` };
+  const A = new Set(mine.ids), B = new Set(model.ids);
+  const extra = mine.ids.filter((x) => !B.has(x)), missing = model.ids.filter((x) => !A.has(x));
+  if (!extra.length && !missing.length) return { correct: true };
+  const label = (id) => { const r = (lang === 'sql' ? EVENTS.find((e) => e.EventID === id) : HISTORY.find((e) => e._id === id)); return r ? `${r.Node} “${r.Summary}”` : id; };
+  let msg = `Your ${lang === 'sql' ? 'filter' : 'search'} returns ${mine.total} alarm${mine.total === 1 ? '' : 's'}; the target view has ${model.total}.`;
+  if (extra.length) msg += ` ${extra.length} should not be there, for example ${label(extra[0])}.`;
+  if (missing.length) msg += ` ${missing.length} ${missing.length === 1 ? 'is' : 'are'} missing, for example ${label(missing[0])}.`;
+  if (lang === 'kql' && mine.total === 0) msg += ' Check the spelling: values such as Critical are case-sensitive, and the wildcard is * outside quotes.';
+  return { correct: false, msg };
+}
+
+// ═══════════════════════════════════════════════════
+//  COURSES AND LESSONS
+//  task types: mcq (options, answer) · sql / kql / es (answer = model query; any query
+//  returning the same alarms is right) · display (need, sort) · dedup (need)
+// ═══════════════════════════════════════════════════
+const NOTE = (s) => `<div class="note">${s}</div>`;
+const WARN = (s) => `<div class="note warn">${s}</div>`;
+const COURSE_META = {
+  events: { name: 'Event list, filters & displays', blurb: 'Read the event list, write filters in SQL, lay out a display. Ends with a view you build yourself.' },
+  rules: { name: 'Where alarms come from', blurb: 'Aggregators, rules, deduplication, clears and mechanizations: what happens before an alarm reaches the list.' },
+  analytics: { name: 'Event Analytics', blurb: 'Search alarm history in Discover with KQL, then query it yourself from the Console.' },
+  final: { name: 'Final shift', blurb: 'One morning shift, five mixed tasks, a score out of 100 and a certificate. Best taken after the three courses.' },
+};
+const PASS_MARK = 70, STEP_POINTS = 20;
+const COURSE_ORDER = ['events', 'rules', 'analytics', 'final'];
+const LESSONS = {
+  events: [
+    { id: 'ev1', title: 'The map: five stages of an alarm',
+      explain: `<p>An alarm passes through five stages, and each stage has its own admin screen. Knowing the stage tells you which screen to open.</p>
+<table><tr><th>Stage</th><th>What happens</th><th>Admin screen</th></tr>
+<tr><td>1 Collect</td><td>A device sends a trap or syslog, or a poller sees a threshold breach</td><td>Configuration › Broker Control › Services</td></tr>
+<tr><td>2 Rules</td><td>Rules turn the raw message into an event and set Node, Severity, Summary, EventKey</td><td>Configuration › Rules</td></tr>
+<tr><td>3 Store</td><td>The event lands in the Events database. A repeat raises Count instead of adding a row</td><td>(nothing day to day)</td></tr>
+<tr><td>4 Tidy</td><td>Mechanizations run scheduled SQL: pair clears with problems, delete expired events</td><td>Configuration › Events › Mechanizations</td></tr>
+<tr><td>5 Show</td><td>A <b>filter</b> picks which events appear; a <b>display</b> picks the columns</td><td>Configuration › Events › Filters, Filter Groups, Displays</td></tr></table>
+<p>Start at stage 5 and work backwards. Filters and displays only change what people <b>see</b>, so they are the safe place to practise.</p>
+${NOTE('The list on the right is this classroom’s live event list: 32 dummy alarms on NGN cabinets (<code>TST1_001</code>…), RAN sites (<code>RAN1_001</code>…), core routers (<code>CORE1_001</code>…) and transmission nodes (<code>TX1_001</code>…).')}`,
+      terms: [['Filter', 'A saved condition that selects which events are shown.'], ['Display', 'A saved column layout and sort order.'], ['Mechanization', 'A scheduled SQL job that maintains live events.']],
+      task: { type: 'mcq', show: 'sql', prompt: 'The RAN team asks: “Can we have a view with only our own alarms?” Which screen do you open?',
+        options: ['Configuration › Rules', 'Configuration › Events › Filters', 'Configuration › Events › Mechanizations', 'Configuration › Broker Control › Services'], answer: 1,
+        hint: 'They want to change which alarms they see, not how alarms are created.', why: 'Choosing which events appear is stage 5: a filter. Rules, mechanizations and services change the alarms themselves for everyone.' } },
+    { id: 'ev2', title: 'Reading the event list',
+      explain: `<p>Each row is one event. The columns you will use most:</p>
+<table><tr><th>Field</th><th>Meaning</th></tr>
+<tr><td>Node / SubNode</td><td>The device, and the instance on it (a port, a cell, a PSU)</td></tr>
+<tr><td>Severity</td><td>0 Normal · 1 Unknown · 2 Info · 3 Minor · 4 Major · 5 Critical</td></tr>
+<tr><td>Summary</td><td>The alarm text</td></tr>
+<tr><td>Ack</td><td>0 = not acknowledged, 1 = acknowledged</td></tr>
+<tr><td>Count</td><td>How many times the same alarm has repeated</td></tr>
+<tr><td>FirstReported / LastReported</td><td>First and latest time seen (stored as epoch seconds)</td></tr>
+<tr><td>Method / SubMethod</td><td>How it arrived (Trapd, Syslogd) and which source or rule set handled it</td></tr>
+<tr><td>TicketID</td><td>The trouble ticket, if one was raised</td></tr></table>
+<p>The row colour is the severity. Acknowledged rows are shown faded here.</p>
+${NOTE('Find the row for <code>RAN1_003</code> with Count 57. One row, fifty-seven occurrences: that is deduplication keeping the list readable.')}`,
+      terms: [['Count', 'Number of times the same alarm (same EventKey) has been received.'], ['Ack', 'Acknowledged flag: someone has taken note of the alarm.']],
+      task: { type: 'mcq', show: 'sql', prompt: 'A row shows Count = 57 and a FirstReported time of several hours ago. What does that tell you?',
+        options: ['57 different devices have this fault', 'The same alarm has been received 57 times since it first appeared', 'The alarm has been acknowledged 57 times', 'Its severity has been raised 57 times'], answer: 1,
+        hint: 'Count belongs to one row, and one row is one alarm on one SubNode.', why: 'Repeats of the same alarm update the existing row and add one to Count. A high Count on an old alarm usually means something is flapping.' } },
+    { id: 'ev3', title: 'Your first filter',
+      explain: `<p>A filter is the part of a SQL query that comes after <code>WHERE</code>. You write a condition; rows where it is true are shown.</p>
+<pre>Severity = 5</pre>
+<p>Join conditions with <code>AND</code> (both must be true):</p>
+<pre>Severity >= 4 AND Node = 'RAN1_001'</pre>
+<ul><li>Numbers are written bare: <code>Ack = 0</code></li><li>Text needs single quotes: <code>Node = 'TST1_001'</code></li><li>Comparisons: <code>=</code> <code>!=</code> <code>&gt;</code> <code>&gt;=</code> <code>&lt;</code> <code>&lt;=</code></li></ul>
+${WARN('On the real system: <b>clone, never edit</b>. Copy a shared filter and change the copy, name it <code>TRAIN_yourinitials_…</code>, and keep yourself as User Owner so it stays private.')}`,
+      terms: [['WHERE clause', 'The condition part of a SQL query. A filter is exactly this.']],
+      task: { type: 'sql', prompt: 'Write a filter that shows only critical alarms that nobody has acknowledged yet.', start: '', answer: 'Severity = 5 AND Ack = 0',
+        hint: 'Critical is severity 5. Not acknowledged is Ack = 0. Both must be true.', why: 'Severity = 5 keeps the critical rows; AND Ack = 0 removes the ones somebody has already acknowledged. Seven alarms are left.',
+        say: { right: 'That’s your first working filter. Seven critical alarms nobody has picked up yet: exactly what a NOC wants at the top of the screen.' } } },
+    { id: 'ev4', title: 'Matching names with LIKE',
+      explain: `<p><code>=</code> needs the whole value. <code>LIKE</code> matches a pattern:</p>
+<table><tr><th>Wildcard</th><th>Matches</th><th>Example</th></tr>
+<tr><td><code>%</code></td><td>any run of characters</td><td><code>Node LIKE 'RAN1%'</code> — every RAN site</td></tr>
+<tr><td><code>_</code></td><td>exactly one character</td><td><code>Node LIKE 'TST1_00_'</code></td></tr></table>
+<p>Put <code>%</code> on both sides to find a phrase anywhere: <code>Summary LIKE '%Loss of Signal%'</code>.</p>
+${NOTE('A pattern that starts with <code>%</code> has to scan every row. On a big live list add a second condition to narrow it.')}`,
+      terms: [['LIKE', 'Pattern match. % is any text, _ is one character.']],
+      task: { type: 'sql', prompt: 'Show major and critical alarms on RAN sites only (nodes named RAN1_…).', start: '', answer: "Node LIKE 'RAN1%' AND Severity >= 4",
+        hint: "Two conditions: the node name starts with RAN1 (use LIKE and %), and Severity is 4 or more.", why: "Node LIKE 'RAN1%' keeps every RAN site; Severity >= 4 keeps Major (4) and Critical (5)." } },
+    { id: 'ev5', title: 'AND, OR and brackets',
+      explain: `<p><code>OR</code> means either side may be true. Mixed with <code>AND</code> it needs brackets, because <code>AND</code> is worked out first.</p>
+<pre>Severity = 5 AND Node LIKE 'TST1%' OR Node LIKE 'RAN1%'</pre>
+<p>reads as “critical on a cabinet, <b>or anything at all</b> on a RAN site”. Try it and look at the colours. With brackets:</p>
+<pre>Severity = 5 AND (Node LIKE 'TST1%' OR Node LIKE 'RAN1%')</pre>
+<p><code>IN</code> is a tidy way to write several ORs on one field: <code>SubMethod IN ('SRC_A', 'SRC_B')</code>.</p>`,
+      terms: [['Precedence', 'AND binds tighter than OR, so use brackets whenever you mix them.']],
+      task: { type: 'sql', prompt: 'Show critical alarms on NGN cabinets (TST1_…) or RAN sites (RAN1_…), and nothing else.', start: "Severity = 5 AND Node LIKE 'TST1%' OR Node LIKE 'RAN1%'", answer: "Severity = 5 AND (Node LIKE 'TST1%' OR Node LIKE 'RAN1%')",
+        hint: 'The starting filter lets every RAN alarm through. Put brackets round the two Node conditions.', why: 'The brackets make the OR one unit, so Severity = 5 applies to both kinds of node.' } },
+    { id: 'ev6', title: 'Tickets, Count and empty values',
+      explain: `<p>Useful working views often ask “what has been missed?”.</p>
+<ul><li>No ticket yet: <code>TicketID = ''</code> (an empty value). Some rows may hold no value at all, so the safe form is <code>(TicketID = '' OR TicketID IS NULL)</code>.</li>
+<li>Flapping alarms: <code>Count &gt; 10</code></li><li>Not from a source: <code>SubMethod != 'SRC_C'</code> or <code>SubMethod NOT IN ('SRC_C', 'SRC_D')</code></li></ul>`,
+      terms: [['IS NULL', 'True when a field holds no value at all, which is different from an empty text value.']],
+      task: { type: 'sql', prompt: 'Show major and critical alarms that have no ticket raised.', start: '', answer: "Severity >= 4 AND (TicketID = '' OR TicketID IS NULL)",
+        hint: "Severity >= 4, and the TicketID is empty: TicketID = ''.", why: 'Severity >= 4 keeps the serious alarms; the TicketID test keeps only those with nothing in the ticket column.' } },
+    { id: 'ev7', title: 'Filtering by time',
+      explain: `<p>Times are stored as epoch numbers: seconds since 1970. <code>UNIX_TIMESTAMP()</code> is “now” in the same units, so:</p>
+<pre>FirstReported > UNIX_TIMESTAMP() - 3600</pre>
+<p>means “first seen less than 3600 seconds (one hour) ago”. A day is 86400.</p>
+${WARN('Check your own version before using this on the real system. If a raw FirstReported value has 13 digits it is in milliseconds, and the clause becomes <code>FirstReported &gt; (UNIX_TIMESTAMP() - 3600) * 1000</code>. This classroom uses seconds.')}`,
+      terms: [['Epoch time', 'A time stored as a count of seconds (or milliseconds) since 1 January 1970.']],
+      task: { type: 'sql', prompt: 'Show every alarm that was first reported in the last hour.', start: '', answer: 'FirstReported > UNIX_TIMESTAMP() - 3600',
+        hint: 'FirstReported must be greater than now minus 3600 seconds.', why: 'UNIX_TIMESTAMP() - 3600 is one hour ago; anything first reported after that is new.' } },
+    { id: 'ev8', title: 'Displays: choosing the columns',
+      explain: `<p>A display controls how alarms <b>look</b>, not which alarms appear. It lives at Configuration › Events › Displays.</p>
+<table><tr><th>Setting</th><th>Effect</th></tr>
+<tr><td>Visible</td><td>Shows the field as a column</td></tr><tr><td>Field</td><td>The real field name. This is the name you use in a filter</td></tr>
+<tr><td>Custom Name</td><td>The header operators see, which may differ from the field name</td></tr>
+<tr><td>Width</td><td>A number, or <code>flex:2</code> to share spare space</td></tr><tr><td>Sorting order</td><td>The default sort</td></tr></table>
+${NOTE('If a column header is not accepted in a filter, open the display and read the Field behind that Custom Name.')}`,
+      terms: [['Custom Name', 'A friendlier column header. Filters still need the real Field name.']],
+      task: { type: 'display', prompt: 'Build a display for spotting flapping alarms: show Severity, LastReported, Count, Node and Summary, sorted by Severity with the worst first.', need: ['Severity', 'LastReported', 'Count', 'Node', 'Summary'], sort: ['Severity', 'desc'],
+        hint: 'Tick the five columns named in the task, then set Sort by to Severity, descending.', why: 'Count and LastReported together show what is repeating right now; sorting by Severity descending puts critical rows at the top.' } },
+    { id: 'ev9', title: 'Project: a RAN working view', project: true,
+      explain: `<p>Put it together. The RAN team wants one view for the start of a shift:</p>
+<ul><li>RAN sites only</li><li>major or critical</li><li>not yet acknowledged</li><li>repeated more than three times, so one-off blips are left out</li></ul>
+<p>On the real system you would save this as <code>TRAIN_yourinitials_RAN_Working</code>, set its Default Display to the display from the last lesson, check it for a shift, and only then ask a senior admin to make it public in a filter group.</p>`,
+      terms: [],
+      task: { type: 'sql', prompt: 'Write the filter for the RAN working view described on the left.', start: '', answer: "Node LIKE 'RAN1%' AND Severity >= 4 AND Ack = 0 AND Count > 3",
+        hint: 'Four conditions joined with AND: Node LIKE …, Severity >= …, Ack = …, Count > ….', why: 'Each bullet is one condition. Five alarms are left, and RAN1_003 with Count 57 is the one to look at first.',
+        say: { right: 'That’s a real working view, built from scratch. Five alarms out of thirty-two, and every one of them needs somebody’s attention.' } } },
+  ],
+  rules: [
+    { id: 'ru1', title: 'Aggregators and rules',
+      explain: `<p>New alarm types are made in the <b>rules</b>, not in filters. A filter can only show events the rules have already produced.</p>
+<table><tr><th>Piece</th><th>What it is</th><th>Where</th></tr>
+<tr><td>Aggregator</td><td>A service that listens for traps, syslog or another feed</td><td>Configuration › Broker Control › Services</td></tr>
+<tr><td>Rules</td><td>Code that runs once per message and fills in the event fields</td><td>Configuration › Rules</td></tr>
+<tr><td>Threshold</td><td>A poll-based alarm, e.g. CPU above 85%</td><td>Configuration › Metrics › Thresholds</td></tr></table>
+<p>A rule, in outline (an illustration of the style, not a file from a real system):</p>
+<pre>if ($Message =~ /LOS detected on (\\S+)/) {
+    $Event->{'SubNode'}  = $1;
+    $Event->{'Summary'}  = "Loss of Signal on $1";
+    $Event->{'Severity'} = 5;
+    $Event->{'EventType'} = 'LOS';
+}</pre>
+${WARN('Rules are high risk: a syntax error can stop an aggregator processing. Read them freely; make your first change with a senior admin, on a test instance if there is one.')}`,
+      terms: [['Aggregator', 'Service that receives raw messages from devices.'], ['Rules', 'Code that turns a raw message into an event.']],
+      task: { type: 'mcq', show: 'sql', showQuery: "Summary LIKE '%temperature%'", prompt: 'The alarms on the right arrive as Minor, Major and Critical for similar faults. The team wants cabinet over-temperature always raised as Critical. Where is that fixed?',
+        options: ['In a filter, with Severity = 5', 'In the display, by renaming the column', 'In the rules that process that message', 'In Kibana index patterns'], answer: 2,
+        hint: 'A filter can hide or show rows, but can it change the severity an alarm arrives with?', why: 'Severity is set when the rules build the event. A filter only chooses rows; it cannot change them.' } },
+    { id: 'ru2', title: 'EventKey and deduplication',
+      explain: `<p>Every event gets an <b>EventKey</b> from the rules. When a new message has the same key as a live event, the existing row is updated and its Count goes up. A different key makes a new row.</p>
+<p>So the key decides how tidy the list is:</p>
+<ul><li><b>Too specific</b> (for example it includes the time): every repeat is a new row and the list floods.</li>
+<li><b>Too broad</b> (for example only the Node): unrelated faults on one device merge into a single row and are hidden.</li></ul>
+<p>The usual recipe is “which device, which part of it, which kind of fault”.</p>`,
+      terms: [['EventKey', 'The value that decides whether a message is a new alarm or a repeat.'], ['Deduplication', 'Folding repeats into one row and raising Count.']],
+      task: { type: 'dedup', prompt: 'Six messages arrive (below). Choose what goes into the EventKey so the list ends up with exactly one row per real fault.', need: ['Node', 'SubNode', 'EventType'],
+        hint: 'Port 3 losing signal three times is one fault. A fan failing on the same cabinet is a different one. The time should not be part of the key.', why: 'Node + SubNode + EventType gives three rows: LOS on Port-3 (Count 3), LOS on Port-5 (Count 2) and the fan failure (Count 1). Adding the time gives six rows; using only the Node gives one.' } },
+    { id: 'ru3', title: 'Problems, clears and mechanizations',
+      explain: `<p>Most faults send two messages: one when the problem starts and one when it clears. The rules mark them:</p>
+<table><tr><th></th><th>EventCategory</th><th>Severity</th></tr><tr><td>Problem</td><td>2</td><td>1 to 5</td></tr><tr><td>Resolution (clear)</td><td>1</td><td>0</td></tr></table>
+<p>A <b>mechanization</b>, a scheduled SQL job, then pairs each resolution with its problem. They match when Node, SubNode and EventType are the same. Both are set to Severity 0 and deleted a few minutes later.</p>
+<p>The green rows on the right are resolutions waiting for that job.</p>
+${WARN('Mechanizations run SQL against every live event. Treat them like rules: read, do not change, until someone has shown you.')}`,
+      terms: [['Resolution', 'The message that says a fault has cleared.'], ['Mechanization', 'Scheduled SQL that maintains live events, such as pairing clears and deleting expired rows.']],
+      task: { type: 'mcq', show: 'sql', showQuery: 'Severity = 0 OR EventType = \'LOS\'', prompt: 'A “signal restored” message arrives for TST1_005 Port-2, but the Loss of Signal alarm for that port stays red. What is the most likely cause?',
+        options: ['The filter is hiding the clear', 'The clear and the problem were given different EventType or SubNode values by the rules, so they never pair', 'Nobody has acknowledged the alarm', 'The display is sorted the wrong way'], answer: 1,
+        hint: 'What three things must be the same for a clear to find its problem?', why: 'Pairing needs the same Node, SubNode and EventType. If the rules label the clear differently from the problem, the mechanization cannot match them.' } },
+    { id: 'ru4', title: 'Working safely as a new admin',
+      explain: `<p>Five habits that keep a live system safe:</p>
+<ol><li><b>Clone, never edit.</b> Change a copy of a shared filter or display.</li>
+<li><b>Prefix practice items</b> with <code>TRAIN_yourinitials_</code> so they are easy to find and remove.</li>
+<li><b>Keep practice items private.</b> A filter you own is invisible to others and cannot be put in a filter group.</li>
+<li><b>Read-only first.</b> Filters, displays, Discover searches and <code>GET</code> queries only read. Rules, mechanizations and anything with <code>PUT</code>, <code>POST</code> or <code>DELETE</code> can change data.</li>
+<li><b>Write down what you changed</b>, and ask before touching rules or Elasticsearch management.</li></ol>
+<p>The list on the right is filtered to alarms that somebody already owns: shared, live work that a careless edit would disturb.</p>
+<p>A <b>filter group</b> is a folder of public filters. A group can carry a Restriction Filter that is added to every filter inside it, which is how one filter can show different alarms to different teams.</p>`,
+      terms: [['Filter group', 'A folder of public filters with an optional restriction applied to all of them.'], ['Restriction Filter', 'An extra condition a filter group adds to every filter in it.']],
+      task: { type: 'mcq', show: 'sql', showQuery: "OwnerName != ''", prompt: 'It is your first week with admin rights on the live system. Which of these is safe to do on your own?',
+        options: ['Edit the shared NOC filter to add a condition', 'Create a private filter named TRAIN_xx_Test and load it', 'Change the schedule of a mechanization', 'Fix a typo in a trap rules file'], answer: 1,
+        hint: 'Which one changes nothing for anybody else?', why: 'A private filter affects only your own view. The other three change what every operator sees or how alarms are processed.' } },
+  ],
+  analytics: [
+    { id: 'ea1', title: 'Live list or history?',
+      explain: `<p>A copy of every event also goes to Elasticsearch, into indices named <code>eventanalytics-*</code>. That copy is <b>history</b>: it keeps alarms long after they clear and leave the live list.</p>
+<table><tr><th></th><th>Live event list</th><th>Event Analytics</th></tr>
+<tr><td>Holds</td><td>What is wrong now</td><td>Everything that happened</td></tr><tr><td>Language</td><td>SQL filter</td><td>KQL, or Elasticsearch JSON</td></tr>
+<tr><td>Open from</td><td>Events</td><td>Analytics › Events › Discover</td></tr></table>
+<p>The list on the right is now the history index: 180 alarm records from the last 7 days, newest first.</p>
+${NOTE('In Discover the most common reason for “no results” is a time picker set too short. Start with Last 24 hours or longer.')}`,
+      terms: [['Index', 'An Elasticsearch store of alarm history, usually one per day.'], ['Index pattern', 'A name with a wildcard covering many indices, such as eventanalytics-*.']],
+      task: { type: 'mcq', show: 'kql', prompt: 'An alarm on RAN1_003 cleared yesterday afternoon and has gone from the event list. Where do you look to see when it started and how often it repeated?',
+        options: ['Configuration › Events › Filters', 'Analytics › Events › Discover', 'Configuration › Rules', 'Configuration › Events › Displays'], answer: 1,
+        hint: 'The live list only holds what is wrong now.', why: 'Cleared alarms leave the live list but stay in the eventanalytics-* history, which Discover searches.' } },
+    { id: 'ea2', title: 'KQL: field : value',
+      explain: `<p>The Discover search bar uses <b>KQL</b>. Its basic form is <code>field : value</code>.</p>
+<table><tr><th>Goal</th><th>KQL</th></tr><tr><td>One node</td><td><code>Node : "RAN1_001"</code></td></tr>
+<tr><td>A family of nodes</td><td><code>Node : TST1_*</code></td></tr><tr><td>A severity by name</td><td><code>Severity.name : "Critical"</code></td></tr>
+<tr><td>A number</td><td><code>Severity >= 4</code></td></tr><tr><td>Words in the alarm text</td><td><code>Summary : "loss of signal"</code></td></tr></table>
+<p>The wildcard is <code>*</code> here, not <code>%</code>, and it must be outside quotes. Values such as <code>Critical</code> are case-sensitive; text in Summary is not.</p>`,
+      terms: [['KQL', 'Kibana Query Language: the search-bar language in Discover.']],
+      task: { type: 'kql', prompt: 'Find the history for one RAN site: every record for node RAN1_001.', start: '', answer: 'Node : "RAN1_001"',
+        hint: 'field : value. The field is Node.', why: 'Node : "RAN1_001" matches that exact node name in every record of the last 7 days.' } },
+    { id: 'ea3', title: 'KQL: combining conditions',
+      explain: `<p>Join conditions with <code>and</code>, <code>or</code> and <code>not</code>. Brackets work as in SQL.</p>
+<table><tr><th>SQL filter (live list)</th><th>KQL (Discover)</th></tr>
+<tr><td><code>Node = 'RAN1_001'</code></td><td><code>Node : "RAN1_001"</code></td></tr><tr><td><code>Node LIKE 'TST1%'</code></td><td><code>Node : TST1_*</code></td></tr>
+<tr><td><code>A AND (B OR C)</code></td><td><code>A and (B or C)</code></td></tr><tr><td><code>Ack = 0</code></td><td><code>Ack : 0</code> or <code>not Ack : 1</code></td></tr>
+<tr><td><code>SubMethod IN ('SRC_A','SRC_B')</code></td><td><code>SubMethod : ("SRC_A" or "SRC_B")</code></td></tr></table>
+<p>They are two different languages for two different stores, so a filter cannot be pasted into Discover.</p>`,
+      terms: [],
+      task: { type: 'kql', prompt: 'Find every Critical record on NGN cabinets (nodes TST1_…) in the history.', start: '', answer: 'Node : TST1_* and Severity.name : "Critical"',
+        hint: 'Two conditions joined with and: Node with a * wildcard, and Severity.name : "Critical".', why: 'Node : TST1_* keeps the cabinets; Severity.name : "Critical" keeps severity 5. Severity = 5 would also work as Severity : 5.' } },
+    { id: 'ea4', title: 'The Console: your first query',
+      explain: `<p>Discover writes Elasticsearch queries for you. In the <b>Console</b> (Analytics › Events › Administration › Console) you write them yourself. A request is a line saying what to do, then a JSON body:</p>
+<pre>GET eventanalytics-*/_search
+{
+  "size": 5,
+  "query": { "match_all": {} }
+}</pre>
+<p>In the reply, <code>hits.total</code> is how many matched, and each entry under <code>hits.hits</code> is one alarm with its fields in <code>_source</code>. Without <code>size</code> you get 10.</p>
+${WARN('Stick to <code>GET</code> while you learn. <code>PUT</code>, <code>POST</code> and <code>DELETE</code> can change or remove data. This classroom console refuses them; the real one does not.')}`,
+      terms: [['match_all', 'A query that matches every document.'], ['size', 'How many individual hits to return.']],
+      task: { type: 'es', prompt: 'Ask the history index for any three alarms.', start: 'GET eventanalytics-*/_search\n{\n  "query": { "match_all": {} }\n}', answer: 'GET eventanalytics-*/_search\n{ "size": 3, "query": { "match_all": {} } }',
+        hint: 'The starting query returns 10. Add "size": 3 inside the braces, with a comma between it and "query".', why: '"size": 3 limits the reply to three hits. hits.total still reports all 180 that matched.' } },
+    { id: 'ea5', title: 'Console: bool and range',
+      explain: `<p>Real questions have several conditions. A <code>bool</code> query combines them:</p>
+<table><tr><th>Part</th><th>Meaning</th></tr><tr><td><code>must</code></td><td>and</td></tr><tr><td><code>should</code></td><td>or</td></tr><tr><td><code>must_not</code></td><td>not</td></tr><tr><td><code>filter</code></td><td>and, without relevance scoring (use for dates)</td></tr></table>
+<pre>GET eventanalytics-*/_search
+{
+  "size": 50,
+  "query": { "bool": {
+    "must": [
+      { "wildcard": { "Node": "TST1_*" } },
+      { "match": { "Severity.name": "Major" } }
+    ],
+    "filter": [
+      { "range": { "@timestamp": { "gte": "now-24h" } } }
+    ]
+  } }
+}</pre>
+<p><code>range</code> takes <code>gte</code>, <code>gt</code>, <code>lte</code>, <code>lt</code>. Dates understand <code>now-1h</code>, <code>now-24h</code>, <code>now-7d</code>.</p>`,
+      terms: [['bool', 'Combines queries with must, should, must_not and filter.'], ['range', 'Matches numbers or dates between limits.']],
+      task: { type: 'es', prompt: 'Find Critical records on RAN sites (RAN1_…) from the last 24 hours. Ask for up to 50 hits.', start: 'GET eventanalytics-*/_search\n{\n  "size": 50,\n  "query": { "bool": {\n    "must": [\n      { "wildcard": { "Node": "TST1_*" } },\n      { "match": { "Severity.name": "Major" } }\n    ],\n    "filter": [\n      { "range": { "@timestamp": { "gte": "now-24h" } } }\n    ]\n  } }\n}',
+        answer: 'GET eventanalytics-*/_search\n{ "size": 50, "query": { "bool": { "must": [ { "wildcard": { "Node": "RAN1_*" } }, { "match": { "Severity.name": "Critical" } } ], "filter": [ { "range": { "@timestamp": { "gte": "now-24h" } } } ] } } }',
+        hint: 'The starting query is the example from the lesson. Change the node pattern to RAN1_* and the severity name to Critical.', why: 'The two must clauses pick RAN sites and Critical; the range filter keeps the last 24 hours.' } },
+    { id: 'ea6', title: 'Console: counting with aggregations',
+      explain: `<p>An <b>aggregation</b> counts and groups, like a pivot table. This asks “which sources raised the most alarms this week?”:</p>
+<pre>GET eventanalytics-*/_search
+{
+  "size": 0,
+  "query": { "range": { "@timestamp": { "gte": "now-7d" } } },
+  "aggs": {
+    "by_source": { "terms": { "field": "SubMethod", "size": 5 } }
+  }
+}</pre>
+<p><code>"size": 0</code> hides the individual alarms so only the counts come back. <code>by_source</code> is a name you choose.</p>
+${NOTE('Some fields are stored as analysed text and cannot be grouped. If you see “Fielddata is disabled on text fields”, add <code>.keyword</code> to the field name. Try grouping on <code>Summary</code> to see it.')}`,
+      terms: [['Aggregation', 'An Elasticsearch count or grouping.'], ['terms', 'An aggregation that groups by the values of one field.']],
+      task: { type: 'es', prompt: 'Which five nodes raised the most alarms in the last 7 days? Return only the counts.', start: 'GET eventanalytics-*/_search\n{\n  "size": 0,\n  "query": { "range": { "@timestamp": { "gte": "now-7d" } } },\n  "aggs": {\n    "by_source": { "terms": { "field": "SubMethod", "size": 5 } }\n  }\n}',
+        answer: 'GET eventanalytics-*/_search\n{ "size": 0, "query": { "range": { "@timestamp": { "gte": "now-7d" } } }, "aggs": { "top_nodes": { "terms": { "field": "Node", "size": 5 } } } }',
+        hint: 'Keep the shape of the example and change the field being grouped from SubMethod to Node.', why: 'A terms aggregation on Node counts records per node; size 5 keeps the top five. RAN1_003 is the noisiest.' } },
+    { id: 'ea7', title: 'Search Profiler and Kibana management',
+      explain: `<p>The <b>Search Profiler</b> tab runs a query and shows where the time went. Change its Index box from <code>_all</code> to <code>eventanalytics-*</code> first, or it profiles every index on the cluster. A wildcard at the <b>front</b> of a value, such as <code>*_001</code>, is usually the slowest thing you can write.</p>
+<p>The reply on the right is what Index Management summarises: one <code>eventanalytics-</code> index per day, with its document count and size.</p>
+<p>On the <b>Management</b> page most items are cluster plumbing:</p>
+<table><tr><th>Item</th><th>For a beginner</th></tr>
+<tr><td>Kibana › Index Patterns</td><td><b>Use it.</b> Shows each field and its type. Refresh the field list when a new field is missing from Discover</td></tr>
+<tr><td>Kibana › Saved Objects</td><td><b>Use it.</b> Export before editing anything shared</td></tr>
+<tr><td>Elasticsearch › Index Management, Index Lifecycle Policies</td><td>Look only. Never delete, close or force-merge</td></tr>
+<tr><td>Advanced Settings, Snapshot and Restore, License, Upgrade Assistant, Security, Logstash, Beats</td><td>Leave alone</td></tr></table>`,
+      terms: [['Search Profiler', 'Shows how long each part of a query took.'], ['Saved Objects', 'Every saved search, visualisation and dashboard in Kibana.']],
+      task: { type: 'mcq', show: 'es', showQuery: 'GET _cat/indices/eventanalytics-*?v', prompt: 'After a rules change, a new field is being stored but does not appear in Discover’s field list. What is the right fix?',
+        options: ['Delete and recreate the eventanalytics indices', 'Open Index Patterns › eventanalytics-* and refresh the field list', 'Change a value in Advanced Settings', 'Restart Elasticsearch'], answer: 1,
+        hint: 'Kibana keeps its own list of the fields it knows about, per index pattern.', why: 'The index pattern holds a cached field list. Refreshing it is safe and routinely needed; the other options are destructive or unrelated.' } },
+    { id: 'ea8', title: 'Project: the noisiest RAN sites', project: true,
+      explain: `<p>A weekly question from the RAN team: <b>“Which three RAN sites raised the most alarms in the last 7 days?”</b></p>
+<p>Build one Console request that:</p>
+<ul><li>looks only at nodes named <code>RAN1_…</code></li><li>covers the last 7 days</li><li>groups by Node and keeps the top 3</li><li>returns the counts only, with no individual alarms</li></ul>
+<p>On the real system you would then paste the body into the Search Profiler to see which part is slowest, and save the result as a Discover search or visualisation named <code>TRAIN_yourinitials_…</code>.</p>`,
+      terms: [],
+      task: { type: 'es', prompt: 'Write the Console request described on the left.', start: 'GET eventanalytics-*/_search\n{\n  "size": 0,\n  "query": { "bool": {\n    "must": [ ],\n    "filter": [ ]\n  } },\n  "aggs": { }\n}',
+        answer: 'GET eventanalytics-*/_search\n{ "size": 0, "query": { "bool": { "must": [ { "wildcard": { "Node": "RAN1_*" } } ], "filter": [ { "range": { "@timestamp": { "gte": "now-7d" } } } ] } }, "aggs": { "top": { "terms": { "field": "Node", "size": 3 } } } }',
+        hint: 'must gets a wildcard on Node; filter gets a range on @timestamp from now-7d; aggs gets a terms aggregation on Node with size 3.', why: 'The wildcard narrows to RAN sites, the range to seven days, and the terms aggregation counts per node and keeps three.',
+        say: { right: 'That is a proper analytics query, written by hand. You can answer “what’s been noisy this week” for any team now.' } } },
+  ],
+};
+LESSONS.final = [
+  { id: 'fs1', title: 'Final shift', project: true,
+    explain: `<p>It is 07:00 and you are the admin on the morning shift. There was a storm overnight, the event list is busy, and the teams are asking for help. Five requests are waiting.</p>
+<table><tr><th>Step</th><th>Request</th><th>You use</th></tr>
+<tr><td>1</td><td>A handover view for the shift lead</td><td>SQL filter</td></tr><tr><td>2</td><td>A display that shows what is repeating</td><td>Display</td></tr>
+<tr><td>3</td><td>A list that is flooding with duplicates</td><td>What you know about rules</td></tr>
+<tr><td>4</td><td>A question about last week</td><td>KQL</td></tr><tr><td>5</td><td>A count for the morning report</td><td>Console</td></tr></table>
+<p><b>Scoring.</b> Each step is worth ${STEP_POINTS} points: ${STEP_POINTS} for right first time with no hint, 15 with a hint or on the second try, 10 after that, and 0 if you use Show answer. ${PASS_MARK} out of 100 passes and earns the certificate. You can take it as often as you like; your best score is kept.</p>
+${NOTE('Everything here is still the simulator with dummy alarms. Ainara can check your work and give hints, but a hint costs points.')}`,
+    terms: [],
+    steps: [
+      { name: 'Handover filter', type: 'sql', prompt: 'The shift lead wants a handover view: major and critical alarms on RAN sites (RAN1_…) and NGN cabinets (TST1_…) that are not acknowledged and have no ticket.', start: '',
+        answer: "Severity >= 4 AND Ack = 0 AND TicketID = '' AND (Node LIKE 'RAN1%' OR Node LIKE 'TST1%')",
+        hint: 'Four things must all be true, and the node test is an OR of two patterns, so it needs brackets.', why: 'Severity, Ack and TicketID are joined with AND; the two node patterns are bracketed so the other conditions apply to both.' },
+      { name: 'Repeat display', type: 'display', prompt: 'Build the display to go with it: Severity, Node, SubNode, Summary, Count and TicketID, with the most repeated alarms at the top.', need: ['Severity', 'Node', 'SubNode', 'Summary', 'Count', 'TicketID'], sort: ['Count', 'desc'],
+        hint: 'Tick the six columns named. “Most repeated at the top” is a sort on Count, descending.', why: 'Count descending puts the flapping alarms first, and TicketID shows at a glance which ones nobody has raised.' },
+      { name: 'Flooding list', type: 'mcq', show: 'sql', showQuery: "Node = 'TX1_001'", prompt: 'Overnight, one Loss of Signal fault on TX1_001 produced forty separate rows instead of one row with Count 40. What is the cause, and what do you do?',
+        options: ['The filter is wrong: add Count > 1 to hide the extra rows', 'The EventKey for that alarm includes something that changes every time, so nothing deduplicates. Raise it with a senior admin as a rules fix', 'The display is sorted by time: sort by Count instead', 'Elasticsearch is behind: refresh the index pattern'], answer: 1,
+        hint: 'What decides whether a new message is a repeat of an existing row or a brand-new row?', why: 'Deduplication depends on the EventKey the rules build. A key containing a time or sequence number is different on every message. Hiding rows with a filter leaves the flood in place, and rules changes go through a senior admin.' },
+      { name: 'History search', type: 'kql', prompt: 'The access team asks: how often did Loss of Signal hit our NGN cabinets (TST1_…) in the last week? Find those records in the history.', start: '',
+        answer: 'Node : TST1_* and Summary : "loss of signal"',
+        hint: 'Two conditions joined with and: a wildcard on Node, and a phrase in Summary.', why: 'Node : TST1_* keeps the cabinets; Summary : "loss of signal" finds the phrase in the alarm text, whatever the capitals.' },
+      { name: 'Morning report', type: 'es', prompt: 'For the morning report: which three sources (SubMethod) raised the most Critical alarms in the last 7 days? Return the counts only.',
+        start: 'GET eventanalytics-*/_search\n{\n  "size": 0,\n  "query": { "bool": {\n    "must": [ ],\n    "filter": [ ]\n  } },\n  "aggs": { }\n}',
+        answer: 'GET eventanalytics-*/_search\n{ "size": 0, "query": { "bool": { "must": [ { "match": { "Severity.name": "Critical" } } ], "filter": [ { "range": { "@timestamp": { "gte": "now-7d" } } } ] } }, "aggs": { "by_source": { "terms": { "field": "SubMethod", "size": 3 } } } }',
+        hint: 'must: a match on Severity.name for Critical. filter: a range on @timestamp from now-7d. aggs: a terms aggregation on SubMethod with size 3.', why: 'The match narrows to Critical, the range to seven days, and the terms aggregation counts per source and keeps the top three.' },
+    ] },
+];
+// ═══════════════════════════════════════════════════
+//  HANDS-ON SIMULATORS for the rules, threshold, clear-pairing, pick-a-row and
+//  operator-tools tasks. Pure: an answer goes in, alarm rows come out.
+// ═══════════════════════════════════════════════════
+function ruleSim(cfg, msgs) {
+  const rows = {}, order = [];
+  msgs.forEach((m) => {
+    let ev;
+    if (cfg.match && m.text.toLowerCase().includes(String(cfg.match).toLowerCase())) ev = { Node: m.Node, SubNode: m.SubNode, Severity: +cfg.sev, EventType: cfg.etype, Summary: m.text, Time: m.Time };
+    else if (cfg.other === 'discard') return;
+    else ev = { Node: m.Node, SubNode: m.SubNode, Severity: 1, EventType: 'unknown', Summary: 'Unknown message: ' + m.text, Time: m.Time, unk: true };
+    const parts = ev.unk ? ['Node', 'SubNode', 'Summary'] : (cfg.key || []);
+    const key = parts.length ? parts.map((p) => ev[p]).join('+') : 'no-key-' + order.length;
+    if (rows[key]) rows[key].Count++; else { rows[key] = { EventKey: parts.length ? key : '(none)', ...ev, Count: 1 }; order.push(key); }
+  });
+  return order.map((k) => rows[k]);
+}
+const POLLS = { CORE1_001: [42, 48, 91, 50, 47, 52, 49, 55, 51, 46, 50, 48], CORE1_002: [60, 72, 81, 86, 88, 92, 90, 87, 70, 64, 58, 55] };
+function thresholdSim(cfg) {
+  const out = [], value = +cfg.value, need = Math.max(1, +cfg.polls || 1);
+  Object.entries(POLLS).forEach(([node, series]) => {
+    let run = 0, open = null;
+    series.forEach((v, i) => {
+      const hit = cfg.op === '<' ? v < value : v > value; run = hit ? run + 1 : 0;
+      if (hit && run >= need && !open) { open = { Node: node, SubNode: 'CPU', Severity: +cfg.sev, Summary: `CPU utilisation ${v}% is ${cfg.op === '<' ? 'below' : 'above'} ${value}%`, Raised: `poll ${i + 1}`, Cleared: 'still active', Count: 1 }; out.push(open); }
+      if (!hit && open) { open.Cleared = `poll ${i + 1}`; open = null; }
+    });
+  });
+  return out;
+}
+const PAIR_MSGS = [
+  { Time: '10:00', Node: 'TST1_005', SubNode: 'Port-2', EventType: 'LOS', Summary: 'Loss of Signal on port 2', cat: 2, Severity: 5 },
+  { Time: '10:01', Node: 'TST1_005', SubNode: 'Fan-1', EventType: 'fanFail', Summary: 'Fan failure', cat: 2, Severity: 4 },
+  { Time: '10:02', Node: 'TST1_003', SubNode: 'Port-2', EventType: 'LOS', Summary: 'Loss of Signal on port 2', cat: 2, Severity: 5 },
+  { Time: '10:03', Node: 'TST1_005', SubNode: 'Port-2', EventType: 'RDI', Summary: 'Remote defect indication on port 2', cat: 2, Severity: 3 },
+  { Time: '10:05', Node: 'TST1_005', SubNode: 'Port-2', EventType: 'LOS', Summary: 'Signal restored on port 2', cat: 1, Severity: 0 },
+];
+function pairSim(parts) {
+  const clears = PAIR_MSGS.filter((m) => m.cat === 1);
+  return PAIR_MSGS.filter((m) => m.cat === 2).map((p) => {
+    const cleared = parts.length > 0 && clears.some((c) => parts.every((f) => c[f] === p[f]));
+    return { Node: p.Node, SubNode: p.SubNode, EventType: p.EventType, Summary: p.Summary, Severity: cleared ? 0 : p.Severity, State: cleared ? 'cleared by the 10:05 message' : 'still active', Count: 1 };
+  });
+}
+const OPS_START = () => EVENTS.filter((e) => e.Severity === 5 && e.Ack === 0).map((e) => ({ ...e, OwnerName: '', Journal: '' }));
+function simRun(T, a) {
+  if (T.type === 'rule') return ruleSim(a, T.msgs);
+  if (T.type === 'threshold') return thresholdSim(a);
+  if (T.type === 'pair') return pairSim(a);
+  if (T.type === 'ops') return a;
+  return [];
+}
+const sevName = (n) => `${SEV[n]} (${n})`;
+function simMark(T, a) {
+  if (T.type === 'pickrow') {
+    if (a === null || a === undefined) return { correct: false, msg: 'Click a row in the list first.', empty: true };
+    const r = EVENTS.find((e) => e.EventID === a);
+    return r && r.Node === T.need.node && r.SubNode === T.need.sub ? { correct: true } : { correct: false, msg: `That row is ${r ? `${r.Node} ${r.SubNode} with Count ${r.Count}` : 'not in the list'}. ${T.miss || ''}` };
+  }
+  if (T.type === 'ops') {
+    const t = a.find((r) => r.Node === T.need.node && r.SubNode === T.need.sub), others = a.filter((r) => r !== t && (r.Ack || r.OwnerName || r.Journal));
+    if (others.length) return { correct: false, msg: `You changed ${others[0].Node} ${others[0].SubNode}, which is somebody else’s alarm. Undo that (Unacknowledge) and work on ${T.need.node} ${T.need.sub}.` };
+    if (!t.Ack) return { correct: false, msg: `Select ${T.need.node} ${T.need.sub} and acknowledge it.` };
+    if (!t.OwnerName) return { correct: false, msg: 'Acknowledged. Now take ownership so others can see who is on it.' };
+    if (!t.Journal) return { correct: false, msg: 'Acknowledged and owned. Add a journal note saying what you are doing.' };
+    return { correct: true };
+  }
+  const sig = (rows) => rows.map((r) => (T.type === 'threshold' ? [r.Node, r.Raised, r.Severity] : T.type === 'pair' ? [r.Node, r.SubNode, r.EventType, r.Severity] : [r.Node, r.SubNode, r.Severity, r.EventType, r.Count]).join('|')).sort().join(';');
+  const mine = simRun(T, a), want = simRun(T, T.need);
+  if (sig(mine) === sig(want)) return { correct: true };
+  if (T.type === 'rule') {
+    const hit = mine.filter((r) => !r.unk), wHit = want.filter((r) => !r.unk);
+    if (!hit.length) return { correct: false, msg: 'Your rule does not match any of the incoming messages yet. Choose the text those messages share.' };
+    if (mine.filter((r) => r.unk).length < want.filter((r) => r.unk).length) return { correct: false, msg: 'A message your rule does not recognise has been thrown away. Keep unmatched messages as Unknown until somebody writes a rule for them.' };
+    if (hit.length !== wHit.length && hit.reduce((n, r) => n + r.Count, 0) === wHit.reduce((n, r) => n + r.Count, 0)) return { correct: false, msg: `The right messages are matched, but they make ${hit.length} row${hit.length === 1 ? '' : 's'} and there should be ${wHit.length}. Look at the EventKey: which device, which part of it, which kind of fault.` };
+    if (hit.reduce((n, r) => n + r.Count, 0) !== wHit.reduce((n, r) => n + r.Count, 0)) return { correct: false, msg: 'Your rule is matching the wrong set of messages. Check the text it looks for.' };
+    if (hit[0].Severity !== wHit[0].Severity) return { correct: false, msg: `Right rows, wrong severity: they arrive as ${sevName(hit[0].Severity)} and the task asks for ${sevName(wHit[0].Severity)}.` };
+    return { correct: false, msg: 'Nearly. Check the EventType you set.' };
+  }
+  if (T.type === 'threshold') {
+    if (!mine.length) return { correct: false, msg: 'No alarm is raised at all with those settings. Lower the value or the number of polls.' };
+    if (mine.some((r) => r.Node === 'CORE1_001')) return { correct: false, msg: 'CORE1_001 is alarming on a single spike at poll 3. Require more polls in a row before raising.' };
+    if (mine[0].Severity !== want[0].Severity) return { correct: false, msg: `The alarm is raised at the right time but as ${sevName(mine[0].Severity)}; the task asks for ${sevName(want[0].Severity)}.` };
+    return { correct: false, msg: `CORE1_002 raises at ${mine[0].Raised}; with the task’s settings it should raise at ${want[0].Raised}. Check the value and the number of polls.` };
+  }
+  const cleared = mine.filter((r) => r.Severity === 0);
+  if (!cleared.length) return { correct: false, msg: `Nothing was cleared. ${a.includes('Summary') ? 'The clear says “Signal restored” and the problem says “Loss of Signal”, so Summary never matches.' : a.includes('Time') ? 'The clear arrives later than the problem, so Time never matches.' : 'Choose what a clear and its problem have in common.'}` };
+  return { correct: false, msg: `${cleared.length} alarms were cleared but only one fault was fixed (Loss of Signal on TST1_005 Port-2). ${cleared.find((r) => r.EventType !== 'LOS') ? `The ${cleared.find((r) => r.EventType !== 'LOS').EventType} alarm was closed by a clear meant for something else.` : 'An alarm on a different node was closed too.'}` };
+}
+
+// ═══════════════════════════════════════════════════
+//  DIAGRAMS (inline SVG, drawn with the page's theme colours)
+// ═══════════════════════════════════════════════════
+const fbox = (x, y, w, h, t, s, cls) => `<rect class="b ${cls || ''}" x="${x}" y="${y}" width="${w}" height="${h}" rx="8"/><text x="${x + w / 2}" y="${y + (s ? h / 2 - 3 : h / 2 + 4)}" text-anchor="middle">${t}</text>${s ? `<text class="s" x="${x + w / 2}" y="${y + h / 2 + 12}" text-anchor="middle">${s}</text>` : ''}`;
+const farrow = (d, cls) => `<path class="a ${cls || ''}" d="${d}" marker-end="url(#ah)"/>`;
+const fsvg = (h, body, cap) => `<figure class="fig"><svg viewBox="0 0 420 ${h}" role="img" aria-label="${cap}"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ahd"/></marker></defs>${body}</svg><figcaption>${cap}</figcaption></figure>`;
+const FIGS = {
+  pipeline: fsvg(236, fbox(8, 8, 118, 44, 'Device', 'trap · syslog · poll') + farrow('M126 30 H148') + fbox(150, 8, 118, 44, '1 Collect', 'aggregator') + farrow('M268 30 H290') + fbox(292, 8, 120, 44, '2 Rules', 'build the event', 'hl')
+    + farrow('M352 52 V110 H270') + fbox(150, 88, 118, 44, '3 Store', 'Events database') + farrow('M148 110 H128') + farrow('M128 110 H148') + fbox(8, 88, 118, 44, '4 Tidy', 'mechanizations')
+    + farrow('M185 132 V178') + fbox(60, 180, 160, 46, '5 Show', 'filter + display → event list', 'gold') + farrow('M250 132 L300 178') + fbox(240, 180, 172, 46, 'History', 'eventanalytics-* → Discover'),
+    'How an alarm travels. You will mostly work at stage 5.'),
+  anatomy: fsvg(96, `<text class="m" x="10" y="30">Severity</text><text class="m op" x="92" y="30">&gt;=</text><text class="m val" x="122" y="30">4</text><text class="m kw" x="146" y="30">AND</text><text class="m" x="186" y="30">Node</text><text class="m op" x="230" y="30">LIKE</text><text class="m val" x="274" y="30">'RAN1%'</text>`
+    + `<path class="u" d="M10 38 H86"/><text class="s" x="48" y="54" text-anchor="middle">field</text><path class="u" d="M92 38 H114"/><text class="s" x="103" y="54" text-anchor="middle">test</text><path class="u" d="M122 38 H132"/><text class="s" x="127" y="54" text-anchor="middle">value</text>`
+    + `<path class="u g" d="M146 38 H176"/><text class="s" x="161" y="70" text-anchor="middle">both must be true</text><path class="u" d="M186 38 H224"/><path class="u" d="M230 38 H268"/><path class="u" d="M274 38 H346"/><text class="s" x="266" y="54" text-anchor="middle">field · test · value (text in quotes)</text>`,
+    'A filter is one or more conditions. Each is a field, a test and a value.'),
+  dedup: fsvg(150, fbox(8, 8, 150, 30, '09:00  LOS Port-3') + fbox(8, 44, 150, 30, '09:07  LOS Port-3') + fbox(8, 80, 150, 30, '09:21  LOS Port-3') + farrow('M158 23 L246 52') + farrow('M158 59 H246') + farrow('M158 95 L246 66')
+    + fbox(248, 40, 164, 38, 'LOS Port-3', 'one row · Count 3', 'gold') + fbox(8, 116, 150, 28, '09:15  Fan-1 failure') + farrow('M158 130 H246') + fbox(248, 112, 164, 34, 'Fan-1 failure', 'its own row · Count 1'),
+    'Same EventKey: one row and a rising Count. Different key: a new row.'),
+  pairing: fsvg(150, fbox(8, 8, 190, 44, 'Problem · Severity 5', 'Category 2 · LOS · Port-2', 'bad') + fbox(222, 8, 190, 44, 'Clear · Severity 0', 'Category 1 · LOS · Port-2', 'good') + farrow('M103 52 V84') + farrow('M317 52 V84')
+    + fbox(60, 86, 300, 30, 'Mechanization: same Node + SubNode + EventType?', '', 'hl') + farrow('M210 116 V132') + `<text class="s" x="210" y="146" text-anchor="middle">yes → both set to Severity 0, then deleted a few minutes later</text>`,
+    'A clear finds its problem by matching three fields.'),
+  livehist: fsvg(170, fbox(150, 6, 120, 36, 'Rules', '', 'hl') + farrow('M180 42 L110 70') + farrow('M240 42 L310 70') + fbox(20, 72, 180, 40, 'Events database', 'live: what is wrong now') + fbox(220, 72, 180, 40, 'Elasticsearch', 'history: everything that happened')
+    + farrow('M110 112 V130') + farrow('M310 112 V130') + fbox(20, 132, 180, 34, 'Event list · SQL filter', '', 'gold') + fbox(220, 132, 180, 34, 'Discover · KQL / Console'),
+    'Two stores, two languages. A cleared alarm lives on only on the right.'),
+};
+
+// ═══════════════════════════════════════════════════
+//  COURSE ADDITIONS: extra practice per lesson, hands-on lessons that replace
+//  multiple choice, the rules simulators, operator tools, and the diagrams.
+// ═══════════════════════════════════════════════════
+const lessonById = (id) => Object.values(LESSONS).flat().find((L) => L.id === id);
+const idOf = (node, sub) => EVENTS.find((e) => e.Node === node && e.SubNode === sub).EventID;
+const SEV_OPTS = [5, 4, 3, 2, 1, 0];
+
+// --- events: reading the list becomes "click the row"; two new hands-on lessons
+Object.assign(lessonById('ev2'), { task: { type: 'pickrow', prompt: 'One alarm in this list has been flapping for hours. Click the row that has repeated the most times.', need: { node: 'RAN1_003', sub: 'Link-1' },
+  miss: 'Look down the Count column for the biggest number.', hint: 'Count is how many times the same alarm has been received. Find the largest Count.', why: 'RAN1_003 Link-1 has Count 57: one row, fifty-seven occurrences since it first appeared. A high Count on an old alarm usually means something is flapping.' } });
+LESSONS.events.splice(2, 0, { id: 'ev11', title: 'Working an alarm: acknowledge, own, journal',
+  explain: `<p>Before you change what operators see, know what they do with an alarm. Three tools cover most of it:</p>
+<table><tr><th>Tool</th><th>What it changes</th><th>What others see</th></tr>
+<tr><td>Acknowledge</td><td><code>Ack</code> becomes 1</td><td>“Someone has seen this.” It drops out of any filter with <code>Ack = 0</code></td></tr>
+<tr><td>Take ownership</td><td><code>OwnerName</code> becomes your user</td><td>Who is dealing with it</td></tr>
+<tr><td>Journal</td><td>Adds a dated note to the event</td><td>What has been done so far</td></tr></table>
+<p>As admin you decide which tools each group gets, under Configuration › Events › Tools and Menus. You will also be asked “why did my alarm disappear?” The usual answer is that somebody acknowledged it and the view filters on <code>Ack = 0</code>.</p>
+${NOTE('Click a row on the right to select it, then use the tool buttons. Only touch the alarm the task names: the others belong to other people.')}`,
+  terms: [['Acknowledge', 'Mark an alarm as seen. Sets Ack to 1.'], ['Journal', 'Dated notes attached to an event.'], ['OwnerName', 'The user who has taken the alarm.']],
+  task: { type: 'ops', prompt: 'You are taking the Loss of Signal on TST1_001 Port-3. Acknowledge it, take ownership, and add a journal note saying what you are doing.', need: { node: 'TST1_001', sub: 'Port-3', ack: true, own: true, note: 'Investigating with the field team' },
+    hint: 'Click the TST1_001 Port-3 row first. Then Acknowledge, Take ownership, type a note and press Add note.', why: 'Ack 1 tells the NOC it has been seen, OwnerName shows who has it, and the journal says what is happening. In a view filtered on Ack = 0 this row would now disappear.' } });
+LESSONS.events.splice(LESSONS.events.findIndex((L) => L.id === 'ev9'), 0, { id: 'ev10', title: 'Filter groups and restriction filters',
+  explain: `<p>A <b>filter group</b> is a folder of public filters, arranged in a tree under Global (Configuration › Events › Filter Groups). Users see the filters in their own group and the groups below it.</p>
+<p>A group can carry a <b>Restriction Filter</b>: an extra condition that is added, with <code>AND</code>, to every filter in the group. So one shared filter can show different alarms to different teams:</p>
+<pre>filter       Severity >= 4 AND Ack = 0
+restriction  SubMethod = 'SRC_D'
+result       (Severity >= 4 AND Ack = 0) AND (SubMethod = 'SRC_D')</pre>
+<p>Only public filters can go in a group. A private filter (one where you are the User Owner) cannot, which is why your practice filters stay invisible.</p>
+${WARN('A restriction changes what a whole team can see. On the real system, read existing restrictions freely but agree any change with a senior admin.')}`,
+  terms: [['Filter group', 'A folder of public filters.'], ['Restriction Filter', 'A condition a group adds to every filter inside it.']],
+  task: { type: 'sql', base: 'Severity >= 4 AND Ack = 0', prompt: 'The shared filter “Major and critical, unacknowledged” is in the RAN team’s group. Write the group’s Restriction Filter so that team sees only RAN sites (RAN1_…).', start: '', answer: "Node LIKE 'RAN1%'",
+    hint: 'Write only the extra condition. It is joined to the filter with AND for you.', why: 'The restriction Node LIKE \'RAN1%\' is ANDed onto the shared filter, so the RAN team sees its own seven alarms from the same filter everyone else uses.' } });
+
+// --- rules: two rule-writing lessons, clear pairing and thresholds become simulators
+const RECT_MSGS = [
+  { Time: '09:00', Node: 'TST1_002', SubNode: 'PSU-A', text: 'Rectifier fail on PSU-A' }, { Time: '09:01', Node: 'TST1_002', SubNode: 'PSU-A', text: 'Rectifier fail on PSU-A' },
+  { Time: '09:02', Node: 'TST1_002', SubNode: 'PSU-B', text: 'Rectifier fail on PSU-B' }, { Time: '09:03', Node: 'TST1_004', SubNode: 'PSU-A', text: 'Rectifier fail on PSU-A' },
+  { Time: '09:05', Node: 'TST1_002', SubNode: 'Door', text: 'Door open' },
+];
+const HB_MSGS = [
+  { Time: '11:00', Node: 'TST1_001', SubNode: 'Ctrl', text: 'Heartbeat OK' }, { Time: '11:01', Node: 'TST1_001', SubNode: 'Ctrl', text: 'Heartbeat OK' }, { Time: '11:02', Node: 'TST1_001', SubNode: 'Ctrl', text: 'Heartbeat OK' },
+  { Time: '11:02', Node: 'TST1_001', SubNode: 'Fan-1', text: 'Fan failure on Fan-1' }, { Time: '11:03', Node: 'TST1_001', SubNode: 'Ctrl', text: 'Heartbeat OK' },
+];
+LESSONS.rules.splice(2, 0,
+  { id: 'ru5', title: 'Write a rule: setting up a new alarm',
+    explain: `<p>This is how a new alarm comes to exist. A device starts sending a message the rules do not know. It arrives as <b>Unknown</b>, severity 1, and nobody acts on it.</p>
+<p>A rule fixes that. For messages it recognises, it sets:</p>
+<ul><li><b>Severity</b>: how serious it is</li><li><b>EventType</b>: the kind of fault, used to pair a clear with its problem</li><li><b>EventKey</b>: which repeats count as the same alarm</li></ul>
+<p>and it decides what happens to everything else. In real rules those are lines of code like <code>$Event->{'Severity'} = 4;</code>. Here you set the same things with the controls on the right, and the alarms that result are listed below them.</p>
+${WARN('Never discard what you have not classified. An unmatched message kept as Unknown can be found later; a discarded one is gone.')}`,
+    terms: [['Unknown event', 'A message no rule recognised. It is kept at severity 1 so it can be reviewed.'], ['EventType', 'The kind of fault. A clear must carry the same EventType as its problem.']],
+    task: { type: 'rule', msgs: RECT_MSGS, matches: ['', 'Rectifier fail', 'Door open', 'PSU-A'], types: ['unknown', 'powerFail', 'doorOpen', 'LOS'], start: { match: '', sev: 1, etype: 'unknown', key: ['Node'], other: 'unknown' },
+      prompt: 'New cabinets are sending “Rectifier fail” messages that arrive as Unknown. Write the rule: raise them as Major, with EventType powerFail, one alarm per power supply. Leave the door message alone.',
+      need: { match: 'Rectifier fail', sev: 4, etype: 'powerFail', key: ['Node', 'SubNode', 'EventType'], other: 'unknown' },
+      hint: 'Match on the text the four rectifier messages share. Major is severity 4. One alarm per power supply means the key needs the Node and the SubNode.', why: 'Matching “Rectifier fail” picks the four messages; Severity 4 and EventType powerFail classify them; Node + SubNode + EventType gives three alarms (PSU-A on TST1_002 with Count 2, PSU-B, and PSU-A on TST1_004). The door message stays Unknown for a later rule.',
+      say: { right: 'You have just set up a new alarm from scratch. That is the core of the job.' } } },
+  { id: 'ru6', title: 'Tidy a noisy rule',
+    explain: `<p>The other half of rules work is fixing alarms that are wrong. The two commonest complaints:</p>
+<table><tr><th>Complaint</th><th>Usual cause</th></tr><tr><td>“It’s red but it isn’t a fault”</td><td>Severity set too high</td></tr><tr><td>“It fills the screen”</td><td>EventKey includes something that changes every time, such as the time</td></tr></table>
+<p>Somebody wrote the rule on the right in a hurry. Every “Heartbeat OK” message becomes its own Critical row.</p>
+${NOTE('Discarding the heartbeat would also empty the screen, but then nobody could tell a quiet cabinet from a dead one. Keeping one low-severity row that counts is the safer fix.')}`,
+    terms: [['Noise', 'Events that are not faults and hide the ones that are.']],
+    task: { type: 'rule', msgs: HB_MSGS, matches: ['', 'Heartbeat', 'Fan failure', 'OK'], types: ['heartbeat', 'fanFail', 'unknown'], start: { match: 'Heartbeat', sev: 5, etype: 'heartbeat', key: ['Node', 'SubNode', 'EventType', 'Time'], other: 'unknown' },
+      prompt: 'Fix the heartbeat rule: heartbeats are information, not faults, and should be one row that counts. Do not lose the fan failure.',
+      need: { match: 'Heartbeat', sev: 2, etype: 'heartbeat', key: ['Node', 'SubNode', 'EventType'], other: 'unknown' },
+      hint: 'Two changes: the severity (Info is 2) and the EventKey (take the time out).', why: 'Severity 2 stops it looking like a fault, and removing Time from the key folds the four heartbeats into one row with Count 4. The fan failure is still there as Unknown.' } });
+Object.assign(lessonById('ru3'), { explain: `<p>Most faults send two messages: one when the problem starts and one when it clears. The rules mark them:</p>
+${FIGS.pairing}
+<p>A <b>mechanization</b>, a scheduled SQL job, pairs each clear with its problem by comparing fields. Choose the wrong fields and either nothing ever clears, or a clear closes somebody else’s alarm.</p>
+${WARN('Mechanizations run SQL against every live event. Treat them like rules: read, do not change, until someone has shown you.')}`,
+  task: { type: 'pair', prompt: 'Five messages arrive (below). The last one says the signal is back on TST1_005 Port-2. Choose which fields a clear must share with a problem so that exactly the right alarm is cleared.', need: ['Node', 'SubNode', 'EventType'], start: ['Node'],
+    hint: 'Three other alarms must stay: a fan on the same cabinet, the same fault on a different cabinet, and a different fault on the same port.', why: 'Node + SubNode + EventType clears only the Loss of Signal on TST1_005 Port-2. Node alone would also close the fan failure; leaving out Node would close TST1_003; Summary and Time never match between a problem and its clear.' } });
+LESSONS.rules.splice(LESSONS.rules.findIndex((L) => L.id === 'ru4'), 0, { id: 'ru7', title: 'Thresholds: an alarm from a measurement',
+  explain: `<p>Not every alarm starts as a message from a device. A <b>threshold</b> watches a number that Assure1 polls, such as CPU, interface utilisation or temperature, and raises an alarm when it crosses a line (Configuration › Metrics › Thresholds).</p>
+<p>A threshold has four parts:</p>
+<table><tr><th>Part</th><th>Example</th></tr><tr><td>Metric and test</td><td>CPU utilisation above 85%</td></tr><tr><td>For how long</td><td>3 polls in a row</td></tr><tr><td>Severity</td><td>Major</td></tr><tr><td>Clear</td><td>when it drops back under the line</td></tr></table>
+<p>“For how long” is what separates a real problem from a blip. One high sample is normal; three in a row is a trend.</p>
+${NOTE('The chart on the right shows twelve polls of CPU on two core routers. Change the settings and watch which samples would raise an alarm.')}`,
+  terms: [['Threshold', 'A rule that raises an alarm when a polled measurement crosses a limit.'], ['Poll', 'One scheduled reading of a measurement.']],
+  task: { type: 'threshold', prompt: 'Set up a CPU alarm: Major when utilisation is above 85% for 3 polls in a row. The single spike on CORE1_001 must not raise anything.', start: { op: '>', value: 85, polls: 1, sev: 5 }, need: { op: '>', value: 85, polls: 3, sev: 4 },
+    hint: 'The value is already right. Change how many polls in a row are needed, and the severity.', why: 'With 3 polls in a row, the one-off 91% on CORE1_001 is ignored. CORE1_002 reads 86, 88, 92 and raises a Major at poll 6, then clears at poll 9 when it falls to 70.' } });
+
+// --- extra practice: optional follow-up tasks after the main one
+const MORE = {
+  ev3: [{ type: 'sql', prompt: 'Show every alarm on node TST1_003.', answer: "Node = 'TST1_003'", hint: 'One condition: Node equals the name, in single quotes.', why: 'Text values go in single quotes; = needs the whole name.' },
+    { type: 'sql', prompt: 'Show major and critical alarms that have already been acknowledged.', answer: 'Ack = 1 AND Severity >= 4', hint: 'Acknowledged is Ack = 1.', why: 'The mirror image of an unacknowledged view: useful for “what is being worked on?”.' }],
+  ev4: [{ type: 'sql', prompt: 'Show every alarm whose summary mentions temperature.', answer: "Summary LIKE '%temperature%'", hint: 'A phrase anywhere in the text needs % on both sides.', why: '% either side finds the word wherever it sits in the Summary.' },
+    { type: 'sql', prompt: 'Show alarms on fans: the SubNode starts with Fan.', answer: "SubNode LIKE 'Fan%'", hint: 'Starts with: the % goes at the end.', why: 'Fan% matches Fan-1 and Fan-2 on any node.' }],
+  ev5: [{ type: 'sql', prompt: 'Show critical alarms from source SRC_A or SRC_D.', answer: "Severity = 5 AND SubMethod IN ('SRC_A', 'SRC_D')", hint: 'IN (…) is the tidy way to say “one of these”.', why: 'IN replaces two ORs and needs no extra brackets.' },
+    { type: 'sql', prompt: 'Show minor-or-worse alarms on core routers (CORE1_…) or transmission nodes (TX1_…).', answer: "(Node LIKE 'CORE1%' OR Node LIKE 'TX1%') AND Severity >= 3", hint: 'Bracket the two Node patterns, then AND the severity.', why: 'Without the brackets the severity test would apply to only one of the two kinds of node.' }],
+  ev6: [{ type: 'sql', prompt: 'Show flapping alarms nobody has picked up: repeated more than 10 times and not acknowledged.', answer: 'Count > 10 AND Ack = 0', hint: 'Two number tests joined with AND.', why: 'High Count with Ack 0 is the first place to look at the start of a shift.' },
+    { type: 'sql', prompt: 'Show alarms that have a ticket but are still not acknowledged.', answer: "TicketID != '' AND Ack = 0", hint: 'Has a ticket: TicketID is not empty.', why: 'A ticket without an acknowledgement often means the two systems are out of step.' }],
+  ev7: [{ type: 'sql', prompt: 'Show old alarms: first reported more than a day ago (a day is 86400 seconds).', answer: 'FirstReported < UNIX_TIMESTAMP() - 86400', hint: 'Older means a smaller number than “now minus a day”.', why: 'Less-than gives everything before that moment.' },
+    { type: 'sql', prompt: 'Show critical alarms that repeated in the last 10 minutes.', answer: 'Severity = 5 AND LastReported > UNIX_TIMESTAMP() - 600', hint: 'Use LastReported, and 600 seconds.', why: 'LastReported moves every time the alarm repeats, so this finds what is active right now.' }],
+  ea2: [{ type: 'kql', prompt: 'Find every Major record in the history.', answer: 'Severity.name : "Major"', hint: 'The field is Severity.name and the value starts with a capital.', why: 'Keyword values are case-sensitive: "Major", not "major".' },
+    { type: 'kql', prompt: 'Find records whose alarm text mentions the door being open.', answer: 'Summary : "door open"', hint: 'A phrase in Summary goes in double quotes.', why: 'Summary is analysed text, so the phrase matches whatever the capitals.' }],
+  ea3: [{ type: 'kql', prompt: 'Find major-or-worse records from source SRC_A or SRC_B.', answer: 'SubMethod : ("SRC_A" or "SRC_B") and Severity >= 4', hint: 'field : (a or b), then and a number test.', why: 'The bracketed list is KQL’s version of SQL IN.' },
+    { type: 'kql', prompt: 'Find RAN site records that were never acknowledged.', answer: 'Node : RAN1_* and not Ack : 1', hint: 'A wildcard on Node, and not Ack : 1.', why: 'not flips a condition; Ack : 0 would work as well.' }],
+  ea5: [{ type: 'es', prompt: 'Find Major records on NGN cabinets (TST1_…) that were not acknowledged. Ask for up to 50 hits.', start: 'GET eventanalytics-*/_search\n{\n  "size": 50,\n  "query": { "bool": {\n    "must": [ ],\n    "must_not": [ ]\n  } }\n}',
+    answer: 'GET eventanalytics-*/_search\n{ "size": 50, "query": { "bool": { "must": [ { "wildcard": { "Node": "TST1_*" } }, { "match": { "Severity.name": "Major" } } ], "must_not": [ { "term": { "Ack": 1 } } ] } } }', hint: 'must gets a wildcard on Node and a match on Severity.name. must_not gets a term on Ack with the value 1.', why: 'must_not removes the acknowledged ones, the same job as “not” in KQL.' }],
+  ea6: [{ type: 'es', prompt: 'For RAN sites only, how many records are there of each severity name? Return the counts only.', start: 'GET eventanalytics-*/_search\n{\n  "size": 0,\n  "query": { },\n  "aggs": { }\n}',
+    answer: 'GET eventanalytics-*/_search\n{ "size": 0, "query": { "wildcard": { "Node": "RAN1_*" } }, "aggs": { "by_sev": { "terms": { "field": "Severity.name", "size": 6 } } } }', hint: 'query: a wildcard on Node. aggs: a terms aggregation on Severity.name.', why: 'The query narrows to RAN sites first; the aggregation then counts within that set.' }],
+};
+Object.entries(MORE).forEach(([id, list]) => { lessonById(id).more = list; });
+
+// --- diagrams: after the first paragraph of the lesson they belong to
+Object.entries({ ev1: 'pipeline', ev3: 'anatomy', ru2: 'dedup', ea1: 'livehist' }).forEach(([id, fig]) => { const L = lessonById(id); L.explain = L.explain.replace('</p>', '</p>' + FIGS[fig]); });
+
+// the dedup lesson's incoming messages
+const DEDUP_MSGS = [
+  { Time: '09:00:01', Node: 'TST1_001', SubNode: 'Port-3', EventType: 'LOS', Summary: 'Loss of Signal on port 3' },
+  { Time: '09:00:07', Node: 'TST1_001', SubNode: 'Port-3', EventType: 'LOS', Summary: 'Loss of Signal on port 3' },
+  { Time: '09:00:09', Node: 'TST1_001', SubNode: 'Port-5', EventType: 'LOS', Summary: 'Loss of Signal on port 5' },
+  { Time: '09:00:15', Node: 'TST1_001', SubNode: 'Fan-1', EventType: 'fanFail', Summary: 'Fan failure' },
+  { Time: '09:00:21', Node: 'TST1_001', SubNode: 'Port-3', EventType: 'LOS', Summary: 'Loss of Signal on port 3' },
+  { Time: '09:00:30', Node: 'TST1_001', SubNode: 'Port-5', EventType: 'LOS', Summary: 'Loss of Signal on port 5' },
+];
+function dedup(parts) {
+  const rows = {};
+  DEDUP_MSGS.forEach((m) => { const key = parts.length ? parts.map((p) => m[p]).join('+') : m.Time + Math.random(); if (rows[key]) rows[key].Count++; else rows[key] = { EventKey: parts.length ? key : '(none)', Node: m.Node, SubNode: m.SubNode, Summary: m.Summary, Count: 1, Severity: m.EventType === 'LOS' ? 5 : 4 }; });
+  return Object.values(rows);
+}
+//ENGINE>>
+
+// ═══════════════════════════════════════════════════
+//  SCREEN
+// ═══════════════════════════════════════════════════
+const API_BASE = 'http://localhost:8100/run/user_tools_assureclassroom';
+const TTS_URL = 'http://localhost:8101/framework/tts';
+const $ = (id) => document.getElementById(id);
+const LOGO_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAAXgklEQVR42u18eZxV1ZXut/be595bdWtgFhDQyCCKY4KixJ90dWJiMDFJt1W/TtpO2hHjrzWJQycmr1OUHTvR9jnRrVHTrbZRk1sBBxLRoBYIJqBIFC3mQeYaoG7Vnc85e6/1/jj3AknbylD44D3PP1zuPbXvOd/51re+tdauAo6CQ6RZiYCk86mx4Y6HV8mmuwdE7wsd8trAB66hcHQcighibeHvTMybCBWn/lqYAMHRfIiARIRkS6rK7Xy4K9z+8PpDZY6kUhoAwq6npxe3PfZYhaVHKYOaNRGJM5lL1PAhQwG8QEQi0mwOesnGoSQCckH+LLCbDgBELXx0AjQTLCJKguBG5HOwof909MGkQwiNBUwE0QguUIr7IoDen5TmiA6vtmZDDS22dNUJX4wPqDnddqa7i+nty8o04IMLWVEApNR1+gRT7aa6TGYpADAzEZEcXQz6C7CIEHF4C4wSkGwaNPn2PhF535vZP/LMVEQkOsx8F8kaYnE9e/X6KGKQSEoTNbmw89TPx5LxqQgsoNSm6NNWBcAdjDhTQ5OVntbTgPAyuAAEVQZogQLARxGD2gUAyBa+BzjA80DGvBN9NpQOHHAQhrYTiOCsewCeFwcIYPfeB/2cOVLZAzSx7JpzNkuuwRV8qz1jrJMyQN0HHl5vPmioYUZoO1Pf1wMTUzmd81VVPE7iVkUEWnA0GcWhRARxft9M5QGkNbm8byVbXLkvuw5I7CfPCMOO1s/oKroNfTmrtPG4t4BSX197Re+OCgaJPOgRNYThjv/6a51UX+BswapklXGFYG1i5ZJNH+RZPkDLbLFzzliT4F+CHbGAVMJTri/b+d6q5RuiM1vkiGeQLHvQI5oRBlseP0vF1SPsByxKiSTisGGwnJpaXRR++5/SiZqc9L4wKBbnZ+HREA6ZoQxQFQfb0h9PaWrNRefhyAZIlj3o0eQZoXQ8ca5Xa+YpcbUIBSBSJEBQKL5cDi/aP3CaFRGxbHokwdw3V1WpSZwPLBmthSBQAMi+tE8GOzJFWgQEpBRRUxh2PPVlTtATygZJVwqZtFHKGNh0thR2736x4qz31wzK2ilxHpCdo2oSUzmds+TFjBBARFoyOZR6d0XK3Hq/HJEAVQpEoiYnfU9/B2Tvhl8Eh8zK8xSLOFVTpYKt6d8Pnnbb1igUiD/U6xA5eTcVw7F4WtVVf4F3ZSwZzwgpAMIqWa2Crs616//w7Iqy6XRHHEAVIygQkuwZD6Dau8btzjOckDKeEgBEAESo1NvxUMUFv5+Z+/M105seGcCDTUolvQt4d5k55fUYmmGMCou5JybPeDOUqxcYAPaIAkikzRA1WOl+ZiRXzX1UVcUu4J6MJShNniEAEBbWNVWquHPbuqWP/+qZD3vSe9bcNXsUx81zKumd6XqyVnnGgFQZHAgZrcPu7mBX+5rHo5BdwEeMUYz6OAs0UYOVvhencMymlIcx3JOzRNqAACgCiEBaCWKeKu3u+ufps9b7cl+r/p/Kiz3gpJ8/E1UyWxl8wqXzVhljQAQpV+oEOFWdMMVtW359/Jf/bVOFcUcEQNHFkANgJTfvStY8S5FLcMa3ZLQRERAIUAAzsa6rVvmN61a/ffOtT0UZ6b/fSAR4qyJqsGHmN19GHI8DXOsyvlNGG4AA0lEZKg4wRtl0j81uW/8vREBra+uHXrf5aLKUKCJysiU1iIfU3oEqfQXl8nCOWBljIACJACAIBNozjHyf2dG+9B8bFsIKJukPANzZ3Is367jcAb8EFzIr7eloLYBIRfiArapKmMz61b8c8Zl72veHPYcdIBFRpBRDyIX5578Ez9yjPHOCy/Y5CBRpHYkxACGAwADYoiZhOhYunj3hq7+Y+343so+G1XJN9QMqEftb7kszBKSUVkIoM0dF0DCLTlSTv3O7v/2tV5sj5s3cr3LlsBlFaWszRMTyxlWelObdZ6qrn4PCCZzLWlJGk/KISIGUBrQBaQ0Gsaqt05lV7TvefvbJq0VEzZzZJPvagijVN1jpe3oqarzfq4T6W87stgApUpoivSnrWFnPoDTDU7pz5YpbT/nG3PVRWO5fuUKHNUv1zZmA6oGPwFRNdYU0EyRSGZHo6e65GUCYRcXjLkjvNGvm/vJzp10+d76kGjU1tbp91wQAW3j6Rq3M7SBoLviWtDFla1xmDUAq+pdBTlfX6I4//O7tL0699axlkmJQE+/vNEMdHjFusFL63cWoHrwEJjbVFXstKaVIGQVSgFIAKQhpiNIRbF7CQoVm66L5/3Ta5XPnS1uzoaZWJ6mUjlJ8g5Xe1DgpPPNbXRW/k0sl5fIlJq0NRO0FnCLDIyIgbURXJ7Hz9d/J4l/8x4w3QWFra+sBjXqo/8Fpcrb4yhU6UfVzOB8uCJxSUSoREZAwQBIVQ6QAEQjI6oRndi545omRDXdfKvKgBwzkissGANv36xu0p36ERKze9RUdESlSigS6fBuRwBNpqHgc8GKwfbttx2tPmxWLFt5+0U83f7+teZppaFloD+SeqL/BCYJXpxgdWyKuyOIsFJGKHljZBDMjmmpFXx2BU2V2vT5v0a1TbrvgPhEmonDPun2tU1jrO1QycT6yBbATB620lLMelIbSHsgkAE8DYYDsjs3YsGQB7353KXk1tWvP/96vTm9t/aFtbGzl/6lqP6xZLErljSKyzOOwdD8Rg9kJKdJ7/E0loilSBghDlGd1PGF2vzn/3VcfueeSWYA/iwgiy4eitPtTbAtfg5JLVdwol847EClljCZjAG0AHWV/zuXQu2UjOta0Y/s7y5Dp2IQBQ4bIaRdeooae9umriCb4kmrUBwpOP6b5Nk1E1gZLrtRezSfZ77CKjBEpR3s53QKAEEFYoONVIVTo7Vjwy3Wv/mzW9K/9Cl2Snnc8kuaHXOz4iophiErEIJkCJHROGaUhgCvmUcr2Ibe7Gz1bNqDrvY3IdGyFK2WRrE3imPEn4Yzp0+2Q088x25etuJvqvrSorTw+Opg7o37wOuU13q7mMLMK5EZJGAgRFFAxaeWsIgAzQ1clHLrW6dUvppYvmvXC165+A2ttYf7XtcHd8GQYshk4ywxS0ToUjfWym1eiY9UbSHd2wYUBtOehqn4ghow5AQNGjUX14BFAVQ0jEVPrnp+7esJF/36GpFIWjU18MOzpJwZFtZX1F39dx/Rol+t1SmmNikaAQEQQ1hCB6HiM+5bO1cueffKxz/5k2+UiQlcUX3lYVeFKFLNw+dCSiKayBaZyDEMENSPHY+zwsSDFUCYGeDFAacA5wIZwoS+aQ+leuoSXz5t7JYj8VrTqJjr4DQr9xiBXnL9Ux9xkzhWZAB0VieWRLimwQHRVkrsWzdaLHrv/B5c8ip+IvDWMix3PqarYFNfX48CiVHkiWNFxEQDCgHPli2Ww2MoHACkoVTacsbgNdqw3bzw3+8fn3fT6Px1M1upXgKIisoWl9OoEDntXUljUUbem/MAocrIsLDpZy+m3FurFj95/1cU/y/281DVngldb9RsVp/HcmwlB5FEFjLITRiXPKfUnpUMk8i46NwwR+iVkdvVw76Z3VGb7ynfPPOfNT7ZubOSDyVr9HGJ/oYAWhp+eqpKkOe9bQEx0SVH2Ygh0ssrl1i43r81+6jsX/yz3877uZ0706qpeVCge53blrVLKA3MFj73tCQIkDNC9eS2yHe+hlE0j9ENYa2HDEEGxBD+XQVjKiQLLMSMHutHjR/w9TaYwlYI+VHD6AaBogMcuuFAFDghLEBFEHgUAM0wiYUtb15oFqSfu/NK/br23sPuF0fFaPU/Z9HGczlillIGVMuloD0jRugwQUD/8eFTXD0Exl0ahrwfFbAY28KHA8OJx1A4b4YaPGWMynVturp9855ttbdNMQ0Or7Y/8TIfifYgg0tys7NVjVhst48NckYWtEgYEAmViTgdZ/VLq8ecvnLnyol27ltQNTOZeVmHXZNvVbZU2RvZ9xhSJjghDhKC0ifwS20iMlQHpGEhrkDYg0kA84WCLet2iF+ZN+Mqj0/tDd/qFQRF9CTPRgpt7bw9N/QCEpRwgFhACKc0uyKvX5v1m28bXVl4GEAYm8v+pgp2TC5s2WtLaRE6AykYyEnORyEQGvo/ezp1QWqGqZgBMPA5FAnEOAEMpDWXibH1fbXxr8c7tv2+7XERo5kxi9ONhDk2kf6WJmtyV52/bmEzGTrZ+QSLtAbQx/O7ihWbzO8uuunY+uoLM/O8pf8tfp1etCKE9r2IgSRGIFFSZPSwACwOkoauqkd6+DlveXoCg6IPitfCqB8CLV8HEPJAIG9trStnN3/ziY9QhFzXplpYD3/Vx2ABasODfCQC2bVy3Yuig5EWhHwocQ8firmvDOrPmj2/ce9kv3AtBftE5alf7bZ3r/uisFaOUgiiFSqc4KsApaqwLgVkgALxENUadPBUy6VyUeneid9t6pDt2INP9HpwL7ZCh9aYouP3cm7bOb2ueZqip1aKfj0MCqLt7mADA1rXrlg4dPICSAwYSkXbFbFavWLqk/WSV+4GIxLNrZj3kb2/XuUzWRa6Yyv6Iyk67rD3lWk2cgw0DiBAI74G8OBIDjsHQUz6LY6fUw8QTzjMx07tlxetDz/nxD2RUk0Zjq0NL//e2DgmgxqZWBoCtb3cvrh64qe+00+NJZuLVy99W6a7t1/zV4yj0XH/XLdK99tSO7TutNsYI9havlX2BlcpcysMrbWLwwxDpnRsRBAKvqg5qyxYIO0AZgRAUwnwi7P7GsHNvY2luVtR0eLbzmoPTHlGVefbaeXP0+C/c1/vwNcPmHjtIX5rLBNi4Zv1D1z5pF+c3/3xk96ql3890bGPLpENr/wSUPa+5vJ2bpdxsLCE5+FiM/eRoZLa/gx1r30G+GCJUNRDE3OAaMcqj687+wcY1bc3TDLW0WBymgw4QGP0Bwzt64hu4PnTAhGF4aNs2BFOunnG96+28q2t3zmqtzN5nTFG24nKFD4EwwzmGtQ5+YFEqFhCvrsOoiadj0JABKHavw441b1oPBcOx5L+d+9311/V3Sj9ogP58Ji7iTwK2TwbSn0CQVxDehXhyBzC5HUAXAJ+IcqvnfH1O2LfrK7lC6BSR2fOVImBmCAscu0iUWWCdRRA4+EEAZy3Y+giDAMmBwzBy4lluxMiBOr/jrVcnfu2FaalUo25sauXDvVPefDg4lfkTQWTrN+Fvvra0Y86nEi6tXSGDsFSEsEAIcJiHEAnE6obszG95asOm3z93aj5XIoHSVqJiMyrMBcyAdQ7sLJxlMDOcc8j19cEPJTKFxFBQ6N6+lbetaVdjxh3XedJ5n7lUBISZJ8tH8WsEtD9tVF82T4rxjvvRtfL8rjXL0dOxEy4MHTMJc6W0YAKgtFJkPA2CoGdXL5zjqO4snycisOzgHMDswHtActDGYNDgeuR2bUS6J42CTSJfFOGgJONPHEWfmHTS+RObnlmcSjXqpvK043Af5kPCyoWyZroprn4yv+qV+g0r3rKlwCmAlAi0cGTsFBDNoMrdG5vxYX2fRaAAiUrGclixcwhdxJgKa9i56HUhDxZgzPhzcExhE3q2r5a+goeauqFq0PBhfz+x6ZnFbc3TTMNh8DsHxKBom1ujANsbEK55ofu12WZ9+yqbzReNOIvKFu49o11Fe5xwpUgVcZHGiEC4PHMQgXMOoY1AEakAFIEFAGEQQGuNsaecgYF17Di9HEgM/MdTrl5710chyh/KoCjhNhIRuY0vz/hXWzJmyfz5Np/LGWYHAkEphXgshljMwDMGpFVlL09lLLWn1crl1B31cCIWOeuicmIPqyoARX7IhiFWLn2Nx506SY8Ze/6OsX81+65mQHVPGvaR/+oSvc//pRxin1rx3HWLFzz1UPzYEUk3aEBCgwxlcyF60iVksgEcK5hYDPGYB60j4JRSIAiIyq5YGBEWDBEGl9unlS9jiQCSchgCAqWj+iwslfj4iRP45KnT7hw3/We32MDHvtPWjxogAkhEOL753bk353d1/POO9nlSz2/LxHFDVKHkUCxYB5D2A0ZvTx5dnRns7MgjV3AAEZTW0FpDa1WurQhEDHZSNoblCJQ9bihqqUnZLFbabBQ1+ZVScNbK6DEj6NiJp7/0qW9efznRtK0fZahVAKLm5mYaWXqt9vjjh89wheyYXW89u7DOoL2vbrzU1dK1J46t+YfhQ2PI5HxrLZQiUuIYub4iursy6OrOI5sLEFiBk6hsiJhEe1K7Kveoo9or0hxFBKWicyrdWtkDn0ApDRaxgwcmzTHHT+gYe8aUq8d+/n/PbQYUmpvR0tLCH1mI3XvduHjPrPXSAgR7P4ou96eNI86bes7Q28cdl5xqDKNQCq110ApELghRzJWQz/nI5QPk8gEKRYswiEyg4yi0SCL2UKWZD4LSBKX0PkDu9UrOMawTOBYwyMU9pUeOGY0RJ4y/9ZwZv20WZ3G4Uz6931ttzeeb7kkLpbEdMhPAzEmNVI57evS6cddMGFv3neOOjU9Q2sIvWRta0cRM7BgudPB9C9+3CEMHZ6MSQsqi7Di6+UoGBEWTCUK5zSECVw5JZgE7gR845IsWhRKzY8GI4YNU7TGj503+XOMVwybfsPNwhtx+12KpRujGlDARyVCg5q5rR//DJ06o+/a446qHCzFKJeuEQWBR1kWgOBvdZCT6Fa2J9IYhYFB5Z1mFrAxmlDNdJOeKhAmCYskik/HRm3Mq7ztOJmKmftixW0adeNoVZ3/zyZei6wP3R6P+kHrSzc3TTMutCy0EuCCJYX932ahvHTe69sqxoxOjTEwh8Nk5FnEsSkRUJWYcR+ISCXYkzY4FAhIFEQUBKYiiyI4brZSnFTwNWMsQpQFmdO/OYuuOLO/q8a0wxeoGDZaBw0fe+PnvLbkb4H4PuYNt2lNb8zRdofWpwMAbvzXqiuNHJ68ZPbJ6bH2tgRNBaBki4lhEmJmwt6uhiIRIop0eRhGMIggzwpBR8Bm5gvhB4NZmM35bX1/xDai4Hj5y4Kn1debi2mqM7+7qxYaNvTZftDSwvk4nBgxNnT71q98ac2FLT1szTEML/u9ONSqmcsE+QAFIPnDZyItOGJO8sLZGNySr6PjaKoLWgHMC6yLQSr5FvuA48G3GD2w2CKWTWbZZ6zYUi8HaUsGuXrWhtOXepXjvz7/zHKDqnvvO/sqAOvVt8bNT3tu8Gzs7C35NwotX1w/eMGTcSZedc/mzi/or5Pplf9D7AAUAVT+5uH7i4HrvWDIywAYcFIrsQic5vxD2dnUW06+vwO43gDyA0vtPTgiv/Oh8AywsvzMN+37Hioc+3cRSuDXMZ0/csLEH1jrU1NfbWO2wm6f/r+X3AIxUI3RT68E38vt7jyKlGqEaGxux326XAGEhtDapBe2tBADdKyHtJ0NaWiD47y0NklSjQnms3Nx4cs0ln6+/xi/mb+zbnR6+dXtaamuT5CWHPDX6k5+99syv3tt7KCFHOHwHNTeDJq0EtZ8MwoLozUnDohtuPxkyswXyp7PUA2TuPmXH+tlfHVZI7/h+d+fu63t392q2AlM9YHXN4GHfuODmP7zRn7p0VB0SJYw9Rfeqpz43dcmsMxa+8KPRkrpukMy+eWTuN80TLo0yMJQcXlIcwUDJXqBIKSz/z09/u+32iX3zbhkuT980XJ774bh/Ke++J2ne/929/8+hmWps1I2tUa96ReuFpwWdnfcUM5kGv+gjF9Djo04YdsXkGW+GhyreR/2xN+wI7f9x7vWv3jEps/DW0TLnhpELn2k+c2R0zpH9pzkOf9g1QzWXw2lV6rOnvnbXqa8su/ME+e0to99rvWnCaR+D9GdsEhF686GzbnjtzpP4pZbj/F9/97iGP2Xb/+dsqmSwpY9MP+P1WWcs+8MdEyT1nTF/+TFI78OmBx980Fv2wNSfvnzbqfnUDaPPA4BUqlF/jBAAad7757iWP/iXX3jpx2cuT9008dwK0z5GaG9HwgDAiif/5piXb5sy83e3nnlSxVN9DM8+5Url9at3nPfp5+89u25ff/h/AOteuenrSchgAAAAAElFTkSuQmCC';
+document.querySelectorAll('.ainara-logo').forEach((i) => { i.src = LOGO_SRC; });
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const plain = (html) => { const d = document.createElement('div'); d.innerHTML = String(html || ''); return (d.textContent || '').replace(/\s+/g, ' ').trim(); };
+const LANG_NAME = { sql: 'SQL filter (live event list)', kql: 'KQL (Discover, alarm history)', es: 'Console (Elasticsearch, alarm history)' };
+
+const state = { gotData: false, bootAt: Date.now() / 1000, view: 'landing', course: null, idx: 0, done: {}, doneAt: {}, idxBy: {}, answers: {}, profile: {}, voiceCues: true, theme: null,
+  step: 0, stepScores: [], debrief: null, finals: {}, recap: null, extra: 0, ops: null, attempts: 0, hintSeen: false, shown: false, lastCheck: null, lastRun: null, seenReq: '', lastCue: null, lang: 'sql', sel: null, cols: null, sort: null, fromVoice: false };
+
+let OFFLINE = false;
+function offlineCall(action, params) {
+  if (action === 'load_progress') { try { return { success: true, progress: JSON.parse(localStorage.getItem('assure_progress') || '{}') }; } catch (e) { return { success: true, progress: {} }; } }
+  if (action === 'save_progress') { try { localStorage.setItem('assure_progress', params.progress); } catch (e) { /* ignore */ } }
+  if (action === 'reset') { try { localStorage.removeItem('assure_progress'); } catch (e) { /* ignore */ } }
+  return { success: true };
+}
+async function callSkill(action, params = {}) {
+  if (OFFLINE) return offlineCall(action, params);
+  let res;
+  try { res = await fetch(API_BASE, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...params }) }); }
+  catch (e) { return { success: false, offline: true, error: `Couldn't reach Ainara's backend (${e.message || e}).` }; }
+  let json; try { json = await res.json(); } catch (e) { return { success: false, error: `Unexpected response (HTTP ${res.status}).` }; }
+  if (json && 'result' in json) return json.result;
+  return { success: false, error: (json && json.error) || `HTTP ${res.status}` };
+}
+
+const lessonsOf = (c) => LESSONS[c] || [];
+const lesson = () => (state.view === 'lesson' ? state.recap || lessonsOf(state.course)[state.idx] || null : null);
+const isSandbox = () => state.view === 'lesson' && !state.recap && state.idx >= lessonsOf(state.course).length;
+const doneCount = (c) => lessonsOf(c).filter((L) => state.done[L.id]).length;
+// the task on screen: a lesson has one; the final shift has several steps
+const curTask = () => { const L = lesson(); return !L || state.debrief ? null : (L.steps ? L.steps[state.step] : state.extra ? L.more[state.extra - 1] : L.task); };
+const ansKey = () => { const L = lesson(); return L.steps ? `${L.id}_${state.step}` : state.extra ? `${L.id}_m${state.extra}` : L.id; };
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+function resetTry() { state.attempts = 0; state.hintSeen = false; state.shown = false; state.lastCheck = null; state.lastRun = null; state.sel = null; state.cols = null; state.sort = null; }
+
+// ---------- progress ----------
+function loadProgress(p) {
+  p = p && typeof p === 'object' ? p : {};
+  state.done = p.done || {}; state.doneAt = p.doneAt || {}; state.idxBy = p.idx || {}; state.answers = p.answers || {};
+  state.finals = p.finals || {}; state.profile = p.profile || {}; state.voiceCues = p.voiceCues !== false; state.theme = p.theme || null; state.course = LESSONS[p.course] ? p.course : null;
+}
+let saveTimer = null;
+function saveSoon(delay = 500) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => callSkill('save_progress', { progress: JSON.stringify({ done: state.done, doneAt: state.doneAt, idx: state.idxBy, answers: state.answers, finals: state.finals, profile: state.profile, voiceCues: state.voiceCues, theme: state.theme, course: state.course }) }), delay);
+}
+function applyTheme() {
+  const t = state.theme || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  document.documentElement.setAttribute('data-theme', t);
+}
+function toggleTheme() { state.theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; applyTheme(); saveSoon(); }
+function voiceLabel() { const t = `Ainara’s spoken tips: ${state.voiceCues ? 'on' : 'off'}`; $('voiceItem').textContent = t; $('voiceBtn2').textContent = t; }
+function toggleVoice() { state.voiceCues = !state.voiceCues; voiceLabel(); saveSoon(); }
+
+// ---------- Ainara's caption bubble and voice ----------
+let bubbleTimer = null, lastSpoken = 0, ttsWorks = null, toastTimer = null, stuckTimer = null;
+function toast(text) { $('toast').innerHTML = text; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 4800); }
+function cue(text, opts = {}) {
+  if (!text) return;
+  const b = $('bubble'); $('bubbleTxt').innerHTML = text; b.classList.add('show');
+  clearTimeout(bubbleTimer); bubbleTimer = setTimeout(() => b.classList.remove('show', 'talking'), Math.max(5000, plain(text).length * 70));
+  state.lastCue = { text: plain(text), at: Date.now() };
+  if (opts.speak !== false && state.voiceCues && !OFFLINE && !state.fromVoice && (opts.force || Date.now() - lastSpoken > 8000)) {
+    lastSpoken = Date.now(); b.classList.add('talking');
+    fetch(TTS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: plain(text) }) })
+      .then((r) => r.json()).then((j) => { ttsWorks = !!(j && j.success); }).catch(() => { ttsWorks = false; }).finally(() => b.classList.remove('talking'));
+  }
+}
+function testVoice() {
+  if (OFFLINE) { toast('Preview mode: Ainara isn’t connected, so she can’t speak here.'); return; }
+  cue('Hello! This is how I’ll sound when I give you a quick tip.', { force: true });
+  setTimeout(() => { if (ttsWorks === true) toast('✓ Ainara’s voice works from the classroom.'); else if (ttsWorks === false) toast('Ainara’s voice couldn’t be reached (PyBridge on port 8101). Tips will still show on screen.'); }, 4000);
+}
+function armStuckTimer() {
+  clearTimeout(stuckTimer);
+  const L = lesson(); if (!L) return;
+  stuckTimer = setTimeout(() => { if (lesson() === L && !(state.lastCheck && state.lastCheck.correct) && !state.hintSeen) cue('Want a nudge? Press Hint, or just ask me.'); }, 90000);
+}
+
+// ---------- alarm grid ----------
+const fmtTime = (sec) => { const d = new Date(sec * 1000); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+function cell(row, f) {
+  const v = row[f];
+  if (f === 'Severity') return `${v} ${SEV[v]}`;
+  if (f === 'FirstReported' || f === 'LastReported') return fmtTime(v);
+  if (f === '@timestamp') return fmtTime(row._ts / 1000);
+  return esc(v === undefined || v === null ? '' : v);
+}
+function grid(rows, cols, sort, selId) {
+  if (!rows.length) return '<div class="grid"><div class="empty">No alarms match.</div></div>';
+  if (sort) rows = rows.slice().sort((a, b) => (a[sort[0]] < b[sort[0]] ? -1 : a[sort[0]] > b[sort[0]] ? 1 : 0) * (sort[1] === 'desc' ? -1 : 1));
+  return `<div class="grid"><table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr>${rows.map((r) => `<tr class="s${r.Severity}${r.Ack ? ' ack' : ''}${selId && r.EventID === selId ? ' sel' : ''}"${r.EventID ? ` data-id="${r.EventID}"` : ''}>${cols.map((c) => `<td>${cell(r, c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+}
+const H_COLS = ['@timestamp', 'Node', 'Severity.name', 'Summary', 'SubMethod', 'Ack'];
+function showResult(res, title) {
+  state.lastRun = res;
+  const o = $('out');
+  if (!res.ok) { o.innerHTML = `<div class="cap"><b>${esc(title || 'Result')}</b></div><div class="err">${esc(res.error)}</div>`; return; }
+  if (res.cat) { o.innerHTML = `<div class="cap"><b>Console reply</b></div><pre class="json">${esc(res.cat)}</pre>`; return; }
+  const store = res.lang === 'sql' ? 'live event list' : 'alarm history, last 7 days';
+  let html = `<div class="cap"><b>${res.total} alarm${res.total === 1 ? '' : 's'}</b><span>of ${res.of} in the ${store}${res.lang === 'es' && res.rows.length !== res.total ? ` · showing ${res.rows.length} (size)` : ''}</span></div>`;
+  if (res.aggs) html += Object.entries(res.aggs).map(([name, b]) => `<div class="grid" style="margin-bottom:8px"><table><tr><th>${esc(name)}</th><th>doc_count</th></tr>${b.map((x) => `<tr><td>${esc(x.key)}</td><td>${x.doc_count}</td></tr>`).join('') || '<tr><td colspan="2">no groups</td></tr>'}</table></div>`).join('');
+  if (!(res.aggs && !res.rows.length)) html += grid(res.rows, res.lang === 'sql' ? (state.cols || DEFAULT_COLS) : H_COLS, res.lang === 'sql' ? state.sort : null);
+  if (res.json) html += `<pre class="json">${esc(res.json.length > 6000 ? res.json.slice(0, 6000) + '\n…' : res.json)}</pre>`;
+  o.innerHTML = html;
+}
+
+// ---------- landing ----------
+const COURSE_LOOK = {
+  events: { c: '#38bdf8', big: 'WHERE …', badge: 'Start here', time: 'about 1 hour' },
+  rules: { c: '#f59e0b', big: 'EventKey', badge: 'Behind the list', time: 'about 30 min' },
+  analytics: { c: '#a78bfa', big: 'Node : *', badge: 'Alarm history', time: 'about 1 hour' },
+  final: { c: '#e2b04a', big: '07:00', badge: 'Certificate', time: '5 scored tasks · about 20 min' },
+};
+// A demo event list on the course page: three example filters over the dummy alarms, shown in turn.
+const DEMOS = [
+  { filter: 'Demo_Critical_Unack', clause: 'Severity = 5 AND Ack = 0' },
+  { filter: 'Demo_RAN_Working', clause: "Node LIKE 'RAN1%' AND Severity >= 4 AND Ack = 0 AND Count > 3" },
+  { filter: 'Demo_NGN_No_Ticket', clause: "Node LIKE 'TST1%' AND Severity >= 3 AND TicketID = ''" },
+];
+let demoAt = 0, demoTimer = null;
+function renderDemo() {
+  const d = DEMOS[demoAt % DEMOS.length], res = runQuery('sql', d.clause);
+  const rows = res.rows.slice().sort((a, b) => b.Severity - a.Severity || b.LastReported - a.LastReported);
+  $('demo').innerHTML = `<div class="bar1">Event list <span>· demo with dummy alarms</span></div>
+    <div class="bar2"><span>Display: <b>Demo Display</b></span><span>Filter Type: <b>Event Filter</b></span><span>Filter Group: <b>/Demo_Group</b></span><span>Filter: <b>${esc(d.filter)}</b></span></div>
+    <div class="clause"><span>Filter clause</span><code>${esc(d.clause)}</code><span class="n">${res.total} of ${res.of} alarms</span><span class="dots">${DEMOS.map((x, k) => `<i class="${k === demoAt % DEMOS.length ? 'on' : ''}" data-k="${k}" title="${esc(x.filter)}"></i>`).join('')}</span></div>
+    ${grid(rows, ['Severity', 'FirstReported', 'Node', 'SubNode', 'Summary', 'Count', 'TicketID'])}`;
+  document.querySelectorAll('#demo .dots i').forEach((x) => { x.onclick = () => { demoAt = +x.dataset.k; renderDemo(); startDemo(); }; });
+}
+function startDemo() { clearInterval(demoTimer); demoTimer = setInterval(() => { if (state.view !== 'landing') { clearInterval(demoTimer); return; } if ($('demo').matches(':hover')) return; demoAt++; renderDemo(); }, 7000); }
+function showLanding() {
+  state.view = 'landing'; $('lessonView').classList.add('hidden'); $('landing').classList.remove('hidden');
+  const name = (state.profile.name || '').trim(), anyDone = Object.keys(state.done).length > 0;
+  $('hello').textContent = name ? (anyDone ? `Welcome back, ${name}. What’s next?` : `Hi ${name}. Ready to run the alarm list?`) : 'Learn to run the alarm list';
+  const all = COURSE_ORDER.reduce((a, c) => a + lessonsOf(c).length, 0), fin = COURSE_ORDER.reduce((a, c) => a + doneCount(c), 0);
+  $('wlTotal').innerHTML = `🏆 <strong>${fin}</strong> of ${all} lessons`;
+  $('courses').innerHTML = COURSE_ORDER.map((c) => { const n = lessonsOf(c).length, d = doneCount(c), K = COURSE_LOOK[c], best = (state.finals.fs1 || {}).best;
+    const meta = c === 'final' ? (best !== undefined ? `best score ${best} / 100${d ? ' · passed ✓' : ''}` : K.time) : `${n} lessons · ${K.time}${d ? ` · ${d} done${d === n ? ' ✓' : ''}` : ''}`;
+    return `<button class="course" data-c="${c}" style="--c:${K.c}"><span class="badge-top">${K.badge}</span><span class="big">${esc(K.big)}</span><h3>${esc(COURSE_META[c].name)}</h3><p>${esc(COURSE_META[c].blurb)}</p><span class="meta">${meta}</span><span class="progress-row"><span class="mini-bar"><i style="width:${Math.round(100 * d / n)}%"></i></span><span class="go">${d === n ? (c === 'final' ? 'Retake →' : 'Review →') : d || (c === 'final' && best !== undefined) ? 'Continue →' : 'Start →'}</span></span></button>`; }).join('');
+  document.querySelectorAll('.course').forEach((b) => { b.onclick = () => openCourse(b.dataset.c); });
+  const doneN = new Set(recapPool().map((t) => t.name)).size;
+  $('recapBtn').textContent = doneN >= 3 ? '🔁 Quick recap · 5 questions' : '🔁 Quick recap · after 3 lessons'; $('recapBtn').classList.toggle('off', doneN < 3); $('recapBtn').onclick = () => startRecap();
+  state.recap = null;
+  renderDemo(); startDemo();
+  syncSoon(200);
+}
+function openCourse(c, idx) {
+  if (!LESSONS[c]) return showLanding();
+  state.course = c; state.view = 'lesson';
+  const n = lessonsOf(c).length;
+  if (idx === undefined || idx === null) { idx = +state.idxBy[c] || 0; if (state.done[(lessonsOf(c)[idx] || {}).id] && idx < n - 1 && doneCount(c) < n) idx = lessonsOf(c).findIndex((L) => !state.done[L.id]); }
+  goLesson(Math.max(0, Math.min(n, +idx || 0)));
+}
+
+// ---------- lesson ----------
+function goLesson(i) { state.recap = null; state.idx = i; state.idxBy[state.course] = i; showLesson(); }
+function showLesson() {
+  state.step = 0; state.stepScores = []; state.debrief = null; state.extra = 0; resetTry();
+  $('landing').classList.add('hidden'); $('lessonView').classList.remove('hidden');
+  const all = lessonsOf(state.course), i = state.idx, L = lesson();
+  $('hTitle').textContent = L ? L.title : 'Sandbox';
+  $('hSub').textContent = state.recap ? 'Questions from lessons you have finished' : `${COURSE_META[state.course].name} · ${L ? `lesson ${i + 1} of ${all.length}` : 'free practice'}${L && state.done[L.id] ? ' · done ✓' : ''}`;
+  $('prevBtn').disabled = !!state.recap || i <= 0; $('nextBtn').disabled = !!state.recap || i >= all.length; $('nextBtn').textContent = i === all.length - 1 ? 'Sandbox ›' : 'Next ›';
+  if (!L) return renderSandbox();
+  $('left').innerHTML = `<h2>${esc(L.title)}</h2>${L.explain}${L.terms && L.terms.length ? `<dl class="terms">${L.terms.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join('')}</dl>` : ''}`;
+  $('left').scrollTop = 0; $('right').scrollTop = 0;
+  renderTask();
+  if (!state.quietIntro) cue(L.recap ? 'Quick recap. Let’s see what has stuck.' : (L.say && L.say.intro) || `${esc(L.title)}. ${L.project ? 'This is the project: everything from this course in one task.' : 'Have a read on the left, then try the task. Ask me if you want a hint.'}`);
+  state.quietIntro = false;
+  if (!state.recap) saveSoon();
+  syncSoon(300); armStuckTimer();
+}
+function taskLang(T) { return ['sql', 'kql', 'es'].includes(T.type) ? T.type : (T.show || null); }
+function renderTask() {
+  const L = lesson(), T = curTask(), W = SIMW[T.type]; let w = '';
+  if (T.type === 'ops') state.ops = { rows: OPS_START(), sel: null };
+  if (T.type === 'pickrow') state.sel = null;
+  if (W) w = W.html(T);
+  else if (T.type === 'mcq') w = `<div class="opts">${T.options.map((o, k) => `<button class="opt" data-k="${k}"><b>${'ABCD'[k]}</b><span>${esc(o)}</span></button>`).join('')}</div>`;
+  else if (T.type === 'display') w = `<div class="lang"><span class="lbl">Visible columns</span></div><div class="checks">${FIELDS.map((f) => `<label><input type="checkbox" value="${f}" ${['Node', 'Summary'].includes(f) ? 'checked' : ''}> ${f}</label>`).join('')}</div><div class="lang" style="margin-top:10px"><span class="lbl">Sort by</span><select id="sortF">${FIELDS.map((f) => `<option ${f === 'FirstReported' ? 'selected' : ''}>${f}</option>`).join('')}</select><select id="sortD"><option value="asc">ascending</option><option value="desc">descending</option></select></div>`;
+  else if (T.type === 'dedup') w = `<div class="lang"><span class="lbl">EventKey is built from</span></div><div class="checks">${['Node', 'SubNode', 'EventType', 'Time'].map((f) => `<label><input type="checkbox" value="${f}" ${f === 'Node' ? 'checked' : ''}> ${f}</label>`).join('')}</div>`;
+  else w = `${T.base ? `<div class="lang"><span class="lbl">Shared filter</span><code>${esc(T.base)}</code></div><div class="lang"><span class="lbl">Restriction Filter for the group (added with AND)</span></div>` : `<div class="lang"><span class="lbl">${LANG_NAME[T.type]}</span></div>`}<textarea id="ed" spellcheck="false" rows="${T.type === 'es' ? 9 : 2}" placeholder="${T.type === 'sql' ? "e.g. Severity >= 4 AND Node LIKE 'RAN1%'" : T.type === 'kql' ? 'e.g. Node : RAN1_* and Severity >= 4' : ''}">${esc(!L.steps && state.answers[ansKey()] !== undefined ? state.answers[ansKey()] : (T.start || ''))}</textarea>`;
+  const runnable = ['sql', 'kql', 'es', 'display', 'dedup', 'rule', 'threshold', 'pair'].includes(T.type);
+  $('task').innerHTML = `<div class="kicker">${L.recap ? `Recap ${state.step + 1} of ${L.steps.length} · from “${esc(T.name)}” · score so far ${state.stepScores.reduce((a, b) => a + (b || 0), 0)}` : L.steps ? `Step ${state.step + 1} of ${L.steps.length} · ${esc(T.name)} · score so far ${state.stepScores.reduce((a, b) => a + (b || 0), 0)}` : state.extra ? `Extra practice ${state.extra} of ${L.more.length}` : L.project ? 'Project' : 'Your task'}</div><div class="prompt">${esc(T.prompt)}</div>${w}
+    <div class="actions">${runnable ? '<button class="btn" id="runBtn">▶ Run</button>' : ''}<button class="btn primary" id="checkBtn">Check</button><button class="btn" id="hintBtn">💡 Hint</button><button class="btn" id="showBtn">Show answer</button><button class="btn hidden" id="moreBtn"></button><button class="btn gold hidden" id="goNext">Next lesson ›</button></div><div class="fb" id="fb"></div>
+    <div class="ask-line"><img alt="Ainara" src="${LOGO_SRC}"><span>Stuck? Ask Ainara:</span><em>“give me a hint”</em><em>“${T.type === 'mcq' ? 'is it B?' : ['sql', 'kql', 'es'].includes(T.type) ? 'check my filter' : T.type === 'ops' ? 'acknowledge TST1_001' : 'check my answer'}”</em><em>“show me the answer”</em></div>`;
+  if (T.type === 'mcq') document.querySelectorAll('.opt').forEach((b) => { b.onclick = () => { state.sel = +b.dataset.k; document.querySelectorAll('.opt').forEach((x) => x.classList.toggle('on', x === b)); syncSoon(); }; });
+  if (runnable) $('runBtn').onclick = () => runTask();
+  $('checkBtn').onclick = () => checkTask(); $('hintBtn').onclick = showHint; $('showBtn').onclick = showAnswer;
+  $('goNext').onclick = () => goLesson(state.idx + 1); $('moreBtn').onclick = startExtra;
+  const ed = $('ed'); if (ed) { ed.oninput = () => { state.answers[ansKey()] = ed.value; syncSoon(1500); armStuckTimer(); }; ed.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runTask(); } }; }
+  document.querySelectorAll('#task .checks input, #task select, #task input[type=number]').forEach((x) => { x.onchange = () => { runTask(); syncSoon(); }; });
+  // what the output shows before they do anything
+  if (W || T.type === 'display' || T.type === 'dedup') runTask();
+  else { const lang = taskLang(T); if (lang) showResult(runQuery(lang, T.base || T.showQuery || ''), 'Result'); else $('out').innerHTML = ''; state.lastRun = null; }
+}
+function getAnswer() {
+  const T = curTask(); if (!T) return null;
+  if (SIMW[T.type]) return SIMW[T.type].get(T);
+  if (T.type === 'mcq') return state.sel;
+  if (T.type === 'display') return { cols: [...document.querySelectorAll('#task .checks input:checked')].map((x) => x.value), sort: [$('sortF').value, $('sortD').value] };
+  if (T.type === 'dedup') return [...document.querySelectorAll('#task .checks input:checked')].map((x) => x.value);
+  return $('ed') ? $('ed').value : '';
+}
+function describeAnswer() {
+  const T = curTask(), a = getAnswer(); if (!T) return '';
+  if (SIMW[T.type]) return SIMW[T.type].text(T, a);
+  if (T.type === 'mcq') return a === null ? '(nothing chosen yet)' : `${'ABCD'[a]}: ${T.options[a]}`;
+  if (T.type === 'display') return `columns ${a.cols.join(', ') || '(none)'}; sorted by ${a.sort[0]} ${a.sort[1]}ending`;
+  if (T.type === 'dedup') return `EventKey built from ${a.join(' + ') || '(nothing)'}`;
+  return String(a || '').trim() || '(nothing typed yet)';
+}
+function answerText(T) {
+  if (SIMW[T.type]) return SIMW[T.type].text(T, T.need);
+  if (T.type === 'mcq') return `${'ABCD'[T.answer]}: ${T.options[T.answer]}`;
+  if (T.type === 'display') return `columns ${T.need.join(', ')}; sorted by ${T.sort[0]} ${T.sort[1]}ending`;
+  if (T.type === 'dedup') return `EventKey built from ${T.need.join(' + ')}`;
+  return T.answer;
+}
+function runTask() {
+  const T = curTask(), a = getAnswer(); if (!T) return null;
+  if (SIMW[T.type]) { const W = SIMW[T.type], rows = simRun(T, a); state.lastRun = { ok: true, lang: T.type, total: rows.length, rows }; $('out').innerHTML = W.out(T, a, rows); if (W.bind) W.bind(T); return state.lastRun; }
+  if (T.type === 'display') { state.cols = a.cols.length ? a.cols : ['Node']; state.sort = a.sort; showResult(runQuery('sql', ''), 'Preview'); return state.lastRun; }
+  if (T.type === 'dedup') { const rows = dedup(a); state.lastRun = { ok: true, lang: 'dedup', total: rows.length, rows };
+    $('out').innerHTML = `<div class="cap"><b>Incoming messages</b><span>six raw messages from one cabinet</span></div>${`<div class="grid"><table><tr><th>Time</th><th>Node</th><th>SubNode</th><th>EventType</th><th>Summary</th></tr>${DEDUP_MSGS.map((m) => `<tr><td>${m.Time}</td><td>${m.Node}</td><td>${m.SubNode}</td><td>${m.EventType}</td><td>${esc(m.Summary)}</td></tr>`).join('')}</table></div>`}
+      <div class="cap" style="margin-top:12px"><b>Resulting event list: ${rows.length} row${rows.length === 1 ? '' : 's'}</b></div>${grid(rows, ['EventKey', 'Node', 'SubNode', 'Summary', 'Count'])}`; return state.lastRun; }
+  showResult(runQuery(T.type, fullQuery(T, a)), 'Result'); syncSoon(300); return state.lastRun;
+}
+function feedback(kind, html) { const f = $('fb'); f.className = `fb show ${kind}`; f.innerHTML = html; }
+function checkTask() {
+  const L = lesson(), T = curTask(); if (!L || !T) return; const a = getAnswer(); let res;
+  if (SIMW[T.type]) { runTask(); res = simMark(T, a); if (res.empty) { feedback('info', esc(res.msg)); state.lastCheck = { correct: false, msg: res.msg, answer: describeAnswer(), at: Date.now() }; syncSoon(0); return; } }
+  else if (T.type === 'mcq') { if (a === null) { feedback('info', 'Pick an option first.'); state.lastCheck = { correct: false, msg: 'Nothing chosen yet.', answer: describeAnswer(), at: Date.now() }; syncSoon(0); return; } res = a === T.answer ? { correct: true } : { correct: false, msg: 'Not that one.' }; }
+  else if (T.type === 'display') { runTask(); const miss = T.need.filter((c) => !a.cols.includes(c)), extra = a.cols.filter((c) => !T.need.includes(c));
+    res = miss.length ? { correct: false, msg: `Still missing: ${miss.join(', ')}.` } : extra.length > 2 ? { correct: false, msg: `Too many columns for this view. Untick: ${extra.join(', ')}.` } : (a.sort[0] !== T.sort[0] || a.sort[1] !== T.sort[1]) ? { correct: false, msg: `The columns are right. Now sort by ${T.sort[0]} with the worst first.` } : { correct: true }; }
+  else if (T.type === 'dedup') { const rows = runTask().rows; const same = a.length === T.need.length && T.need.every((p) => a.includes(p));
+    res = same ? { correct: true } : { correct: false, msg: `That key gives ${rows.length} row${rows.length === 1 ? '' : 's'}. There are 3 real faults: LOS on Port-3, LOS on Port-5 and a fan failure.${a.includes('Time') ? ' Including the time makes every repeat look new.' : rows.length < 3 ? ' Different faults are being merged.' : ''}` }; }
+  else { if (!String(a).trim()) { feedback('info', 'Type your answer first, then Check.'); state.lastCheck = { correct: false, msg: 'Nothing typed yet.', answer: describeAnswer(), at: Date.now() }; syncSoon(0); return; } res = compare(T.type, runTask(), runQuery(T.type, fullQuery(T, T.answer))); }
+  state.attempts++; state.lastCheck = { correct: res.correct, msg: res.msg || '', answer: describeAnswer(), at: Date.now() };
+  if (res.correct) {
+    feedback('good', `<b>Correct.</b> ${T.why || ''}`);
+    if (L.steps) { finishStep(); syncSoon(0); return; }
+    if (!state.extra && !state.done[L.id]) { state.done[L.id] = true; state.doneAt[L.id] = Date.now(); }
+    const left = (L.more || []).length - state.extra;
+    if (left > 0) { $('moreBtn').classList.remove('hidden'); $('moreBtn').textContent = state.extra ? `Another one (${left} left)` : `Practise more (${left})`; }
+    $('goNext').classList.remove('hidden'); $('goNext').textContent = state.idx === lessonsOf(state.course).length - 1 ? 'Open the sandbox ›' : 'Next lesson ›';
+    $('hSub').textContent = $('hSub').textContent.replace(/ · done ✓$/, '') + ' · done ✓';
+    const courseDone = doneCount(state.course) === lessonsOf(state.course).length;
+    cue((T.say && T.say.right) || (courseDone ? `That finishes ${COURSE_META[state.course].name}. Well done.` : state.shown ? 'Now you’ve seen how it fits together. Try the next one on your own first.' : state.attempts === 1 && !state.hintSeen ? 'Right first time, without a hint.' : 'That’s it. Well done.'));
+    saveSoon(0);
+  } else {
+    feedback('bad', `<b>Not yet.</b> ${esc(res.msg || '')}`);
+    if (state.attempts >= 3) cue('Shall we walk through it together? Ask me to show the answer, or press Show answer.'); else if (state.attempts === 2) cue('Want a nudge? Press Hint, or ask me.', { speak: false });
+  }
+  syncSoon(0); armStuckTimer();
+}
+function finishStep() {
+  const L = lesson();
+  if (state.stepScores[state.step] === undefined) state.stepScores[state.step] = state.shown ? 0 : state.attempts === 1 && !state.hintSeen ? STEP_POINTS : state.attempts <= 2 ? 15 : 10;
+  const last = state.step === L.steps.length - 1, b = $('goNext');
+  b.classList.remove('hidden'); b.textContent = last ? 'See my result ›' : 'Next step ›';
+  b.onclick = () => { if (last) showDebrief(); else { state.step++; resetTry(); renderTask(); $('right').scrollTop = 0; syncSoon(300); } };
+  const got = state.stepScores[state.step];
+  cue(L.recap ? (last ? 'That’s the last one. Let’s see the score.' : got ? 'Yes. Next one.' : 'Worth going back over. Next one.') : last ? 'That’s the last request dealt with. Let’s see how the shift went.' : got === STEP_POINTS ? pick(['Full marks for that one. Next request.', 'Clean. On to the next.']) : got ? 'Got there. On to the next request.' : 'That one’s worth going back over later. Next request.');
+}
+function showDebrief() {
+  if (lesson().recap) return showRecapResult();
+  const L = lesson(), total = state.stepScores.reduce((a, b) => a + (b || 0), 0), max = L.steps.length * STEP_POINTS, pass = total >= PASS_MARK;
+  const prev = state.finals[L.id] || {};
+  state.finals[L.id] = { best: Math.max(prev.best || 0, total), last: total, at: Date.now(), tries: (prev.tries || 0) + 1 };
+  state.debrief = { score: total, out_of: max, passed: pass, pass_mark: PASS_MARK, best_score: state.finals[L.id].best, steps: L.steps.map((s, i) => `${s.name}: ${state.stepScores[i] || 0} of ${STEP_POINTS}`) };
+  if (pass && !state.done[L.id]) { state.done[L.id] = true; state.doneAt[L.id] = Date.now(); }
+  const weak = L.steps.filter((s, i) => (state.stepScores[i] || 0) < 15).map((s) => s.name);
+  $('task').innerHTML = `<div class="kicker">Final shift · result</div><div class="prompt" style="font-size:26px;margin-top:6px">${total} / ${max} ${pass ? '· passed ✓' : ''}</div>
+    <div class="grid" style="max-height:none"><table><tr><th>Step</th><th>Points</th></tr>${L.steps.map((s, i) => `<tr><td>${esc(s.name)}</td><td>${state.stepScores[i] || 0} / ${STEP_POINTS}</td></tr>`).join('')}</table></div>
+    <div class="fb show ${pass ? 'good' : 'info'}">${pass ? '<b>Shift handed over.</b> You can read the event list, build filters and displays, reason about rules, and search alarm history.' : `<b>${PASS_MARK} passes.</b> You are ${PASS_MARK - total} short.`}${weak.length ? ` Worth another look: ${weak.map(esc).join(', ')}.` : ''}</div>
+    ${pass ? '<canvas id="cert" width="1000" height="700" style="width:100%;border-radius:9px;margin-top:12px;border:1px solid var(--line-2)"></canvas>' : ''}
+    <div class="actions">${pass ? '<button class="btn primary" id="saveCert">Save certificate</button>' : ''}<button class="btn" id="retake">Take it again</button><button class="btn" id="toCourses">Back to courses</button></div>`;
+  $('out').innerHTML = ''; $('hSub').textContent = `${COURSE_META[state.course].name} · result${pass ? ' · done ✓' : ''}`;
+  $('retake').onclick = () => goLesson(state.idx); $('toCourses').onclick = showLanding;
+  if (pass) { drawCert(total); $('saveCert').onclick = saveCert; }
+  cue(pass ? (total === max ? 'A perfect shift. Every request right first time.' : `You passed with ${total} out of ${max}. Your certificate is on screen.`) : `${total} out of ${max} this time. Have another look at ${weak[0] || 'the steps you missed'} and take it again when you’re ready.`, { force: true });
+  saveSoon(0); syncSoon(0);
+}
+function drawCert(score) {
+  const c = $('cert'), g = c.getContext('2d'), name = (state.profile.name || '').trim() || 'Assure1 learner';
+  g.fillStyle = '#0e1116'; g.fillRect(0, 0, 1000, 700);
+  g.strokeStyle = '#38bdf8'; g.lineWidth = 6; g.strokeRect(28, 28, 944, 644); g.strokeStyle = '#e2b04a'; g.lineWidth = 2; g.strokeRect(44, 44, 912, 612);
+  g.textAlign = 'center'; g.fillStyle = '#38bdf8'; g.font = '700 22px system-ui, sans-serif'; g.fillText('ASSURE1 CLASSROOM', 500, 120);
+  g.fillStyle = '#e8edf3'; g.font = '800 48px system-ui, sans-serif'; g.fillText('Certificate of completion', 500, 200);
+  g.fillStyle = '#aab5c3'; g.font = '400 22px system-ui, sans-serif'; g.fillText('This certifies that', 500, 270);
+  g.fillStyle = '#e2b04a'; g.font = '800 56px system-ui, sans-serif'; g.fillText(name, 500, 345, 860);
+  g.fillStyle = '#aab5c3'; g.font = '400 22px system-ui, sans-serif'; g.fillText('completed the beginner’s course in alarm administration', 500, 410);
+  g.fillText('event filters · displays · rules and deduplication · event analytics', 500, 445);
+  g.fillStyle = '#e8edf3'; g.font = '700 30px system-ui, sans-serif'; g.fillText(`Final shift: ${score} / 100`, 500, 520);
+  g.fillStyle = '#7a8797'; g.font = '400 18px system-ui, sans-serif'; g.fillText(new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }), 500, 580);
+  g.fillText('Completed in a training simulator with dummy data, tutored by Ainara', 500, 625);
+}
+async function saveCert() {
+  const image = $('cert').toDataURL('image/png');
+  if (OFFLINE) { const a = document.createElement('a'); a.href = image; a.download = 'Assure1 Classroom certificate.png'; a.click(); return; }
+  const r = await callSkill('save_certificate', { image });
+  toast(r && r.success ? `✓ Saved to ${esc(r.shown_path)}` : `Couldn’t save it: ${esc((r && r.error) || 'unknown error')}`);
+}
+function showHint() { const T = curTask(); if (!T) return; state.hintSeen = true; feedback('info', `<b>Hint.</b> ${esc(T.hint || 'Read the example on the left again.')}`); syncSoon(0); }
+function showAnswer() {
+  const L = lesson(), T = curTask(); if (!L || !T) return; state.shown = true;
+  if (SIMW[T.type]) { SIMW[T.type].set(T, T.need); runTask(); }
+  else if (T.type === 'mcq') document.querySelectorAll('.opt').forEach((b) => b.classList.toggle('right', +b.dataset.k === T.answer));
+  else if (T.type === 'display') { document.querySelectorAll('#task .checks input').forEach((x) => { x.checked = T.need.includes(x.value); }); $('sortF').value = T.sort[0]; $('sortD').value = T.sort[1]; runTask(); }
+  else if (T.type === 'dedup') { document.querySelectorAll('#task .checks input').forEach((x) => { x.checked = T.need.includes(x.value); }); runTask(); }
+  else { const pretty = T.type === 'es' ? T.answer.replace(/^(GET \S+)\n([\s\S]*)$/, (m, h, b) => { try { return h + '\n' + JSON.stringify(JSON.parse(b), null, 2); } catch (e) { return m; } }) : T.answer; $('ed').value = pretty; state.answers[ansKey()] = pretty; runTask(); }
+  feedback('info', `<b>Answer.</b> <code>${esc(answerText(T)).slice(0, 400)}</code><br>${T.why || ''}<br>${L.steps ? 'Press Check to move on. This step scores 0.' : 'Press Check to mark the lesson done.'}`);
+  syncSoon(0);
+}
+
+// ---------- widgets for the simulator tasks (rule, threshold, pair, pickrow, ops) ----------
+const checked = () => [...document.querySelectorAll('#task .checks input:checked')].map((x) => x.value);
+const setChecked = (list) => document.querySelectorAll('#task .checks input').forEach((x) => { x.checked = list.includes(x.value); });
+const checksHtml = (fields, on) => `<span class="checks">${fields.map((f) => `<label><input type="checkbox" value="${f}" ${on.includes(f) ? 'checked' : ''}> ${f}</label>`).join('')}</span>`;
+const sevSelect = (id, v) => `<select id="${id}">${SEV_OPTS.map((n) => `<option value="${n}" ${n === v ? 'selected' : ''}>${n} ${SEV[n]}</option>`).join('')}</select>`;
+const msgTable = (msgs, cols) => `<div class="grid"><table><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr>${msgs.map((m) => `<tr>${cols.map((c) => `<td>${esc(c === 'Message' ? m.text : c === 'Kind' ? (m.cat === 1 ? 'clear' : 'problem') : (m[c] === undefined ? '' : m[c]))}</td>`).join('')}</tr>`).join('')}</table></div>`;
+// field names said out loud ("last reported", "sub node"), longest first so Node isn't found inside SubNode
+const namedFields = (txt, list) => { let t = String(txt || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const out = []; list.slice().sort((a, b) => b.length - a.length).forEach((f) => { const k = f.toLowerCase(); if (t.includes(k)) { out.push(f); t = t.split(k).join(' '); } }); return list.filter((f) => out.includes(f)); };
+const saidSeverity = (low) => { const m = /severity\s*(?:to|of|is|=)?\s*([0-5])\b/.exec(low); if (m) return +m[1]; const k = ['critical', 'major', 'minor', 'info'].find((n) => low.includes(n)); return k ? { critical: 5, major: 4, minor: 3, info: 2 }[k] : null; };
+const saidRow = (low, rows) => { const m = /(tst|ran|core|tx)\s*1?[ _-]*0*(\d{1,3})\b/.exec(low); if (!m) return null; const node = `${m[1].toUpperCase()}1_${m[2].padStart(3, '0')}`; const on = rows.filter((r) => r.Node === node); if (!on.length) return null; const flat = low.replace(/[^a-z0-9]/g, ''); return on.find((r) => flat.includes(r.SubNode.toLowerCase().replace(/[^a-z0-9]/g, ''))) || on.slice().sort((a, b) => b.Count - a.Count)[0]; };
+const numWord = (w) => ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 }[w] || +w);
+function thresholdChart(a, rows) {
+  const X = (i) => 34 + i * 33.5, Y = (v) => 150 - (Math.max(30, Math.min(100, v)) - 30) / 70 * 135;
+  const line = (s) => s.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
+  const hot = (node) => { const r = rows.filter((x) => x.Node === node); return POLLS[node].map((v, i) => r.some((x) => i + 1 >= +x.Raised.slice(5) && (x.Cleared === 'still active' || i + 1 < +x.Cleared.slice(5)))); };
+  const dots = (node, cls) => { const h = hot(node); return POLLS[node].map((v, i) => `<circle class="${h[i] ? 'hotdot' : cls}" cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${h[i] ? 4.5 : 3}"/>`).join(''); };
+  return `<figure class="fig chart"><svg viewBox="0 0 420 186" role="img" aria-label="CPU utilisation over twelve polls"><text class="s" x="4" y="${Y(100) + 4}">100%</text><text class="s" x="8" y="${Y(50) + 4}">50%</text>
+    <path class="thr" d="M30 ${Y(a.value).toFixed(1)} H412"/><text class="s thrt" x="412" y="${(Y(a.value) - 4).toFixed(1)}" text-anchor="end">threshold ${esc(a.value)}%</text>
+    <path class="l1" d="${line(POLLS.CORE1_001)}"/><path class="l2" d="${line(POLLS.CORE1_002)}"/>${dots('CORE1_001', 'd1')}${dots('CORE1_002', 'd2')}
+    ${POLLS.CORE1_001.map((v, i) => `<text class="s" x="${X(i).toFixed(1)}" y="168" text-anchor="middle">${i + 1}</text>`).join('')}<text class="s" x="223" y="182" text-anchor="middle">poll number</text>
+    <text class="s k1" x="40" y="12">— CORE1_001</text><text class="s k2" x="130" y="12">— CORE1_002</text><text class="s khot" x="222" y="12">● alarm active</text></svg></figure>`;
+}
+const SIMW = {
+  rule: {
+    html: (T) => `<div class="rulebox">
+      <div><span class="lbl">When the message contains</span><select id="rMatch">${T.matches.map((m) => `<option value="${esc(m)}" ${m === T.start.match ? 'selected' : ''}>${m ? `“${esc(m)}”` : '(no rule yet)'}</option>`).join('')}</select></div>
+      <div><span class="lbl">set Severity</span>${sevSelect('rSev', T.start.sev)}<span class="lbl">and EventType</span><select id="rType">${T.types.map((t) => `<option ${t === T.start.etype ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div><span class="lbl">build the EventKey from</span>${checksHtml(['Node', 'SubNode', 'EventType', 'Time'], T.start.key)}</div>
+      <div><span class="lbl">Any other message</span><select id="rOther"><option value="unknown">keep as Unknown (severity 1)</option><option value="discard">discard</option></select></div></div>`,
+    get: () => ({ match: $('rMatch').value, sev: +$('rSev').value, etype: $('rType').value, key: checked(), other: $('rOther').value }),
+    set: (T, v) => { $('rMatch').value = v.match; $('rSev').value = v.sev; $('rType').value = v.etype; setChecked(v.key); $('rOther').value = v.other; },
+    out: (T, a, rows) => `<div class="cap"><b>Incoming messages</b><span>what the devices sent</span></div>${msgTable(T.msgs, ['Time', 'Node', 'SubNode', 'Message'])}
+      <div class="cap" style="margin-top:12px"><b>Resulting event list: ${rows.length} row${rows.length === 1 ? '' : 's'}</b><span>what your rule makes of them</span></div>${grid(rows, ['Severity', 'Node', 'SubNode', 'EventType', 'Summary', 'Count', 'EventKey'])}`,
+    text: (T, a) => `rule matching “${a.match || 'nothing'}”: Severity ${a.sev} ${SEV[a.sev]}, EventType ${a.etype}, EventKey ${a.key.join(' + ') || '(nothing)'}, other messages ${a.other === 'discard' ? 'discarded' : 'kept as Unknown'}`,
+    speech: (T, said, cur) => {
+      const low = said.toLowerCase(), v = { ...cur, key: cur.key.slice() }; let hit = false;
+      const m = T.matches.filter(Boolean).find((x) => low.includes(x.toLowerCase())); if (m) { v.match = m; hit = true; }
+      const sv = saidSeverity(low); if (sv !== null) { v.sev = sv; hit = true; }
+      const ty = T.types.filter((x) => x !== 'unknown').find((x) => low.replace(/[^a-z0-9]/g, '').includes(x.toLowerCase())); if (ty) { v.etype = ty; hit = true; }
+      if (/\bkey\b/.test(low)) { const removing = /\b(without|remove|take|out of|drop|not)\b/.test(low), k = namedFields((removing ? low : low.slice(low.indexOf('key'))).replace(/\btimestamp\b/g, 'time'), ['Node', 'SubNode', 'EventType', 'Time']); if (k.length) { v.key = removing ? v.key.filter((f) => !k.includes(f)) : k; hit = true; } }
+      if (/\bdiscard|throw away|drop the (rest|others?)\b/.test(low)) { v.other = 'discard'; hit = true; } else if (/keep (the )?(rest|others?|them)|as unknown/.test(low)) { v.other = 'unknown'; hit = true; }
+      return hit ? v : null;
+    },
+  },
+  threshold: {
+    html: (T) => `<div class="rulebox"><div><span class="lbl">Raise an alarm when CPU utilisation is</span><select id="tOp"><option value=">" ${T.start.op === '>' ? 'selected' : ''}>above</option><option value="<" ${T.start.op === '<' ? 'selected' : ''}>below</option></select><input type="number" id="tVal" min="30" max="100" value="${T.start.value}"><span class="lbl">%</span></div>
+      <div><span class="lbl">for</span><input type="number" id="tPolls" min="1" max="6" value="${T.start.polls}"><span class="lbl">poll(s) in a row, with Severity</span>${sevSelect('tSev', T.start.sev)}</div></div>`,
+    get: () => ({ op: $('tOp').value, value: +$('tVal').value || 0, polls: Math.max(1, +$('tPolls').value || 1), sev: +$('tSev').value }),
+    set: (T, v) => { $('tOp').value = v.op; $('tVal').value = v.value; $('tPolls').value = v.polls; $('tSev').value = v.sev; },
+    out: (T, a, rows) => `${thresholdChart(a, rows)}<div class="cap"><b>Alarms this threshold raises: ${rows.length}</b></div>${rows.length ? grid(rows, ['Severity', 'Node', 'SubNode', 'Summary', 'Raised', 'Cleared']) : '<div class="grid"><div class="empty">No alarm is raised.</div></div>'}`,
+    text: (T, a) => `CPU ${a.op === '<' ? 'below' : 'above'} ${a.value}% for ${a.polls} poll${a.polls === 1 ? '' : 's'} in a row, Severity ${a.sev} ${SEV[a.sev]}`,
+    speech: (T, said, cur) => {
+      const low = said.toLowerCase(), v = { ...cur }; let hit = false;
+      const p = /(\d+|one|two|three|four|five|six)\s*(?:consecutive\s*)?(?:polls?|samples?|readings?|times|in a row)/.exec(low); if (p) { v.polls = numWord(p[1]); hit = true; }
+      const val = /(\d{2,3})\s*(?:%|percent)/.exec(low) || /(?:above|over|below|under|than)\s*(\d{2,3})/.exec(low); if (val) { v.value = +val[1]; hit = true; }
+      if (/\b(below|under|less)\b/.test(low)) { v.op = '<'; hit = true; } else if (/\b(above|over|more|greater)\b/.test(low)) { v.op = '>'; hit = true; }
+      const sv = saidSeverity(low); if (sv !== null) { v.sev = sv; hit = true; }
+      return hit ? v : null;
+    },
+  },
+  pair: {
+    html: (T) => `<div class="lang"><span class="lbl">A clear closes a problem when these fields match</span></div>${checksHtml(['Node', 'SubNode', 'EventType', 'Summary', 'Time'], T.start)}`,
+    get: () => checked(), set: (T, v) => setChecked(v),
+    out: (T, a, rows) => `<div class="cap"><b>Incoming messages</b><span>four problems, then one clear</span></div>${msgTable(PAIR_MSGS, ['Time', 'Kind', 'Node', 'SubNode', 'EventType', 'Summary'])}
+      <div class="cap" style="margin-top:12px"><b>Event list after the mechanization runs</b><span>${rows.filter((r) => r.Severity === 0).length} cleared</span></div>${grid(rows, ['Severity', 'Node', 'SubNode', 'EventType', 'Summary', 'State'])}`,
+    text: (T, a) => `a clear must match on ${a.join(' + ') || '(nothing)'}`,
+    speech: (T, said) => { const k = namedFields(said.replace(/\btimestamp\b/gi, 'time'), ['Node', 'SubNode', 'EventType', 'Summary', 'Time']); return k.length ? k : null; },
+  },
+  pickrow: {
+    html: () => '<div class="lang"><span class="lbl">Click a row in the list below, then Check.</span></div>',
+    get: () => state.sel, set: (T, v) => { state.sel = v && typeof v === 'object' ? idOf(v.node, v.sub) : v; },
+    out: () => `<div class="cap"><b>${EVENTS.length} alarms</b><span>the live event list · click a row to choose it</span></div>${grid(EVENTS, DEFAULT_COLS, null, state.sel)}`,
+    bind: () => bindRows((id) => { state.sel = id; runTask(); syncSoon(); }),
+    text: (T, a) => { if (a && typeof a === 'object') return `the ${a.node} ${a.sub} row`; const r = EVENTS.find((e) => e.EventID === a); return r ? `the ${r.Node} ${r.SubNode} row (Count ${r.Count})` : '(no row chosen yet)'; },
+    speech: (T, said) => { const r = saidRow(said.toLowerCase(), EVENTS); return r ? r.EventID : null; },
+  },
+  ops: {
+    html: () => `<div class="tools"><button class="btn small" data-op="ack">✔ Acknowledge</button><button class="btn small" data-op="unack">Unacknowledge</button><button class="btn small" data-op="own">Take ownership</button><input id="jNote" placeholder="Journal note…" maxlength="80"><button class="btn small" data-op="note">Add note</button></div><div class="lang"><span class="lbl" id="opsSel"></span></div>`,
+    get: () => state.ops.rows,
+    set: (T, v) => { const r = state.ops.rows.find((x) => (v.node ? x.Node === v.node && x.SubNode === v.sub : x.EventID === state.ops.sel)); if (!r) return; state.ops.sel = r.EventID;
+      if (v.ack === true) { r.Ack = 1; r.OwnerName = r.OwnerName || ''; } if (v.ack === false) { r.Ack = 0; r.OwnerName = ''; r.Journal = ''; } if (v.own) r.OwnerName = 'you'; if (v.note) r.Journal = String(v.note).slice(0, 80); },
+    out: (T, a, rows) => `<div class="cap"><b>${rows.length} critical alarms</b><span>click a row to select it, then use the tools above</span></div>${grid(rows, ['Severity', 'Node', 'SubNode', 'Summary', 'Ack', 'OwnerName', 'Journal'], null, state.ops.sel)}`,
+    bind: (T) => {
+      const r = state.ops.rows.find((x) => x.EventID === state.ops.sel); $('opsSel').textContent = r ? `Selected: ${r.Node} ${r.SubNode}` : 'No row selected yet';
+      bindRows((id) => { state.ops.sel = id; runTask(); });
+      document.querySelectorAll('#task .tools button').forEach((b) => { b.onclick = () => {
+        if (!state.ops.sel) { toast('Click a row in the list first.'); return; }
+        const op = b.dataset.op; if (op === 'note' && !$('jNote').value.trim()) { toast('Type a short note first.'); return; }
+        SIMW.ops.set(T, op === 'ack' ? { ack: true } : op === 'unack' ? { ack: false } : op === 'own' ? { own: true } : { note: $('jNote').value.trim() });
+        if (op === 'note') $('jNote').value = ''; runTask(); syncSoon(); }; });
+    },
+    text: (T, a) => { if (!Array.isArray(a)) return `${a.node} ${a.sub}: acknowledged, owned by you, with a journal note`; const ch = a.filter((r) => r.Ack || r.OwnerName || r.Journal); return ch.length ? ch.map((r) => `${r.Node} ${r.SubNode}: Ack ${r.Ack}${r.OwnerName ? ', owner ' + r.OwnerName : ''}${r.Journal ? `, journal “${r.Journal}”` : ''}`).join('; ') : '(nothing changed yet)'; },
+    speech: (T, said) => {
+      const low = said.toLowerCase(), r = saidRow(low, state.ops.rows), v = r ? { node: r.Node, sub: r.SubNode } : {}; let hit = false;
+      if (/\bun-?ack|undo\b/.test(low)) { v.ack = false; hit = true; } else if (/\back/.test(low)) { v.ack = true; hit = true; }
+      if (/\b(own|ownership|assign|mine|take it)\b/.test(low)) { v.own = true; hit = true; }
+      const n = /(?:journal note|journal entry|note|journal|comment)(?:\s+(?:saying|that says|that|:))?\s*(.*)$/.exec(low); if (n) { v.note = n[1].trim() || 'Investigating'; hit = true; }
+      if (!hit && r) { state.ops.sel = r.EventID; return {}; }
+      return hit && (r || state.ops.sel) ? v : null;
+    },
+  },
+};
+function bindRows(cb) { document.querySelectorAll('#out .grid tr[data-id]').forEach((tr) => { tr.classList.add('pick'); tr.onclick = () => cb(+tr.dataset.id); }); }
+
+// ---------- extra practice and the quick recap ----------
+function startExtra() { const L = lesson(); if (!L || !L.more || state.extra >= L.more.length) return; state.extra++; resetTry(); renderTask(); $('right').scrollTop = 0; syncSoon(300); }
+function recapPool() { const out = []; COURSE_ORDER.filter((c) => c !== 'final').forEach((c) => lessonsOf(c).forEach((L) => { if (state.done[L.id]) [L.task, ...(L.more || [])].forEach((T) => out.push({ ...T, say: null, name: L.title })); })); return out; }
+function startRecap() {
+  const pool = recapPool().sort(() => Math.random() - 0.5);
+  if (new Set(pool.map((t) => t.name)).size < 3) { toast('Finish three lessons first, then a recap has something to ask you.'); return false; }
+  const steps = [], used = new Set();
+  pool.forEach((t) => { if (steps.length < 5 && !used.has(t.name)) { steps.push(t); used.add(t.name); } });
+  pool.forEach((t) => { if (steps.length < 5 && !steps.includes(t)) steps.push(t); });
+  state.recap = { id: 'recap', title: 'Quick recap', recap: true, terms: [], steps,
+    explain: `<p>${steps.length} questions drawn from lessons you have already finished, in a random order. It is the quickest way to find out what has stuck.</p><p><b>Scoring.</b> ${STEP_POINTS} points each: full marks for right first time with no hint, 15 with a hint or on the second try, 10 after that, 0 with Show answer.</p>${NOTE('Nothing here changes your progress. Take as many recaps as you like; the questions change each time.')}` };
+  state.course = state.course || 'events'; state.view = 'lesson'; showLesson(); return true;
+}
+function showRecapResult() {
+  const L = lesson(), total = state.stepScores.reduce((a, b) => a + (b || 0), 0), max = L.steps.length * STEP_POINTS;
+  const weak = L.steps.filter((s, i) => (state.stepScores[i] || 0) < 15).map((s) => s.name);
+  state.debrief = { recap: true, score: total, out_of: max, steps: L.steps.map((s, i) => `${s.name}: ${state.stepScores[i] || 0} of ${STEP_POINTS}`), revisit: weak };
+  $('task').innerHTML = `<div class="kicker">Quick recap · result</div><div class="prompt" style="font-size:26px;margin-top:6px">${total} / ${max}</div>
+    <div class="grid" style="max-height:none"><table><tr><th>From lesson</th><th>Points</th></tr>${L.steps.map((s, i) => `<tr><td>${esc(s.name)}</td><td>${state.stepScores[i] || 0} / ${STEP_POINTS}</td></tr>`).join('')}</table></div>
+    <div class="fb show ${weak.length ? 'info' : 'good'}">${weak.length ? `<b>Worth another look:</b> ${[...new Set(weak)].map(esc).join(', ')}.` : '<b>All of it has stuck.</b> Nothing to revisit.'}</div>
+    <div class="actions"><button class="btn primary" id="retake">Another recap</button><button class="btn" id="toCourses">Back to courses</button></div>`;
+  $('out').innerHTML = ''; $('retake').onclick = () => startRecap(); $('toCourses').onclick = showLanding;
+  cue(weak.length ? `${total} out of ${max}. ${weak[0]} is the one to go back over.` : `${total} out of ${max}. That has all stuck.`, { force: true });
+  syncSoon(0);
+}
+
+// ---------- sandbox: free practice in all three languages ----------
+function renderSandbox() {
+  $('left').innerHTML = `<h2>Sandbox</h2><p>Free practice. Type anything and press Run; nothing is marked.</p>
+<table><tr><th>Language</th><th>Searches</th><th>Try</th></tr>
+<tr><td>SQL filter</td><td>the live event list (32 alarms)</td><td><code>Count > 10 AND Ack = 0</code></td></tr>
+<tr><td>KQL</td><td>alarm history (7 days)</td><td><code>Summary : "loss of signal" and not Node : TST1_*</code></td></tr>
+<tr><td>Console</td><td>alarm history (7 days)</td><td><code>GET _cat/indices/eventanalytics-*?v</code></td></tr></table>
+${NOTE('You can also ask Ainara: “run Severity equals 5 and Ack equals 0”.')}
+<p><b>Live list fields:</b> ${FIELDS.map((f) => `<code>${f}</code>`).join(' ')}</p><p><b>History fields:</b> ${H_FIELDS.map((f) => `<code>${f}</code>`).join(' ')}</p>`;
+  $('task').innerHTML = `<div class="kicker">Sandbox</div><div class="lang" style="margin-top:6px">${['sql', 'kql', 'es'].map((l) => `<button class="tab ${state.lang === l ? 'on' : ''}" data-l="${l}">${{ sql: 'SQL filter', kql: 'KQL', es: 'Console' }[l]}</button>`).join('')}<span class="lbl">${LANG_NAME[state.lang]}</span></div>
+    <textarea id="ed" spellcheck="false" rows="${state.lang === 'es' ? 9 : 2}">${esc(state.answers['sandbox_' + state.lang] !== undefined ? state.answers['sandbox_' + state.lang] : (state.lang === 'es' ? 'GET eventanalytics-*/_search\n{\n  "size": 5,\n  "query": { "match_all": {} }\n}' : ''))}</textarea>
+    <div class="actions"><button class="btn primary" id="runBtn">▶ Run</button></div>`;
+  document.querySelectorAll('.tab').forEach((b) => { b.onclick = () => { state.lang = b.dataset.l; renderSandbox(); }; });
+  const run = () => { state.answers['sandbox_' + state.lang] = $('ed').value; showResult(runQuery(state.lang, $('ed').value), 'Result'); syncSoon(300); saveSoon(); };
+  $('runBtn').onclick = run; $('ed').onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } };
+  run(); saveSoon();
+}
+
+// ═══════════════════════════════════════════════════
+//  LIVE STATE for Ainara (read by tools/checkmyfilter.py and friends)
+// ═══════════════════════════════════════════════════
+function runSummary() {
+  const r = state.lastRun; if (!r) return null;
+  if (!r.ok) return { error: r.error };
+  const o = { alarms_returned: r.total };
+  if (r.rows && r.rows.length) o.first_rows = r.rows.slice(0, 6).map((x) => `${x.Severity !== undefined ? SEV[x.Severity] : ''} ${x.Node} ${x.SubNode || ''}: ${x.Summary}${x.Count ? ` (Count ${x.Count})` : ''}`);
+  if (r.aggs) o.groups = Object.fromEntries(Object.entries(r.aggs).map(([k, b]) => [k, b.map((x) => `${x.key}: ${x.doc_count}`)]));
+  return o;
+}
+function liveSnapshot() {
+  const base = { classroom: 'assure', at: Date.now(), learner: state.profile || {}, data_note: 'simulator with dummy alarms only (TST1_ = NGN cabinets, RAN1_ = RAN sites, CORE1_, TX1_)',
+    courses: Object.fromEntries(COURSE_ORDER.map((c) => [COURSE_META[c].name, `${doneCount(c)} of ${lessonsOf(c).length} done`])) };
+  if (state.view === 'landing') return { ...base, on_screen: 'the choose-a-course landing page' };
+  const out = { ...base, course: state.course, course_name: COURSE_META[state.course].name, lesson_count: lessonsOf(state.course).length };
+  if (isSandbox()) return { ...out, on_screen: 'the sandbox', lesson_free: true, language: LANG_NAME[state.lang], learner_answer: ($('ed') && $('ed').value) || '', last_run: runSummary() };
+  const L = lesson(), T = curTask();
+  if (L.more && !L.steps) out.extra_practice = { tasks: L.more.length, on_now: state.extra || 0, offered: !!state.done[L.id] };
+  if (L.steps) out[L.recap ? 'recap' : 'final_shift'] = { step: state.step + 1, steps: L.steps.length, score_so_far: state.stepScores.reduce((a, b) => a + (b || 0), 0), step_ready_for_next: state.stepScores[state.step] !== undefined, pass_mark: PASS_MARK, best_score: (state.finals[L.id] || {}).best, scoring: 'a hint or a second try costs 5 points; Show answer scores 0 for the step' };
+  if (!T) return { ...out, on_screen: L.recap ? 'the recap result' : 'the final shift result', lesson_id: L.id, lesson_number: state.idx + 1, lesson_title: L.title, result: state.debrief };
+  Object.assign(out, { on_screen: 'the lesson', lesson_id: L.id, lesson_number: state.idx + 1, lesson_title: L.title, lesson_done: !!state.done[L.id], is_project: !!L.project,
+    lesson_explain: plain(L.explain).slice(0, 2500), key_terms: (L.terms || []).map(([t, d]) => `${t}: ${d}`),
+    task: { type: T.type, prompt: T.prompt, shared_filter_it_is_added_to: T.base, step: L.steps ? `step ${state.step + 1} of ${L.steps.length}: ${T.name}` : state.extra ? `extra practice ${state.extra} of ${L.more.length}` : undefined, language: LANG_NAME[T.type] || undefined, options: T.options, starting_text: T.start || undefined },
+    learner_answer: describeAnswer(), attempts: state.attempts, hint_seen: state.hintSeen, answer_shown: state.shown, last_check: state.lastCheck, last_run: runSummary(),
+    correct_answer: answerText(T), why: T.why || '', hint: T.hint || '' });
+  if (state.lastCue && Date.now() - state.lastCue.at < 120000) out.ainara_just_said_on_screen = state.lastCue.text;
+  return out;
+}
+let syncTimer = null;
+function syncSoon(delay = 900) { clearTimeout(syncTimer); syncTimer = setTimeout(() => { if (!OFFLINE) callSkill('sync', { live: JSON.stringify(liveSnapshot()) }); }, delay); }
+
+// ═══════════════════════════════════════════════════
+//  REQUESTS FROM AINARA: the helper skills leave a request, the long-poll brings it here
+// ═══════════════════════════════════════════════════
+function fromSpeech(T, said) {
+  const s = String(said || '').trim();
+  const low = s.toLowerCase();
+  if (SIMW[T.type]) return s && SIMW[T.type].speech ? SIMW[T.type].speech(T, s, getAnswer()) : null;
+  if (T.type === 'mcq') {
+    const m = /^(?:option\s+|answer\s+|it'?s\s+|is it\s+)?([a-d])(?![a-z])/i.exec(s); if (m) return 'abcd'.indexOf(m[1].toLowerCase());
+    const ord = /\b(first|second|third|fourth|last|[1-4])\b/.exec(low); if (ord && low.length < 30) return { first: 0, second: 1, third: 2, fourth: 3, last: T.options.length - 1, 1: 0, 2: 1, 3: 2, 4: 3 }[ord[1]];
+    const exact = T.options.findIndex((o) => o.toLowerCase().includes(low) || low.includes(o.toLowerCase())); if (exact >= 0) return exact;
+    // otherwise the option sharing the most words with what they said, if one clearly wins
+    const words = (x) => new Set(x.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !['the', 'and', 'configuration', 'events', 'with', 'for'].includes(w)));
+    const mine = words(low); const scores = T.options.map((o) => [...words(o)].filter((w) => mine.has(w)).length); const best = Math.max(...scores);
+    return best > 0 && scores.filter((x) => x === best).length === 1 ? scores.indexOf(best) : null;
+  }
+  if (['sql', 'kql', 'es'].includes(T.type)) return s || null;
+  const named = namedFields;
+  if (T.type === 'display') {
+    const parts = low.split(/\b(?:sort(?:ed|ing)?|order(?:ed)?)(?: it| them)?(?: by| on)?\b/); const cols = named(parts[0], FIELDS); const sf = parts[1] ? named(parts[1], FIELDS)[0] : null;
+    if (!cols.length && !sf) return null;
+    return { cols: cols.length ? cols : null, sort: sf ? [sf, /desc|worst|highest|biggest|largest|newest|latest|reverse|down/.test(parts[1]) ? 'desc' : 'asc'] : null };
+  }
+  if (T.type === 'dedup') { const parts = named(low.replace(/\btimestamp\b/g, 'time'), ['Node', 'SubNode', 'EventType', 'Time']); return parts.length ? parts : null; }
+  return null;
+}
+function handleRequest(r) {
+  if (!r || !r.action) return;
+  state.seenReq = r.id;
+  if (!OFFLINE) callSkill('ack', { seen: r.id });
+  if (r.name) { state.profile = { ...state.profile, name: String(r.name).slice(0, 60) }; saveSoon(0); }
+  if (r.voice_cues !== undefined && r.voice_cues !== null) { state.voiceCues = !!r.voice_cues; voiceLabel(); saveSoon(0); }
+  if (r.action === 'goto') { state.quietIntro = true; if (r.page === 'recap') startRecap(); else if (r.page === 'landing' || !r.course) showLanding(); else openCourse(r.course, r.idx); state.quietIntro = false; }
+  else if (r.action === 'more') { const L = lesson(); if (L && L.more && !L.steps && (state.done[L.id] || state.extra)) startExtra(); }
+  else if (r.action === 'settings') { if (state.view === 'landing') showLanding(); syncSoon(0); }
+  else if (r.action === 'hint') { if (lesson()) showHint(); }
+  else if (r.action === 'next_step') { const b = $('goNext'); if (lesson() && lesson().steps && b && !b.classList.contains('hidden')) b.click(); }
+  else if (r.action === 'retake') { if (lesson() && lesson().recap) startRecap(); else if (lesson() && lesson().steps) goLesson(state.idx); }
+  else if (r.action === 'check') { if (isSandbox()) $('runBtn').click(); else if (lesson()) { state.fromVoice = true; try { checkTask(); } finally { state.fromVoice = false; } } }
+  else if (r.action === 'showme') { if (lesson()) showAnswer(); }
+  else if (r.action === 'answer' || r.action === 'run') {
+    if (isSandbox()) { if (r.language && LANG_NAME[r.language] && r.language !== state.lang) { state.lang = r.language; renderSandbox(); } $('ed').value = String(r.answer || ''); $('runBtn').click(); return; }
+    const L = lesson(), T = curTask(); if (!L || !T) return; const v = fromSpeech(T, r.answer);
+    if (v === null) { toast(`Ainara heard “${esc(r.answer)}” but couldn’t match it to this task. Try again, or use the screen.`); syncSoon(0); return; }
+    if (SIMW[T.type]) SIMW[T.type].set(T, v);
+    else if (T.type === 'mcq') { state.sel = v; document.querySelectorAll('.opt').forEach((x) => x.classList.toggle('on', +x.dataset.k === v)); }
+    else if (T.type === 'display') { if (v.cols) document.querySelectorAll('#task .checks input').forEach((x) => { x.checked = v.cols.includes(x.value); }); if (v.sort) { $('sortF').value = v.sort[0]; $('sortD').value = v.sort[1]; } }
+    else if (T.type === 'dedup') document.querySelectorAll('#task .checks input').forEach((x) => { x.checked = v.includes(x.value); });
+    else { $('ed').value = v; state.answers[ansKey()] = v; }
+    state.fromVoice = true;
+    try { if ((r.action === 'run' && T.type !== 'mcq') || T.type === 'ops') { runTask(); if (T.type === 'ops' && simMark(T, getAnswer()).correct) checkTask(); } else checkTask(); } finally { state.fromVoice = false; }
+  }
+}
+let waiting = false;
+async function waitLoop() {
+  if (waiting || OFFLINE) return; waiting = true;
+  while (!OFFLINE) {
+    const r = await callSkill('wait', { since: String(state.bootAt), seen: state.seenReq || '' });
+    if (r && r.offline) { await new Promise((ok) => setTimeout(ok, 8000)); continue; }
+    if (r && r.request) handleRequest(r.request);
+    if (r && r.superseded) await new Promise((ok) => setTimeout(ok, 6000));
+    else if (!r || !r.success) await new Promise((ok) => setTimeout(ok, 3000));
+  }
+  waiting = false;
+}
+
+// ═══════════════════════════════════════════════════
+//  BOOT: Ainara posts the "open" result to this card. Opened any other way
+//  (straight in a browser), it boots by itself in preview mode.
+// ═══════════════════════════════════════════════════
+function boot(progress, course, extra = {}) {
+  loadProgress(progress); applyTheme(); voiceLabel();
+  $('welcome').classList.remove('show');
+  state.quietIntro = true;  // Ainara has just spoken the welcome herself
+  if (course && LESSONS[course]) openCourse(course, extra.idx); else showLanding();
+  if (extra.page === 'recap') startRecap();
+  state.quietIntro = false;
+  if (extra.showme) setTimeout(showAnswer, 400);
+  waitLoop();
+}
+window.addEventListener('message', (event) => {
+  const d = event.data; if (!d || typeof d !== 'object') return;
+  if (d.view === 'close') {
+    if (d.issued_at && (Date.now() / 1000 - d.issued_at) < 60) { state.gotData = true; $('welcome').classList.remove('show'); $('goodbye').classList.add('show');
+      setTimeout(() => { try { window.parent.postMessage({ type: 'ainara:close-documents' }, '*'); } catch (e) { /* ignore */ } }, 1400); }
+    return;
+  }
+  if (d.view === 'classroom') {
+    if (state.gotData) return; state.gotData = true;
+    callSkill('load_progress').then((r) => { if (r && r.offline) { OFFLINE = true; $('offlinePill').classList.remove('hidden'); r = offlineCall('load_progress'); }
+      boot(r && r.success ? r.progress : null, d.course, { idx: d.idx, showme: d.showme, page: d.page }); });
+  }
+});
+setTimeout(async () => {
+  if (state.gotData) return; state.gotData = true;
+  let r = await callSkill('load_progress');
+  if (!r || r.offline || !r.success) { OFFLINE = true; $('offlinePill').classList.remove('hidden'); r = offlineCall('load_progress'); }
+  const q = new URLSearchParams(location.search);
+  boot(r.progress, q.get('course'), { idx: q.get('lesson') ? +q.get('lesson') - 1 : undefined });
+}, 1500);
+
+$('homeBtn').onclick = showLanding;
+$('prevBtn').onclick = () => goLesson(state.idx - 1);
+$('nextBtn').onclick = () => goLesson(state.idx + 1);
+$('menuBtn').onclick = (e) => { e.stopPropagation(); $('menu').classList.toggle('open'); };
+document.addEventListener('click', () => $('menu').classList.remove('open'));
+$('voiceItem').onclick = toggleVoice; $('voiceBtn2').onclick = toggleVoice; $('testVoice').onclick = testVoice;
+$('themeBtn').onclick = toggleTheme; $('themeBtn2').onclick = toggleTheme;
+$('restartBtn').onclick = () => { lessonsOf(state.course).forEach((L) => { delete state.done[L.id]; delete state.doneAt[L.id]; delete state.answers[L.id]; }); saveSoon(0); goLesson(0); toast('Course restarted.'); };
+$('resetBtn').onclick = async () => { if (!confirm('Erase all Assure1 Classroom progress?')) return; await callSkill('reset'); const keep = { profile: state.profile, voiceCues: state.voiceCues, theme: state.theme }; loadProgress(keep); saveSoon(0); showLanding(); toast('Progress reset.'); };
+</script>
+</body>
+</html>

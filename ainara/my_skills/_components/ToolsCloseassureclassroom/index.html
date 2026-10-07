@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Assure1 Classroom closed</title>
+<style>
+  :root { --bg: #0e1116; --ink: #e8edf3; --ink-dim: #aab5c3; --accent: #38bdf8; --line: #263040; }
+  @media (prefers-color-scheme: light) { :root { --bg: #f3f5f8; --ink: #1b2330; --ink-dim: #556274; --accent: #0369a1; --line: #d6dce5; } }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px;
+  }
+  .card { max-width: 460px; opacity: 0; transform: scale(.97); transition: opacity .3s ease, transform .3s ease; }
+  .card.show { opacity: 1; transform: scale(1); }
+  .pulse { width: 64px; height: 64px; margin: 0 auto 12px; }
+  .pulse path { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+                stroke-dasharray: 160; stroke-dashoffset: 160; animation: draw 1.1s ease forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  p { color: var(--ink-dim); line-height: 1.55; font-size: 15px; }
+  .today { margin: 14px auto 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; font-size: 14px; color: var(--ink); display: none; }
+  .today.show { display: block; }
+  strong { color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <svg class="pulse" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 8 C22 8 18 16 18 26 V38 L12 46 H52 L46 38 V26 C46 16 42 8 32 8 M26 52 a6 6 0 0 0 12 0"/></svg>
+    <h1 id="title">Assure1 Classroom closed</h1>
+    <div class="today" id="today"></div>
+    <p>Your progress is saved. Say <strong>“open my Assure classroom”</strong> any time to pick up where you left off.</p>
+  </div>
+<script>
+  // Ainara sends this skill's result when the popup loads. A fresh "close"
+  // shows the goodbye, then asks Ainara's screen (Polaris) to close all popups.
+  // Results older than a minute (replayed from chat history) only show the card.
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  window.addEventListener('message', (event) => {
+    const d = event.data;
+    if (!d || typeof d !== 'object' || d.view !== 'close') return;
+    const fresh = d.issued_at && (Date.now() / 1000 - d.issued_at) < 60;
+    if (d.name) document.getElementById('title').textContent = `See you soon, ${d.name}`;
+    if (d.summary) { const t = document.getElementById('today'); t.innerHTML = esc(d.summary); t.classList.add('show'); }
+    document.getElementById('card').classList.add('show');
+    if (!fresh) return;
+    setTimeout(() => {
+      try { window.parent.postMessage({ type: 'ainara:close-documents' }, '*'); } catch (e) { /* ignore */ }
+    }, 2200);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+{
+ "events": [
+  {
+   "id": "ev1",
+   "title": "The map: five stages of an alarm",
+   "project": false
+  },
+  {
+   "id": "ev2",
+   "title": "Reading the event list",
+   "project": false
+  },
+  {
+   "id": "ev11",
+   "title": "Working an alarm: acknowledge, own, journal",
+   "project": false
+  },
+  {
+   "id": "ev3",
+   "title": "Your first filter",
+   "project": false
+  },
+  {
+   "id": "ev4",
+   "title": "Matching names with LIKE",
+   "project": false
+  },
+  {
+   "id": "ev5",
+   "title": "AND, OR and brackets",
+   "project": false
+  },
+  {
+   "id": "ev6",
+   "title": "Tickets, Count and empty values",
+   "project": false
+  },
+  {
+   "id": "ev7",
+   "title": "Filtering by time",
+   "project": false
+  },
+  {
+   "id": "ev8",
+   "title": "Displays: choosing the columns",
+   "project": false
+  },
+  {
+   "id": "ev10",
+   "title": "Filter groups and restriction filters",
+   "project": false
+  },
+  {
+   "id": "ev9",
+   "title": "Project: a RAN working view",
+   "project": true
+  }
+ ],
+ "rules": [
+  {
+   "id": "ru1",
+   "title": "Aggregators and rules",
+   "project": false
+  },
+  {
+   "id": "ru2",
+   "title": "EventKey and deduplication",
+   "project": false
+  },
+  {
+   "id": "ru5",
+   "title": "Write a rule: setting up a new alarm",
+   "project": false
+  },
+  {
+   "id": "ru6",
+   "title": "Tidy a noisy rule",
+   "project": false
+  },
+  {
+   "id": "ru3",
+   "title": "Problems, clears and mechanizations",
+   "project": false
+  },
+  {
+   "id": "ru7",
+   "title": "Thresholds: an alarm from a measurement",
+   "project": false
+  },
+  {
+   "id": "ru4",
+   "title": "Working safely as a new admin",
+   "project": false
+  }
+ ],
+ "analytics": [
+  {
+   "id": "ea1",
+   "title": "Live list or history?",
+   "project": false
+  },
+  {
+   "id": "ea2",
+   "title": "KQL: field : value",
+   "project": false
+  },
+  {
+   "id": "ea3",
+   "title": "KQL: combining conditions",
+   "project": false
+  },
+  {
+   "id": "ea4",
+   "title": "The Console: your first query",
+   "project": false
+  },
+  {
+   "id": "ea5",
+   "title": "Console: bool and range",
+   "project": false
+  },
+  {
+   "id": "ea6",
+   "title": "Console: counting with aggregations",
+   "project": false
+  },
+  {
+   "id": "ea7",
+   "title": "Search Profiler and Kibana management",
+   "project": false
+  },
+  {
+   "id": "ea8",
+   "title": "Project: the noisiest RAN sites",
+   "project": true
+  }
+ ],
+ "final": [
+  {
+   "id": "fs1",
+   "title": "Project: Final shift",
+   "project": true
+  }
+ ]
+}
