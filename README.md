@@ -173,16 +173,32 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 (`ainara_licensing`) — DEVELOPER source runs only, so Nexus bundle
 subscriptions can be issued; packaged builds ship the compiled
 `nexuslicensing` package and don't need it. End users running from
-source should instead install the prebuilt private wheel once (no env
-var and no secret file needed afterwards; the normal import path takes
+source install the prebuilt private wheel instead (no env var and no
+secret file needed afterwards; the normal import path takes
 precedence):
 
+Automated (recommended — idempotent; detects the platform, resolves the
+latest version from the published manifest, verifies the sha256, and
+installs into the project venv — no venv knowledge required):
+
+```bash
+npm run setup:nexus-licensing
 ```
-pip install https://downloads.ainara.app/nexuslicensing/nexuslicensing-<ver>-py3-none-<platform>.whl
+
+Also runs automatically as part of a fresh bootstrap with
+`npm run setup -- --with-nexus-licensing`.
+
+Manual equivalent:
+
+```
+pip install https://download.ainara.app/nexuslicensing/nexuslicensing-<ver>-py3-none-<platform>.whl
 ```
 
 Platforms: `win_amd64`, `linux_x86_64`, `macosx_11_0_x86_64`,
-`macosx_11_0_arm64`; check the published `.sha256`. This is a
+`macosx_11_0_arm64`. The manifest (`latest.json`, published next to the
+wheels) lists the current version and per-file sha256; the installer
+verifies it before installing, so a manually downloaded wheel should be
+checked against it too. This is a
 PLATFORM-level runtime, shared by every license-gated Nexus app (any
 vendor, any NFT series — series are declared per-app in each bundle's
 manifest), and it is only needed for gated bundles — open bundles

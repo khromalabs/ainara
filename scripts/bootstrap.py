@@ -191,6 +191,12 @@ def main() -> None:
         action="store_true",
         help="Skip the runtime model files download (Kokoro TTS, ~354 MB).",
     )
+    parser.add_argument(
+        "--with-nexus-licensing",
+        action="store_true",
+        help="Also install the prebuilt private nexuslicensing wheel "
+             "(only needed for license-gated Nexus bundles; idempotent).",
+    )
     args = parser.parse_args()
 
     check_python_version()
@@ -218,6 +224,28 @@ def main() -> None:
         run_step(
             [venv_python(venv_dir), os.path.join(REPO_ROOT, "scripts", "fetch_models.py")],
             "Downloading runtime model files",
+        )
+
+    if args.with_nexus_licensing:
+        result = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(REPO_ROOT, "scripts", "install_nexus_licensing.py"),
+                "--venv-dir",
+                venv_dir,
+            ],
+            cwd=REPO_ROOT,
+        )
+        if result.returncode != 0:
+            # Non-fatal: only license-gated Nexus bundles need this wheel.
+            log(
+                "WARNING: nexuslicensing wheel install failed — gated "
+                "Nexus bundles won't work, everything else is unaffected."
+            )
+    else:
+        log(
+            "Skipping nexuslicensing wheel install (use "
+            "--with-nexus-licensing; only needed for gated Nexus bundles)"
         )
 
     log("Source-run environment ready.")

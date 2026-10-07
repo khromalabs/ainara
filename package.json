@@ -44,6 +44,7 @@
   },
   "scripts": {
     "setup": "node scripts/run-bootstrap.js",
+    "setup:nexus-licensing": "node scripts/run-nexus-licensing.js",
     "start": "node scripts/start.js",
     "start:source": "node scripts/start.js",
     "start:bundle": "node scripts/start.js --bundle",
