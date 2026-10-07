@@ -64,9 +64,16 @@ class ServiceManager {
         // Define services with their executables and health endpoints
         if (useSourcePythonModules) {
             Logger.info('Using Python modules for services (dev-source mode)');
+            // Virtualenv resolution: AINARA_VENV_DIR (absolute or relative to
+            // the repo root) > .venv (bootstrap default) > legacy venv/.
+            const venvName = process.env.AINARA_VENV_DIR
+                || (fs.existsSync(path.join(process.cwd(), '.venv')) ? '.venv' : 'venv');
+            const venvDir = path.isAbsolute(venvName)
+                ? venvName
+                : path.join(process.cwd(), venvName);
             const pythonExecutable = platform === 'win32'
-                ? path.join(process.cwd(), 'venv', 'Scripts', 'python.exe')
-                : path.join(process.cwd(), 'venv', 'bin', 'python');
+                ? path.join(venvDir, 'Scripts', 'python.exe')
+                : path.join(venvDir, 'bin', 'python');
 
             this.services = {
                 orakle: new Service('orakle', {

@@ -43,7 +43,10 @@
     "globals": "^17.9.0"
   },
   "scripts": {
-    "start": "electron .",
+    "setup": "node scripts/run-bootstrap.js",
+    "start": "node scripts/start.js",
+    "start:source": "node scripts/start.js",
+    "start:bundle": "node scripts/start.js --bundle",
     "prebuild": "node polaris/compile-bytecode.js",
     "build": "electron-builder build",
     "build:win": "electron-builder build --win nsis --publish always",

@@ -58,6 +58,9 @@ VENV_PATHS = [
     os.path.expanduser("~/.venv"),
     os.path.expanduser("~/venv"),
     os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv"
+    ),
+    os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "venv"
     ),
 ]

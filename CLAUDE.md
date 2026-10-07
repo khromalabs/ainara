@@ -19,17 +19,29 @@ Plus **Nexus Apps**: third-party bundleable skill/UI applications (see the "Nexu
 
 ## Installing Python+Node Dependencies
 
+One-shot, idempotent bootstrap (creates `.venv`, installs Python + Node deps, installs `ainara` in editable mode; safe to re-run):
+
 ```bash
+npm run setup                 # cross-platform (Linux/macOS/Windows)
+# or directly: bash scripts/bootstrap.sh / scripts\bootstrap.cmd
+```
+
+Manual equivalent, if needed:
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .   # Install ainara package in editable mode
-npm install
+npm ci
 ```
+
+Venv location: `.venv` by default; override with `--venv-dir` / `AINARA_VENV_DIR`. A legacy `venv/` directory is still detected by Polaris and `scripts/services.py`.
 
 ## Running the Frontend (Polaris)
 
 ```bash
-# Run from source (set env var to bypass compiled bytecode)
-export AINARA_USE_SOURCE=1 && node_modules/electron/dist/electron .
+npm start             # source mode (AINARA_USE_SOURCE=1); default for development
+npm run start:bundle  # boot against the packaged PyInstaller executables
 
 # Build for current platform
 npm run build
@@ -40,13 +52,12 @@ npm run build:win
 npm run build:mac
 ```
 
+Both start scripts spawn the Electron binary DIRECTLY (no npm wrapper layer),
+which keeps signal delivery (Ctrl+C) reliable and avoids orphaned backend
+services from wrapper-layer teardown races. First boot launches the graphical
+setup Wizard, which handles the remaining configuration.
+
 Ideally the services are managed straight from the Electron frontend, which integrates better mechanisms to check services health (services will auto finish if the health starts, and then stops) the Frontend manager also can respawn services if detects a service shutdown.
-
-To start the whole application using source:
-```
-export AINARA_USE_SOURCE=1 && node_modules/electron/dist/electron .
-
-```
 
 Otherwise the application attempts to use the packaged service executables with PyInstaller (see below).
 
