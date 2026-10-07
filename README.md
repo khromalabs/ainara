@@ -177,15 +177,16 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 
 ## Running the Sentinel scheduler script
 
-An alternative way to run the backend services with no UI frontend for scheduled agentic jobs
+An alternative way to run the backend services with no UI frontend for scheduled agentic jobs, just using the scheduler script:
 
 ```bash
 # Start Bureau+Orakle
 scripts/scheduler.py
+```
 
-# stop all services
+Under graphical environments use the env var `AINARA_SENTINEL_MODE` as shown above which also only starts Orakle and Bureau with an alternate UI.
 
-The services script handles virtualenv activation, health-check polling, and log tailing (same log directories as Polaris).
+The services scheduler script / Sentinel UI handles virtualenv activation, health-check polling, and log tailing (same log directories as Polaris).
 
 ## Requirements
 
