@@ -51,7 +51,7 @@ npm run setup        # creates .venv, installs Python + Node deps; idempotent
 npm start            # boots from source; the setup Wizard handles the rest
 ```
 
-`npm run setup` is safe to re-run at any time. On the first boot, the graphical setup Wizard guides you through the remaining configuration.
+`npm run setup` is safe to re-run at any time. It also downloads the Kokoro TTS model files (~354 MB, `--skip-models` to opt out) — without them the backend services cannot boot. On the first boot, the graphical setup Wizard guides you through the remaining configuration.
 
 To boot against the packaged server executables instead (bundle mode), use `npm run start:bundle`.
 

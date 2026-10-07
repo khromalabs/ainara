@@ -96,7 +96,9 @@ class KokoroTTS(TTSBackend):
         if not self.setup():
             msg = (
                 "Kokoro TTS setup failed. Model files (kokoro-v1.0.onnx,"
-                " voices.json) not found in bundled or user directories."
+                " voices-v1.0.bin) not found in bundled or user directories."
+                " Run 'npm run setup' (or scripts/fetch_models.py) to fetch"
+                " them."
             )
             self.logger.error(msg)
             raise RuntimeError(msg)

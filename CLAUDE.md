@@ -19,7 +19,7 @@ Plus **Nexus Apps**: third-party bundleable skill/UI applications (see the "Nexu
 
 ## Installing Python+Node Dependencies
 
-One-shot, idempotent bootstrap (creates `.venv`, installs Python + Node deps, installs `ainara` in editable mode; safe to re-run):
+One-shot, idempotent bootstrap (creates `.venv`, installs Python + Node deps, downloads the Kokoro TTS model files into `resources/tts/models/` (~354 MB; see `scripts/fetch_models.py`), installs `ainara` in editable mode; safe to re-run):
 
 ```bash
 npm run setup                 # cross-platform (Linux/macOS/Windows)

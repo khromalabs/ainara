@@ -19,7 +19,9 @@ Idempotent: safe to re-run at any time. It will:
   1. Create the Python virtualenv (default: .venv) if it does not exist.
   2. Install Python dependencies (requirements.txt + editable ainara package).
   3. Install Node dependencies via `npm ci` (skipped if already present).
-  4. Print how to start the application (the first-boot setup Wizard
+  4. Download the Kokoro TTS model files (~354 MB, skipped when already
+     present; see scripts/fetch_models.py).
+  5. Print how to start the application (the first-boot setup Wizard
      handles the rest of the configuration).
 
 Usage:
@@ -32,6 +34,7 @@ Options:
     --skip-pip         Skip the Python dependency installation step.
     --skip-npm         Skip the Node dependency installation step.
     --reinstall-npm    Force `npm ci` even if node_modules already exists.
+    --skip-models      Skip the runtime model files download (Kokoro TTS).
 
 Requirements: Python >= 3.11 (3.12 recommended), Node.js >= 18 and npm.
 """
@@ -76,8 +79,16 @@ def check_python_version() -> None:
 
 
 def resolve_venv_dir(requested: str) -> str:
-    venv_dir = requested or os.environ.get("AINARA_VENV_DIR") or ".venv"
-    return venv_dir if os.path.isabs(venv_dir) else os.path.join(REPO_ROOT, venv_dir)
+    if requested or os.environ.get("AINARA_VENV_DIR"):
+        venv_dir = requested or os.environ.get("AINARA_VENV_DIR")
+        return venv_dir if os.path.isabs(venv_dir) else os.path.join(REPO_ROOT, venv_dir)
+    # Default to .venv, but honour a pre-existing legacy venv/ so older
+    # checkouts don't grow a duplicate virtualenv on re-runs.
+    if not os.path.isdir(os.path.join(REPO_ROOT, ".venv")) and os.path.isdir(
+        os.path.join(REPO_ROOT, "venv")
+    ):
+        return os.path.join(REPO_ROOT, "venv")
+    return os.path.join(REPO_ROOT, ".venv")
 
 
 def venv_python(venv_dir: str) -> str:
@@ -175,6 +186,11 @@ def main() -> None:
         action="store_true",
         help="Force npm ci even if node_modules is already populated.",
     )
+    parser.add_argument(
+        "--skip-models",
+        action="store_true",
+        help="Skip the runtime model files download (Kokoro TTS, ~354 MB).",
+    )
     args = parser.parse_args()
 
     check_python_version()
@@ -191,6 +207,18 @@ def main() -> None:
         log("Skipping Node dependencies (--skip-npm)")
     else:
         install_node_deps(args.reinstall_npm)
+
+    if args.skip_models:
+        log("Skipping runtime model files download (--skip-models)")
+    else:
+        log(
+            "Fetching runtime model files (Kokoro TTS, ~354 MB; "
+            "use --skip-models to skip)"
+        )
+        run_step(
+            [venv_python(venv_dir), os.path.join(REPO_ROOT, "scripts", "fetch_models.py")],
+            "Downloading runtime model files",
+        )
 
     log("Source-run environment ready.")
     print(
