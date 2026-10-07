@@ -162,20 +162,29 @@ Inside the `polaris` subdirectory there's a specific `polaris.json` file with th
 - `AINARA_USE_SOURCE=1`: use source to boot backend services (set automatically by `npm start`).
 - `AINARA_LOG_ELECTRON=1`: capture all Electron output into /tmp/electron.log
 - `AINARA_SENTINEL_MODE=1`: start Polaris in alternative Sentinel-only mode; runs Bureau+Orakle for scheduled agent orchestration plan execution.
-- `AINARA_NEXUS_LICENSING_PATH`: developer-only source-run setting for Nexus bundle subscriptions — see [Nexus licensing](#nexus-licensing).
+- `AINARA_NEXUS_LICENSING_PATH`: developer-only setting for authoring gated Nexus bundles — see [Nexus licensing](#nexus-licensing-optional).
 
-### Nexus licensing
+### Nexus licensing (optional)
+
+Nexus Apps are open bundles, but a developer may optionally **gate their
+app behind a subscription tied to their NFT collection**. The
+authorization framework that makes this possible is a small closed-source
+component (`nexuslicensing`) that runs entirely on your machine: it
+verifies ownership of the developer's NFT collection directly against
+public blockchain state — no activation server, no callbacks, no
+telemetry. It is shared platform-level: one install covers every gated
+app, from any vendor.
+
+What you need:
+
+- **Running a packaged build** — nothing; the component ships compiled
+  inside the application.
+- **Running from source** — install the prebuilt wheel once (below).
+- **Open (non-gated) bundles** — no licensing setup at all; a gated app
+  will simply tell you when it needs it.
 
 <details>
-<summary>Details (developer source runs only — click to expand)</summary>
-
-`AINARA_NEXUS_LICENSING_PATH` points to the closed licensing checkout
-(`ainara_licensing`) — DEVELOPER source runs only, so Nexus bundle
-subscriptions can be issued; packaged builds ship the compiled
-`nexuslicensing` package and don't need it. End users running from
-source install the prebuilt private wheel instead (no env var and no
-secret file needed afterwards; the normal import path takes
-precedence):
+<summary>Installing the licensing wheel (source runs only — click to expand)</summary>
 
 Automated (recommended — idempotent; detects the platform, resolves the
 latest version from the published manifest, verifies the sha256, and
@@ -198,11 +207,14 @@ Platforms: `win_amd64`, `linux_x86_64`, `macosx_11_0_x86_64`,
 `macosx_11_0_arm64`. The manifest (`latest.json`, published next to the
 wheels) lists the current version and per-file sha256; the installer
 verifies it before installing, so a manually downloaded wheel should be
-checked against it too. This is a
-PLATFORM-level runtime, shared by every license-gated Nexus app (any
-vendor, any NFT series — series are declared per-app in each bundle's
-manifest), and it is only needed for gated bundles — open bundles
-work with no licensing setup at all.
+checked against it too.
+
+Developers authoring gated bundles use a private licensing checkout
+instead, pointed at via `AINARA_NEXUS_LICENSING_PATH` — not needed by
+end users, and not required by packaged builds.
+
+This framework is expected to fold into a future "Nexus Developer
+Toolkit"; until then it is distributed as-is via the wheel above.
 
 </details>
 
