@@ -108,6 +108,34 @@
   .goals-btn { font-weight: 700; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 99px; padding: 6px 14px; }
   .goals-btn:hover { border-color: var(--gold); }
   .goals-btn.off { opacity: .55; }
+  /* how do I */
+  #howView { height: 100%; display: flex; flex-direction: column; }
+  #howSearch { flex: 1; min-width: 180px; max-width: 420px; font: inherit; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line-2); border-radius: 9px; padding: 7px 12px; }
+  .how-split { flex: 1; display: grid; grid-template-columns: minmax(250px, 300px) 1fr; min-height: 0; }
+  #howList { overflow: auto; padding: 14px 12px 30px; border-right: 1px solid var(--line); background: var(--panel); }
+  #howAns { overflow: auto; padding: 20px 24px 40px; min-width: 0; }
+  @media (max-width: 820px) { .how-split { grid-template-columns: 1fr; overflow: auto; } #howList, #howAns { overflow: visible; } #howList { border-right: 0; border-top: 1px solid var(--line); } #howAns { order: -1; } #howView.pick #howAns { order: 0; } #howView.pick .how-empty { margin-top: 20px; } }
+  .how-g { margin: 14px 6px 6px; } .how-g:first-child { margin-top: 2px; }
+  .how-item { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 9px; padding: 7px 10px; font-size: 14px; color: var(--ink-dim); }
+  .how-item:hover { background: var(--raised); color: var(--ink); } .how-item.on { border-color: var(--gold); color: var(--ink); background: var(--gold-bg); font-weight: 600; }
+  .how-item small { display: block; font-size: 12px; color: var(--ink-soft); font-weight: 400; margin-top: 1px; }
+  .how-def { font-size: 17px; color: var(--ink-dim); max-width: 60ch; margin-bottom: 14px; }
+  .wl-search { display: flex; align-items: center; gap: 10px; max-width: 620px; margin: 0 0 16px; padding: 4px 6px 4px 14px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line-2); }
+  .wl-search:focus-within { border-color: var(--gold); }
+  .wl-search input { flex: 1; font: inherit; background: none; border: 0; outline: 0; color: var(--ink); padding: 7px 4px; }
+  .how-none { color: var(--ink-soft); font-size: 14px; padding: 8px; }
+  #howAns h2 { font-size: 24px; letter-spacing: -.01em; margin: 4px 0 10px; }
+  #howAns .kicker { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--gold); font-weight: 700; }
+  .how-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .how-meta .pill { font-size: 13px; padding: 4px 11px; color: var(--ink); }
+  .pill.risk-safe { border-color: var(--good); color: var(--good); } .pill.risk-care, .pill.risk-ask { border-color: var(--gold); color: var(--gold); }
+  .how-cols { display: grid; grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 1050px) { .how-cols { grid-template-columns: 1fr; } }
+  .how-cols .fig { margin-top: 0; }
+  .how-steps { margin: 0 0 12px 20px; display: grid; gap: 9px; color: var(--ink-dim); } .how-steps b { color: var(--ink); }
+  .how-empty { max-width: 520px; margin: 8vh auto 0; text-align: center; color: var(--ink-dim); } .how-empty img { width: 64px; height: 64px; filter: drop-shadow(0 3px 10px rgba(226,176,74,.55)); } .how-empty h2 { color: var(--ink); } .how-empty em { font-style: normal; color: var(--gold); font-weight: 600; }
+  .fig circle.num { fill: var(--gold-bg); stroke: var(--gold); stroke-width: 1.4; } .fig text.numt { fill: var(--gold); font-weight: 800; font-size: 13px; }
+  .goals-btn.gold { border-color: color-mix(in srgb, #d9a53a 55%, transparent); color: var(--gold); }
   /* diagrams */
   .fig { margin: 12px 0; padding: 10px 10px 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
   .fig svg { width: 100%; height: auto; display: block; }
@@ -238,6 +266,7 @@
       <div class="wl-say-text"><span class="wl-say-label">Stuck? Just ask Ainara</span>
         <span class="wl-chips"><span class="wl-chip">“Check my filter”</span><span class="wl-chip">“Give me a hint”</span><span class="wl-chip">“Show me the answer”</span><span class="wl-chip">“Next lesson”</span><span class="wl-chip">“Open the sandbox”</span></span></div>
     </div>
+    <div class="wl-search"><span>🔎</span><input id="landSearch" placeholder="Search lessons, how-tos and key terms, e.g. EventKey, threshold, share a filter" autocomplete="off"></div>
     <div class="wl-how">
       <div class="wl-step"><span class="wl-ico">📖</span><span><strong>Read</strong> a short lesson</span></div>
       <span class="wl-arrow">→</span>
@@ -253,7 +282,7 @@
         <li><b>Answer “what happened last week?”</b> from alarm history, with KQL and the Console</li>
         <li><b>Handle a full morning shift</b> of mixed requests, and earn the certificate</li></ul></div>
     </div>
-    <div class="wl-choose"><span class="wl-section">Choose a course</span><button class="goals-btn" id="recapBtn">🔁 Quick recap</button></div>
+    <div class="wl-choose"><span class="wl-section">Choose a course</span><span class="wl-right"><button class="goals-btn gold" id="howBtn">❓ How do I…?</button><button class="goals-btn" id="recapBtn">🔁 Quick recap</button></span></div>
     <div class="courses" id="courses"></div>
     <p class="foot">Your progress saves automatically, so you can close this and pick up where you left off. Nothing here touches your real Assure1.
       <button class="reset-link" id="themeBtn2">Light / dark</button><button class="reset-link" id="voiceBtn2"></button><button class="reset-link" id="resetBtn">Reset all progress</button></p>
@@ -265,6 +294,7 @@
     <button class="btn small" id="homeBtn">← Courses</button>
     <div class="where"><b id="hTitle"></b><span id="hSub"></span></div>
     <span class="pill sim">Simulator</span>
+    <button class="btn small" id="howBtn2">❓ How do I…?</button>
     <button class="btn small" id="prevBtn">‹ Prev</button>
     <button class="btn small" id="nextBtn">Next ›</button>
     <div class="menu" id="menu">
@@ -284,6 +314,16 @@
       <div class="out" id="out"></div>
     </section>
   </div>
+</div>
+
+<div id="howView" class="hidden">
+  <header>
+    <button class="btn small" id="howHome">← Courses</button>
+    <div class="where"><b>How do I…? · Search</b><span>Where to click, the steps, and a diagram</span></div>
+    <input id="howSearch" placeholder="Search everything, e.g. EventKey, new alarm, slow search" autocomplete="off">
+    <span class="pill sim">Guidance · check on your version</span>
+  </header>
+  <div class="how-split"><aside id="howList"></aside><section id="howAns"></section></div>
 </div>
 
 <div class="cover show" id="welcome"><div><h1>Assure1 Classroom</h1><p>Opening…</p></div></div>
@@ -1162,6 +1202,86 @@ Object.entries(MORE).forEach(([id, list]) => { lessonById(id).more = list; });
 // --- diagrams: after the first paragraph of the lesson they belong to
 Object.entries({ ev1: 'pipeline', ev3: 'anatomy', ru2: 'dedup', ea1: 'livehist' }).forEach(([id, fig]) => { const L = lessonById(id); L.explain = L.explain.replace('</p>', '</p>' + FIGS[fig]); });
 
+// ═══════════════════════════════════════════════════
+//  HOW DO I…?  Prepared answers: where to click, the steps, a diagram, and how risky it is.
+//  risk: safe = do it yourself · care = keep it private first · ask = agree it with a senior admin
+//  steps: [short label for the diagram, the full instruction]
+// ═══════════════════════════════════════════════════
+const HOWTO = [
+  { id: 'create-filter', group: 'Filters', q: 'How do I create a filter?', keys: ['create', 'new', 'make', 'add', 'filter', 'view', 'alarms', 'write'], where: 'Configuration › Events › Filters', risk: 'safe', lesson: ['events', 'ev3'],
+    steps: [['Open Filters', 'Go to Configuration › Events › Filters.'], ['Clone or Add', 'Clone a filter that is close to what you want, or click Add.'], ['Name it TRAIN_…', 'Name it TRAIN_yourinitials_… and set User Owner to yourself, so it stays private.'], ['Write the clause', 'Type the condition in Filter Clause, for example Severity >= 4 AND Ack = 0.'], ['Pick a display', 'Choose a Default Display so the right columns load with it.'], ['Save and load', 'Save, go to Events and pick it from the Filter dropdown.']],
+    note: 'A filter only changes what you see. It cannot change or delete an alarm.' },
+  { id: 'filter-syntax', group: 'Filters', q: 'How do I write the filter clause?', keys: ['clause', 'syntax', 'where', 'sql', 'like', 'and', 'or', 'wildcard', 'condition', 'write'], where: 'Filter Clause box of a filter', risk: 'safe', lesson: ['events', 'ev4'], fig: 'anatomy',
+    steps: [['field  test  value', 'Each condition is a field, a test and a value: Severity >= 4.'], ['Text in quotes', "Text values need single quotes: Node = 'TST1_001'."], ['LIKE for patterns', "Use LIKE with % for any text: Node LIKE 'RAN1%'."], ['Join with AND / OR', 'AND needs both, OR needs either. Put brackets round the OR part when you mix them.'], ['Check the count', 'Load it and check the number of alarms is what you expect.']] },
+  { id: 'share-filter', group: 'Filters', q: 'How do I share a filter with a team?', keys: ['share', 'public', 'team', 'group', 'publish', 'everyone', 'others', 'see', 'filter'], where: 'Configuration › Events › Filters, then Filter Groups', risk: 'ask', lesson: ['events', 'ev10'],
+    steps: [['Test it privately', 'Use the filter yourself for a shift first.'], ['Agree it', 'Show a senior admin and agree the name and which group it belongs in.'], ['Make it public', 'Set User Owner to “Public to All Users In Group” and choose the Group Owner.'], ['Add to a group', 'Open Configuration › Events › Filter Groups and add the filter to the team’s group.'], ['Check as the team', 'Ask someone in that team to confirm it appears and shows the right alarms.']],
+    note: 'Only public filters can go in a group. Changing a filter back to private removes it from every group.' },
+  { id: 'restriction-filter', group: 'Filters', q: 'How do I limit a team to its own alarms?', keys: ['restrict', 'restriction', 'limit', 'team', 'only', 'own', 'group', 'scope', 'different'], where: 'Configuration › Events › Filter Groups', risk: 'ask', lesson: ['events', 'ev10'],
+    steps: [['Open Filter Groups', 'Go to Configuration › Events › Filter Groups and expand Global.'], ['Find the team’s group', 'Select the group the team uses.'], ['Restriction Filter', "Write the extra condition, for example Node LIKE 'RAN1%'."], ['It is ANDed on', 'That condition is added with AND to every filter in the group.'], ['Verify', 'Load a shared filter as that team and check the count.']],
+    note: 'A restriction changes what a whole team can see. Agree any change first.' },
+  { id: 'create-display', group: 'Displays', q: 'How do I create or change a display?', keys: ['display', 'columns', 'column', 'layout', 'show', 'hide', 'order', 'sort', 'width', 'rename', 'header'], where: 'Configuration › Events › Displays', risk: 'safe', lesson: ['events', 'ev8'],
+    steps: [['Open Displays', 'Go to Configuration › Events › Displays.'], ['Clone one', 'Clone a display close to what you want and name it TRAIN_yourinitials_….'], ['Tick Visible', 'Tick Visible for each column you want.'], ['Custom Name, Width', 'Set a Custom Name for a friendlier header and a Width (a number, or flex:2).'], ['Sorting order', 'Drag fields into Sorting order for the default sort.'], ['Save and select', 'Save, then choose it in the Display dropdown on the event list.']],
+    note: 'A filter needs the real Field name, not the Custom Name shown in the header.' },
+  { id: 'alarm-disappeared', group: 'Event list', q: 'Why did an alarm disappear from my list?', keys: ['disappear', 'disappeared', 'gone', 'missing', 'vanished', 'where', 'cannot', 'find', 'lost', 'why'], where: 'Events, then Analytics › Events › Discover', risk: 'safe', lesson: ['analytics', 'ea1'], fig: 'livehist',
+    steps: [['Was it acknowledged?', 'If your filter has Ack = 0, an acknowledged alarm drops out. Load a filter without it.'], ['Did it clear?', 'A clear sets Severity 0 and the row is deleted a few minutes later.'], ['Check the filter', 'A Count, time or node condition may no longer match.'], ['Check the group', 'A filter group’s Restriction Filter may be hiding it.'], ['Look in history', 'Search Discover for the node: cleared alarms live on there.']] },
+  { id: 'ack-alarm', group: 'Event list', q: 'How do I acknowledge and take ownership of an alarm?', keys: ['acknowledge', 'ack', 'own', 'ownership', 'journal', 'note', 'assign', 'take', 'comment'], where: 'Events, right-click tools menu on a row', risk: 'safe', lesson: ['events', 'ev11'],
+    steps: [['Select the row', 'Click the alarm in the event list.'], ['Acknowledge', 'Use the Acknowledge tool. Ack becomes 1.'], ['Take ownership', 'Use Take Ownership so OwnerName shows your user.'], ['Add a journal note', 'Write what you are doing, so the next shift can read it.'], ['It may leave your view', 'If your filter has Ack = 0, the row now drops out. That is expected.']] },
+  { id: 'new-alarm', group: 'Rules and alarms', q: 'How do I set up a new alarm?', keys: ['new', 'alarm', 'setup', 'set', 'up', 'create', 'add', 'rule', 'unknown', 'message', 'trap', 'syslog'], where: 'Configuration › Rules', risk: 'ask', lesson: ['rules', 'ru5'],
+    steps: [['Find the raw message', 'Look for it arriving as Unknown, and note its exact text and Method.'], ['Find the rules file', 'In Configuration › Rules, open the rules the receiving aggregator loads.'], ['Match the message', 'Add a condition that recognises the text.'], ['Set the fields', 'Set Severity, EventType and Summary.'], ['Build the EventKey', 'Node + SubNode + EventType, so repeats count instead of flooding.'], ['Test with a senior', 'Send a test message and check one clean row appears. Rules are version-controlled, so it can be rolled back.']],
+    note: 'A syntax error in rules can stop an aggregator processing. Make your first changes with a senior admin.' },
+  { id: 'change-severity', group: 'Rules and alarms', q: 'How do I change the severity of an alarm?', keys: ['severity', 'change', 'wrong', 'colour', 'color', 'critical', 'major', 'minor', 'raise', 'lower', 'red'], where: 'Configuration › Rules', risk: 'ask', lesson: ['rules', 'ru6'],
+    steps: [['Note Method, SubMethod', 'On the alarm, read which source and rule set handled it.'], ['Open that rules file', 'In Configuration › Rules, find the file named after the SubMethod.'], ['Find the Severity line', 'Search for a word from the Summary, then the line that sets Severity.'], ['Change and save', 'Change the value with a senior admin. The save is a new revision.'], ['Wait for the next one', 'New alarms arrive with the new severity. Existing rows keep theirs.']],
+    note: 'A filter cannot change severity. It can only choose which rows to show.' },
+  { id: 'too-many-rows', group: 'Rules and alarms', q: 'How do I stop one alarm filling the list with duplicates?', keys: ['duplicate', 'duplicates', 'flood', 'flooding', 'many', 'rows', 'repeat', 'repeating', 'eventkey', 'key', 'dedup', 'deduplication', 'count'], where: 'Configuration › Rules', risk: 'ask', lesson: ['rules', 'ru2'], fig: 'dedup',
+    steps: [['Compare two rows', 'Expand two of the duplicate rows and compare their EventKey.'], ['Spot what changes', 'A time, sequence number or counter in the key makes every message look new.'], ['Fix the key', 'In the rule, build the key from Node + SubNode + EventType only.'], ['Check Count rises', 'The next repeats should raise Count on one row.']] },
+  { id: 'wont-clear', group: 'Rules and alarms', q: 'Why does an alarm not clear when the fault is fixed?', keys: ['clear', 'clears', 'clearing', 'stuck', 'stays', 'red', 'resolution', 'restored', 'pair', 'mechanization', 'not'], where: 'Configuration › Rules, then Configuration › Events › Mechanizations', risk: 'ask', lesson: ['rules', 'ru3'], fig: 'pairing',
+    steps: [['Find the clear', 'Look for the clear message: Severity 0, EventCategory 1.'], ['Compare three fields', 'Node, SubNode and EventType must be identical on the clear and the problem.'], ['Fix the rule', 'If one differs, the rules label the clear wrongly. That is a rules fix.'], ['Check the mechanization', 'If all three match, check the pairing mechanization is enabled and running.']] },
+  { id: 'threshold', group: 'Rules and alarms', q: 'How do I create a threshold alarm?', keys: ['threshold', 'cpu', 'utilisation', 'utilization', 'temperature', 'metric', 'poll', 'above', 'exceeds', 'percent', 'measurement'], where: 'Configuration › Metrics › Thresholds', risk: 'ask', lesson: ['rules', 'ru7'],
+    steps: [['Open Thresholds', 'Go to Configuration › Metrics › Thresholds.'], ['Pick the metric', 'Choose the measurement, for example CPU utilisation.'], ['Set the limit', 'Set the test and value: above 85%.'], ['Set how long', 'Require several polls in a row, so one spike does not alarm.'], ['Set the severity', 'Choose the severity the alarm is raised with.'], ['Apply to devices', 'Assign it to a small group of devices first and watch for a day.']] },
+  { id: 'search-history', group: 'History', q: 'How do I search alarm history?', keys: ['history', 'search', 'past', 'yesterday', 'last', 'week', 'discover', 'kql', 'old', 'cleared', 'happened', 'previous'], where: 'Analytics › Events › Discover', risk: 'safe', lesson: ['analytics', 'ea2'],
+    steps: [['Open Discover', 'Go to Analytics › Events › Discover.'], ['Check the index', 'The index pattern at top left should be eventanalytics-*.'], ['Widen the time', 'Set the time picker to Last 24 hours or longer.'], ['Type a search', 'Use field : value, for example Node : RAN1_* and Severity >= 4.'], ['Add columns', 'Click Add beside the fields you want as columns.'], ['Save it', 'Save the search as TRAIN_yourinitials_….']] },
+  { id: 'count-alarms', group: 'History', q: 'How do I count alarms per node or source?', keys: ['count', 'top', 'most', 'noisiest', 'noisy', 'per', 'node', 'nodes', 'sources', 'which', 'source', 'aggregation', 'aggs', 'group', 'rank', 'report', 'how', 'many'], where: 'Analytics › Events › Administration › Console', risk: 'safe', lesson: ['analytics', 'ea6'],
+    steps: [['Open the Console', 'Go to Analytics › Events › Administration › Console.'], ['Start with GET', 'Type GET eventanalytics-*/_search and a JSON body.'], ['Narrow it', 'Add a query, for example a range on @timestamp from now-7d.'], ['Add aggs', 'Add a terms aggregation on the field to group by, such as Node.'], ['size 0', 'Set "size": 0 so only the counts come back.'], ['Run it', 'Press the green arrow or Ctrl+Enter.']],
+    note: 'Use GET only. PUT, POST and DELETE can change or remove history.' },
+  { id: 'slow-search', group: 'History', q: 'How do I find out why a search is slow?', keys: ['slow', 'profiler', 'profile', 'performance', 'speed', 'long', 'takes', 'timeout'], where: 'Analytics › Events › Administration › Search Profiler', risk: 'safe', lesson: ['analytics', 'ea7'],
+    steps: [['Open Search Profiler', 'It is the tab beside the Console.'], ['Set the index', 'Change Index from _all to eventanalytics-*.'], ['Paste the body', 'Paste only the JSON body of the query, without the GET line.'], ['Profile', 'Click Profile and expand the Query Profile tree.'], ['Fix the slowest part', 'A wildcard at the front of a value is the usual culprit. Narrow the time range first.']] },
+  { id: 'field-missing', group: 'History', q: 'Why is a field missing in Discover?', keys: ['field', 'missing', 'refresh', 'index', 'pattern', 'not', 'showing', 'discover', 'new', 'keyword', 'type'], where: 'Analytics › Events › Administration › Management › Index Patterns', risk: 'safe', lesson: ['analytics', 'ea7'],
+    steps: [['Open Index Patterns', 'In Management, under Kibana, open Index Patterns.'], ['Open eventanalytics-*', 'Select the pattern to see every field and its type.'], ['Refresh field list', 'Click the refresh button. This is safe and routinely needed.'], ['Back to Discover', 'Reload Discover; the field is now in the list.']] },
+  { id: 'which-screen', group: 'Getting around', q: 'Which screen do I use for what?', keys: ['which', 'screen', 'menu', 'where', 'find', 'map', 'stages', 'pipeline', 'overview', 'navigate'], where: 'Search Configs, at the top of the left menu', risk: 'safe', lesson: ['events', 'ev1'], fig: 'pipeline',
+    steps: [['What people see', 'Filters, Filter Groups and Displays, under Configuration › Events.'], ['How alarms are built', 'Configuration › Rules.'], ['Poll-based alarms', 'Configuration › Metrics › Thresholds.'], ['Clean-up jobs', 'Configuration › Events › Mechanizations.'], ['History', 'Analytics › Events: Discover, Console, Search Profiler.'], ['Cannot find it?', 'Type the name into Search Configs at the top of the left menu.']] },
+  { id: 'safe-practice', group: 'Getting around', q: 'What is safe for me to change?', keys: ['safe', 'safely', 'allowed', 'careful', 'risk', 'break', 'practice', 'practise', 'permission', 'change', 'touch'], where: 'Everywhere', risk: 'safe', lesson: ['rules', 'ru4'],
+    steps: [['Clone, never edit', 'Change a copy of a shared filter or display.'], ['Prefix TRAIN_', 'Name practice items TRAIN_yourinitials_….'], ['Keep it private', 'Stay as User Owner until it has been reviewed.'], ['Read-only first', 'Filters, displays, Discover and GET queries only read.'], ['Ask before', 'Rules, mechanizations, services, and anything under Elasticsearch management.'], ['Write it down', 'Keep a note of what you changed and why.']] },
+  { id: 'cleanup', group: 'Getting around', q: 'How do I remove my practice items?', keys: ['delete', 'remove', 'clean', 'cleanup', 'tidy', 'practice', 'train', 'items', 'old'], where: 'Configuration › Events › Filters and Displays; Management › Saved Objects', risk: 'care', lesson: ['rules', 'ru4'],
+    steps: [['List TRAIN_ items', 'Search for TRAIN_yourinitials in Filters and in Displays.'], ['Check the owner', 'Delete only items where you are the User Owner.'], ['Delete filters first', 'Then the displays they used.'], ['Saved Objects', 'In Kibana Management › Saved Objects, export, then delete your TRAIN_ searches.'], ['Close your note', 'Record what you removed.']] },
+];
+// a flow diagram drawn from any list of steps
+function stepsFig(steps, cap) {
+  const n = Math.min(steps.length, 7), h = 46, gap = 12, H = n * (h + gap) + 4;
+  let body = '';
+  steps.slice(0, n).forEach((s, i) => { const y = 4 + i * (h + gap), label = String(Array.isArray(s) ? s[0] : s).replace(/[<>&]/g, '').slice(0, 44);
+    body += `<rect class="b ${i === 0 ? 'hl' : i === n - 1 ? 'gold' : ''}" x="60" y="${y}" width="340" height="${h}" rx="10"/><circle class="num" cx="34" cy="${y + h / 2}" r="15"/><text class="numt" x="34" y="${y + h / 2 + 5}" text-anchor="middle">${i + 1}</text><text x="76" y="${y + h / 2 + 5}">${label}</text>`;
+    if (i < n - 1) body += farrow(`M34 ${y + h / 2 + 15} V${y + h + gap + h / 2 - 16}`); });
+  return fsvg(H, body, cap || 'The steps, in order.');
+}
+const HOW_STOP = new Set('how do i can you the a an to of in on for my me is it and or with what does do does did are was be we us our your this that at from by as'.split(' '));
+const howWords = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !HOW_STOP.has(w));
+function howScore(t, question) { const qs = new Set(howWords(question)), tw = new Set(howWords(t.q)); let n = 0; qs.forEach((w) => { if (t.keys.includes(w)) n += 2; else if (tw.has(w)) n += 1; else if (t.keys.some((k) => k.length > 4 && (k.startsWith(w) || w.startsWith(k)))) n += 1; }); return n; }
+// Search everything: prepared questions, lessons (title, key terms, text) and the key terms themselves.
+function searchAll(query) {
+  const qs = [...new Set(howWords(query))]; if (!qs.length) return { how: [], lessons: [], terms: [] };
+  const hits = (text, w) => String(text).toLowerCase().includes(w);
+  const how = HOWTO.map((t) => [howScore(t, query) + qs.filter((w) => t.steps.some((s) => hits(s[1], w))).length, t]).filter((x) => x[0] > 0).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+  const lessons = [], terms = [];
+  COURSE_ORDER.forEach((c) => (LESSONS[c] || []).forEach((L, i) => {
+    const body = String(L.explain || '').replace(/<[^>]+>/g, ' '), tasks = [L.task, ...(L.more || []), ...(L.steps || [])].filter(Boolean).map((T) => T.prompt).join(' ');
+    const n = qs.reduce((a, w) => a + (hits(L.title, w) ? 4 : 0) + ((L.terms || []).some((t) => hits(t[0], w)) ? 2 : 0) + (hits(body, w) ? 1 : 0) + (hits(tasks, w) ? 1 : 0), 0);
+    if (n > 0) lessons.push([n, { course: c, idx: i, id: L.id, title: L.title, where: `${COURSE_META[c].name}, lesson ${i + 1}` }]);
+    (L.terms || []).forEach((t) => { const k = qs.reduce((a, w) => a + (hits(t[0], w) ? 3 : 0) + (hits(t[1], w) ? 1 : 0), 0); if (k > 0 && !terms.some((x) => x[1].term === t[0])) terms.push([k, { term: t[0], meaning: t[1], course: c, idx: i, lesson: L.title }]); });
+  }));
+  return { how, lessons: lessons.sort((a, b) => b[0] - a[0]).slice(0, 8).map((x) => x[1]), terms: terms.sort((a, b) => b[0] - a[0]).slice(0, 8).map((x) => x[1]) };
+}
+function howFind(question) { const r = HOWTO.map((t) => [howScore(t, question), t]).sort((a, b) => b[0] - a[0]); return r[0][0] >= 3 ? r[0][1] : null; }
+
 // the dedup lesson's incoming messages
 const DEDUP_MSGS = [
   { Time: '09:00:01', Node: 'TST1_001', SubNode: 'Port-3', EventType: 'LOS', Summary: 'Loss of Signal on port 3' },
@@ -1317,7 +1437,7 @@ function renderDemo() {
 }
 function startDemo() { clearInterval(demoTimer); demoTimer = setInterval(() => { if (state.view !== 'landing') { clearInterval(demoTimer); return; } if ($('demo').matches(':hover')) return; demoAt++; renderDemo(); }, 7000); }
 function showLanding() {
-  state.view = 'landing'; $('lessonView').classList.add('hidden'); $('landing').classList.remove('hidden');
+  state.view = 'landing'; $('lessonView').classList.add('hidden'); $('howView').classList.add('hidden'); $('landing').classList.remove('hidden');
   const name = (state.profile.name || '').trim(), anyDone = Object.keys(state.done).length > 0;
   $('hello').textContent = name ? (anyDone ? `Welcome back, ${name}. What’s next?` : `Hi ${name}. Ready to run the alarm list?`) : 'Learn to run the alarm list';
   const all = COURSE_ORDER.reduce((a, c) => a + lessonsOf(c).length, 0), fin = COURSE_ORDER.reduce((a, c) => a + doneCount(c), 0);
@@ -1344,7 +1464,7 @@ function openCourse(c, idx) {
 function goLesson(i) { state.recap = null; state.idx = i; state.idxBy[state.course] = i; showLesson(); }
 function showLesson() {
   state.step = 0; state.stepScores = []; state.debrief = null; state.extra = 0; resetTry();
-  $('landing').classList.add('hidden'); $('lessonView').classList.remove('hidden');
+  $('landing').classList.add('hidden'); $('howView').classList.add('hidden'); $('lessonView').classList.remove('hidden');
   const all = lessonsOf(state.course), i = state.idx, L = lesson();
   $('hTitle').textContent = L ? L.title : 'Sandbox';
   $('hSub').textContent = state.recap ? 'Questions from lessons you have finished' : `${COURSE_META[state.course].name} · ${L ? `lesson ${i + 1} of ${all.length}` : 'free practice'}${L && state.done[L.id] ? ' · done ✓' : ''}`;
@@ -1615,6 +1735,7 @@ function startRecap() {
   const steps = [], used = new Set();
   pool.forEach((t) => { if (steps.length < 5 && !used.has(t.name)) { steps.push(t); used.add(t.name); } });
   pool.forEach((t) => { if (steps.length < 5 && !steps.includes(t)) steps.push(t); });
+  $('howView').classList.add('hidden');
   state.recap = { id: 'recap', title: 'Quick recap', recap: true, terms: [], steps,
     explain: `<p>${steps.length} questions drawn from lessons you have already finished, in a random order. It is the quickest way to find out what has stuck.</p><p><b>Scoring.</b> ${STEP_POINTS} points each: full marks for right first time with no hint, 15 with a hint or on the second try, 10 after that, 0 with Show answer.</p>${NOTE('Nothing here changes your progress. Take as many recaps as you like; the questions change each time.')}` };
   state.course = state.course || 'events'; state.view = 'lesson'; showLesson(); return true;
@@ -1630,6 +1751,68 @@ function showRecapResult() {
   $('out').innerHTML = ''; $('retake').onclick = () => startRecap(); $('toCourses').onclick = showLanding;
   cue(weak.length ? `${total} out of ${max}. ${weak[0]} is the one to go back over.` : `${total} out of ${max}. That has all stuck.`, { force: true });
   syncSoon(0);
+}
+
+// ---------- "How do I…?": prepared answers with a diagram, or Ainara's own steps drawn as a flow ----------
+const RISK = { safe: ['good', 'Safe to do yourself'], care: ['info', 'Take care: your own items only'], ask: ['info', 'Agree it with a senior admin first'] };
+function showHow(id, custom) {
+  state.view = 'howto'; state.recap = null;
+  $('landing').classList.add('hidden'); $('lessonView').classList.add('hidden'); $('howView').classList.remove('hidden');
+  const t = HOWTO.find((x) => x.id === id) || null;
+  state.how = custom && !t ? { custom: true, ...custom } : t ? { id: t.id } : null;
+  renderHowList($('howSearch').value); renderHowAnswer(); document.querySelector('.how-split').scrollTop = 0; syncSoon(200);
+}
+function renderHowList(query) {
+  const q = String(query || '').trim(); let html = '', group = null;
+  const item = (t) => `<button class="how-item ${state.how && state.how.id === t.id ? 'on' : ''}" data-id="${t.id}">${esc(t.q)}</button>`;
+  if (!q) HOWTO.forEach((t) => { if (t.group !== group) { group = t.group; html += `<div class="wl-section how-g">${esc(group)}</div>`; } html += item(t); });
+  else {
+    const r = searchAll(q);
+    if (r.how.length) html += `<div class="wl-section how-g">How do I…? · ${r.how.length}</div>${r.how.map(item).join('')}`;
+    if (r.lessons.length) html += `<div class="wl-section how-g">Lessons · ${r.lessons.length}</div>${r.lessons.map((l) => `<button class="how-item" data-c="${l.course}" data-i="${l.idx}">${esc(l.title)}<small>${esc(l.where)}</small></button>`).join('')}`;
+    if (r.terms.length) html += `<div class="wl-section how-g">Key terms · ${r.terms.length}</div>${r.terms.map((t, k) => `<button class="how-item ${state.how && state.how.term === t.term ? 'on' : ''}" data-t="${k}">${esc(t.term)}<small>${esc(t.meaning)}</small></button>`).join('')}`;
+    if (!html) html = `<p class="how-none">Nothing found for “${esc(q)}”. Try one or two plain words, or ask Ainara out loud and she will answer in her own words.</p>`;
+    state.howTerms = r.terms;
+  }
+  $('howList').innerHTML = html;
+  document.querySelectorAll('.how-item').forEach((b) => { b.onclick = () => {
+    if (b.dataset.id) showHow(b.dataset.id);
+    else if (b.dataset.c) openCourse(b.dataset.c, +b.dataset.i);
+    else { state.how = { ...state.howTerms[+b.dataset.t] }; renderHowList($('howSearch').value); renderHowAnswer(); syncSoon(200); } }; });
+}
+function renderHowAnswer() {
+  const h = state.how, box = $('howAns'); $('howView').classList.toggle('pick', !h);
+  if (!h && $('howSearch').value.trim()) { box.innerHTML = `<div class="how-empty"><img alt="Ainara" src="${LOGO_SRC}"><h2>Results for “${esc($('howSearch').value.trim())}”</h2><p>Pick a result from the list. Questions open here with a diagram; lessons open in the classroom; key terms show their meaning.</p></div>`; return; }
+  if (!h) { box.innerHTML = `<div class="how-empty"><img alt="Ainara" src="${LOGO_SRC}"><h2>How do I…?</h2><p>Pick a question on the left, type a few words in the search box, or just ask Ainara: <em>“how do I create a filter?”</em>, <em>“why did my alarm disappear?”</em>, <em>“how do I set up a new alarm?”</em></p></div>`; return; }
+  if (h.term) {
+    box.innerHTML = `<div class="kicker">Key term</div><h2>${esc(h.term)}</h2><p class="how-def">${esc(h.meaning)}</p><div class="actions"><button class="btn primary" id="howTry">Open the lesson: ${esc(h.lesson)} ›</button></div>
+      <div class="ask-line"><img alt="Ainara" src="${LOGO_SRC}"><span>Ask Ainara:</span><em>“explain ${esc(h.term)} with an example”</em></div>`;
+    $('howTry').onclick = () => openCourse(h.course, h.idx); return;
+  }
+  if (h.custom) {
+    const steps = (h.steps || []).map((s) => [String(s).split(/[.:;]/)[0].trim().slice(0, 44), String(s)]);
+    box.innerHTML = `<div class="kicker">Ainara’s answer</div><h2>${esc(h.question || 'Your question')}</h2><div class="fb show info">This is general guidance from Ainara, not one of the classroom’s prepared answers, and it has not been checked against your version of Assure1.</div>
+      ${steps.length ? `${stepsFig(steps, 'Ainara’s steps, in order.')}<ol class="how-steps">${steps.map((s) => `<li>${esc(s[1])}</li>`).join('')}</ol>` : '<p class="how-none">Ainara is answering out loud.</p>'}`;
+    return;
+  }
+  const t = HOWTO.find((x) => x.id === h.id), L = LESSONS[t.lesson[0]].find((x) => x.id === t.lesson[1]), n = LESSONS[t.lesson[0]].indexOf(L) + 1;
+  box.innerHTML = `<div class="kicker">How do I…?</div><h2>${esc(t.q)}</h2>
+    <div class="how-meta"><span class="pill">📍 ${esc(t.where)}</span><span class="pill risk-${t.risk}">${RISK[t.risk][1]}</span></div>
+    <div class="how-cols"><div>${stepsFig(t.steps, 'The steps, in order.')}</div>
+      <div><ol class="how-steps">${t.steps.map((s) => `<li><b>${esc(s[0])}.</b> ${esc(s[1])}</li>`).join('')}</ol>${t.note ? `<div class="note warn">${esc(t.note)}</div>` : ''}${t.fig ? FIGS[t.fig] : ''}
+      <div class="actions"><button class="btn primary" id="howTry">Try it: ${esc(COURSE_META[t.lesson[0]].name)}, lesson ${n} ›</button></div>
+      <div class="ask-line"><img alt="Ainara" src="${LOGO_SRC}"><span>Ask Ainara:</span><em>“explain step 3”</em><em>“why is that risky?”</em><em>“how do I …?”</em></div></div></div>`;
+  $('howTry').onclick = () => openCourse(t.lesson[0], n - 1);
+  box.scrollTop = 0;
+}
+function howSnapshot() {
+  const h = state.how, sq = $('howSearch').value.trim();
+  if (!h && sq) { const r = searchAll(sq); return { showing: 'search results', searched_for: sq, how_do_i: r.how.slice(0, 5).map((t) => t.q), lessons: r.lessons.slice(0, 5).map((l) => `${l.title} (${l.where})`), key_terms: r.terms.slice(0, 5).map((t) => `${t.term}: ${t.meaning}`), nothing_found: !(r.how.length || r.lessons.length || r.terms.length) }; }
+  if (!h) return { showing: 'the list of questions', questions: HOWTO.map((t) => t.q) };
+  if (h.term) return { showing: 'a key term', term: h.term, meaning: h.meaning, from_lesson: h.lesson };
+  if (h.custom) return { showing: 'your own answer, drawn as a flow diagram', question: h.question, steps: h.steps };
+  const t = HOWTO.find((x) => x.id === h.id);
+  return { showing: 'a prepared answer with a diagram', question: t.q, where: t.where, risk: RISK[t.risk][1], steps: t.steps.map((s) => s[1]), note: t.note, diagram: t.fig ? `also shows the ${t.fig} diagram` : 'a numbered flow of the steps', try_it_lesson: `${COURSE_META[t.lesson[0]].name}: ${LESSONS[t.lesson[0]].find((x) => x.id === t.lesson[1]).title}` };
 }
 
 // ---------- sandbox: free practice in all three languages ----------
@@ -1665,6 +1848,7 @@ function liveSnapshot() {
   const base = { classroom: 'assure', at: Date.now(), learner: state.profile || {}, data_note: 'simulator with dummy alarms only (TST1_ = NGN cabinets, RAN1_ = RAN sites, CORE1_, TX1_)',
     courses: Object.fromEntries(COURSE_ORDER.map((c) => [COURSE_META[c].name, `${doneCount(c)} of ${lessonsOf(c).length} done`])) };
   if (state.view === 'landing') return { ...base, on_screen: 'the choose-a-course landing page' };
+  if (state.view === 'howto') return { ...base, on_screen: 'the how-do-I page', howto: howSnapshot() };
   const out = { ...base, course: state.course, course_name: COURSE_META[state.course].name, lesson_count: lessonsOf(state.course).length };
   if (isSandbox()) return { ...out, on_screen: 'the sandbox', lesson_free: true, language: LANG_NAME[state.lang], learner_answer: ($('ed') && $('ed').value) || '', last_run: runSummary() };
   const L = lesson(), T = curTask();
@@ -1715,6 +1899,8 @@ function handleRequest(r) {
   if (r.name) { state.profile = { ...state.profile, name: String(r.name).slice(0, 60) }; saveSoon(0); }
   if (r.voice_cues !== undefined && r.voice_cues !== null) { state.voiceCues = !!r.voice_cues; voiceLabel(); saveSoon(0); }
   if (r.action === 'goto') { state.quietIntro = true; if (r.page === 'recap') startRecap(); else if (r.page === 'landing' || !r.course) showLanding(); else openCourse(r.course, r.idx); state.quietIntro = false; }
+  else if (r.action === 'search') { $('howSearch').value = String(r.search || '').slice(0, 80); showHow(null); }
+  else if (r.action === 'howto') { $('howSearch').value = ''; showHow(r.topic || null, r.topic ? null : (r.question ? { question: String(r.question).slice(0, 160), steps: Array.isArray(r.steps) ? r.steps.slice(0, 7).map((x) => String(x).slice(0, 220)) : [] } : null)); }
   else if (r.action === 'more') { const L = lesson(); if (L && L.more && !L.steps && (state.done[L.id] || state.extra)) startExtra(); }
   else if (r.action === 'settings') { if (state.view === 'landing') showLanding(); syncSoon(0); }
   else if (r.action === 'hint') { if (lesson()) showHint(); }
@@ -1758,6 +1944,7 @@ function boot(progress, course, extra = {}) {
   state.quietIntro = true;  // Ainara has just spoken the welcome herself
   if (course && LESSONS[course]) openCourse(course, extra.idx); else showLanding();
   if (extra.page === 'recap') startRecap();
+  if (extra.page === 'howto') showHow(extra.howto || null);
   state.quietIntro = false;
   if (extra.showme) setTimeout(showAnswer, 400);
   waitLoop();
@@ -1772,7 +1959,7 @@ window.addEventListener('message', (event) => {
   if (d.view === 'classroom') {
     if (state.gotData) return; state.gotData = true;
     callSkill('load_progress').then((r) => { if (r && r.offline) { OFFLINE = true; $('offlinePill').classList.remove('hidden'); r = offlineCall('load_progress'); }
-      boot(r && r.success ? r.progress : null, d.course, { idx: d.idx, showme: d.showme, page: d.page }); });
+      boot(r && r.success ? r.progress : null, d.course, { idx: d.idx, showme: d.showme, page: d.page, howto: d.howto }); });
   }
 });
 setTimeout(async () => {
@@ -1780,10 +1967,14 @@ setTimeout(async () => {
   let r = await callSkill('load_progress');
   if (!r || r.offline || !r.success) { OFFLINE = true; $('offlinePill').classList.remove('hidden'); r = offlineCall('load_progress'); }
   const q = new URLSearchParams(location.search);
-  boot(r.progress, q.get('course'), { idx: q.get('lesson') ? +q.get('lesson') - 1 : undefined });
+  boot(r.progress, q.get('course'), { idx: q.get('lesson') ? +q.get('lesson') - 1 : undefined, page: q.get('page'), howto: q.get('howto') });
 }, 1500);
 
-$('homeBtn').onclick = showLanding;
+$('homeBtn').onclick = showLanding; $('howHome').onclick = showLanding;
+$('howBtn').onclick = () => showHow(null); $('howBtn2').onclick = () => showHow(null);
+$('howSearch').oninput = () => { state.how = null; renderHowList($('howSearch').value); renderHowAnswer(); syncSoon(1200); };
+$('landSearch').oninput = () => { if ($('landSearch').value.trim().length < 2) return; $('howSearch').value = $('landSearch').value; $('landSearch').value = ''; showHow(null); $('howSearch').focus(); };
+$('howSearch').onkeydown = (e) => { if (e.key === 'Enter') { const t = howFind($('howSearch').value); if (t) showHow(t.id); } };
 $('prevBtn').onclick = () => goLesson(state.idx - 1);
 $('nextBtn').onclick = () => goLesson(state.idx + 1);
 $('menuBtn').onclick = (e) => { e.stopPropagation(); $('menu').classList.toggle('open'); };

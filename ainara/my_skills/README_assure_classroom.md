@@ -47,8 +47,10 @@ example "a clear closed the fan alarm too"). The Console is read-only: `PUT`, `P
     my_skills/tools/checkmyfilter.py          "check my filter", "is it Severity equals 5 and Ack equals 0?", "give me a hint"
     my_skills/tools/showassureanswer.py       "show me the answer", "talk me through it"
     my_skills/tools/closeassureclassroom.py   "close my Assure classroom"
+    my_skills/tools/assurehowto.py            "how do I create a filter?", "why did my alarm disappear?" (steps + a diagram)
     my_skills/_components/ToolsAssureclassroom/index.html
     my_skills/_components/ToolsAssureclassroom/lessons.json
+    my_skills/_components/ToolsAssureclassroom/howto.json     (the How-do-I answers; written by engine_test.js, like lessons.json)
     my_skills/_components/ToolsCloseassureclassroom/index.html
 
 **Restart Ainara** so Orakle picks up the new skills, then say **"open my Assure classroom"**.
@@ -137,3 +139,18 @@ Lessons are in `index.html`, in the `LESSONS` object inside the block marked
   additions is in the block headed COURSE ADDITIONS inside the engine section of
   `index.html`. Lesson ids are kept, so earlier progress still counts; lesson numbers in the
   first two courses have shifted.
+- **2026-10-08 (How do I…?).** A new page in the classroom, opened from the main page, the
+  lesson header, or by asking Ainara a how-to question. It holds 19 prepared answers (filters,
+  displays, the event list, rules and alarms, history, getting around). Each shows where to
+  click, the steps, a risk label (safe to do yourself, or agree it with a senior admin
+  first), a numbered flow diagram, and a button to the lesson that practises it. The new
+  `assurehowto` skill picks the answer that fits the question and shows it without reopening
+  the screen. For a question with no prepared answer, Ainara's own steps are drawn as a flow
+  diagram and marked as general guidance that has not been checked against your version.
+  The answers are in the `HOWTO` list in `index.html`; run `engine_test.js` after editing
+  them so `howto.json` is rewritten for the skill.
+- **2026-10-08 (search).** The search box on the How-do-I page now searches everything:
+  prepared questions (including their steps), lessons (title, key terms, text and task) and
+  key terms. Results are grouped; a question opens with its diagram, a lesson opens in the
+  classroom, a key term shows its meaning with a link to its lesson. There is a search box on
+  the main page too, and by voice: "search for EventKey", "find the lesson on thresholds".

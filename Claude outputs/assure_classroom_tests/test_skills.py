@@ -5,7 +5,7 @@ os.environ["HOME"] = tempfile.mkdtemp(prefix="assure_test_")
 TOOLS = Path(sys.argv[1])
 def load(name):
     spec = importlib.util.spec_from_file_location(name, TOOLS / f"{name}.py"); mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); return mod
-main = load("assureclassroom"); change = load("changeassurelesson"); check = load("checkmyfilter"); show = load("showassureanswer"); close = load("closeassureclassroom")
+main = load("assureclassroom"); change = load("changeassurelesson"); check = load("checkmyfilter"); show = load("showassureanswer"); close = load("closeassureclassroom"); howto = load("assurehowto")
 card_skill = main.ToolsAssureclassroom()
 LESSONS = json.loads(main.LESSONS_JSON.read_text())
 handled = []
@@ -26,6 +26,10 @@ async def fake_card(stop):
         await card_skill.run(action="ack", seen=seen)
         if r["action"] == "goto" and r.get("page") == "recap":
             state = {"on_screen": "the lesson", "course": "events", "recap": {"step": 1, "steps": 5, "step_ready_for_next": False}, "task": {"type": "sql", "prompt": "recap q1", "language": "SQL filter"}}
+        elif r["action"] == "search":
+            state = {"on_screen": "the how-do-I page", "howto": {"showing": "search results", "searched_for": r["search"], "key_terms": ["EventKey: the dedup key"], "nothing_found": r["search"] == "zzz"}}
+        elif r["action"] == "howto":
+            state = {"on_screen": "the how-do-I page", "howto": {"topic": r.get("topic"), "question": r.get("question"), "steps": r.get("steps")}}
         elif r["action"] == "more":
             state["extra_practice"] = {"tasks": 2, "on_now": state.get("extra_practice", {}).get("on_now", 0) + 1, "offered": True}
         elif r["action"] == "goto":
@@ -57,8 +61,14 @@ async def go():
     r = await card_skill.run(course="kql", lesson="3"); expect("open kql lesson 3 -> analytics idx 2", r.get("course") == "analytics" and r.get("idx") == 2, r)
     r = await card_skill.run(page="sandbox"); expect("open sandbox", r.get("idx") == 8 and r["now_showing"]["lesson"] == "the sandbox", r)
     r = await card_skill.run(page="recap"); expect("open with a recap", r.get("page") == "recap" and r.get("course") is None, r)
+    r = await card_skill.run(page="howto", lesson="how do I set up a new alarm"); expect("open on the how-do-I page with a topic", r.get("page") == "howto" and r.get("howto") == "new-alarm" and r.get("course") is None, r)
+    r = await card_skill.run(page="how do I"); expect("open on the how-do-I list", r.get("page") == "howto" and "howto" not in r, r)
     # nothing on screen
     for f in (main.HEARTBEAT_FILE, main.LIVE_FILE): f.unlink(missing_ok=True)
+    r = await howto.ToolsAssurehowto().run(question="how do I create a filter?"); expect("how-to while closed: prepared answer + offer to open", r["classroom_open"] is False and r["prepared_answer"]["where"].endswith("Filters") and "page = howto" in r["for_ainara"] and r.get("practise_it_in", "").startswith("Event list"), r)
+    r = await howto.ToolsAssurehowto().run(question="how do I export alarms to a spreadsheet", steps="Open the event list | Load the filter | Click the download icon"); expect("how-to while closed: no prepared answer -> general guidance", "prepared_answer" not in r and r["your_steps"][2] == "Click the download icon" and "general guidance" in r["for_ainara"], r)
+    r = await howto.ToolsAssurehowto().run(search_for="EventKey"); expect("search while closed -> offers to open", r["success"] is False and "page = howto" in r["open_with"], r)
+    expect("split_steps handles numbered text", howto.split_steps("1. Open Filters 2. Clone one 3) Save") == ["Open Filters", "Clone one", "Save"], howto.split_steps("1. Open Filters 2. Clone one 3) Save"))
     r = await change.ToolsChangeassurelesson().run(lesson="next"); expect("change lesson while closed -> told to open", r["success"] is False and "open_with" in r, r)
     r = await check.ToolsCheckmyfilter().run(); expect("check while closed -> offers to open", r["classroom_open"] is False, r)
     r = await show.ToolsShowassureanswer().run(); expect("show while closed -> open_with show_answer", "show_answer = yes" in r.get("open_with", ""), r)
@@ -70,6 +80,12 @@ async def go():
     # with a card listening
     stop = asyncio.Event(); card = asyncio.ensure_future(fake_card(stop)); await asyncio.sleep(0.6)
     r = await check.ToolsCheckmyfilter().run(); expect("check on course page", r.get("on_screen") == "the course page", r)
+    r = await howto.ToolsAssurehowto().run(question="why did my alarm disappear", steps="Check Ack | Check clears"); expect("how-to while open: prepared answer shown on screen", r["classroom_open"] and handled[-1]["action"] == "howto" and handled[-1]["topic"] == "alarm-disappeared" and "diagram" in r["for_ainara"], r)
+    r = await howto.ToolsAssurehowto().run(question="how do I export alarms to a spreadsheet", steps="Open the event list | Load the filter | Click the download icon"); expect("how-to while open: Ainara's own steps sent for drawing", handled[-1]["topic"] is None and len(handled[-1]["steps"]) == 3 and "flow diagram" in r["for_ainara"], r)
+    r = await howto.ToolsAssurehowto().run(search_for="EventKey"); expect("search: results on screen and read back", handled[-1]["action"] == "search" and r["results"]["key_terms"] and "found" in r["for_ainara"], r)
+    r = await howto.ToolsAssurehowto().run(search_for="zzz"); expect("search: nothing found", "found nothing" in r["for_ainara"], r)
+    r = await howto.ToolsAssurehowto().run(); expect("how-to with no question: list shown", handled[-1]["action"] == "howto" and handled[-1]["topic"] is None and "list of questions" in r["for_ainara"], r)
+    r = await change.ToolsChangeassurelesson().run(page="landing")
     r = await change.ToolsChangeassurelesson().run(course="events", lesson="3"); expect("goto events lesson 3", r["success"] and r["now_showing"]["title"] == "Working an alarm: acknowledge, own, journal" and r.get("task") == "do it", r)
     r = await change.ToolsChangeassurelesson().run(lesson="next"); expect("next -> lesson 4", r["success"] and r["now_showing"]["lesson"] == "lesson 4 of 11", r)
     r = await change.ToolsChangeassurelesson().run(lesson="previous"); expect("previous -> lesson 3", r["now_showing"]["lesson"] == "lesson 3 of 11", r)
@@ -109,6 +125,6 @@ async def go():
     png = "data:image/png;base64," + __import__("base64").b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 20).decode()
     r = await card_skill.run(action="save_certificate", image=png); expect("certificate saved under HOME", r["success"] and os.path.exists(r["path"]) and r["path"].startswith(os.environ["HOME"]), r)
     r = await card_skill.run(action="save_certificate", image="data:text/html;base64,AAAA"); expect("non-PNG certificate refused", r["success"] is False, r)
-    for s in (card_skill, change.ToolsChangeassurelesson(), check.ToolsCheckmyfilter(), show.ToolsShowassureanswer(), close.ToolsCloseassureclassroom()):
+    for s in (card_skill, change.ToolsChangeassurelesson(), check.ToolsCheckmyfilter(), show.ToolsShowassureanswer(), close.ToolsCloseassureclassroom(), howto.ToolsAssurehowto()):
         expect(f"matcher_info on {type(s).__name__}", len(s.matcher_info) > 100)
 asyncio.run(go()); print("ALL PASS" if ok else "SOME FAILED"); sys.exit(0 if ok else 1)

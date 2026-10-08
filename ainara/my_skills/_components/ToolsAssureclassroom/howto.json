@@ -1,0 +1,590 @@
+[
+ {
+  "id": "create-filter",
+  "q": "How do I create a filter?",
+  "keys": [
+   "create",
+   "new",
+   "make",
+   "add",
+   "filter",
+   "view",
+   "alarms",
+   "write"
+  ],
+  "where": "Configuration › Events › Filters",
+  "risk": "safe",
+  "steps": [
+   "Go to Configuration › Events › Filters.",
+   "Clone a filter that is close to what you want, or click Add.",
+   "Name it TRAIN_yourinitials_… and set User Owner to yourself, so it stays private.",
+   "Type the condition in Filter Clause, for example Severity >= 4 AND Ack = 0.",
+   "Choose a Default Display so the right columns load with it.",
+   "Save, go to Events and pick it from the Filter dropdown."
+  ],
+  "note": "A filter only changes what you see. It cannot change or delete an alarm.",
+  "lesson": [
+   "events",
+   "ev3"
+  ]
+ },
+ {
+  "id": "filter-syntax",
+  "q": "How do I write the filter clause?",
+  "keys": [
+   "clause",
+   "syntax",
+   "where",
+   "sql",
+   "like",
+   "and",
+   "or",
+   "wildcard",
+   "condition",
+   "write"
+  ],
+  "where": "Filter Clause box of a filter",
+  "risk": "safe",
+  "steps": [
+   "Each condition is a field, a test and a value: Severity >= 4.",
+   "Text values need single quotes: Node = 'TST1_001'.",
+   "Use LIKE with % for any text: Node LIKE 'RAN1%'.",
+   "AND needs both, OR needs either. Put brackets round the OR part when you mix them.",
+   "Load it and check the number of alarms is what you expect."
+  ],
+  "note": "",
+  "lesson": [
+   "events",
+   "ev4"
+  ]
+ },
+ {
+  "id": "share-filter",
+  "q": "How do I share a filter with a team?",
+  "keys": [
+   "share",
+   "public",
+   "team",
+   "group",
+   "publish",
+   "everyone",
+   "others",
+   "see",
+   "filter"
+  ],
+  "where": "Configuration › Events › Filters, then Filter Groups",
+  "risk": "ask",
+  "steps": [
+   "Use the filter yourself for a shift first.",
+   "Show a senior admin and agree the name and which group it belongs in.",
+   "Set User Owner to “Public to All Users In Group” and choose the Group Owner.",
+   "Open Configuration › Events › Filter Groups and add the filter to the team’s group.",
+   "Ask someone in that team to confirm it appears and shows the right alarms."
+  ],
+  "note": "Only public filters can go in a group. Changing a filter back to private removes it from every group.",
+  "lesson": [
+   "events",
+   "ev10"
+  ]
+ },
+ {
+  "id": "restriction-filter",
+  "q": "How do I limit a team to its own alarms?",
+  "keys": [
+   "restrict",
+   "restriction",
+   "limit",
+   "team",
+   "only",
+   "own",
+   "group",
+   "scope",
+   "different"
+  ],
+  "where": "Configuration › Events › Filter Groups",
+  "risk": "ask",
+  "steps": [
+   "Go to Configuration › Events › Filter Groups and expand Global.",
+   "Select the group the team uses.",
+   "Write the extra condition, for example Node LIKE 'RAN1%'.",
+   "That condition is added with AND to every filter in the group.",
+   "Load a shared filter as that team and check the count."
+  ],
+  "note": "A restriction changes what a whole team can see. Agree any change first.",
+  "lesson": [
+   "events",
+   "ev10"
+  ]
+ },
+ {
+  "id": "create-display",
+  "q": "How do I create or change a display?",
+  "keys": [
+   "display",
+   "columns",
+   "column",
+   "layout",
+   "show",
+   "hide",
+   "order",
+   "sort",
+   "width",
+   "rename",
+   "header"
+  ],
+  "where": "Configuration › Events › Displays",
+  "risk": "safe",
+  "steps": [
+   "Go to Configuration › Events › Displays.",
+   "Clone a display close to what you want and name it TRAIN_yourinitials_….",
+   "Tick Visible for each column you want.",
+   "Set a Custom Name for a friendlier header and a Width (a number, or flex:2).",
+   "Drag fields into Sorting order for the default sort.",
+   "Save, then choose it in the Display dropdown on the event list."
+  ],
+  "note": "A filter needs the real Field name, not the Custom Name shown in the header.",
+  "lesson": [
+   "events",
+   "ev8"
+  ]
+ },
+ {
+  "id": "alarm-disappeared",
+  "q": "Why did an alarm disappear from my list?",
+  "keys": [
+   "disappear",
+   "disappeared",
+   "gone",
+   "missing",
+   "vanished",
+   "where",
+   "cannot",
+   "find",
+   "lost",
+   "why"
+  ],
+  "where": "Events, then Analytics › Events › Discover",
+  "risk": "safe",
+  "steps": [
+   "If your filter has Ack = 0, an acknowledged alarm drops out. Load a filter without it.",
+   "A clear sets Severity 0 and the row is deleted a few minutes later.",
+   "A Count, time or node condition may no longer match.",
+   "A filter group’s Restriction Filter may be hiding it.",
+   "Search Discover for the node: cleared alarms live on there."
+  ],
+  "note": "",
+  "lesson": [
+   "analytics",
+   "ea1"
+  ]
+ },
+ {
+  "id": "ack-alarm",
+  "q": "How do I acknowledge and take ownership of an alarm?",
+  "keys": [
+   "acknowledge",
+   "ack",
+   "own",
+   "ownership",
+   "journal",
+   "note",
+   "assign",
+   "take",
+   "comment"
+  ],
+  "where": "Events, right-click tools menu on a row",
+  "risk": "safe",
+  "steps": [
+   "Click the alarm in the event list.",
+   "Use the Acknowledge tool. Ack becomes 1.",
+   "Use Take Ownership so OwnerName shows your user.",
+   "Write what you are doing, so the next shift can read it.",
+   "If your filter has Ack = 0, the row now drops out. That is expected."
+  ],
+  "note": "",
+  "lesson": [
+   "events",
+   "ev11"
+  ]
+ },
+ {
+  "id": "new-alarm",
+  "q": "How do I set up a new alarm?",
+  "keys": [
+   "new",
+   "alarm",
+   "setup",
+   "set",
+   "up",
+   "create",
+   "add",
+   "rule",
+   "unknown",
+   "message",
+   "trap",
+   "syslog"
+  ],
+  "where": "Configuration › Rules",
+  "risk": "ask",
+  "steps": [
+   "Look for it arriving as Unknown, and note its exact text and Method.",
+   "In Configuration › Rules, open the rules the receiving aggregator loads.",
+   "Add a condition that recognises the text.",
+   "Set Severity, EventType and Summary.",
+   "Node + SubNode + EventType, so repeats count instead of flooding.",
+   "Send a test message and check one clean row appears. Rules are version-controlled, so it can be rolled back."
+  ],
+  "note": "A syntax error in rules can stop an aggregator processing. Make your first changes with a senior admin.",
+  "lesson": [
+   "rules",
+   "ru5"
+  ]
+ },
+ {
+  "id": "change-severity",
+  "q": "How do I change the severity of an alarm?",
+  "keys": [
+   "severity",
+   "change",
+   "wrong",
+   "colour",
+   "color",
+   "critical",
+   "major",
+   "minor",
+   "raise",
+   "lower",
+   "red"
+  ],
+  "where": "Configuration › Rules",
+  "risk": "ask",
+  "steps": [
+   "On the alarm, read which source and rule set handled it.",
+   "In Configuration › Rules, find the file named after the SubMethod.",
+   "Search for a word from the Summary, then the line that sets Severity.",
+   "Change the value with a senior admin. The save is a new revision.",
+   "New alarms arrive with the new severity. Existing rows keep theirs."
+  ],
+  "note": "A filter cannot change severity. It can only choose which rows to show.",
+  "lesson": [
+   "rules",
+   "ru6"
+  ]
+ },
+ {
+  "id": "too-many-rows",
+  "q": "How do I stop one alarm filling the list with duplicates?",
+  "keys": [
+   "duplicate",
+   "duplicates",
+   "flood",
+   "flooding",
+   "many",
+   "rows",
+   "repeat",
+   "repeating",
+   "eventkey",
+   "key",
+   "dedup",
+   "deduplication",
+   "count"
+  ],
+  "where": "Configuration › Rules",
+  "risk": "ask",
+  "steps": [
+   "Expand two of the duplicate rows and compare their EventKey.",
+   "A time, sequence number or counter in the key makes every message look new.",
+   "In the rule, build the key from Node + SubNode + EventType only.",
+   "The next repeats should raise Count on one row."
+  ],
+  "note": "",
+  "lesson": [
+   "rules",
+   "ru2"
+  ]
+ },
+ {
+  "id": "wont-clear",
+  "q": "Why does an alarm not clear when the fault is fixed?",
+  "keys": [
+   "clear",
+   "clears",
+   "clearing",
+   "stuck",
+   "stays",
+   "red",
+   "resolution",
+   "restored",
+   "pair",
+   "mechanization",
+   "not"
+  ],
+  "where": "Configuration › Rules, then Configuration › Events › Mechanizations",
+  "risk": "ask",
+  "steps": [
+   "Look for the clear message: Severity 0, EventCategory 1.",
+   "Node, SubNode and EventType must be identical on the clear and the problem.",
+   "If one differs, the rules label the clear wrongly. That is a rules fix.",
+   "If all three match, check the pairing mechanization is enabled and running."
+  ],
+  "note": "",
+  "lesson": [
+   "rules",
+   "ru3"
+  ]
+ },
+ {
+  "id": "threshold",
+  "q": "How do I create a threshold alarm?",
+  "keys": [
+   "threshold",
+   "cpu",
+   "utilisation",
+   "utilization",
+   "temperature",
+   "metric",
+   "poll",
+   "above",
+   "exceeds",
+   "percent",
+   "measurement"
+  ],
+  "where": "Configuration › Metrics › Thresholds",
+  "risk": "ask",
+  "steps": [
+   "Go to Configuration › Metrics › Thresholds.",
+   "Choose the measurement, for example CPU utilisation.",
+   "Set the test and value: above 85%.",
+   "Require several polls in a row, so one spike does not alarm.",
+   "Choose the severity the alarm is raised with.",
+   "Assign it to a small group of devices first and watch for a day."
+  ],
+  "note": "",
+  "lesson": [
+   "rules",
+   "ru7"
+  ]
+ },
+ {
+  "id": "search-history",
+  "q": "How do I search alarm history?",
+  "keys": [
+   "history",
+   "search",
+   "past",
+   "yesterday",
+   "last",
+   "week",
+   "discover",
+   "kql",
+   "old",
+   "cleared",
+   "happened",
+   "previous"
+  ],
+  "where": "Analytics › Events › Discover",
+  "risk": "safe",
+  "steps": [
+   "Go to Analytics › Events › Discover.",
+   "The index pattern at top left should be eventanalytics-*.",
+   "Set the time picker to Last 24 hours or longer.",
+   "Use field : value, for example Node : RAN1_* and Severity >= 4.",
+   "Click Add beside the fields you want as columns.",
+   "Save the search as TRAIN_yourinitials_…."
+  ],
+  "note": "",
+  "lesson": [
+   "analytics",
+   "ea2"
+  ]
+ },
+ {
+  "id": "count-alarms",
+  "q": "How do I count alarms per node or source?",
+  "keys": [
+   "count",
+   "top",
+   "most",
+   "noisiest",
+   "noisy",
+   "per",
+   "node",
+   "nodes",
+   "sources",
+   "which",
+   "source",
+   "aggregation",
+   "aggs",
+   "group",
+   "rank",
+   "report",
+   "how",
+   "many"
+  ],
+  "where": "Analytics › Events › Administration › Console",
+  "risk": "safe",
+  "steps": [
+   "Go to Analytics › Events › Administration › Console.",
+   "Type GET eventanalytics-*/_search and a JSON body.",
+   "Add a query, for example a range on @timestamp from now-7d.",
+   "Add a terms aggregation on the field to group by, such as Node.",
+   "Set \"size\": 0 so only the counts come back.",
+   "Press the green arrow or Ctrl+Enter."
+  ],
+  "note": "Use GET only. PUT, POST and DELETE can change or remove history.",
+  "lesson": [
+   "analytics",
+   "ea6"
+  ]
+ },
+ {
+  "id": "slow-search",
+  "q": "How do I find out why a search is slow?",
+  "keys": [
+   "slow",
+   "profiler",
+   "profile",
+   "performance",
+   "speed",
+   "long",
+   "takes",
+   "timeout"
+  ],
+  "where": "Analytics › Events › Administration › Search Profiler",
+  "risk": "safe",
+  "steps": [
+   "It is the tab beside the Console.",
+   "Change Index from _all to eventanalytics-*.",
+   "Paste only the JSON body of the query, without the GET line.",
+   "Click Profile and expand the Query Profile tree.",
+   "A wildcard at the front of a value is the usual culprit. Narrow the time range first."
+  ],
+  "note": "",
+  "lesson": [
+   "analytics",
+   "ea7"
+  ]
+ },
+ {
+  "id": "field-missing",
+  "q": "Why is a field missing in Discover?",
+  "keys": [
+   "field",
+   "missing",
+   "refresh",
+   "index",
+   "pattern",
+   "not",
+   "showing",
+   "discover",
+   "new",
+   "keyword",
+   "type"
+  ],
+  "where": "Analytics › Events › Administration › Management › Index Patterns",
+  "risk": "safe",
+  "steps": [
+   "In Management, under Kibana, open Index Patterns.",
+   "Select the pattern to see every field and its type.",
+   "Click the refresh button. This is safe and routinely needed.",
+   "Reload Discover; the field is now in the list."
+  ],
+  "note": "",
+  "lesson": [
+   "analytics",
+   "ea7"
+  ]
+ },
+ {
+  "id": "which-screen",
+  "q": "Which screen do I use for what?",
+  "keys": [
+   "which",
+   "screen",
+   "menu",
+   "where",
+   "find",
+   "map",
+   "stages",
+   "pipeline",
+   "overview",
+   "navigate"
+  ],
+  "where": "Search Configs, at the top of the left menu",
+  "risk": "safe",
+  "steps": [
+   "Filters, Filter Groups and Displays, under Configuration › Events.",
+   "Configuration › Rules.",
+   "Configuration › Metrics › Thresholds.",
+   "Configuration › Events › Mechanizations.",
+   "Analytics › Events: Discover, Console, Search Profiler.",
+   "Type the name into Search Configs at the top of the left menu."
+  ],
+  "note": "",
+  "lesson": [
+   "events",
+   "ev1"
+  ]
+ },
+ {
+  "id": "safe-practice",
+  "q": "What is safe for me to change?",
+  "keys": [
+   "safe",
+   "safely",
+   "allowed",
+   "careful",
+   "risk",
+   "break",
+   "practice",
+   "practise",
+   "permission",
+   "change",
+   "touch"
+  ],
+  "where": "Everywhere",
+  "risk": "safe",
+  "steps": [
+   "Change a copy of a shared filter or display.",
+   "Name practice items TRAIN_yourinitials_….",
+   "Stay as User Owner until it has been reviewed.",
+   "Filters, displays, Discover and GET queries only read.",
+   "Rules, mechanizations, services, and anything under Elasticsearch management.",
+   "Keep a note of what you changed and why."
+  ],
+  "note": "",
+  "lesson": [
+   "rules",
+   "ru4"
+  ]
+ },
+ {
+  "id": "cleanup",
+  "q": "How do I remove my practice items?",
+  "keys": [
+   "delete",
+   "remove",
+   "clean",
+   "cleanup",
+   "tidy",
+   "practice",
+   "train",
+   "items",
+   "old"
+  ],
+  "where": "Configuration › Events › Filters and Displays; Management › Saved Objects",
+  "risk": "care",
+  "steps": [
+   "Search for TRAIN_yourinitials in Filters and in Displays.",
+   "Delete only items where you are the User Owner.",
+   "Then the displays they used.",
+   "In Kibana Management › Saved Objects, export, then delete your TRAIN_ searches.",
+   "Record what you removed."
+  ],
+  "note": "",
+  "lesson": [
+   "rules",
+   "ru4"
+  ]
+ }
+]

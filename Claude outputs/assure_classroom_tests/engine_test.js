@@ -4,7 +4,7 @@ const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</scri
 // whole script must at least parse
 new Function(script);
 const eng = script.slice(script.indexOf('//<<ENGINE'), script.indexOf('//ENGINE>>'));
-const api = new Function(eng + '; return { EVENTS, HISTORY, LESSONS, COURSE_ORDER, COURSE_META, runQuery, compare, dedup, simMark, simRun, fullQuery, OPS_START, FIGS };')();
+const api = new Function(eng + '; return { EVENTS, HISTORY, LESSONS, COURSE_ORDER, COURSE_META, runQuery, compare, dedup, simMark, simRun, fullQuery, OPS_START, FIGS, HOWTO, howFind, stepsFig, searchAll };')();
 let bad = 0; const idx = {};
 for (const c of api.COURSE_ORDER) {
   idx[c] = api.LESSONS[c].map((L) => ({ id: L.id, title: (L.project && !/^project/i.test(L.title) ? 'Project: ' : '') + L.title, project: !!L.project }));
@@ -44,4 +44,11 @@ const cases = [
 cases.forEach(([l, q]) => console.log(l.padEnd(3), JSON.stringify(q).slice(0, 80).padEnd(82), '=>', t(l, q)));
 console.log('dedup', [['Node'], ['Node', 'SubNode', 'EventType'], ['Node', 'SubNode', 'EventType', 'Time'], []].map((p) => api.dedup(p).length).join(','));
 if (process.argv[3]) fs.writeFileSync(process.argv[3], JSON.stringify(idx, null, 1));
+for (const h of api.HOWTO) { const L = (api.LESSONS[h.lesson[0]] || []).find((x) => x.id === h.lesson[1]); if (!L || (h.fig && !api.FIGS[h.fig]) || !['safe', 'care', 'ask'].includes(h.risk) || h.steps.length < 3 || !api.stepsFig(h.steps).includes('<svg')) { bad++; console.log('BAD howto', h.id); } }
+const asks = [['how do I create a filter', 'create-filter'], ['how can I set up a new alarm', 'new-alarm'], ['why did my alarm disappear', 'alarm-disappeared'], ['how do I change the severity of an alarm', 'change-severity'], ['the list is flooding with duplicate rows', 'too-many-rows'], ['how do I make a cpu threshold alarm', 'threshold'], ['how do i share my filter with the ran team', 'share-filter'], ['which nodes had the most alarms last week', 'count-alarms'], ['an alarm will not clear', 'wont-clear'], ['how do I add a column to the display', 'create-display'], ['how do I bake a cake', null], ['what is the weather', null]];
+asks.forEach(([q, want]) => { const got = api.howFind(q); if ((got ? got.id : null) !== want) { bad++; console.log('BAD howFind', JSON.stringify(q), '->', got && got.id, 'wanted', want); } });
+[['EventKey', 'terms', 'EventKey'], ['threshold', 'lessons', 'Thresholds: an alarm from a measurement'], ['restriction filter', 'lessons', 'Filter groups and restriction filters'], ['share a filter', 'how', 'How do I share a filter with a team?'], ['kql', 'lessons', 'KQL: field : value']].forEach(([q, kind, want]) => { const r = api.searchAll(q), first = r[kind][0], got = first && (first.term || first.title || first.q); if (got !== want) { bad++; console.log('BAD search', q, kind, '->', got); } });
+if (api.searchAll('zzzz').how.length + api.searchAll('zzzz').lessons.length + api.searchAll('').terms.length) { bad++; console.log('BAD search: junk matched'); }
+console.log('howto topics', api.HOWTO.length);
+if (process.argv[3]) fs.writeFileSync(require('path').join(require('path').dirname(process.argv[3]), 'howto.json'), JSON.stringify(api.HOWTO.map((h) => ({ id: h.id, q: h.q, keys: h.keys, where: h.where, risk: h.risk, steps: h.steps.map((s) => s[1]), note: h.note || '', lesson: h.lesson })), null, 1));
 console.log(bad ? `${bad} BAD` : 'ALL LESSON ANSWERS OK');

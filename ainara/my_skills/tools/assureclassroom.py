@@ -30,6 +30,7 @@ skills, which have NO popup (so asking for help never reopens the screen):
     checkmyfilter         "check my filter", "is it Severity equals 5 and Ack equals 0?", "give me a hint"
     showassureanswer      "show me the answer", "talk me through it"
     closeassureclassroom  "close my Assure classroom"
+    assurehowto           "how do I create a filter?", "why did my alarm disappear?" (answers with a diagram)
 
 REAL PATHS:
     this file   -> ainara/my_skills/tools/assureclassroom.py
@@ -105,6 +106,36 @@ LANDING_WORDS = ("home", "landing", "landing page", "menu", "main menu", "course
                  "courses page", "main page", "start page", "home page", "choose a course", "course list")
 SANDBOX_WORDS = ("sandbox", "playground", "free", "free practice", "free play")
 RECAP_WORDS = ("recap", "quiz", "review", "revise", "revision", "test me")
+HOWTO_JSON = LESSONS_JSON.with_name("howto.json")   # the How-do-I answers, written by the test script from the card
+HOW_STOP = set("how do i can you the a an to of in on for my me is it and or with what does did are was be we us our your this that at from by as".split())
+
+
+def how_words(text: Optional[str]) -> List[str]:
+    return [w for w in re.split(r"[^a-z0-9]+", str(text or "").lower()) if len(w) > 1 and w not in HOW_STOP]
+
+
+def howto_topics() -> List[Dict[str, Any]]:
+    try:
+        data = json.loads(HOWTO_JSON.read_text(encoding="utf-8"))
+        return [t for t in data if isinstance(t, dict) and t.get("id")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def howto_find(question: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The prepared How-do-I answer that best fits a question (same scoring as the card), or None."""
+    qs = set(how_words(question))
+    best, best_n = None, 0
+    for t in howto_topics():
+        keys, tw, n = t.get("keys") or [], set(how_words(t.get("q"))), 0
+        for w in qs:
+            if w in keys:
+                n += 2
+            elif w in tw or any(len(k) > 4 and (k.startswith(w) or w.startswith(k)) for k in keys):
+                n += 1
+        if n > best_n:
+            best, best_n = t, n
+    return best if best_n >= 3 else None
 
 TALK_RULES = (
     " Keep it short and spoken: two or three sentences, then hand back to them. Never use"
@@ -454,6 +485,8 @@ class ToolsAssureclassroom(Skill):
             return None
         if p in LANDING_WORDS or any(w in p for w in ("landing", "course page", "course list", "all courses", "main", "home", "choose", "menu")):
             return "landing"
+        if "how" in p or "help page" in p or "question" in p:
+            return "howto"
         if any(w in p for w in RECAP_WORDS):
             return "recap"
         if any(w in p for w in SANDBOX_WORDS):
@@ -476,6 +509,8 @@ class ToolsAssureclassroom(Skill):
             return {"landing": True}
         if pk == "recap":
             return {"landing": True, "recap": True}
+        if pk == "howto":
+            return {"landing": True, "howto": True}
         if not key and str(lesson or "").strip().lower() in ("", "none", "null", "no") and pk is None:
             return {"landing": True}
         # "next" / "previous" count from what is on screen right now (live.json), which is
@@ -568,6 +603,16 @@ class ToolsAssureclassroom(Skill):
                 say += ("They have finished everything, final shift included. Greet them (by name if you know it),"
                         " congratulate them in one sentence, and offer the sandbox for practice or a retake of the"
                         " final shift for a better score. ")
+            if where.get("howto"):
+                topic = howto_find(lesson) or howto_find(page)
+                result["page"] = "howto"
+                if topic:
+                    result["howto"] = topic["id"]
+                    result["how_to"] = {k: topic.get(k) for k in ("q", "where", "risk", "steps", "note")}
+                say = ("The Assure1 classroom is open on its 'How do I…?' page"
+                       + (f", showing the prepared answer to '{topic['q']}' with a diagram. Talk them through how_to in three or four short sentences: where to go, the key steps, and the risk. " if topic else
+                          ": a list of common admin questions, each with steps and a diagram. Ask what they'd like to know how to do. ")
+                       + "For any further 'how do I' question use the assure-how-to capability; it changes this page without reopening it. ")
             if where.get("recap"):
                 result["page"] = "recap"
                 say = ("The Assure1 classroom is open and a quick recap is starting: five questions drawn from lessons"
@@ -609,7 +654,7 @@ class ToolsAssureclassroom(Skill):
         action: Annotated[str, "Action: open (default). The classroom screen itself uses wait, ack, sync, save_progress, load_progress, reset"] = "open",
         course: Annotated[Optional[str], "For open: the course if they named one: events (event list, SQL filters, displays), rules (where alarms come from, deduplication, mechanizations), analytics (Discover, KQL, Console, Search Profiler), final (the final shift: the scored assessment with a certificate). Leave empty if they didn't say"] = None,
         lesson: Annotated[Optional[str], "For open: which lesson, only if they asked for one. If they said a NUMBER ('lesson 4', 'maybe lesson four') pass just that number: '4'. Otherwise 'next', 'sandbox', or part of a lesson title. Use 'project' ONLY if they said the word project. Leave empty to open on the course page"] = None,
-        page: Annotated[Optional[str], "For open: 'sandbox' for free practice, 'recap' for a quick quiz on finished lessons, or 'landing' for the course page. Leave empty for a normal lesson"] = None,
+        page: Annotated[Optional[str], "For open: 'sandbox' for free practice, 'recap' for a quick quiz on finished lessons, 'howto' for the How-do-I page (put their question in lesson), or 'landing' for the course page. Leave empty for a normal lesson"] = None,
         show_answer: Annotated[Optional[str], "For open: 'yes' only when the show-assure-answer capability said the classroom was closed and they want it opened with the answer shown"] = None,
         since: Annotated[Optional[str], "Card only: when the card opened (for wait)"] = None,
         seen: Annotated[Optional[str], "Card only: last request id the card handled (for wait and ack)"] = None,
