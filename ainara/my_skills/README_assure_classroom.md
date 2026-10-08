@@ -162,3 +162,21 @@ Lessons are in `index.html`, in the `LESSONS` object inside the block marked
   themselves, stop an alarm being created. `ExpireTime` and `DeleteExpired` come from
   Oracle's Unified Assurance 6.1 field documentation; the Delete tool and the rule line that
   sets ExpireTime are from general product knowledge.
+- **2026-10-08 (Filters lab).** A practice copy of Configuration › Events › Filters, opened
+  from the main page ("🧪 Filters lab"), from any filter How-do-I answer, or by voice ("open
+  the filters lab"). Filters are listed on the left, shared (👥) and private (🔒). The form on
+  the right has Name, User Owner, Group Owner, Default Display and the Filter Clause, with
+  Preview in Events (the alarms it returns, in the chosen display), Submit and Reset. Add,
+  Clone and Delete work on the list. It teaches the habits as you go: saving a shared filter
+  asks you to clone instead, a clause that errors is not saved, shared filters cannot be
+  deleted, and making a filter public is flagged. One seeded filter is broken on purpose. A
+  seven-item practice checklist ticks itself off. Your lab filters are kept with your progress;
+  "Reset lab" puts it back. By voice through check-my-filter: "open Demo_Critical_Unack",
+  "clone it", "try Severity = 5 and Ack = 0", "save it", "delete that filter".
+  The form fields follow Oracle's Unified Assurance 6.1 Filters page; Shard, Show Symptoms and
+  Viewers are left out, and the real screen's exact layout and button names may differ.
+- **2026-10-08 (lab filter list).** The lab's list of filters is now a table with ID, Name and
+  Where Clause columns. Click a header to sort; the search also matches IDs. New and cloned
+  filters get the next ID, and a filter can be opened by voice by ID ("open filter 103").
+- **2026-10-08 (lab form).** The lab's edit form now has a Shard dropdown as well as User
+  Owner, Group Owner and Default Display. The lab has a single shard, so it has one option.

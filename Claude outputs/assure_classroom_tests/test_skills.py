@@ -26,6 +26,10 @@ async def fake_card(stop):
         await card_skill.run(action="ack", seen=seen)
         if r["action"] == "goto" and r.get("page") == "recap":
             state = {"on_screen": "the lesson", "course": "events", "recap": {"step": 1, "steps": 5, "step_ready_for_next": False}, "task": {"type": "sql", "prompt": "recap q1", "language": "SQL filter"}}
+        elif r["action"] == "goto" and r.get("page") == "lab":
+            state = {"on_screen": "the filters lab", "lab": {"open_filter": "none: the list is showing", "checklist": ["to do: Open Demo_Critical_Unack"]}}
+        elif r["action"] == "lab":
+            state = {"on_screen": "the filters lab", "lab": {"open_filter": r.get("filter") or "x", "did": r.get("op"), "filter_clause_in_editor": r.get("clause"), "preview": {"alarms_returned": 7}, "checklist": []}}
         elif r["action"] == "search":
             state = {"on_screen": "the how-do-I page", "howto": {"showing": "search results", "searched_for": r["search"], "key_terms": ["EventKey: the dedup key"], "nothing_found": r["search"] == "zzz"}}
         elif r["action"] == "howto":
@@ -60,6 +64,7 @@ async def go():
     r = await card_skill.run(course="filters"); expect("open course 'filters' -> events lesson 1", r.get("course") == "events" and r.get("idx") == 0, r)
     r = await card_skill.run(course="kql", lesson="3"); expect("open kql lesson 3 -> analytics idx 2", r.get("course") == "analytics" and r.get("idx") == 2, r)
     r = await card_skill.run(page="sandbox"); expect("open sandbox", r.get("idx") == 8 and r["now_showing"]["lesson"] == "the sandbox", r)
+    r = await card_skill.run(page="lab"); expect("open on the filters lab", r.get("page") == "lab" and "FILTERS LAB" in r["for_ainara"], r)
     r = await card_skill.run(page="recap"); expect("open with a recap", r.get("page") == "recap" and r.get("course") is None, r)
     r = await card_skill.run(page="howto", lesson="how do I set up a new alarm"); expect("open on the how-do-I page with a topic", r.get("page") == "howto" and r.get("howto") == "new-alarm" and r.get("course") is None, r)
     r = await card_skill.run(page="how do I"); expect("open on the how-do-I list", r.get("page") == "howto" and "howto" not in r, r)
@@ -109,6 +114,12 @@ async def go():
     r = await change.ToolsChangeassurelesson().run(lesson="next"); expect("recap: next refused until right", r["success"] is False and "recap" in r["for_ainara"], r)
     await card_skill.run(action="sync", live=json.dumps({"on_screen": "the recap result", "course": "events", "recap": {"step": 5, "steps": 5}, "result": {"score": 80, "revisit": ["Your first filter"]}}))
     r = await check.ToolsCheckmyfilter().run(); expect("recap: result reported", r.get("result", {}).get("score") == 80 and "recap" in r["for_ainara"], r)
+    r = await change.ToolsChangeassurelesson().run(page="open the filters lab"); expect("lab: opened by voice", handled[-1].get("page") == "lab" and "Filters lab" in r["for_ainara"] and r["lab"], r)
+    r = await check.ToolsCheckmyfilter().run(lab_action="open", filter_name="Demo_Critical_Unack"); expect("lab: open a filter", handled[-1]["action"] == "lab" and handled[-1]["op"] == "open" and handled[-1]["filter"] == "Demo_Critical_Unack" and "name" not in handled[-1] and r["lab"]["did"] == "open", r)
+    r = await check.ToolsCheckmyfilter().run(lab_action="copy"); expect("lab: clone", handled[-1]["op"] == "clone", r)
+    r = await check.ToolsCheckmyfilter().run(spoken_answer="Severity = 5 AND Ack = 0"); expect("lab: try a clause", handled[-1]["action"] == "lab" and handled[-1]["clause"] == "Severity = 5 AND Ack = 0" and r["lab"]["preview"]["alarms_returned"] == 7, r)
+    r = await check.ToolsCheckmyfilter().run(lab_action="save", filter_name="save anyway"); expect("lab: save anyway", handled[-1]["op"] == "save" and handled[-1]["filter"] == "anyway", r)
+    n = len(handled); r = await check.ToolsCheckmyfilter().run(); expect("lab: 'what's on screen' reads without acting", len(handled) == n and r["on_screen"] == "the filters lab", r)
     r = await change.ToolsChangeassurelesson().run(course="final"); expect("open the final shift", r["now_showing"]["course"] == "Final shift" and "FINAL SHIFT" in r["for_ainara"], r)
     await card_skill.run(action="sync", live=json.dumps({**main.read_json(main.LIVE_FILE), "final_shift": {"step": 1, "steps": 5, "step_ready_for_next": False}}))
     n = len(handled); r = await change.ToolsChangeassurelesson().run(lesson="next"); expect("final: next step refused until the step is right", r["success"] is False and len(handled) == n, r)

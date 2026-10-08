@@ -70,6 +70,9 @@ class ToolsCheckmyfilter(Skill):
         " than 3', '**give me a hint**', 'I'm stuck', 'what does this task mean?', 'what alarms did"
         " that return?', 'why is that alarm in the list?', 'what does this error mean?', 'can you see"
         " my filter?'. It reads the open classroom, so never ask them to paste or read anything out."
+        "\n\nIt also drives the FILTERS LAB by voice (lab_action): '**open Demo_Critical_Unack**', '**clone it**',"
+        " 'add a new filter called TRAIN_DM_Flapping', 'try Severity = 5 and Ack = 0' (spoken_answer),"
+        " '**save it**', 'delete that filter', 'change the display to Ticket Display'."
         "\n\nNOT for the coding classroom (check-my-code) or the medical classroom (check-my-answer)."
         " For 'show me the answer' use show-assure-answer."
         "\n\nKeywords: check my filter, check my query, am I right, hint, stuck, alarms returned,"
@@ -98,6 +101,36 @@ class ToolsCheckmyfilter(Skill):
                 return live
         return None
 
+    async def lab(self, m, live: Dict[str, Any], said: str, action: str, name: str, question: Optional[str], rules: str) -> Dict[str, Any]:
+        """The Filters lab: open / clone / new / save / delete a filter, or try a clause, then say what the screen shows."""
+        action = {"select": "open", "add": "new", "create": "new", "copy": "clone", "submit": "save", "remove": "delete"}.get(action, action)
+        if action == "save" and "anyway" in name.lower():
+            name = "anyway"
+        did = bool(action or said)
+        if did:
+            extra: Dict[str, Any] = {"op": action or "", "filter": name[:60]}
+            if said:
+                extra["clause"] = said[:1500]
+            req = await self._send(m, "lab", **extra)
+            if not req:
+                return {"success": False, "classroom_open": False,
+                        "for_ainara": "The classroom screen isn't responding, so it has probably been closed. Offer to reopen the Filters lab (the Assure classroom capability with page = lab)." + rules}
+            live = await self._wait_for(m, lambda d: float(d.get("updated_ts") or 0) >= req["at"] and d.get("on_screen") == "the filters lab", 3.0) or m.read_json(m.LIVE_FILE)
+        lab = live.get("lab") if isinstance(live.get("lab"), dict) else {}
+        out: Dict[str, Any] = {"success": True, "classroom_open": True, "on_screen": "the filters lab", "lab": lab}
+        say = ("They are in the FILTERS LAB, a practice copy of Configuration, Events, Filters (dummy filters only). "
+               + (f"You did: {action or 'try a clause'}{' ' + name if name else ''}. " if did else "")
+               + "Say what the screen shows now, in two or three short sentences, from lab: which filter is open and whether"
+               " it is shared or private, what last_message_on_screen says (a save that was refused, a clone that was made),"
+               " and from preview how many alarms the Filter Clause returns or what its error means in plain words."
+               " If waiting_for_shared_filter_confirmation is true, explain that saving a shared filter changes it for"
+               " everyone and recommend 'clone it'; only use lab_action = save with filter_name = anyway if they insist."
+               " If unsaved_changes is true, remind them to say 'save it'. Then suggest the next 'to do' item from"
+               " checklist, without doing it for them."
+               + (f" They also asked: '{question}'." if question else ""))
+        out["for_ainara"] = say + rules
+        return out
+
     @staticmethod
     def _task_view(live: Dict[str, Any]) -> Dict[str, Any]:
         keys = ("course_name", "lesson_number", "lesson_title", "is_project", "task", "learner_answer", "last_run",
@@ -113,6 +146,8 @@ class ToolsCheckmyfilter(Skill):
         spoken_answer: Annotated[Optional[str], "Their answer if they SAID it rather than doing it on screen. A filter or search is written as real syntax on one line: SQL like \"Severity = 5 AND Ack = 0\" or \"Node LIKE 'RAN1%'\"; KQL like 'Node : RAN1_* and Severity >= 4'; a Console request as 'GET eventanalytics-*/_search' followed by the whole JSON body. Multiple choice: the letter ('B') or their words. Display task: the columns and sort as said ('Severity, LastReported, Count, Node and Summary, sorted by Severity descending'). EventKey or clear-pairing task: the fields as said ('Node, SubNode and EventType'). Rule task: what the rule should do as said ('match Rectifier fail, severity major, event type powerFail, key node subnode and event type'). Threshold task: as said ('above 85 percent for 3 polls in a row, major'). Pick-a-row task: the node and sub-node ('RAN1_003 Link-1'). Clean-up task: what to delete ('delete the test alarms', 'undo'). Expiry task: as said ('door open events expire after one hour'). Operator-tools task: the action and the alarm ('acknowledge TST1_001 Port-3 and take ownership', 'add a journal note saying checking with the field team'). Leave empty for 'check my filter' / 'check my answer': the screen's Check is then pressed for them"] = None,
         wants_hint: Annotated[Optional[str], "'yes' if they asked for a hint, said they're stuck, or asked for help"] = None,
         question: Annotated[Optional[str], "Their question about the task, the alarms listed or an error, if they asked one"] = None,
+        lab_action: Annotated[Optional[str], "FILTERS LAB only (the practice copy of Configuration, Events, Filters): 'open' a filter ('open Demo_Critical_Unack'), 'clone' ('clone it', 'make a copy'), 'new' ('add a filter', 'create a new filter'), 'save' ('save it', 'submit'; 'save anyway' only if they insist on editing a shared filter), 'delete', 'rename', or 'display' (change the Default Display). Put the filter or display name in filter_name, and a clause they said in spoken_answer"] = None,
+        filter_name: Annotated[Optional[str], "FILTERS LAB only: the filter name for lab_action (open / clone / delete), the new name (new / rename), or the display name (display)"] = None,
         language: Annotated[Optional[str], "Sandbox only, if they said which: 'sql' (filter on the live list), 'kql' (Discover) or 'console' (Elasticsearch)"] = None,
     ) -> Dict[str, Any]:
         """Look at the learner's work in the open Assure1 classroom."""
@@ -133,6 +168,8 @@ class ToolsCheckmyfilter(Skill):
                     "for_ainara": "They're on the course page, so there's no task yet. Help them pick a course." + rules}
 
         said = str(spoken_answer or "").strip()
+        if on == "the filters lab":
+            return await self.lab(m, live, said, str(lab_action or "").strip().lower(), str(filter_name or "").strip(), question, rules)
         if on == "the sandbox":
             out: Dict[str, Any] = {"success": True, "classroom_open": True, "on_screen": "the sandbox"}
             if said:

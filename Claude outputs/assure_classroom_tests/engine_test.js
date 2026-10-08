@@ -4,7 +4,7 @@ const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</scri
 // whole script must at least parse
 new Function(script);
 const eng = script.slice(script.indexOf('//<<ENGINE'), script.indexOf('//ENGINE>>'));
-const api = new Function(eng + '; return { EVENTS, HISTORY, LESSONS, COURSE_ORDER, COURSE_META, runQuery, compare, dedup, simMark, simRun, fullQuery, OPS_START, FIGS, HOWTO, howFind, stepsFig, searchAll, CLEAN_START };')();
+const api = new Function(eng + '; return { EVENTS, HISTORY, LESSONS, COURSE_ORDER, COURSE_META, runQuery, compare, dedup, simMark, simRun, fullQuery, OPS_START, FIGS, HOWTO, howFind, stepsFig, searchAll, CLEAN_START, LAB_SEED, LAB_PUBLIC, labMissions, labRun };')();
 let bad = 0; const idx = {};
 for (const c of api.COURSE_ORDER) {
   idx[c] = api.LESSONS[c].map((L) => ({ id: L.id, title: (L.project && !/^project/i.test(L.title) ? 'Project: ' : '') + L.title, project: !!L.project }));
@@ -50,6 +50,10 @@ const asks = [['how do I edit a saved filter', 'edit-filter'], ['how do I remove
 asks.forEach(([q, want]) => { const got = api.howFind(q); if ((got ? got.id : null) !== want) { bad++; console.log('BAD howFind', JSON.stringify(q), '->', got && got.id, 'wanted', want); } });
 [['EventKey', 'terms', 'EventKey'], ['threshold', 'lessons', 'Thresholds: an alarm from a measurement'], ['restriction filter', 'lessons', 'Filter groups and restriction filters'], ['share a filter', 'how', 'How do I share a filter with a team?'], ['kql', 'lessons', 'KQL: field : value']].forEach(([q, kind, want]) => { const r = api.searchAll(q), first = r[kind][0], got = first && (first.term || first.title || first.q); if (got !== want) { bad++; console.log('BAD search', q, kind, '->', got); } });
 if (api.searchAll('zzzz').how.length + api.searchAll('zzzz').lessons.length + api.searchAll('').terms.length) { bad++; console.log('BAD search: junk matched'); }
+{ const seed = api.LAB_SEED(), lab = { filters: seed.slice(), deleted: 0, read: {} }, n = (l) => api.labMissions(l).filter((m) => m.done).length;
+  if (n(lab) !== 0 || !api.labRun(seed[1].clause).ok || api.labRun(seed[4].clause).ok) { bad++; console.log('BAD lab seed'); }
+  lab.read.f2 = true; lab.filters.push({ id: 'u1', name: 'TRAIN_XX_Critical_Unack', owner: 'you', from: 'f2', clause: "Severity = 5 AND Ack = 0 AND Node LIKE 'RAN1%'" }, { id: 'u2', name: 'TRAIN_XX_Core', owner: 'you', from: 'f5', clause: "Severity >= 4 AND Node LIKE 'CORE1%'" }, { id: 'u3', name: 'TRAIN_XX_New', owner: 'you', clause: 'Count > 10' }); lab.deleted = 1;
+  if (n(lab) !== 7) { bad++; console.log('BAD lab missions', JSON.stringify(api.labMissions(lab))); } }
 console.log('howto topics', api.HOWTO.length);
 if (process.argv[3]) fs.writeFileSync(require('path').join(require('path').dirname(process.argv[3]), 'howto.json'), JSON.stringify(api.HOWTO.map((h) => ({ id: h.id, q: h.q, keys: h.keys, where: h.where, risk: h.risk, steps: h.steps.map((s) => s[1]), note: h.note || '', lesson: h.lesson })), null, 1));
 console.log(bad ? `${bad} BAD` : 'ALL LESSON ANSWERS OK');

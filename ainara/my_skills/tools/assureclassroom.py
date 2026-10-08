@@ -281,7 +281,8 @@ class ToolsAssureclassroom(Skill):
         " '**teach me Assure1**', 'teach me how to write alarm filters', 'I want to learn Assure1"
         " admin', 'teach me event filters', 'how do I create a filter in Assure1', 'teach me KQL',"
         " 'teach me the Kibana console', 'practise alarm filters', 'open the alarm classroom',"
-        " 'continue my Assure lessons', 'open the alarm sandbox'."
+        " 'continue my Assure lessons', 'open the alarm sandbox', '**open the filters lab**', 'open the"
+        " filter editor', 'take me to Configuration Events Filters' (page = lab)."
         "\n\nNOT for the coding classroom or the medical classroom (each has its own capability)."
         "\n\nActions: open (default) with course = events (event list, SQL filters, displays) / rules"
         " (where alarms come from, deduplication, mechanizations) / analytics (Discover, KQL, Console,"
@@ -485,6 +486,8 @@ class ToolsAssureclassroom(Skill):
             return None
         if p in LANDING_WORDS or any(w in p for w in ("landing", "course page", "course list", "all courses", "main", "home", "choose", "menu")):
             return "landing"
+        if re.search(r"\blab\b|filter editor|filters? screen|filters? page|configuration.*filters", p):
+            return "lab"
         if "how" in p or "help page" in p or "question" in p:
             return "howto"
         if any(w in p for w in RECAP_WORDS):
@@ -511,6 +514,8 @@ class ToolsAssureclassroom(Skill):
             return {"landing": True, "recap": True}
         if pk == "howto":
             return {"landing": True, "howto": True}
+        if pk == "lab":
+            return {"landing": True, "lab": True}
         if not key and str(lesson or "").strip().lower() in ("", "none", "null", "no") and pk is None:
             return {"landing": True}
         # "next" / "previous" count from what is on screen right now (live.json), which is
@@ -613,6 +618,14 @@ class ToolsAssureclassroom(Skill):
                        + (f", showing the prepared answer to '{topic['q']}' with a diagram. Talk them through how_to in three or four short sentences: where to go, the key steps, and the risk. " if topic else
                           ": a list of common admin questions, each with steps and a diagram. Ask what they'd like to know how to do. ")
                        + "For any further 'how do I' question use the assure-how-to capability; it changes this page without reopening it. ")
+            if where.get("lab"):
+                result["page"] = "lab"
+                say = ("The Assure1 classroom is open on its FILTERS LAB: a practice copy of Configuration, Events, Filters."
+                       " Filters are listed on the left (shared ones and their own private ones); the edit form on the"
+                       " right has Name, User Owner, Group Owner, Default Display and the Filter Clause, with a preview"
+                       " of the alarms the filter returns underneath, and a practice checklist. In two sentences say"
+                       " what it is and suggest opening Demo_Critical_Unack to read its clause. The check-my-filter"
+                       " capability drives it by voice: open, clone, new, save or delete a filter, and try a clause. ")
             if where.get("recap"):
                 result["page"] = "recap"
                 say = ("The Assure1 classroom is open and a quick recap is starting: five questions drawn from lessons"
@@ -654,7 +667,7 @@ class ToolsAssureclassroom(Skill):
         action: Annotated[str, "Action: open (default). The classroom screen itself uses wait, ack, sync, save_progress, load_progress, reset"] = "open",
         course: Annotated[Optional[str], "For open: the course if they named one: events (event list, SQL filters, displays), rules (where alarms come from, deduplication, mechanizations), analytics (Discover, KQL, Console, Search Profiler), final (the final shift: the scored assessment with a certificate). Leave empty if they didn't say"] = None,
         lesson: Annotated[Optional[str], "For open: which lesson, only if they asked for one. If they said a NUMBER ('lesson 4', 'maybe lesson four') pass just that number: '4'. Otherwise 'next', 'sandbox', or part of a lesson title. Use 'project' ONLY if they said the word project. Leave empty to open on the course page"] = None,
-        page: Annotated[Optional[str], "For open: 'sandbox' for free practice, 'recap' for a quick quiz on finished lessons, 'howto' for the How-do-I page (put their question in lesson), or 'landing' for the course page. Leave empty for a normal lesson"] = None,
+        page: Annotated[Optional[str], "For open: 'lab' for the Filters lab (the practice copy of Configuration, Events, Filters), 'sandbox' for free practice, 'recap' for a quick quiz on finished lessons, 'howto' for the How-do-I page (put their question in lesson), or 'landing' for the course page. Leave empty for a normal lesson"] = None,
         show_answer: Annotated[Optional[str], "For open: 'yes' only when the show-assure-answer capability said the classroom was closed and they want it opened with the answer shown"] = None,
         since: Annotated[Optional[str], "Card only: when the card opened (for wait)"] = None,
         seen: Annotated[Optional[str], "Card only: last request id the card handled (for wait and ack)"] = None,

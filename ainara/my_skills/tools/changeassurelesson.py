@@ -55,7 +55,7 @@ class ToolsChangeassurelesson(Skill):
         " '**previous lesson**', '**go to lesson 4**' (lesson = 4), 'bring me into event list, lesson 4' (course = events, lesson = 4), '**switch to event"
         " analytics**', 'switch to the rules course', 'take me to the sandbox', '**open the"
         " sandbox**', 'back to the course page', '**take the final shift**' / 'start the final assessment' (course = final),"
-        " in the final shift or a recap: '**next step**' (lesson = next) and 'take it again' (lesson = retake), '**give me another one**' / 'more practice' (lesson = more), '**quiz me**' / 'quick recap' (page = recap), 'call me Dave', 'stop talking during lessons' / 'turn"
+        " in the final shift or a recap: '**next step**' (lesson = next) and 'take it again' (lesson = retake), '**give me another one**' / 'more practice' (lesson = more), '**quiz me**' / 'quick recap' (page = recap), '**open the filters lab**' (page = lab), 'call me Dave', 'stop talking during lessons' / 'turn"
         " your tips back on' (spoken_tips). It changes the classroom that's already on screen, without"
         " opening a new window."
         "\n\nNOT for the coding classroom (that is change-lesson) or the medical classroom (that is"
@@ -84,7 +84,7 @@ class ToolsChangeassurelesson(Skill):
         self,
         lesson: Annotated[Optional[str], "Which lesson. If they said a NUMBER ('lesson 4', 'maybe lesson four', 'the fourth one') pass just that number: '4'. Otherwise 'next', 'previous', 'sandbox', or part of a lesson title. Use 'project' ONLY if they said the word project. 'more' when they want another practice task on the same lesson ('give me another one', 'more practice'). Never put a course name here. Leave empty when they only named a course or changed a setting"] = None,
         course: Annotated[Optional[str], "The course if they named one: events (event list, SQL filters, displays), rules (where alarms come from, deduplication, mechanizations), analytics (Discover, KQL, Console, Search Profiler), final (the final shift: the scored assessment with a certificate)"] = None,
-        page: Annotated[Optional[str], "'landing' for the course page, 'sandbox' for free practice, 'recap' for a quick quiz on lessons they've finished ('quiz me', 'test me on what I've done'). Leave empty for a normal lesson change"] = None,
+        page: Annotated[Optional[str], "'lab' for the Filters lab ('open the filters lab', 'the filter editor', 'Configuration Events Filters'), 'landing' for the course page, 'sandbox' for free practice, 'recap' for a quick quiz on lessons they've finished ('quiz me', 'test me on what I've done'). Leave empty for a normal lesson change"] = None,
         name: Annotated[Optional[str], "Only if they told you the name to call them"] = None,
         spoken_tips: Annotated[Optional[str], "'off' if they want Ainara's short spoken tips during lessons to stop, 'on' to bring them back"] = None,
     ) -> Dict[str, Any]:
@@ -197,7 +197,9 @@ class ToolsChangeassurelesson(Skill):
         async def closed() -> Dict[str, Any]:
             if settings:
                 save_settings_directly()
-            if where.get("recap"):
+            if where.get("lab"):
+                args = "action = open, page = lab"
+            elif where.get("recap"):
                 args = "action = open, page = recap"
             elif where.get("landing"):
                 args = "action = open, page = landing"
@@ -207,6 +209,16 @@ class ToolsChangeassurelesson(Skill):
                     "for_ainara": (said + "The Assure1 classroom isn't open on screen right now. Call the Assure classroom"
                                    f" capability NOW with {args}; don't just say it's open." + rules)}
 
+        if where.get("lab"):
+            request.update(action="goto", page="lab")
+            if not await m.deliver(request, 4.0 if on_screen else 1.5):
+                return await closed()
+            after = await self._wait_for(m, lambda d: d.get("on_screen") == "the filters lab", 8) or {}
+            return {"success": True, "classroom_open": True, "lab": after.get("lab"),
+                    "for_ainara": said + ("The Filters lab is on screen: a practice copy of Configuration, Events, Filters, with the"
+                                          " filters on the left and the edit form and Filter Clause on the right. In two sentences"
+                                          " say what it is and suggest a first step from the checklist (lab.checklist). Use"
+                                          " check-my-filter to drive it by voice (open, clone, new, save, delete, try a clause).") + rules}
         if where.get("recap"):
             request.update(action="goto", page="recap")
             if not await m.deliver(request, 4.0 if on_screen else 1.5):
