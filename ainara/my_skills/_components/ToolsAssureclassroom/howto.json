@@ -586,5 +586,166 @@
    "rules",
    "ru4"
   ]
+ },
+ {
+  "id": "edit-filter",
+  "q": "How do I edit a saved filter?",
+  "keys": [
+   "edit",
+   "change",
+   "modify",
+   "update",
+   "saved",
+   "existing",
+   "filter",
+   "fix",
+   "amend",
+   "alter"
+  ],
+  "where": "Configuration › Events › Filters",
+  "risk": "ask",
+  "steps": [
+   "Go to Configuration › Events › Filters and open it.",
+   "Paste the current Filter Clause into your change note. That is your undo.",
+   "Load the filter in Events and note how many alarms it returns.",
+   "Clone it as TRAIN_yourinitials_… and make the edit there first.",
+   "Check every row that appeared or disappeared is meant to.",
+   "Change the real filter, save, and tell the people who use it."
+  ],
+  "note": "A shared filter changes on everyone’s screen the moment you save. Your own private filters you can edit freely.",
+  "lesson": [
+   "events",
+   "ev12"
+  ]
+ },
+ {
+  "id": "hide-noise",
+  "q": "How do I hide unwanted alarms from a view?",
+  "keys": [
+   "hide",
+   "exclude",
+   "unwanted",
+   "noise",
+   "noisy",
+   "ignore",
+   "except",
+   "without",
+   "clutter",
+   "suppress",
+   "remove",
+   "out"
+  ],
+  "where": "Filter Clause of the filter",
+  "risk": "safe",
+  "steps": [
+   "Look for something the unwanted rows share: an EventType, a source, a word in the Summary.",
+   "Add AND EventType != 'doorOpen'.",
+   "Use NOT IN ('SRC_C', 'SRC_D'), or NOT LIKE for a pattern.",
+   "Join exclusions with AND, never OR.",
+   "Make sure only the rows you meant to lose have gone."
+  ],
+  "note": "Hiding leaves the alarm untouched. If it is noise for everyone, also raise it as a rules change.",
+  "lesson": [
+   "events",
+   "ev13"
+  ]
+ },
+ {
+  "id": "delete-alarms",
+  "q": "How do I remove alarms that should not be in the list?",
+  "keys": [
+   "delete",
+   "remove",
+   "cleanup",
+   "clean",
+   "clear",
+   "unwanted",
+   "leftover",
+   "stale",
+   "old",
+   "test",
+   "alarms",
+   "rid",
+   "purge"
+  ],
+  "where": "Events, Delete tool on selected rows",
+  "risk": "ask",
+  "steps": [
+   "If it only bothers one view, exclude it in the filter instead.",
+   "Load a filter that lists only the rows to remove, such as Summary LIKE 'TRAIN_TEST%'.",
+   "Confirm the number of rows is what you expect.",
+   "Select the rows in that filtered list.",
+   "Use the Delete tool, if your role has it.",
+   "Record what you deleted and why."
+  ],
+  "note": "Deleting removes the live alarm for every user. Never select rows by eye from a busy list.",
+  "lesson": [
+   "events",
+   "ev14"
+  ]
+ },
+ {
+  "id": "auto-expire",
+  "q": "How do I make alarms go away by themselves?",
+  "keys": [
+   "expire",
+   "expiry",
+   "expiretime",
+   "automatically",
+   "auto",
+   "themselves",
+   "timeout",
+   "age",
+   "pile",
+   "stale",
+   "old",
+   "away",
+   "deleteexpired"
+  ],
+  "where": "Configuration › Rules, and Configuration › Events › Mechanizations",
+  "risk": "ask",
+  "steps": [
+   "Choose events with no clear message and no lasting meaning, such as a door opening.",
+   "Agree with the team how long they are useful: an hour, a day.",
+   "In the rule for that event type, set ExpireTime in seconds.",
+   "Confirm the DeleteExpired mechanization is enabled.",
+   "Check old ones go and new ones still arrive."
+  ],
+  "note": "Never put an expiry on a real fault: it would vanish while the problem is still there.",
+  "lesson": [
+   "rules",
+   "ru8"
+  ]
+ },
+ {
+  "id": "stop-alarm",
+  "q": "How do I stop an unwanted alarm being created at all?",
+  "keys": [
+   "stop",
+   "discard",
+   "drop",
+   "block",
+   "prevent",
+   "never",
+   "source",
+   "suppress",
+   "unwanted",
+   "created",
+   "disable"
+  ],
+  "where": "Configuration › Rules",
+  "risk": "ask",
+  "steps": [
+   "Lower its severity or give it an expiry first.",
+   "Confirm with the owning team that nobody needs to see it.",
+   "Open the rules file for its SubMethod.",
+   "Add a discard for exactly that message, with a senior admin.",
+   "Check it stops arriving and nothing else did."
+  ],
+  "note": "A discarded message is gone before it reaches the list or the history. This is the strongest option; use it last.",
+  "lesson": [
+   "rules",
+   "ru6"
+  ]
  }
 ]

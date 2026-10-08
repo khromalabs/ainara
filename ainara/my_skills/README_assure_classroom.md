@@ -19,12 +19,12 @@ records. It never connects to a real Assure1, and every name is made up:
 | `TX1_001` … `TX1_003` | Transmission nodes |
 | `SRC_A` … `SRC_D` | Alarm sources (SubMethod) |
 
-## Courses (27 lessons, a final assessment, a recap quiz and a sandbox)
+## Courses (31 lessons, a final assessment, a recap quiz and a sandbox)
 
 | Course | Lessons | Hands-on with |
 |---|---|---|
-| Event list, filters & displays | 11, ending in a project (a RAN working view) | clicking rows in the event list; operator tools (acknowledge, own, journal); SQL `WHERE` filters; a display; a filter group's restriction filter |
-| Where alarms come from | 7 | an EventKey (deduplication simulator); two rule-writing lessons (set up a new alarm, tidy a noisy one); clear pairing; a threshold on a CPU chart |
+| Event list, filters & displays | 14, ending in a project (a RAN working view) | clicking rows in the event list; operator tools (acknowledge, own, journal); deleting unwanted alarms (filter first, then delete); SQL `WHERE` filters; editing a saved filter; hiding noise; a display; a filter group's restriction filter |
+| Where alarms come from | 8 | an EventKey (deduplication simulator); two rule-writing lessons (set up a new alarm, tidy a noisy one); clear pairing; a threshold on a CPU chart; expiry (ExpireTime and DeleteExpired) |
 | Event Analytics | 8, ending in a project (the noisiest RAN sites) | KQL searches; Console (Elasticsearch) requests |
 | Final shift | 1 assessment of 5 scored steps: 20 points each, 70 of 100 passes | a filter, a display, a rules question, a KQL search, a Console count |
 
@@ -154,3 +154,11 @@ Lessons are in `index.html`, in the `LESSONS` object inside the block marked
   key terms. Results are grouped; a question opens with its diagram, a lesson opens in the
   classroom, a key term shows its meaning with a link to its lesson. There is a search box on
   the main page too, and by voice: "search for EventKey", "find the lesson on thresholds".
+- **2026-10-08 (editing and clean-up).** Four more lessons: editing a saved filter (with a
+  before/after count and two extra tasks, one a clause that errors), hiding noise from a view,
+  cleaning up alarms that should not be there (filter first, then delete; deleting a real
+  alarm is caught and explained), and expiry. Five more How-do-I answers: edit a saved
+  filter, hide unwanted alarms, remove alarms from the list, make alarms go away by
+  themselves, stop an alarm being created. `ExpireTime` and `DeleteExpired` come from
+  Oracle's Unified Assurance 6.1 field documentation; the Delete tool and the rule line that
+  sets ExpireTime are from general product knowledge.

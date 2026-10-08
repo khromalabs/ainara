@@ -157,8 +157,8 @@ SAFETY_RULES = (
 
 # What a learner can do after each course; Ainara uses these on the course page.
 OUTCOMES = {
-    "events": "read and work the event list (acknowledge, own, journal) and build their own alarm views: SQL filters for any team, a display to go with them, and a filter group's restriction",
-    "rules": "set up a new alarm and fix a bad one: write a rule (severity, EventType, EventKey), pair clears with problems, create a threshold alarm from a measurement, and know what is safe to change",
+    "events": "read and work the event list (acknowledge, own, journal) and build and maintain alarm views: write and edit SQL filters for any team, hide noise, lay out a display, set a filter group's restriction, and safely delete alarms that should not be there",
+    "rules": "set up a new alarm and fix a bad one: write a rule (severity, EventType, EventKey), pair clears with problems, create a threshold alarm from a measurement, give clutter an expiry so it removes itself, and know what is safe to change",
     "analytics": "answer questions about the past: search alarm history in Discover with KQL, and count and rank alarms from the Console",
     "final": "prove it on a full morning shift of five mixed tasks, and earn the certificate",
 }

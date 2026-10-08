@@ -16,6 +16,11 @@
    "project": false
   },
   {
+   "id": "ev14",
+   "title": "Cleaning up: removing alarms that should not be there",
+   "project": false
+  },
+  {
    "id": "ev3",
    "title": "Your first filter",
    "project": false
@@ -38,6 +43,16 @@
   {
    "id": "ev7",
    "title": "Filtering by time",
+   "project": false
+  },
+  {
+   "id": "ev12",
+   "title": "Editing a saved filter",
+   "project": false
+  },
+  {
+   "id": "ev13",
+   "title": "Hiding noise from a view",
    "project": false
   },
   {
@@ -85,6 +100,11 @@
   {
    "id": "ru7",
    "title": "Thresholds: an alarm from a measurement",
+   "project": false
+  },
+  {
+   "id": "ru8",
+   "title": "Expiry: alarms that remove themselves",
    "project": false
   },
   {

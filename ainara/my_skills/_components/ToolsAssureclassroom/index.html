@@ -158,6 +158,7 @@
   .rulebox input[type=number] { width: 70px; font: inherit; background: var(--panel); color: var(--ink); border: 1px solid var(--line-2); border-radius: 7px; padding: 4px 8px; }
   .tools { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
   .tools input { flex: 1; min-width: 150px; font: inherit; background: var(--code-bg); color: var(--ink); border: 1px solid var(--line-2); border-radius: 7px; padding: 5px 9px; }
+  tr.gone td { opacity: .38; text-decoration: line-through; }
   tr.pick { cursor: pointer; } tr.pick:hover td { filter: brightness(1.12); }
   tr.sel td { box-shadow: inset 0 3px 0 var(--gold), inset 0 -3px 0 var(--gold); font-weight: 700; opacity: 1 !important; }
   /* Ainara's line in the lesson, and her caption bubble */
@@ -1022,15 +1023,15 @@ function pairSim(parts) {
   });
 }
 const OPS_START = () => EVENTS.filter((e) => e.Severity === 5 && e.Ack === 0).map((e) => ({ ...e, OwnerName: '', Journal: '' }));
-function simRun(T, a) {
+let simRun = function (T, a) {
   if (T.type === 'rule') return ruleSim(a, T.msgs);
   if (T.type === 'threshold') return thresholdSim(a);
   if (T.type === 'pair') return pairSim(a);
   if (T.type === 'ops') return a;
   return [];
-}
+};
 const sevName = (n) => `${SEV[n]} (${n})`;
-function simMark(T, a) {
+let simMark = function (T, a) {
   if (T.type === 'pickrow') {
     if (a === null || a === undefined) return { correct: false, msg: 'Click a row in the list first.', empty: true };
     const r = EVENTS.find((e) => e.EventID === a);
@@ -1065,7 +1066,7 @@ function simMark(T, a) {
   const cleared = mine.filter((r) => r.Severity === 0);
   if (!cleared.length) return { correct: false, msg: `Nothing was cleared. ${a.includes('Summary') ? 'The clear says “Signal restored” and the problem says “Loss of Signal”, so Summary never matches.' : a.includes('Time') ? 'The clear arrives later than the problem, so Time never matches.' : 'Choose what a clear and its problem have in common.'}` };
   return { correct: false, msg: `${cleared.length} alarms were cleared but only one fault was fixed (Loss of Signal on TST1_005 Port-2). ${cleared.find((r) => r.EventType !== 'LOS') ? `The ${cleared.find((r) => r.EventType !== 'LOS').EventType} alarm was closed by a clear meant for something else.` : 'An alarm on a different node was closed too.'}` };
-}
+};
 
 // ═══════════════════════════════════════════════════
 //  DIAGRAMS (inline SVG, drawn with the page's theme colours)
@@ -1176,6 +1177,86 @@ ${NOTE('The chart on the right shows twelve polls of CPU on two core routers. Ch
   task: { type: 'threshold', prompt: 'Set up a CPU alarm: Major when utilisation is above 85% for 3 polls in a row. The single spike on CORE1_001 must not raise anything.', start: { op: '>', value: 85, polls: 1, sev: 5 }, need: { op: '>', value: 85, polls: 3, sev: 4 },
     hint: 'The value is already right. Change how many polls in a row are needed, and the severity.', why: 'With 3 polls in a row, the one-off 91% on CORE1_001 is ignored. CORE1_002 reads 86, 88, 92 and raises a Major at poll 6, then clears at poll 9 when it falls to 70.' } });
 
+// --- editing saved filters, hiding noise, and cleaning up alarms that should not be there
+const CLEAN_START = () => { const real = EVENTS.filter((e) => e.Severity >= 4 && e.Ack === 0).slice(0, 5).map((e) => ({ ...e }));
+  const test = [1, 2, 3].map((n) => ({ ...EVENTS[13], EventID: 9000 + n, Node: 'TST1_999', SubNode: `Port-${n}`, Severity: 4, Summary: `TRAIN_TEST link down on port ${n}`, Count: 1, SubMethod: 'SRC_TEST', EventType: 'test', TicketID: '', Ack: 0, OwnerName: '', EventKey: `TST1_999+Port-${n}+test` }));
+  return [real[0], test[0], real[1], real[2], test[1], real[3], test[2], real[4]]; };
+const EXP_ROWS = [
+  { Node: 'TST1_002', SubNode: 'Door', EventType: 'doorOpen', Summary: 'Cabinet door open', Severity: 2, age: 180 }, { Node: 'RAN1_002', SubNode: 'Door', EventType: 'doorOpen', Summary: 'Cabinet door open', Severity: 2, age: 20 },
+  { Node: 'TST1_004', SubNode: 'Door', EventType: 'doorOpen', Summary: 'Cabinet door open', Severity: 2, age: 1500 }, { Node: 'RAN1_001', SubNode: 'Cell-1', EventType: 'cellDown', Summary: 'Cell down: no heartbeat from sector 1', Severity: 5, age: 300 },
+  { Node: 'TST1_003', SubNode: 'Batt', EventType: 'battLow', Summary: 'Battery low voltage', Severity: 4, age: 2000 }, { Node: 'TX1_003', SubNode: 'Fan-1', EventType: 'unknown', Summary: 'Unknown trap received', Severity: 1, age: 90 },
+];
+const ageText = (m) => (m >= 1440 ? `${Math.round(m / 144) / 10} days` : m >= 60 ? `${Math.round(m / 6) / 10} hours` : `${m} min`);
+function expireSim(cfg) { return EXP_ROWS.map((r) => { const gone = +cfg.expire > 0 && (cfg.etype === 'all' || r.EventType === cfg.etype) && r.age * 60 > +cfg.expire; return { ...r, Count: 1, 'Last changed': ageText(r.age) + ' ago', State: gone ? 'deleted by DeleteExpired' : 'kept', gone }; }); }
+const simRunBase = simRun, simMarkBase = simMark;
+simRun = function (T, a) { return T.type === 'cleanup' ? a : T.type === 'expire' ? expireSim(a) : simRunBase(T, a); };
+simMark = function (T, a) {
+  if (T.type === 'cleanup') {
+    const start = CLEAN_START(), left = a.filter((r) => r.Summary.startsWith('TRAIN_TEST')), lost = start.filter((r) => !r.Summary.startsWith('TRAIN_TEST') && !a.some((x) => x.EventID === r.EventID));
+    if (lost.length) return { correct: false, msg: `You deleted a real alarm: ${lost[0].Node} ${lost[0].SubNode} “${lost[0].Summary}”. On the live system that fault would now be invisible. Press Undo everything, filter the list to the test alarms first, and delete only those.` };
+    if (left.length === 3) return { correct: false, msg: 'Nothing has been deleted yet. Filter the list to the test alarms, select them, then delete.' };
+    if (left.length) return { correct: false, msg: `${left.length} test alarm${left.length === 1 ? ' is' : 's are'} still in the list.` };
+    return { correct: true };
+  }
+  if (T.type === 'expire') {
+    const mine = expireSim(a), want = expireSim(T.need), sig = (rows) => rows.map((r) => (r.gone ? 1 : 0)).join('');
+    if (sig(mine) === sig(want)) return { correct: true };
+    const bad = mine.find((r) => r.gone && r.Severity >= 4);
+    if (bad) return { correct: false, msg: `${bad.Node} “${bad.Summary}” was deleted while the fault is still there. Expiry must apply only to the door events, not to every event type.` };
+    if (!mine.some((r) => r.gone)) return { correct: false, msg: 'Nothing expires with those settings. Choose the event type and a time.' };
+    if (mine.some((r) => r.gone && r.EventType !== 'doorOpen')) return { correct: false, msg: 'An event that is not a door alarm was removed. Set the expiry on the doorOpen type only.' };
+    return { correct: false, msg: `${mine.filter((r) => r.gone).length} door events were removed; with a one-hour expiry it should be ${want.filter((r) => r.gone).length}. Check the time.` };
+  }
+  return simMarkBase(T, a);
+};
+const afterId = (course, id, L) => LESSONS[course].splice(LESSONS[course].findIndex((x) => x.id === id) + 1, 0, L);
+afterId('events', 'ev11', { id: 'ev14', title: 'Cleaning up: removing alarms that should not be there',
+  explain: `<p>Sometimes a row is in the list that is not a real fault: a leftover test alarm, a device that was decommissioned, something raised by mistake. There are four ways to deal with an unwanted alarm, from gentlest to strongest:</p>
+<table><tr><th>What you want</th><th>How</th><th>Risk</th></tr>
+<tr><td>Stop seeing it in one view</td><td>Exclude it in the filter (lesson on hiding noise)</td><td>None: the alarm is untouched</td></tr>
+<tr><td>Let it go away by itself</td><td>An expiry time, set in the rules</td><td>Low once agreed</td></tr>
+<tr><td>Remove it now</td><td>The Delete tool on selected rows</td><td>High: a deleted live alarm is gone for everyone</td></tr>
+<tr><td>Stop it ever being created</td><td>Discard it in the rules</td><td>High: nobody will ever see it</td></tr></table>
+<p>When you do have to delete, the safe habit is <b>filter first, then select</b>. Load a filter that lists only the rows you mean to remove, check the count is what you expect, and only then select all and delete. Never pick rows out of a busy list by eye.</p>
+${WARN('Deleting removes the row from the live list for every user. The history in Event Analytics keeps a record, but the live alarm does not come back unless the device sends it again. Whether you have a Delete tool at all depends on your role.')}`,
+  terms: [['Delete tool', 'Removes selected events from the live list for everyone.'], ['Filter first', 'Narrow the list to exactly the rows you mean to act on before selecting any.']],
+  task: { type: 'cleanup', prompt: 'Somebody left three test alarms in the live list. They all have a Summary starting TRAIN_TEST. Remove them, and nothing else.', need: { test: true },
+    hint: "Type Summary LIKE 'TRAIN_TEST%' into the filter box and press Apply filter. Three rows should be left. Select all shown, then Delete selected.", why: 'Filtering first meant the only rows on screen were the three you meant to remove, so Select all could not catch a real fault. The five real alarms are untouched.' } });
+afterId('events', 'ev7', { id: 'ev12', title: 'Editing a saved filter',
+  explain: `<p>Sooner or later someone says “that view is wrong” and you have to change a filter that already exists. A shared filter is used by other people right now, so an edit shows on their screens the moment you save.</p>
+<p>The safe routine:</p>
+<ol><li><b>Open it and copy the old clause</b> into your change note. That is your undo.</li><li><b>Note the count</b> the filter returns now.</li><li><b>Clone it</b> as <code>TRAIN_yourinitials_…</code> and make the change on the clone.</li><li><b>Compare the counts.</b> Fewer rows than before? Check each one that went is meant to go.</li><li><b>Then edit the real one</b> (Configuration › Events › Filters, open it, change Filter Clause, Save) and tell the people who use it.</li></ol>
+<p>Most edits are one of three kinds:</p>
+<table><tr><th>Request</th><th>Edit</th></tr><tr><td>“It shows too much”</td><td>Add a condition with <code>AND</code></td></tr><tr><td>“Something is missing”</td><td>Loosen a condition, or add an alternative with <code>OR</code> or <code>IN</code></td></tr><tr><td>“It gives an error”</td><td>Look for a missing quote or bracket</td></tr></table>
+${NOTE('Under the Run button the screen shows how many alarms the filter returned before your edit and how many it returns now.')}`,
+  terms: [['Change note', 'Your record of what a filter said before you edited it, and why you changed it.']],
+  task: { type: 'sql', was: "Severity >= 2 AND Node LIKE 'TST1%'", start: "Severity >= 2 AND Node LIKE 'TST1%'", showQuery: "Severity >= 2 AND Node LIKE 'TST1%'",
+    prompt: 'The shared NGN cabinet filter has two complaints: it still lists alarms people have already acknowledged, and it shows Info-level door alarms. Edit the clause to fix both without losing anything else.', answer: "Severity >= 3 AND Node LIKE 'TST1%' AND Ack = 0",
+    hint: 'Two edits. Raise the severity limit so Info (2) is left out, and add a condition so acknowledged rows are left out.', why: 'Severity >= 3 drops the Info rows and AND Ack = 0 drops the acknowledged ones. Everything else the filter showed is still there.' },
+  more: [{ type: 'sql', start: "Severity >= 4 AND Node LIKE 'RAN1% AND Ack = 0", prompt: 'This saved filter gives an error when it is loaded. Press Run to see the error, then fix the clause.', answer: "Severity >= 4 AND Node LIKE 'RAN1%' AND Ack = 0", hint: 'Count the single quotes. Every text value needs one at each end.', why: 'The closing quote after RAN1% was missing, so the rest of the clause was read as part of the text.' },
+    { type: 'sql', was: "SubMethod = 'SRC_A' AND Severity >= 4", start: "SubMethod = 'SRC_A' AND Severity >= 4", showQuery: "SubMethod = 'SRC_A' AND Severity >= 4", prompt: 'The team behind this filter has taken over source SRC_B as well. Edit it so it covers both sources.', answer: "SubMethod IN ('SRC_A', 'SRC_B') AND Severity >= 4", hint: 'Replace = with IN and a list of both sources.', why: 'IN widens the one condition. Using OR without brackets would have let every SRC_B alarm through, whatever its severity.' }] });
+afterId('events', 'ev12', { id: 'ev13', title: 'Hiding noise from a view',
+  explain: `<p>The gentlest way to deal with alarms nobody wants to see is to leave them out of the view. Nothing is deleted, and anyone who does need them can use a different filter.</p>
+<table><tr><th>To leave out</th><th>Write</th></tr>
+<tr><td>One value</td><td><code>EventType != 'doorOpen'</code></td></tr><tr><td>Several values</td><td><code>SubMethod NOT IN ('SRC_C', 'SRC_D')</code></td></tr>
+<tr><td>A pattern</td><td><code>Summary NOT LIKE '%temperature%'</code></td></tr><tr><td>Low severities</td><td><code>Severity >= 2</code> leaves out Normal (0) and Unknown (1)</td></tr>
+<tr><td>A whole condition</td><td><code>NOT (Node LIKE 'TST1%' AND Severity = 2)</code></td></tr></table>
+<p>Join exclusions with <code>AND</code>: “not this <b>and</b> not that”. Using OR between two exclusions lets nearly everything back in.</p>
+${WARN('Hiding is not fixing. If an alarm is noise for everybody, raise it as a rules change so it is given the right severity or an expiry, and keep the exclusion as a stop-gap.')}`,
+  terms: [['Noise', 'Events that are not faults and hide the ones that are.'], ['NOT IN', 'Leaves out rows whose value is in the list.']],
+  task: { type: 'sql', start: '', prompt: 'This view is cluttered. Show everything except door-open events (EventType doorOpen), Unknown traps and alarms that have already cleared.', answer: "Severity >= 2 AND EventType != 'doorOpen'",
+    hint: 'Unknown is severity 1 and a cleared alarm is severity 0, so one severity test removes both. Then exclude the door EventType.', why: 'Severity >= 2 leaves out Normal and Unknown; EventType != \'doorOpen\' leaves out the door events. Twenty-seven alarms remain.' },
+  more: [{ type: 'sql', prompt: 'Hide everything that comes from sources SRC_C and SRC_D.', answer: "SubMethod NOT IN ('SRC_C', 'SRC_D')", hint: 'NOT IN with a list of the two sources.', why: 'NOT IN is the tidy form of “not this and not that” on one field.' },
+    { type: 'sql', prompt: 'Show major and critical alarms, but leave out anything about temperature.', answer: "Severity >= 4 AND Summary NOT LIKE '%temperature%'", hint: 'NOT LIKE with % on both sides of the word.', why: 'The severity test narrows the list first, so the slow text match has fewer rows to look at.' }] });
+LESSONS.rules.splice(LESSONS.rules.findIndex((L) => L.id === 'ru4'), 0, { id: 'ru8', title: 'Expiry: alarms that remove themselves',
+  explain: `<p>Some events are worth seeing for a while and then are only clutter: a cabinet door opened, an engineer logged in, a one-off warning with no clear message. Instead of deleting them by hand, give them an <b>expiry</b>.</p>
+<p>Every event has an <code>ExpireTime</code> field, in seconds. A mechanization called DeleteExpired runs on a schedule and removes events whose last change was longer ago than their ExpireTime. An event with no ExpireTime never expires.</p>
+<pre>$Event->{'ExpireTime'} = 3600;   # one hour, set in the rule for this event type</pre>
+<p>This is also how cleared alarms leave the list: the pairing mechanization gives a cleared pair a short ExpireTime, and DeleteExpired removes them a few minutes later.</p>
+${WARN('Never put an expiry on a real fault. If it expires while the fault is still there, the alarm disappears and nobody knows. Expiry is for events that have no clear message and no lasting meaning.')}`,
+  terms: [['ExpireTime', 'Seconds after its last change at which an event may be deleted automatically.'], ['DeleteExpired', 'The mechanization that removes events past their ExpireTime.']],
+  task: { type: 'expire', prompt: 'Door-open events never get a clear message, so they pile up for days. Give them an expiry of one hour. Real faults must not expire.', start: { etype: 'all', expire: 0 }, need: { etype: 'doorOpen', expire: 3600 },
+    hint: 'Choose the doorOpen event type, not “every event type”, and one hour.', why: 'With a one-hour expiry on doorOpen only, the two door events last changed 3 hours and 1 day ago are removed, the one from 20 minutes ago stays for now, and the real faults are never touched.' } });
 // --- extra practice: optional follow-up tasks after the main one
 const MORE = {
   ev3: [{ type: 'sql', prompt: 'Show every alarm on node TST1_003.', answer: "Node = 'TST1_003'", hint: 'One condition: Node equals the name, in single quotes.', why: 'Text values go in single quotes; = needs the whole name.' },
@@ -1254,6 +1335,22 @@ const HOWTO = [
   { id: 'cleanup', group: 'Getting around', q: 'How do I remove my practice items?', keys: ['delete', 'remove', 'clean', 'cleanup', 'tidy', 'practice', 'train', 'items', 'old'], where: 'Configuration › Events › Filters and Displays; Management › Saved Objects', risk: 'care', lesson: ['rules', 'ru4'],
     steps: [['List TRAIN_ items', 'Search for TRAIN_yourinitials in Filters and in Displays.'], ['Check the owner', 'Delete only items where you are the User Owner.'], ['Delete filters first', 'Then the displays they used.'], ['Saved Objects', 'In Kibana Management › Saved Objects, export, then delete your TRAIN_ searches.'], ['Close your note', 'Record what you removed.']] },
 ];
+HOWTO.push(
+  { id: 'edit-filter', group: 'Filters', q: 'How do I edit a saved filter?', keys: ['edit', 'change', 'modify', 'update', 'saved', 'existing', 'filter', 'fix', 'amend', 'alter'], where: 'Configuration › Events › Filters', risk: 'ask', lesson: ['events', 'ev12'],
+    steps: [['Open the filter', 'Go to Configuration › Events › Filters and open it.'], ['Copy the old clause', 'Paste the current Filter Clause into your change note. That is your undo.'], ['Note the count', 'Load the filter in Events and note how many alarms it returns.'], ['Try it on a clone', 'Clone it as TRAIN_yourinitials_… and make the edit there first.'], ['Compare the counts', 'Check every row that appeared or disappeared is meant to.'], ['Edit, save, tell people', 'Change the real filter, save, and tell the people who use it.']],
+    note: 'A shared filter changes on everyone’s screen the moment you save. Your own private filters you can edit freely.' },
+  { id: 'hide-noise', group: 'Filters', q: 'How do I hide unwanted alarms from a view?', keys: ['hide', 'exclude', 'unwanted', 'noise', 'noisy', 'ignore', 'except', 'without', 'clutter', 'suppress', 'remove', 'out'], where: 'Filter Clause of the filter', risk: 'safe', lesson: ['events', 'ev13'],
+    steps: [['Find what marks them', 'Look for something the unwanted rows share: an EventType, a source, a word in the Summary.'], ['Exclude one value', "Add AND EventType != 'doorOpen'."], ['Exclude several', "Use NOT IN ('SRC_C', 'SRC_D'), or NOT LIKE for a pattern."], ['Join with AND', 'Join exclusions with AND, never OR.'], ['Check the count', 'Make sure only the rows you meant to lose have gone.']],
+    note: 'Hiding leaves the alarm untouched. If it is noise for everyone, also raise it as a rules change.' },
+  { id: 'delete-alarms', group: 'Event list', q: 'How do I remove alarms that should not be in the list?', keys: ['delete', 'remove', 'cleanup', 'clean', 'clear', 'unwanted', 'leftover', 'stale', 'old', 'test', 'alarms', 'rid', 'purge'], where: 'Events, Delete tool on selected rows', risk: 'ask', lesson: ['events', 'ev14'],
+    steps: [['Is hiding enough?', 'If it only bothers one view, exclude it in the filter instead.'], ['Filter first', "Load a filter that lists only the rows to remove, such as Summary LIKE 'TRAIN_TEST%'."], ['Check the count', 'Confirm the number of rows is what you expect.'], ['Select all shown', 'Select the rows in that filtered list.'], ['Delete', 'Use the Delete tool, if your role has it.'], ['Note it', 'Record what you deleted and why.']],
+    note: 'Deleting removes the live alarm for every user. Never select rows by eye from a busy list.' },
+  { id: 'auto-expire', group: 'Rules and alarms', q: 'How do I make alarms go away by themselves?', keys: ['expire', 'expiry', 'expiretime', 'automatically', 'auto', 'themselves', 'timeout', 'age', 'pile', 'stale', 'old', 'away', 'deleteexpired'], where: 'Configuration › Rules, and Configuration › Events › Mechanizations', risk: 'ask', lesson: ['rules', 'ru8'],
+    steps: [['Pick the event type', 'Choose events with no clear message and no lasting meaning, such as a door opening.'], ['Agree the time', 'Agree with the team how long they are useful: an hour, a day.'], ['Set ExpireTime', 'In the rule for that event type, set ExpireTime in seconds.'], ['Check DeleteExpired', 'Confirm the DeleteExpired mechanization is enabled.'], ['Watch a cycle', 'Check old ones go and new ones still arrive.']],
+    note: 'Never put an expiry on a real fault: it would vanish while the problem is still there.' },
+  { id: 'stop-alarm', group: 'Rules and alarms', q: 'How do I stop an unwanted alarm being created at all?', keys: ['stop', 'discard', 'drop', 'block', 'prevent', 'never', 'source', 'suppress', 'unwanted', 'created', 'disable'], where: 'Configuration › Rules', risk: 'ask', lesson: ['rules', 'ru6'],
+    steps: [['Try the gentler options', 'Lower its severity or give it an expiry first.'], ['Agree it is never needed', 'Confirm with the owning team that nobody needs to see it.'], ['Find the rule', 'Open the rules file for its SubMethod.'], ['Discard that message', 'Add a discard for exactly that message, with a senior admin.'], ['Confirm', 'Check it stops arriving and nothing else did.']],
+    note: 'A discarded message is gone before it reaches the list or the history. This is the strongest option; use it last.' });
 // a flow diagram drawn from any list of steps
 function stepsFig(steps, cap) {
   const n = Math.min(steps.length, 7), h = 46, gap = 12, H = n * (h + gap) + 4;
@@ -1396,7 +1493,7 @@ function cell(row, f) {
 function grid(rows, cols, sort, selId) {
   if (!rows.length) return '<div class="grid"><div class="empty">No alarms match.</div></div>';
   if (sort) rows = rows.slice().sort((a, b) => (a[sort[0]] < b[sort[0]] ? -1 : a[sort[0]] > b[sort[0]] ? 1 : 0) * (sort[1] === 'desc' ? -1 : 1));
-  return `<div class="grid"><table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr>${rows.map((r) => `<tr class="s${r.Severity}${r.Ack ? ' ack' : ''}${selId && r.EventID === selId ? ' sel' : ''}"${r.EventID ? ` data-id="${r.EventID}"` : ''}>${cols.map((c) => `<td>${cell(r, c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
+  return `<div class="grid"><table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr>${rows.map((r) => `<tr class="s${r.Severity}${r.Ack ? ' ack' : ''}${selId && (Array.isArray(selId) ? selId.includes(r.EventID) : r.EventID === selId) ? ' sel' : ''}"${r.EventID ? ` data-id="${r.EventID}"` : ''}>${cols.map((c) => `<td>${cell(r, c)}</td>`).join('')}</tr>`).join('')}</table></div>`;
 }
 const H_COLS = ['@timestamp', 'Node', 'Severity.name', 'Summary', 'SubMethod', 'Ack'];
 function showResult(res, title) {
@@ -1482,16 +1579,17 @@ function taskLang(T) { return ['sql', 'kql', 'es'].includes(T.type) ? T.type : (
 function renderTask() {
   const L = lesson(), T = curTask(), W = SIMW[T.type]; let w = '';
   if (T.type === 'ops') state.ops = { rows: OPS_START(), sel: null };
+  if (T.type === 'cleanup') state.ops = { rows: CLEAN_START(), sel: [], filter: '' };
   if (T.type === 'pickrow') state.sel = null;
   if (W) w = W.html(T);
   else if (T.type === 'mcq') w = `<div class="opts">${T.options.map((o, k) => `<button class="opt" data-k="${k}"><b>${'ABCD'[k]}</b><span>${esc(o)}</span></button>`).join('')}</div>`;
   else if (T.type === 'display') w = `<div class="lang"><span class="lbl">Visible columns</span></div><div class="checks">${FIELDS.map((f) => `<label><input type="checkbox" value="${f}" ${['Node', 'Summary'].includes(f) ? 'checked' : ''}> ${f}</label>`).join('')}</div><div class="lang" style="margin-top:10px"><span class="lbl">Sort by</span><select id="sortF">${FIELDS.map((f) => `<option ${f === 'FirstReported' ? 'selected' : ''}>${f}</option>`).join('')}</select><select id="sortD"><option value="asc">ascending</option><option value="desc">descending</option></select></div>`;
   else if (T.type === 'dedup') w = `<div class="lang"><span class="lbl">EventKey is built from</span></div><div class="checks">${['Node', 'SubNode', 'EventType', 'Time'].map((f) => `<label><input type="checkbox" value="${f}" ${f === 'Node' ? 'checked' : ''}> ${f}</label>`).join('')}</div>`;
   else w = `${T.base ? `<div class="lang"><span class="lbl">Shared filter</span><code>${esc(T.base)}</code></div><div class="lang"><span class="lbl">Restriction Filter for the group (added with AND)</span></div>` : `<div class="lang"><span class="lbl">${LANG_NAME[T.type]}</span></div>`}<textarea id="ed" spellcheck="false" rows="${T.type === 'es' ? 9 : 2}" placeholder="${T.type === 'sql' ? "e.g. Severity >= 4 AND Node LIKE 'RAN1%'" : T.type === 'kql' ? 'e.g. Node : RAN1_* and Severity >= 4' : ''}">${esc(!L.steps && state.answers[ansKey()] !== undefined ? state.answers[ansKey()] : (T.start || ''))}</textarea>`;
-  const runnable = ['sql', 'kql', 'es', 'display', 'dedup', 'rule', 'threshold', 'pair'].includes(T.type);
+  const runnable = ['sql', 'kql', 'es', 'display', 'dedup', 'rule', 'threshold', 'pair', 'expire'].includes(T.type);
   $('task').innerHTML = `<div class="kicker">${L.recap ? `Recap ${state.step + 1} of ${L.steps.length} · from “${esc(T.name)}” · score so far ${state.stepScores.reduce((a, b) => a + (b || 0), 0)}` : L.steps ? `Step ${state.step + 1} of ${L.steps.length} · ${esc(T.name)} · score so far ${state.stepScores.reduce((a, b) => a + (b || 0), 0)}` : state.extra ? `Extra practice ${state.extra} of ${L.more.length}` : L.project ? 'Project' : 'Your task'}</div><div class="prompt">${esc(T.prompt)}</div>${w}
     <div class="actions">${runnable ? '<button class="btn" id="runBtn">▶ Run</button>' : ''}<button class="btn primary" id="checkBtn">Check</button><button class="btn" id="hintBtn">💡 Hint</button><button class="btn" id="showBtn">Show answer</button><button class="btn hidden" id="moreBtn"></button><button class="btn gold hidden" id="goNext">Next lesson ›</button></div><div class="fb" id="fb"></div>
-    <div class="ask-line"><img alt="Ainara" src="${LOGO_SRC}"><span>Stuck? Ask Ainara:</span><em>“give me a hint”</em><em>“${T.type === 'mcq' ? 'is it B?' : ['sql', 'kql', 'es'].includes(T.type) ? 'check my filter' : T.type === 'ops' ? 'acknowledge TST1_001' : 'check my answer'}”</em><em>“show me the answer”</em></div>`;
+    <div class="ask-line"><img alt="Ainara" src="${LOGO_SRC}"><span>Stuck? Ask Ainara:</span><em>“give me a hint”</em><em>“${T.type === 'mcq' ? 'is it B?' : ['sql', 'kql', 'es'].includes(T.type) ? 'check my filter' : T.type === 'ops' ? 'acknowledge TST1_001' : T.type === 'cleanup' ? 'delete the test alarms' : 'check my answer'}”</em><em>“show me the answer”</em></div>`;
   if (T.type === 'mcq') document.querySelectorAll('.opt').forEach((b) => { b.onclick = () => { state.sel = +b.dataset.k; document.querySelectorAll('.opt').forEach((x) => x.classList.toggle('on', x === b)); syncSoon(); }; });
   if (runnable) $('runBtn').onclick = () => runTask();
   $('checkBtn').onclick = () => checkTask(); $('hintBtn').onclick = showHint; $('showBtn').onclick = showAnswer;
@@ -1532,7 +1630,9 @@ function runTask() {
   if (T.type === 'dedup') { const rows = dedup(a); state.lastRun = { ok: true, lang: 'dedup', total: rows.length, rows };
     $('out').innerHTML = `<div class="cap"><b>Incoming messages</b><span>six raw messages from one cabinet</span></div>${`<div class="grid"><table><tr><th>Time</th><th>Node</th><th>SubNode</th><th>EventType</th><th>Summary</th></tr>${DEDUP_MSGS.map((m) => `<tr><td>${m.Time}</td><td>${m.Node}</td><td>${m.SubNode}</td><td>${m.EventType}</td><td>${esc(m.Summary)}</td></tr>`).join('')}</table></div>`}
       <div class="cap" style="margin-top:12px"><b>Resulting event list: ${rows.length} row${rows.length === 1 ? '' : 's'}</b></div>${grid(rows, ['EventKey', 'Node', 'SubNode', 'Summary', 'Count'])}`; return state.lastRun; }
-  showResult(runQuery(T.type, fullQuery(T, a)), 'Result'); syncSoon(300); return state.lastRun;
+  showResult(runQuery(T.type, fullQuery(T, a)), 'Result');
+  if (T.was && state.lastRun) { const before = runQuery('sql', T.was).total, r = state.lastRun; $('out').insertAdjacentHTML('afterbegin', `<div class="fb show info" style="margin:0 0 10px">Before your edit this filter returned <b>${before}</b> alarms. Now it ${r.ok ? `returns <b>${r.total}</b>${r.total < before ? ` (${before - r.total} fewer)` : r.total > before ? ` (${r.total - before} more)` : ' (no change)'}` : 'gives an <b>error</b>'}.</div>`); }
+  syncSoon(300); return state.lastRun;
 }
 function feedback(kind, html) { const f = $('fb'); f.className = `fb show ${kind}`; f.innerHTML = html; }
 function checkTask() {
@@ -1726,6 +1826,45 @@ const SIMW = {
 };
 function bindRows(cb) { document.querySelectorAll('#out .grid tr[data-id]').forEach((tr) => { tr.classList.add('pick'); tr.onclick = () => cb(+tr.dataset.id); }); }
 
+// ---------- cleanup (filter first, then delete) and expiry widgets ----------
+SIMW.cleanup = {
+  html: () => `<div class="tools"><input id="cFilter" placeholder="Filter the list first, e.g. Summary LIKE 'TRAIN_TEST%'" spellcheck="false"><button class="btn small" data-op="apply">Apply filter</button></div>
+    <div class="tools" style="margin-top:7px"><button class="btn small" data-op="all">Select all shown</button><button class="btn small" data-op="del">🗑 Delete selected</button><button class="btn small" data-op="undo">Undo everything</button><span class="lbl" id="opsSel"></span></div>`,
+  get: () => state.ops.rows,
+  shown: () => { try { return state.ops.rows.filter(sqlFilter(state.ops.filter)); } catch (e) { state.ops.err = e.message; return state.ops.rows; } },
+  set: (T, v) => { if (v.undo) { state.ops = { rows: CLEAN_START(), sel: [], filter: '' }; if ($('cFilter')) $('cFilter').value = ''; return; }
+    const ids = v.test ? state.ops.rows.filter((r) => r.Summary.startsWith('TRAIN_TEST')).map((r) => r.EventID) : (v.ids || []);
+    if (v.test) { state.ops.filter = "Summary LIKE 'TRAIN_TEST%'"; if ($('cFilter')) $('cFilter').value = state.ops.filter; }
+    state.ops.rows = state.ops.rows.filter((r) => !ids.includes(r.EventID)); state.ops.sel = []; },
+  out: () => { state.ops.err = null; const shown = SIMW.cleanup.shown();
+    return `${state.ops.err ? `<div class="err" style="margin-bottom:8px">${esc(state.ops.err)}</div>` : ''}<div class="cap"><b>${shown.length} alarm${shown.length === 1 ? '' : 's'} shown</b><span>of ${state.ops.rows.length} in the live list${state.ops.filter ? ` · filter: ${esc(state.ops.filter)}` : ' · no filter'}</span></div>${grid(shown, ['Severity', 'Node', 'SubNode', 'Summary', 'Count', 'SubMethod'], null, state.ops.sel)}`; },
+  bind: (T) => {
+    $('opsSel').textContent = `${state.ops.sel.length} selected`;
+    bindRows((id) => { state.ops.sel = state.ops.sel.includes(id) ? state.ops.sel.filter((x) => x !== id) : state.ops.sel.concat(id); runTask(); });
+    const apply = () => { state.ops.filter = $('cFilter').value.trim(); state.ops.sel = []; runTask(); syncSoon(); };
+    $('cFilter').onkeydown = (e) => { if (e.key === 'Enter') apply(); };
+    document.querySelectorAll('#task .tools button').forEach((b) => { b.onclick = () => { const op = b.dataset.op;
+      if (op === 'apply') return apply();
+      if (op === 'all') state.ops.sel = SIMW.cleanup.shown().map((r) => r.EventID);
+      else if (op === 'undo') SIMW.cleanup.set(T, { undo: true });
+      else if (op === 'del') { if (!state.ops.sel.length) { toast('Select the rows to delete first.'); return; } SIMW.cleanup.set(T, { ids: state.ops.sel.slice() }); }
+      runTask(); syncSoon(); }; });
+  },
+  text: (T, a) => { if (!Array.isArray(a)) return "filter the list with Summary LIKE 'TRAIN_TEST%', select all shown, delete"; const start = CLEAN_START(), gone = start.filter((r) => !a.some((x) => x.EventID === r.EventID)); return gone.length ? `deleted ${gone.length}: ${gone.map((r) => `${r.Node} ${r.SubNode} (${r.Summary.startsWith('TRAIN_TEST') ? 'test' : 'REAL alarm'})`).join(', ')}` : `nothing deleted yet${state.ops.filter ? `; list filtered with ${state.ops.filter}` : ''}`; },
+  speech: (T, said) => { const low = said.toLowerCase(); if (/\bundo|restore|put (them|it) back\b/.test(low)) return { undo: true }; if (/test/.test(low) && /delete|remove|clean|clear|get rid/.test(low)) return { test: true }; const r = /delete|remove/.test(low) ? saidRow(low, state.ops.rows) : null; return r ? { ids: [r.EventID] } : null; },
+};
+SIMW.expire = {
+  html: (T) => `<div class="rulebox"><div><span class="lbl">In the rule for</span><select id="xType"><option value="all" ${T.start.etype === 'all' ? 'selected' : ''}>every event type</option>${['doorOpen', 'cellDown', 'battLow', 'unknown'].map((t) => `<option ${t === T.start.etype ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <span class="lbl">set ExpireTime to</span><select id="xTime">${[[0, 'none (never expires)'], [300, '300 (5 minutes)'], [3600, '3600 (1 hour)'], [86400, '86400 (1 day)']].map(([v, l]) => `<option value="${v}" ${v === T.start.expire ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>`,
+  get: () => ({ etype: $('xType').value, expire: +$('xTime').value }), set: (T, v) => { $('xType').value = v.etype; $('xTime').value = v.expire; },
+  out: (T, a, rows) => `<div class="cap"><b>After DeleteExpired runs: ${rows.filter((r) => !r.gone).length} of ${rows.length} events kept</b><span>${rows.filter((r) => r.gone).length} deleted</span></div><div class="grid"><table><tr>${['Severity', 'Node', 'SubNode', 'EventType', 'Summary', 'Last changed', 'State'].map((c) => `<th>${c}</th>`).join('')}</tr>${rows.map((r) => `<tr class="s${r.Severity}${r.gone ? ' gone' : ''}">${['Severity', 'Node', 'SubNode', 'EventType', 'Summary', 'Last changed', 'State'].map((c) => `<td>${cell(r, c)}</td>`).join('')}</tr>`).join('')}</table></div>`,
+  text: (T, a) => `ExpireTime ${a.expire || 'none'}${a.expire ? ' seconds' : ''} on ${a.etype === 'all' ? 'every event type' : a.etype}`,
+  speech: (T, said, cur) => { const low = said.toLowerCase(), v = { ...cur }; let hit = false;
+    const ty = ['doorOpen', 'cellDown', 'battLow', 'unknown'].find((x) => low.replace(/[^a-z]/g, '').includes(x.toLowerCase())) || (/\bdoor/.test(low) ? 'doorOpen' : null); if (ty) { v.etype = ty; hit = true; } else if (/\b(every|all|everything)\b/.test(low)) { v.etype = 'all'; hit = true; }
+    const tm = /\b(5|five) min/.test(low) ? 300 : /\b(an|one|1) hour|3600\b/.test(low) ? 3600 : /\b(a|one|1) day|86400|24 hours\b/.test(low) ? 86400 : /\bnever|none|no expiry\b/.test(low) ? 0 : null; if (tm !== null) { v.expire = tm; hit = true; }
+    return hit ? v : null; },
+};
+
 // ---------- extra practice and the quick recap ----------
 function startExtra() { const L = lesson(); if (!L || !L.more || state.extra >= L.more.length) return; state.extra++; resetTry(); renderTask(); $('right').scrollTop = 0; syncSoon(300); }
 function recapPool() { const out = []; COURSE_ORDER.filter((c) => c !== 'final').forEach((c) => lessonsOf(c).forEach((L) => { if (state.done[L.id]) [L.task, ...(L.more || [])].forEach((T) => out.push({ ...T, say: null, name: L.title })); })); return out; }
@@ -1918,7 +2057,8 @@ function handleRequest(r) {
     else if (T.type === 'dedup') document.querySelectorAll('#task .checks input').forEach((x) => { x.checked = v.includes(x.value); });
     else { $('ed').value = v; state.answers[ansKey()] = v; }
     state.fromVoice = true;
-    try { if ((r.action === 'run' && T.type !== 'mcq') || T.type === 'ops') { runTask(); if (T.type === 'ops' && simMark(T, getAnswer()).correct) checkTask(); } else checkTask(); } finally { state.fromVoice = false; }
+    const stepwise = T.type === 'ops' || T.type === 'cleanup';
+    try { if ((r.action === 'run' && T.type !== 'mcq') || stepwise) { runTask(); if (stepwise && (simMark(T, getAnswer()).correct || T.type === 'cleanup')) checkTask(); } else checkTask(); } finally { state.fromVoice = false; }
   }
 }
 let waiting = false;

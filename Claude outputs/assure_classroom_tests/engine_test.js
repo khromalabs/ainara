@@ -4,15 +4,16 @@ const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</scri
 // whole script must at least parse
 new Function(script);
 const eng = script.slice(script.indexOf('//<<ENGINE'), script.indexOf('//ENGINE>>'));
-const api = new Function(eng + '; return { EVENTS, HISTORY, LESSONS, COURSE_ORDER, COURSE_META, runQuery, compare, dedup, simMark, simRun, fullQuery, OPS_START, FIGS, HOWTO, howFind, stepsFig, searchAll };')();
+const api = new Function(eng + '; return { EVENTS, HISTORY, LESSONS, COURSE_ORDER, COURSE_META, runQuery, compare, dedup, simMark, simRun, fullQuery, OPS_START, FIGS, HOWTO, howFind, stepsFig, searchAll, CLEAN_START };')();
 let bad = 0; const idx = {};
 for (const c of api.COURSE_ORDER) {
   idx[c] = api.LESSONS[c].map((L) => ({ id: L.id, title: (L.project && !/^project/i.test(L.title) ? 'Project: ' : '') + L.title, project: !!L.project }));
   for (const L of api.LESSONS[c]) for (const T of (L.steps || [L.task, ...(L.more || [])])) {
-    if (['rule', 'threshold', 'pair', 'pickrow', 'ops'].includes(T.type)) {
+    if (['rule', 'threshold', 'pair', 'pickrow', 'ops', 'cleanup', 'expire'].includes(T.type)) {
       let model, start;
       if (T.type === 'pickrow') { model = api.EVENTS.find((e) => e.Node === T.need.node && e.SubNode === T.need.sub).EventID; start = api.EVENTS[0].EventID; }
       else if (T.type === 'ops') { start = api.OPS_START(); model = api.OPS_START(); const r = model.find((e) => e.Node === T.need.node && e.SubNode === T.need.sub); r.Ack = 1; r.OwnerName = 'you'; r.Journal = 'x'; }
+      else if (T.type === 'cleanup') { start = api.CLEAN_START(); model = api.CLEAN_START().filter((r) => !r.Summary.startsWith('TRAIN_TEST')); if (api.simMark(T, api.CLEAN_START().slice(1)).msg.indexOf('real alarm') < 0) { bad++; console.log('BAD cleanup: deleting a real alarm not caught'); } }
       else { model = T.need; start = T.start; }
       const m = api.simMark(T, model), s0 = api.simMark(T, start);
       const flag = m.correct && !s0.correct && s0.msg ? 'ok' : 'BAD'; if (flag === 'BAD') bad++;
@@ -45,7 +46,7 @@ cases.forEach(([l, q]) => console.log(l.padEnd(3), JSON.stringify(q).slice(0, 80
 console.log('dedup', [['Node'], ['Node', 'SubNode', 'EventType'], ['Node', 'SubNode', 'EventType', 'Time'], []].map((p) => api.dedup(p).length).join(','));
 if (process.argv[3]) fs.writeFileSync(process.argv[3], JSON.stringify(idx, null, 1));
 for (const h of api.HOWTO) { const L = (api.LESSONS[h.lesson[0]] || []).find((x) => x.id === h.lesson[1]); if (!L || (h.fig && !api.FIGS[h.fig]) || !['safe', 'care', 'ask'].includes(h.risk) || h.steps.length < 3 || !api.stepsFig(h.steps).includes('<svg')) { bad++; console.log('BAD howto', h.id); } }
-const asks = [['how do I create a filter', 'create-filter'], ['how can I set up a new alarm', 'new-alarm'], ['why did my alarm disappear', 'alarm-disappeared'], ['how do I change the severity of an alarm', 'change-severity'], ['the list is flooding with duplicate rows', 'too-many-rows'], ['how do I make a cpu threshold alarm', 'threshold'], ['how do i share my filter with the ran team', 'share-filter'], ['which nodes had the most alarms last week', 'count-alarms'], ['an alarm will not clear', 'wont-clear'], ['how do I add a column to the display', 'create-display'], ['how do I bake a cake', null], ['what is the weather', null]];
+const asks = [['how do I edit a saved filter', 'edit-filter'], ['how do I remove unwanted alarms from the list', 'delete-alarms'], ['how can I hide noisy alarms from my view', 'hide-noise'], ['how do I make old alarms expire automatically', 'auto-expire'], ['how do I clean up leftover test alarms', 'delete-alarms'], ['how do I create a filter', 'create-filter'], ['how can I set up a new alarm', 'new-alarm'], ['why did my alarm disappear', 'alarm-disappeared'], ['how do I change the severity of an alarm', 'change-severity'], ['the list is flooding with duplicate rows', 'too-many-rows'], ['how do I make a cpu threshold alarm', 'threshold'], ['how do i share my filter with the ran team', 'share-filter'], ['which nodes had the most alarms last week', 'count-alarms'], ['an alarm will not clear', 'wont-clear'], ['how do I add a column to the display', 'create-display'], ['how do I bake a cake', null], ['what is the weather', null]];
 asks.forEach(([q, want]) => { const got = api.howFind(q); if ((got ? got.id : null) !== want) { bad++; console.log('BAD howFind', JSON.stringify(q), '->', got && got.id, 'wanted', want); } });
 [['EventKey', 'terms', 'EventKey'], ['threshold', 'lessons', 'Thresholds: an alarm from a measurement'], ['restriction filter', 'lessons', 'Filter groups and restriction filters'], ['share a filter', 'how', 'How do I share a filter with a team?'], ['kql', 'lessons', 'KQL: field : value']].forEach(([q, kind, want]) => { const r = api.searchAll(q), first = r[kind][0], got = first && (first.term || first.title || first.q); if (got !== want) { bad++; console.log('BAD search', q, kind, '->', got); } });
 if (api.searchAll('zzzz').how.length + api.searchAll('zzzz').lessons.length + api.searchAll('').terms.length) { bad++; console.log('BAD search: junk matched'); }
