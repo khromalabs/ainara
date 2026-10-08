@@ -1,51 +1,46 @@
 #!/usr/bin/env bash
-# =============================================================================
-# nexus_state_check.sh — single source of truth for Nexus-task state (Stage 3)
+# Ainara AI Companion Framework Project
+# Copyright (C) 2025 Rubén Gómez - khromalabs.org
 #
-# Consolidates every harness/verification used during the submodule + build
-# session. Read-only against both repos; edits only a TEMP config copy.
-# Pins ./venv/bin/python (gotcha §4-11: bare python fakes import failures).
-# Side effects by design (§4-12): check A instantiates the 8 ataria skills
-# (keyring reads, API-key loads, cache sweeps). No writes to either repo.
+# This file is dual-licensed under:
+# 1. GNU Lesser General Public License v3.0 (LGPL-3.0)
+#    (See the included LICENSE_LGPL3.txt file or look into
+#    <https://www.gnu.org/licenses/lgpl-3.0.html> for details)
+# 2. Commercial license
+#    (Contact: rgomez@khromalabs.org for licensing options)
 #
-# Usage: ./scripts/nexus_state_check.sh   (from anywhere)
-# Update EXPECT_*/ATARIA_DEV below when the ledger advances.
-# =============================================================================
-set -u
-export PYTHONDONTWRITEBYTECODE=1
+# You may use, distribute and modify this code under the terms of either license.
+# This notice must be preserved in all copies or substantial portions of the code.
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# Framework-level Nexus state check (app-agnostic).
+#
+# Verifies the FRAMEWORK side of the Nexus contract: dev_apps resolution,
+# payload resolution, discovery plumbing, pybridge route contract, and
+# generic per-app manifest sanity for every app declared in
+# nexus.dev_apps (ainara.yaml). Nothing here may reference a specific
+# Nexus application — each app repo owns its own state check (e.g.
+# <app-repo>/scripts/state_check.sh) for skill baselines, dist artifacts
+# and app-specific anchors.
+
+set -u
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
-PY="$REPO/venv/bin/python"
-[ -x "$PY" ] || { echo "FATAL: venv python not found at $PY"; exit 2; }
+
+PY=""
+for c in "$REPO/venv/bin/python" "$REPO/.venv/bin/python"; do
+  [ -x "$c" ] && PY="$c" && break
+done
+[ -n "$PY" ] || { echo "FATAL: venv python not found"; exit 2; }
 
 EXPECT_AINARA_BRANCH=dev012
 EXPECT_AINARA_HEAD=0ef54636
-EXPECT_ATARIA_HEAD=ca84c74
-EXPECT_GITLINK=5b13d5c7
-# Single-copy layout: the dev checkout was deleted; the submodule mount is
-# now BOTH the pinned reference and the dev_apps target (probed 8/8, first-wins).
-ATARIA_DEV="$REPO/ainara/nexus/khromalabs/ataria"   # = submodule mount = nexus.dev_apps value
-
-BASELINE_IDS=(
-  khromalabs_ataria_charts_candles
-  khromalabs_ataria_crypto_analysis
-  khromalabs_ataria_crypto_screener
-  khromalabs_ataria_crypto_solanasecurity
-  khromalabs_ataria_crypto_tradingaccount
-  khromalabs_ataria_crypto_tradingorders
-  khromalabs_ataria_crypto_tradingworkbook
-  khromalabs_ataria_dashboards_controlpanel
-)
-BASELINE_CSV="$(printf '%s,' "${BASELINE_IDS[@]}")"; BASELINE_CSV="${BASELINE_CSV%,}"
 
 PASS=0; FAIL=0; WARN=0
 ok()   { PASS=$((PASS+1)); echo "PASS  $*"; }
 bad()  { FAIL=$((FAIL+1)); echo "FAIL  $*"; }
 warn() { WARN=$((WARN+1)); echo "WARN  $*"; }
 
-echo "=== S1: repos & submodule ==================================="
-[ -f .gitmodules ] && ok ".gitmodules present" || bad ".gitmodules missing"
+echo "=== S1: framework repo ======================================"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"; HEAD="$(git rev-parse --short HEAD)"
 [ "$BRANCH" = "$EXPECT_AINARA_BRANCH" ] && ok "ainara branch $BRANCH" \
   || bad "ainara branch '$BRANCH' (expected $EXPECT_AINARA_BRANCH)"
@@ -55,42 +50,11 @@ else
   bad "ainara HEAD $HEAD does NOT contain anchor $EXPECT_AINARA_HEAD (rebase/reset?)"
 fi
 
-if [ -e "$ATARIA_DEV/.git" ]; then   # gitfile, not dir (absorbed gitdir)
-  AH="$(git -C "$ATARIA_DEV" rev-parse HEAD)"
-  if git -C "$ATARIA_DEV" merge-base --is-ancestor "$EXPECT_ATARIA_HEAD" "$AH" 2>/dev/null; then
-    ok "ataria HEAD ${AH:0:8} contains ledger anchor $EXPECT_ATARIA_HEAD"
-  else
-    bad "ataria HEAD ${AH:0:8} does NOT contain anchor $EXPECT_ATARIA_HEAD"
-  fi
-  AS="$(git -C "$ATARIA_DEV" status --short)"
-  [ -z "$AS" ] && ok "ataria working tree clean" || warn "ataria dirty: $AS"
-else
-  warn "ataria dev checkout not at $ATARIA_DEV (update ATARIA_DEV)"
-fi
+echo "=== S2: interpreter & tools ================================="
+echo "      venv: $("$PY" --version 2>&1)"
+"$PY" -c "import aiohttp" 2>/dev/null && ok "bundle deps importable (aiohttp)" \
+  || bad "aiohttp missing in venv — discovery probes will fail"
 
-SUB="$(git submodule status ainara/nexus/khromalabs/ataria 2>/dev/null || true)"
-case "$SUB" in
-  " $EXPECT_GITLINK"*) ok "submodule in-sync @ $(echo "$SUB" | cut -c2-9)" ;;
-  "+"*) warn "submodule HEAD differs from pin: $SUB (git add the gitlink)" ;;
-  "-"*) bad "submodule not initialized (git submodule update --init)" ;;
-  *)    bad "submodule status unexpected: '$SUB'" ;;
-esac
-GL="$(git ls-files -s ainara/nexus/khromalabs/ataria | awk '{print $2}')"
-case "$GL" in
-  "$EXPECT_GITLINK"*) ok "gitlink pinned ${GL:0:8}" ;;
-  "")                 bad "gitlink missing from index (path not tracked?)" ;;
-  *)                  bad "gitlink ${GL:0:8} (expected prefix $EXPECT_GITLINK)" ;;
-esac
-{ [ -f ainara/nexus/khromalabs/ataria/.git ] && \
-  [ -d .git/modules/ainara/nexus/khromalabs/ataria ]; } \
-  && ok "gitdir absorbed" || warn "gitdir not absorbed (git submodule absorbgitdirs)"
-git check-ignore -q --no-index ainara/nexus/khromalabs/ataria \
-  && ok "gitignore rule active (--no-index probe)" \
-  || bad ".gitignore ainara/nexus/* rule missing (gotcha §4-4/13)"
-
-# Pybridge route contract: the six /nexus endpoints (Stage B/C) must stay
-# registered — a bulk deletion regression once orphaned them (gotcha: a
-# route is not an import-time artifact; only source-level checks catch it)
 NEXUS_ROUTES=$(grep -c '@app.route("/nexus' ainara/framework/pybridge.py || true)
 if [ "$NEXUS_ROUTES" -ge 6 ]; then
   ok "pybridge /nexus route contract ($NEXUS_ROUTES routes)"
@@ -98,17 +62,73 @@ else
   bad "pybridge /nexus routes missing (found $NEXUS_ROUTES, need >=6)"
 fi
 
-echo "=== S2: interpreter & tools ================================="
-echo "      venv: $("$PY" --version 2>&1)"
-"$PY" -c "import aiohttp" 2>/dev/null && ok "bundle deps importable (aiohttp)" \
-  || bad "aiohttp missing in venv — discovery A will fail"
+echo "=== S3: dev_apps config & roots ============================="
+# Enumerate dev apps purely from config — the framework never names apps.
+DEV_ROOTS="$("$PY" - <<'PYEOF'
+from ainara.framework.config import config
+roots = config.get_nexus_base_paths()
+for r in roots:
+    print(r)
+PYEOF
+)"
+DEV_COUNT="$("$PY" - <<'PYEOF'
+from ainara.framework.config import config
+da = config._get_unscoped("nexus.dev_apps", {}) or {}
+print(len(da))
+PYEOF
+)"
+if [ "$DEV_COUNT" -ge 1 ] 2>/dev/null; then
+  ok "nexus.dev_apps declares $DEV_COUNT dev app(s)"
+else
+  warn "nexus.dev_apps empty — no dev apps configured (installed apps only)"
+fi
 
-echo "=== S3: discovery A/B (A: keyring/API-key side effects) ====="
+echo "=== S4: payload resolution (per dev app, identity-agnostic) ="
+while IFS= read -r ROOT; do
+  [ -z "$ROOT" ] && continue
+  MANIFEST="$ROOT/payload/nexus.json"
+  if [ ! -f "$MANIFEST" ]; then
+    # Installed-app layout (nexus.json at top) or primary root: skip the
+    # dev-repo probes; resolution itself is covered by the S5 probe.
+    continue
+  fi
+  APP_OUT="$("$PY" - "$MANIFEST" <<'PYEOF'
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+m = d.get("manifest") or d
+name = f"{m.get('provider','?')}/{m.get('name','?')}"
+ver = str(m.get("version", ""))
+cid = (m.get("creatorId") or "").strip()
+print("IDENT:" + name)
+print("VER_OK:" + str(bool(re.match(r"^\d+\.\d+\.\d+$", ver))))
+print("CID_OK:" + str(bool(cid) and cid != "YOUR_SOLANA_PUBLIC_KEY_HERE"))
+PYEOF
+)"
+  IDENT="$(sed -n 's/^IDENT://p' <<<"$APP_OUT")"
+  VER_OK="$(sed -n 's/^VER_OK://p' <<<"$APP_OUT")"
+  CID_OK="$(sed -n 's/^CID_OK://p' <<<"$APP_OUT")"
+  [ "$VER_OK" = "True" ] && ok "$IDENT manifest version is semver" \
+    || bad "$IDENT manifest version not X.Y.Z"
+  [ "$CID_OK" = "True" ] && ok "$IDENT creatorId set" \
+    || warn "$IDENT creatorId placeholder — pack lint will hard-fail"
+done <<<"$DEV_ROOTS"
+
+echo "=== S5: discovery & payload resolution probe ================"
 REAL_CFG="$("$PY" -c "from ainara.framework.config import config; print(config.get_default_config_paths()[0])")"
 TMP_CFG="$(mktemp /tmp/nexus_check_cfg_XXXX)"
 TMP_ERR="$(mktemp /tmp/nexus_check_err_XXXX)"
 cp "$REAL_CFG" "$TMP_CFG"
-printf '\nnexus:\n  dev_apps:\n    ataria: %s\n' "$ATARIA_DEV" >> "$TMP_CFG"
+# A: minimal config carrying exactly the same dev_apps as the real one —
+# proves the dev_apps plumbing independent of any other config state.
+"$PY" - "$TMP_CFG" <<'PYEOF'
+import sys
+from ainara.framework.config import config
+da = config._get_unscoped("nexus.dev_apps", {}) or {}
+with open(sys.argv[1], "a") as f:
+    f.write("\nnexus:\n  dev_apps:\n")
+    for k, v in da.items():
+        f.write(f"    {k}: {v}\n")
+PYEOF
 trap 'rm -f "$TMP_CFG" "$TMP_ERR"' EXIT
 
 discover_ids () {
@@ -120,22 +140,24 @@ print("IDS:" + ",".join(sorted(p.discover())))
 PYEOF
 }
 IDS_A="$(discover_ids "$TMP_CFG" 2>"$TMP_ERR")"
-if [ "${IDS_A#IDS:}" = "$BASELINE_CSV" ]; then
-  ok "A (dev_apps set): 8/8 exact baseline"
+B_IDS="$(discover_ids "$REAL_CFG" 2>"$TMP_ERR")"   # two-step: nested ${()#} is illegal bash
+IDS_A="${IDS_A#IDS:}"; B_IDS="${B_IDS#IDS:}"
+if [ -n "$IDS_A" ] && [ "$IDS_A" = "$B_IDS" ]; then
+  N=$(awk -F, '{print NF}' <<<"$IDS_A")
+  ok "discovery: minimal dev_apps config == real config ($N skill ids)"
+elif [ -z "$IDS_A" ] && [ -z "$B_IDS" ]; then
+  warn "discovery: no skills found (no dev apps or no gated skills installed)"
 else
-  bad "A mismatch — got '${IDS_A#IDS:}' — stderr tail:"
+  bad "discovery mismatch — minimal:'$IDS_A' real:'$B_IDS' — stderr tail:"
   tail -n 6 "$TMP_ERR" | sed 's/^/        /'
 fi
-B_IDS="$(discover_ids "$REAL_CFG" 2>"$TMP_ERR")"   # two-step: nested ${()#} is illegal bash
-B_IDS="${B_IDS#IDS:}"
-[ -z "$B_IDS" ] && ok "B (real config): 0 skills — footgun state as documented" \
-  || warn "B returned '$B_IDS' (real config has dev_apps/other roots now)"
 
-echo "=== S4: framework payload resolution ========================"
-# Root-driven probe of the Stage 3a contract: the resolver must yield the
-# payload, never the repo root. (Replaces the retired _obfuscate probe —
-# resolution is a framework feature; obfuscation now lives in pack.py.)
-PROBE_OUT="$(PROBE_ROOT="$ATARIA_DEV" "$PY" - 2>"$TMP_ERR" <<'PYEOF'
+# Payload-resolution probe for each dev root (framework contract: the
+# resolver must yield the payload, never the repo root).
+PAY_FAIL=0
+while IFS= read -r ROOT; do
+  [ -z "$ROOT" ] || [ ! -f "$ROOT/payload/nexus.json" ] && continue
+  PROBE_OUT="$(PROBE_ROOT="$ROOT" "$PY" - 2>"$TMP_ERR" <<'PYEOF'
 import os, sys, traceback
 try:
     from ainara.framework.nexus_apps import resolve_app_payload
@@ -145,55 +167,20 @@ except BaseException:
     sys.exit(3)
 payload = str(app[2]) if app else ""
 print(payload or "NONE")
-arts = ["nexus.json", "providers_registry.json", "skills_metadata.json", "site"]
-print("MISS:" + ",".join(
-    n for n in arts if not payload or not os.path.exists(os.path.join(payload, n))))
 PYEOF
 )"
-RA_RES="$(sed -n 1p <<<"$PROBE_OUT")"
-MA="$(sed -n 's/^MISS://p' <<<"$PROBE_OUT")"
-case "$RA_RES" in
-  ""|NONE)
-    bad "resolve: probe failed or returned NONE — payload not resolved; stderr tail:"
-    tail -n 8 "$TMP_ERR" | sed 's/^/        /' ;;
-  *)
-    if [ -d "$RA_RES/charts" ] && [ -d "$RA_RES/plans" ] && [ -f "$RA_RES/nexus.json" ]; then
-      ok "resolve(dev_apps root) = payload, never repo root"
-    else
-      bad "resolve: '$RA_RES' fails payload markers (charts+plans+nexus.json present)"
-    fi
-    if [ -z "$MA" ]; then
-      ok "dev payload artifacts complete"
-    else
-      warn "dev payload missing artifacts: $MA (regen before pack)"
-    fi ;;
-esac
-
-echo "=== S5: bundle dist artifact (informational) ================"
-ZIP="$(ls "$ATARIA_DEV"/dist/ataria-*.zip 2>/dev/null | head -1)"
-if [ -n "$ZIP" ] && [ -f "$ZIP.minisig" ] && [ -f "$ZIP.sha256" ]; then
-  ok "dist artifact present: $(basename "$ZIP") (+ sig + sha256)"
-  warn "artifact predates the pack obfuscation stage — verify before shipping"
-elif [ -n "$ZIP" ]; then
-  warn "dist artifact present but signature files missing: $(basename "$ZIP")"
-else
-  warn "no dist artifact (run the pack pipeline to produce one)"
-fi
-
-echo "=== S6: Stage 3 pack prerequisites =========================="
-CID="$("$PY" - "$ATARIA_DEV/payload/nexus.json" <<'PYEOF' 2>/dev/null
-import json, sys
-d = json.load(open(sys.argv[1]))          # tolerate manifest nested or flat
-print((d.get("manifest") or d).get("creatorId", ""))
-PYEOF
-)"
-[ -n "$CID" ] && [ "$CID" != "YOUR_SOLANA_PUBLIC_KEY_HERE" ] \
-  && ok "creatorId set" || warn "creatorId placeholder — pack lint will hard-fail (§6)"
-PLANS="$(ls "$ATARIA_DEV"/payload/plans/*.yaml 2>/dev/null | wc -l)"
-[ "$PLANS" = "2" ] && ok "payload/plans/*.yaml = 2 (store/ at repo root, excluded structurally)" \
-  || warn "payload/plans top-level count = $PLANS (expected 2)"
+  RA_RES="$(sed -n 1p <<<"$PROBE_OUT")"
+  if [ -n "$RA_RES" ] && [ "$RA_RES" != "NONE" ] && [ -f "$RA_RES/nexus.json" ]; then
+    ok "resolve($ROOT) = payload, never repo root"
+  else
+    PAY_FAIL=1
+    bad "resolve('$ROOT') failed — payload not resolved; stderr tail:"
+    tail -n 8 "$TMP_ERR" | sed 's/^/        /'
+  fi
+done <<<"$DEV_ROOTS"
+[ "$PAY_FAIL" = "0" ] && [ -n "$(head -1 <<<"$DEV_ROOTS")" ] && ok "payload resolution green for all dev apps"
 
 echo
 echo "RESULT: $PASS pass / $FAIL fail / $WARN warn"
-if [ "$FAIL" = "0" ]; then echo "STATE: GREEN — resume at note_stage3.md §8"
+if [ "$FAIL" = "0" ]; then echo "STATE: GREEN"
 else echo "STATE: RED — fix FAILs before resuming"; fi

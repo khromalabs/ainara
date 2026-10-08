@@ -18,7 +18,7 @@
 
 """Nexus app remote install — name-addressed bundles (protocol v0).
 
-The user types ``ataria`` (defaults to TLD ``.nexus``) or any host; the
+The user types ``myapp`` (defaults to TLD ``.nexus``) or any host; the
 bundle description lives at ``https://<host>/.well-known/nexus-app.json``
 and is SELF-SIGNED by the vendor's Solana identity key (``creatorId``,
 same canonical-JSON + ed25519 scheme as bundle manifests).
@@ -78,8 +78,8 @@ class InstallerError(Exception):
 
 
 def current_platform_tag() -> str:
-    """Same convention as ataria pack.py: linux-x86_64 / darwin-arm64 /
-    win-x86_64 / ..."""
+    """Same convention as every app repo's pack.py: linux-x86_64 /
+    darwin-arm64 / win-x86_64 / ..."""
     os_name = {"linux": "linux", "darwin": "darwin", "win32": "win"}.get(
         sys.platform, sys.platform
     )
@@ -91,7 +91,7 @@ def current_platform_tag() -> str:
 
 
 def normalize_source(source: str) -> str:
-    """'ataria' -> 'ataria.nexus'; dotted input used as-is; an optional
+    """'myapp' -> 'myapp.nexus'; dotted input used as-is; an optional
     ``:port`` suffix is preserved (dev/test). Rejects URLs/schemes — the
     UI passes a bare host (it may parse URLs itself)."""
     s = (source or "").strip().lower().rstrip(".")

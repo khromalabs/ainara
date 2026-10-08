@@ -55,8 +55,8 @@ def make_bundle(kp, version, payload_extra=None):
     """Build an artifact zip (bundle root at top) with a signed manifest."""
     manifest = {
         "schemaVersion": "1.0",
-        "name": "ataria",
-        "provider": "khromalabs",
+        "name": "sampleapp",
+        "provider": "acme",
         "version": version,
         "creatorId": str(kp.pubkey()),
         "protection": {"mode": "nft-license", "collection": "COLLMINT1111"},
@@ -76,8 +76,8 @@ def make_bundle(kp, version, payload_extra=None):
 def make_doc(kp, version, zip_bytes, sha=None, extra=None):
     doc = {
         "protocol": 1,
-        "vendor": "khromalabs",
-        "app": "ataria",
+        "vendor": "acme",
+        "app": "sampleapp",
         "latest": version,
         "description": "test bundle",
         "creatorId": str(kp.pubkey()),
@@ -85,7 +85,7 @@ def make_doc(kp, version, zip_bytes, sha=None, extra=None):
         "artifacts": [
             {
                 "platform": current_platform_tag(),
-                "url": f"http://127.0.0.1:{PORT}/ataria.zip",
+                "url": f"http://127.0.0.1:{PORT}/sampleapp.zip",
                 "sha256": sha or hashlib.sha256(zip_bytes).hexdigest(),
             }
         ],
@@ -125,16 +125,16 @@ def main():
 
     Handler.state = {
         ".well-known/nexus-app.json": json.dumps(doc_v1).encode(),
-        "ataria.zip": zip_v1,
+        "sampleapp.zip": zip_v1,
     }
     server = HTTPServer(("127.0.0.1", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     try:
         # 1. source normalization
-        assert normalize_source("ataria") == "ataria.nexus"
-        assert normalize_source("ataria.nexus") == "ataria.nexus"
-        assert normalize_source("ATARIA") == "ataria.nexus"
+        assert normalize_source("sampleapp") == "sampleapp.nexus"
+        assert normalize_source("sampleapp.nexus") == "sampleapp.nexus"
+        assert normalize_source("SAMPLEAPP") == "sampleapp.nexus"
         for bad in ("", "https://x", "a/b", "..", "a b"):
             try:
                 normalize_source(bad)
@@ -145,7 +145,7 @@ def main():
 
         # 2. resolve: fetch + identity verify
         s = resolve_source(LOOPBACK_SRC)
-        assert s["vendor"] == "khromalabs" and s["app"] == "ataria"
+        assert s["vendor"] == "acme" and s["app"] == "sampleapp"
         assert s["gated"] is True and s["collection"] == "COLLMINT1111"
         assert s["artifact"]["platform"] == current_platform_tag()
         assert s["latest"] == "0.1.0"
@@ -182,7 +182,7 @@ def main():
 
         # 5. full install with subscription
         r = install_source(LOOPBACK_SRC, apps, subscription_ok=lambda v, a: True)
-        target = apps / "khromalabs.ataria"
+        target = apps / "acme.sampleapp"
         assert r["ok"] and r["version"] == "0.1.0" and target.is_dir()
         assert (target / "nexus.json").is_file()
         assert (target / "skills" / "demo.py").is_file()
@@ -193,7 +193,7 @@ def main():
             kp, "0.1.0", {"../evil.txt": "pwned"}
         )
         doc_evil_slip = make_doc(kp, "0.1.0", evil)
-        Handler.state["ataria.zip"] = evil
+        Handler.state["sampleapp.zip"] = evil
         Handler.state[".well-known/nexus-app.json"] = json.dumps(doc_evil_slip).encode()
         try:
             install_source(LOOPBACK_SRC, apps, subscription_ok=lambda v, a: True)
@@ -208,7 +208,7 @@ def main():
         doc_bad_hash = make_doc(
             kp, "0.2.0", zip_v2b, sha="0" * 64
         )
-        Handler.state["ataria.zip"] = zip_v2b
+        Handler.state["sampleapp.zip"] = zip_v2b
         Handler.state[".well-known/nexus-app.json"] = json.dumps(doc_bad_hash).encode()
         try:
             install_source(LOOPBACK_SRC, apps, subscription_ok=lambda v, a: True)
@@ -230,11 +230,11 @@ def main():
         print("ok  artifact/creator mismatch rejected")
 
         # 6c. update: same path replaces the bundle atomically
-        Handler.state["ataria.zip"] = zip_v2
+        Handler.state["sampleapp.zip"] = zip_v2
         Handler.state[".well-known/nexus-app.json"] = json.dumps(doc_v2).encode()
         r = install_source(LOOPBACK_SRC, apps, subscription_ok=lambda v, a: True)
         assert r["version"] == "0.2.0"
-        m = json.loads((apps / "khromalabs.ataria" / "nexus.json").read_text())
+        m = json.loads((apps / "acme.sampleapp" / "nexus.json").read_text())
         assert m["manifest"]["version"] == "0.2.0"
         leftovers = [p.name for p in apps.iterdir() if p.name.startswith(".")]
         assert not leftovers, f"staging/backup leftovers: {leftovers}"

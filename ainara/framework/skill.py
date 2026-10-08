@@ -71,8 +71,8 @@ class Skill(ConfigurablePropertiesMixin, ABC):
 
         Nexus skills will resolve:
 
-            module: khromalabs.ataria.crypto.tradingorders
-            prefix: skills.nexus.khromalabs.ataria.crypto.tradingorders
+            module: acme.tools.crypto.tradingorders
+            prefix: skills.nexus.acme.tools.crypto.tradingorders
 
         Native/non-Nexus skills currently resolve to an empty prefix.
         """

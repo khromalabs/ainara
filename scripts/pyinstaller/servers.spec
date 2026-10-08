@@ -23,8 +23,8 @@ from _shadowed_libs import SHADOWED_RUNTIME_LIBS
 #
 # NOTE (editions retired): the host app ships fully open. Protected Nexus
 # App content (obfuscation, license guards) lives exclusively in external
-# bundle artifacts produced by each app repo's pack pipeline (e.g. ataria
-# scripts/pack.py) and is installed at runtime — never embedded here.
+# bundle artifacts produced by each app repo's pack pipeline (pack.py,
+# closed licensing tooling) and is installed at runtime — never embedded here.
 
 # Get the project root directory (use current working directory as project root)
 project_root = os.path.abspath(os.getcwd())

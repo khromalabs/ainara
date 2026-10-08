@@ -20,7 +20,7 @@
 
 Stdlib-only by design: this module is imported by the runtime
 (capabilities/nexus.py), the config manager, and by OUT-OF-PROCESS dev
-tooling (ataria's generate_registries.py / docs_hook.py), which must not
+tooling (each app repo's generate_registries.py / docs_hook.py), which must not
 pull Flask or other framework dependencies.
 
 Layout contract (Stage 3a):
