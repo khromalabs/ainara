@@ -345,13 +345,15 @@ def _load_log_rotation_config():
     logs — read fresh on every check (see LOG_ROTATE_CHECK_INTERVAL) so a
     config change takes effect without a scheduler restart.
 
-    Deliberately SEPARATE keys from the framework's own logging.max_size_mb /
-    logging.backup_count (ainara/framework/logging_setup.py, which already
-    rotates orakle.log/bureau.log/pybridge.log via RotatingFileHandler): that
-    key's default is a raw BYTE count despite its "_mb" name, so a value
-    someone actually sets there meaning megabytes would be read as bytes and
-    rotate on almost every line. New code gets its own, correctly-named keys
-    rather than inheriting that ambiguity.
+    Deliberately SEPARATE keys from the framework's own rotation keys, even
+    though both now use logging.rotation.max_size_mb / logging.rotation.backup_count
+    (real megabytes): the scheduler captures ORAKLE_LOG / BUREAU_LOG as
+    subprocess stdout, so it must rotate by copying-and-truncating files a
+    child process holds open — a different mechanism from the framework's
+    RotatingFileHandler (ainara/framework/logging_setup.py), even when both
+    share the same config values. Historically the framework read
+    logging.max_size_mb as raw bytes despite its name (issue #14); that is
+    fixed and both consumers now agree on the same keys and semantics.
     """
     try:
         mgr = ConfigManager()
