@@ -90,24 +90,36 @@ requirement — that is precisely what the tier boundary replaces.
 
 ## 5. Installation and updates
 
-Minimal CLI, reading `registry.yaml`:
+**The Polaris wizard is the primary interface.** Polaris is a final-user-oriented
+application — that is the whole reason the setup wizard exists — so curated
+skills are offered where users already are: a new **Skills step in the wizard**
+(and reachable later from settings) that browses the registry, shows
+description/category/tier, and installs with one click. No terminal required,
+consistent with the project's strong end-user vocation. A user-facing CLI is
+deliberately out of scope; if developer tooling is wanted someday it can be
+added on top of the same service, but it is not the adoption path.
 
-```bash
-ainara skills list [--category X]        # browse the registry
-ainara skills install <name>...          # copy into the optional skills dir
-ainara skills remove <name>...
-ainara skills update [name]...           # pull newer versions of installed skills
+Under the wizard sits a small **install/update service** — the contract, so the
+UI stays thin:
+
 ```
+GET  /skills/registry            # list available curated skills (from registry.yaml)
+GET  /skills/installed           # what is installed, versions, provenance
+POST /skills/install             # {name, version?} → installs into optional dir
+POST /skills/remove              # {name}
+POST /skills/update              # {name?} → pull newer versions
+```
+
+(the exact host/paths — Orakle vs. PyBridge — is an open question; see §10)
 
 - **Provenance:** installed skills land in a dedicated directory (§6) so the
   system can distinguish *curated-installed* from *user-authored*. An
   `.installed-from.yaml` sidecar per skill records source repo, version, and
   install date — enabling updates and conflict detection (user edited an
-  installed skill → warn instead of clobber).
+  installed skill → warn instead of clobber). The wizard uses this to badge
+  skills as *curated* vs. *yours* and to warn before overwriting edits.
 - **Integrity:** v1 ships plain file copy. The sidecar format reserves fields
   for hashes/signatures so signed registries can be added without a migration.
-- **Polaris:** the same commands wrapped in a browse/enable UI later; the CLI is
-  the contract, not the UI.
 
 ## 6. Discovery changes
 
@@ -153,7 +165,8 @@ becomes a routing candidate when the user installed it, which is the point.
   generated code is personal by definition.
 - Before generating, the builder's duplicate check (`_find_existing_skill`)
   gains a "check the registry" step: if a curated skill matches, suggest
-  `ainara skills install <name>` instead of generating a near-duplicate.
+  suggest installing the curated skill from the registry (one click in the
+  wizard) instead of generating a near-duplicate.
 - If a curated skill is *close but not right*, users still generate into their
   personal directory — no conflict, since the directories are separate.
 
@@ -167,12 +180,12 @@ becomes a routing candidate when the user installed it, which is the point.
    by two; nothing is lost for users who install them.
 3. **Phase 2 — discovery:** add the `skills.optional.directory` config key,
    third provider, `origin` metadata.
-4. **Phase 3 — CLI:** `ainara skills` commands against `registry.yaml`.
-5. **Phase 4 — Polaris UI:** browse/install/remove, tier badges in the
-   capabilities view.
-6. **Phase 5 — later:** signed registry, per-skill update channels, optional
+4. **Phase 3 — install service + wizard:** Skills step in the Polaris wizard
+   (browse, install, remove, update) backed by the install/update service
+   (§5); tier badges in the capabilities view.
+5.  **Phase 4 — later:** signed registry, per-skill update channels, optional
    skill "collections" (e.g. install the trader pack → several skills +
-   variables at once).
+   variables at once), possibly developer tooling on top of the service API.
 
 ## 9. Non-goals (for this proposal)
 
@@ -186,8 +199,8 @@ becomes a routing candidate when the user installed it, which is the point.
 ## 10. Open questions
 
 1. Should optional skills be able to declare a *minimum framework version*
-   (enforced by `ainara skills install`)? Probably yes, cheap to add to
-   `registry.yaml` now.
+   (enforced by the install service and surfaced in the wizard)? Probably yes,
+   cheap to add to `registry.yaml` now.
 2. Filesystem/import namespace collisions: the `user_`/`opt_` prefixes make
    capability-id collisions impossible by construction, but the Python import
    namespace needs care — `UserSkillProvider` puts its directory on `sys.path`
@@ -200,5 +213,7 @@ becomes a routing candidate when the user installed it, which is the point.
    when a user asks for something matching an uninstalled registry skill? This
    needs a lightweight, non-bloated mechanism (e.g. only names+descriptions of
    uninstalled registry skills, injected lazily).
-4. Where does the CLI live — `bin/`, a `skills` subcommand of the existing CLI,
-   or part of Orakle's admin surface?
+4. Where does the **install/update service** live (the wizard's backend)?
+   Orakle (owns skills/discovery, but Polaris talks to it through PyBridge
+   middleware) vs. PyBridge (owns user-facing services like chat and STT/TTS).
+   Note the user-facing CLI is intentionally out of scope — see §5.
