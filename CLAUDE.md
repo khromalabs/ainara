@@ -17,6 +17,58 @@ Plus **Nexus Apps**: third-party bundleable skill/UI applications (see the "Nexu
 ### OUTDATED:
 - **Kommander** – Alternative CLI interface (legacy/WIP/very outdated)
 
+## Design Philosophy & Goals
+
+These principles are the reasoning behind past decisions; keep them in mind
+before proposing changes that cut against them.
+
+### Polaris is end-user first
+- Polaris is a final-user-oriented desktop application. The setup **wizard is
+  the canonical configuration surface** — new user-facing capabilities (e.g.
+  installing curated skills) belong there, not in a terminal. A user-facing CLI
+  is deliberately out of scope; any developer tooling should be built on top of
+  the underlying service APIs (Orakle/PyBridge), never as a second primary
+  interface.
+
+### Local-first, user-authoritative
+- Everything runs locally; the user is the authority on their own machine.
+  Do not add sandboxing or gate features behind accounts.
+- Risk is managed by **enablement posture, not sandboxing**: potentially
+  powerful meta-skills ship disabled by default (e.g. `skills.builder.enabled`
+  for the skill builder) and dangerous operations require explicit
+  confirmation (dry-run first, then write).
+
+### Tiered skills model (see `docs/proposals/optional-skills-registry.md`, issue #17)
+- **Core skills** (`ainara/orakle/skills/`) must be universally useful: *would
+  virtually every user expect it to just work on first run?* If not, it
+  belongs in the curated optional registry or the user's own directory.
+- **Core bloat directly degrades routing**: every discovered skill is a
+  semantic-matcher candidate for every query. Keep core small.
+- **User skills** live in `user_skills.directory` (LLM-generated skills also go
+  there — never into core); curated optional skills will install to their own
+  directory. Capability-id prefixes (`user_`, future `opt_`) guarantee no
+  collision with core ids by construction.
+- **Nexus Apps** are for complex bundles (UI components, licensing,
+  multi-capability apps). One skill file + SKILL.md → skill tier; more than
+  that → Nexus.
+
+### Skill conventions
+- One skill = one `.py` + one `SKILL.md` (agentskills.io front-matter),
+  structured returns (`{"success": bool, "result"|"error"}`), quality
+  `matcher_info` (it drives routing), and all persistent data under
+  `get_data_dir()` — never outside it.
+
+### Config hygiene
+- Key names must mean what they say (`logging.rotation.max_size_mb` is real
+  megabytes — issue #14 is the cautionary tale). Prefer correctly-named
+  canonical keys; when renaming, keep a fallback to legacy keys.
+
+### Repo conventions
+- `docs/` holds tracked, shareable documentation and proposals; `notes/` is
+  the gitignored home for local working notes.
+- GitHub issues are the canonical discussion/decision record; tracked docs
+  mirror the agreed state back.
+
 ## Installing Python+Node Dependencies
 
 One-shot, idempotent bootstrap (creates `.venv`, installs Python + Node deps, downloads the Kokoro TTS model files into `resources/tts/models/` (~354 MB; see `scripts/fetch_models.py`), installs `ainara` in editable mode; safe to re-run):
