@@ -33,10 +33,16 @@ before proposing changes that cut against them.
 ### Local-first, user-authoritative
 - Everything runs locally; the user is the authority on their own machine.
   Do not add sandboxing or gate features behind accounts.
-- Risk is managed by **enablement posture, not sandboxing**: potentially
-  powerful meta-skills ship disabled by default (e.g. `skills.builder.enabled`
-  for the skill builder) and dangerous operations require explicit
-  confirmation (dry-run first, then write).
+- **Authorization for sensitive operations is a framework responsibility, not
+  a per-skill one.** Whether a potentially insecure operation (e.g. generating
+  and writing code) prompts per operation, is allowed by default, or is
+  entirely restricted is a user-level policy — planned as a core
+  authorization/policy system, not logic embedded in individual skills
+  (skills must not implement their own confirmation UX: it would be both
+  inconsistent across skills and unskippable for users who opt out).
+- Until that policy system exists, powerful meta-skills ship **disabled by
+  default** behind a config flag (e.g. `skills.builder.enabled: false`) so
+  they can land and be reviewed without being exposed ungated.
 
 ### Tiered skills model (see `docs/proposals/optional-skills-registry.md`, issue #17)
 - **Core skills** (`ainara/orakle/skills/`) must be universally useful: *would
