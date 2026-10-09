@@ -646,7 +646,13 @@ def trigger_plan(plan_name, bureau_url, avoid_if=None, variables=None):
 # ---------------------------------------------------------------------------
 def build_scheduler(schedules, bureau_url):
     """Create and configure APScheduler with jobs from scheduler.yaml."""
-    scheduler = BackgroundScheduler()
+    # APScheduler waits on a monotonic timer but checks lateness against the
+    # wall clock, and its default misfire grace is 1s. An NTP correction that
+    # steps the clock forward by more than a second during a long wait would
+    # otherwise drop the run silently ("was missed by 0:00:01.2").
+    scheduler = BackgroundScheduler(
+        job_defaults={"misfire_grace_time": 300, "coalesce": True}
+    )
 
     for plan_name, plan_config in schedules.items():
         if not plan_config.get("enabled", False):
