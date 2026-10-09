@@ -129,6 +129,12 @@ class OrakleScheduler:
                 "coalesce": False
             }
 
+            # TODO(cleanup): this per-job misfire_grace_time handling is dead
+            # code — the actual assignment below is commented out, so a
+            # misfire_grace_time in the job config never reaches add_job and
+            # only flips coalesce. Since job_defaults now carries a sane grace
+            # (see __init__), either wire the assignment back up or remove this
+            # block and document that per-job grace is not supported.
             # Handle misfire_grace_time explicitly if present.
             # If not present, we let APScheduler use its default (usually 1s/strict).
             if "misfire_grace_time" in job_config:
