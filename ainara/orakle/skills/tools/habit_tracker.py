@@ -1,22 +1,40 @@
-"""Skill for logs habit streaks, sends reminders, and tracks daily habit completion"""
+"""Skill for tracking daily habit completion and streaks"""
 
 import logging
 import sqlite3
+from datetime import date as Date
 from datetime import datetime, timedelta
-from typing import Annotated, Any, Dict, Literal, Optional
+from typing import Annotated, Any, Dict, Iterable, Literal, Optional
 
-import pytz
 from dateutil import parser
 
 from ainara.framework.config import get_data_dir
 from ainara.framework.skill import Skill
 
 
+def compute_streak(dates: Iterable[Date], today: Date) -> int:
+    """Count consecutive completed days ending today or yesterday.
+
+    A streak still counts when today has not been logged yet, so a habit
+    done every day through yesterday reports its full length instead of 0.
+    Duplicate dates are ignored.
+    """
+    days = sorted(set(dates), reverse=True)
+    if not days or days[0] < today - timedelta(days=1):
+        return 0
+    streak = 1
+    for prev, d in zip(days, days[1:]):
+        if d != prev - timedelta(days=1):
+            break
+        streak += 1
+    return streak
+
+
 class ToolsHabitTracker(Skill):
-    """Logs habit streaks, sends reminders, and tracks daily habit completion"""
+    """Tracks daily habit completion and streaks"""
 
     matcher_info = (
-        "Use when user wants to create, track, log, or get reminders about habits, streaks, or daily commitments"
+        "Use when user wants to create, track or log habits, or check a habit streak or daily commitment"
     )
 
     def __init__(self):
@@ -38,14 +56,16 @@ class ToolsHabitTracker(Skill):
 
     async def run(
         self,
-        action: Annotated[Literal['log_completion', 'set_reminder', 'add_habit', 'get_streak', 'plan_habit'], "The operation to perform on habits"],
+        action: Annotated[Literal['log_completion', 'add_habit', 'get_streak', 'plan_habit'], "The operation to perform on habits"],
         habit_name: Annotated[Optional[str], "Name of the habit to add, log, or manage"] = None,
         commitment: Annotated[Optional[str], "Desired frequency or commitment level for the habit"] = None,
         date: Annotated[Optional[str], "Date for logging completion or checking streak in YYYY-MM-DD format"] = None,
     ) -> Dict[str, Any]:
         """Executes the habit tracker skill"""
         try:
-            tz = pytz.timezone('UTC')
+            # Local date: habits are logged against the user's own day, and a
+            # UTC "today" would shift evening completions onto tomorrow.
+            today = datetime.now().date()
             conn = self._get_conn()
             cursor = conn.cursor()
 
@@ -54,7 +74,7 @@ class ToolsHabitTracker(Skill):
                     return {"success": False, "result": "habit_name is required"}
                 cursor.execute(
                     "INSERT OR IGNORE INTO habits (habit_name, date, completed) VALUES (?, ?, 0)",
-                    (habit_name, datetime.now(tz).strftime('%Y-%m-%d'))
+                    (habit_name, today.isoformat())
                 )
                 conn.commit()
                 result = f"Habit '{habit_name}' added"
@@ -62,7 +82,8 @@ class ToolsHabitTracker(Skill):
             elif action == 'log_completion':
                 if not habit_name:
                     return {"success": False, "result": "habit_name is required"}
-                log_date = date if date else datetime.now(tz).strftime('%Y-%m-%d')
+                # Normalize so a free-form date can't poison later streak parsing
+                log_date = parser.parse(date).date().isoformat() if date else today.isoformat()
                 cursor.execute(
                     "INSERT OR REPLACE INTO habits (habit_name, date, completed) VALUES (?, ?, 1)",
                     (habit_name, log_date)
@@ -81,35 +102,21 @@ class ToolsHabitTracker(Skill):
                 if not dates:
                     result = f"No completions recorded for '{habit_name}'"
                 else:
-                    streak = 0
-                    check_date = datetime.now(tz).date()
-                    for d in dates:
-                        if d == check_date or d == check_date - timedelta(days=streak):
-                            streak += 1
-                            check_date = d
-                        else:
-                            break
+                    streak = compute_streak(dates, today)
                     result = f"Current streak for '{habit_name}': {streak} days"
-
-            elif action == 'set_reminder':
-                result = (
-                    "Reminder scheduling requires email configuration in ainara.yaml "
-                    "(notifications.email section). Use the morning ritual reminder skill "
-                    "to schedule recurring notifications."
-                )
 
             elif action == 'plan_habit':
                 if not habit_name or not commitment:
                     return {"success": False, "result": "habit_name and commitment required"}
                 cursor.execute(
                     "INSERT OR IGNORE INTO habits (habit_name, date, completed) VALUES (?, ?, 0)",
-                    (habit_name, datetime.now(tz).strftime('%Y-%m-%d'))
+                    (habit_name, today.isoformat())
                 )
                 conn.commit()
                 result = f"Habit '{habit_name}' planned with commitment: {commitment}"
 
             else:
-                result = f"Unknown action '{action}'. Valid actions: log_completion, set_reminder, add_habit, get_streak, plan_habit"
+                result = f"Unknown action '{action}'. Valid actions: log_completion, add_habit, get_streak, plan_habit"
 
             conn.close()
             return {"success": True, "result": result}
