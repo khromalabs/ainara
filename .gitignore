@@ -6,9 +6,8 @@ ainara/resources/*
 build/*
 config/*.yaml
 dist/*
-docs
-docs/paper/*
-docs/paper/ainara.tex
+notes/
+docs/paper/
 fireworks_ai/
 polaris/**/*.jsc
 pyarmor-*
