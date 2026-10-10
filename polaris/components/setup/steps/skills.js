@@ -135,6 +135,10 @@ async function generateSkillsUI(ctx) {
         setupUserSkillsListeners(ctx, backendConfig);
         setupNexusListeners(ctx);
 
+        // Best-effort update check for installed Nexus apps (async, never
+        // blocks or fails the wizard when the host is unreachable)
+        checkNexusUpdates(ctx, nexusApps);
+
         updateSkillsNextButtonState(ctx);
 
     } catch (error) {
@@ -1118,9 +1122,10 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
         `;
     }).join('');
 
-    return `
-        ${nexusStyles}
-        ${renderNexusAddBox()}
+    // Only offer property search/filtering when at least one Nexus app
+    // exposes configurable properties (installing is optional, and so is
+    // exposing properties — nothing to search otherwise)
+    const searchHtml = apps.length > 0 ? `
         <div class="nexus-search-container">
             <input
                 type="search"
@@ -1133,6 +1138,12 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
                 <label><input type="checkbox" id="nexus-modified-toggle"> Show only modified properties</label>
             </div>
         </div>
+    ` : '';
+
+    return `
+        ${nexusStyles}
+        ${renderNexusAddBox()}
+        ${searchHtml}
         <div class="nexus-apps-list">${appsHtml || ''}</div>
     `;
 }
@@ -1269,6 +1280,57 @@ function compareVersions(a, b) {
         if (d !== 0) return d;
     }
     return 0;
+}
+
+// Best-effort update discovery for installed Nexus apps: resolves each
+// app's name-addressed bundle doc via Pybridge (/nexus/install/resolve)
+// and, when the published 'latest' is newer than the installed version,
+// patches the app card with an "Update available" badge plus an Update
+// button. The button reuses the delegated install handler, so the full
+// verify -> (subscribe if gated) -> download -> atomic-swap flow applies
+// unchanged. Lookup failures (offline, unknown host) simply leave the
+// card without update clues.
+async function checkNexusUpdates(ctx, nexusApps) {
+    const pybridgeUrl = ctx.config.get('pybridge.api_url');
+    const installed = (nexusApps || []).filter(a => a.source === 'installed');
+    await Promise.all(installed.map(async (a) => {
+        try {
+            const resp = await fetch(pybridgeUrl + '/nexus/install/resolve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: a.app })
+            });
+            const data = await resp.json();
+            if (!resp.ok || data.ok === false) return;
+            if (!data.latest || compareVersions(data.latest, a.version) <= 0) return;
+
+            const card = document.querySelector(
+                `.nexus-app[data-vendor="${CSS.escape(a.vendor)}"]` +
+                `[data-bundle="${CSS.escape(a.app)}"] .nexus-app-state`
+            );
+            if (!card) return;
+
+            const badges = card.querySelector('.nexus-app-badges');
+            if (badges && !badges.querySelector('.nexus-update-badge')) {
+                const badge = document.createElement('span');
+                badge.className = 'nexus-badge nexus-badge-warn nexus-update-badge';
+                badge.textContent = `Update available: v${data.latest}`;
+                badges.appendChild(badge);
+            }
+
+            const actions = card.querySelector('.nexus-app-actions');
+            if (actions && !actions.querySelector('.nexus-install-btn')) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'nexus-install-btn';
+                btn.dataset.source = data.source_host || a.app;
+                btn.textContent = `Update to v${data.latest}`;
+                actions.prepend(btn);
+            }
+        } catch {
+            // Degrade silently: no update clue on lookup failure.
+        }
+    }));
 }
 
 function setupTabListeners() {
@@ -1566,7 +1628,10 @@ function setupNexusLifecycleListeners(ctx) {
             const installBtn = e.target.closest('.nexus-install-btn');
             if (installBtn && !installBtn.disabled) {
                 const source = installBtn.dataset.source;
-                const card = installBtn.closest('.nexus-remote-card');
+                // Remote resolve cards vs. installed-app cards (update
+                // button) have different containers for status text
+                const card = installBtn.closest('.nexus-remote-card')
+                    || installBtn.closest('.nexus-app-state');
                 if (!source) return;
                 installBtn.disabled = true;
 

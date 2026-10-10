@@ -1119,6 +1119,10 @@ def create_app():
                 "app": application,
                 "version": manifest.get("version"),
                 "description": manifest.get("description"),
+                # Surface identity fields so installed-app cards can keep
+                # the creator/NFT-collection explorer links visible
+                "creatorId": manifest.get("creatorId"),
+                "collection": (protection.get("collection") or "").strip() or None,
                 "protection": protection.get("mode") or "open",
                 "gated": gated,
                 "identity_verified": identity_ok,
