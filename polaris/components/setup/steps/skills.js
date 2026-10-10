@@ -1153,7 +1153,11 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
 // ---------------------------------------------------------------------
 
 function nexusExplorerLinks(state) {
-    if (!state) return '';
+    // Identity-anchored transparency: only surface creator/collection
+    // links when the manifest signature was verified against creatorId.
+    // Installed apps get this from /nexus/apps; remote resolve cards are
+    // verified fail-closed by /nexus/install/resolve before rendering.
+    if (!state || !state.identity_verified) return '';
     const links = [];
     if (state.creatorId) {
         links.push(
@@ -1265,7 +1269,13 @@ function renderNexusRemoteCard(s) {
             <div class="nexus-app-badges">${bits.join(' ')}</div>
             ${s.gated ? '<div class="nexus-remote-desc">NFT ownership (verified on-chain) is required to install this app and to keep it running. Verify with your wallet below if needed.</div>' : ''}
             ${s.description ? `<div class="nexus-remote-desc">${escapeHtml(s.description)}</div>` : ''}
-            ${nexusExplorerLinks({ creatorId: s.creatorId, collection: s.collection })}
+            ${nexusExplorerLinks({
+                // resolve_source only returns after identity verification
+                // of the doc, so remote cards are verified by construction
+                creatorId: s.creatorId,
+                collection: s.collection,
+                identity_verified: true,
+            })}
             <div class="nexus-app-actions">${actions.join(' ')}</div>
             <div class="nexus-app-status"></div>
         </div>
