@@ -20,6 +20,7 @@ const BaseWindow = require('./BaseWindow');
 const Logger = require('../framework/logger');
 const ConfigHelper = require('../framework/ConfigHelper');
 const Notifier = require('../framework/notifier');
+const KeyState = require('../framework/key-state');
 const loudness = require('loudness');
 // const { EventEmitter } = require('events');
 
@@ -39,6 +40,7 @@ class ComRingWindow extends BaseWindow {
                 if (window.prefix === 'comRing') {
                     window.window.webContents.send('window-hide');
                     window.window.webContents.send('stopRecording');
+                    window.stopPTTKeyWatch();
                 }
             },
             onBlur: async (window, manager) => {
@@ -109,6 +111,7 @@ class ComRingWindow extends BaseWindow {
         });
 
         ipcMain.on('ptt-stop', async () => {
+            this.stopPTTKeyWatch();
             if (this.config.get('stt.lowerVolume', true) && this.originalVolume !== null) {
                 try {
                     await loudness.setVolume(this.originalVolume);
@@ -207,6 +210,66 @@ class ComRingWindow extends BaseWindow {
                     break;
             }
         });
+    }
+
+    /**
+     * Polls the OS-level state of the PTT trigger key while recording.
+     *
+     * Electron can silently drop the DOM keyup event (see #19 item 5), leaving
+     * push-to-talk stuck. This watcher is the games-style fix: instead of
+     * trusting the event stream, it samples the physical key state and forces
+     * a stop when the OS reports the key up.
+     *
+     * The watcher must first "arm" by observing the key down at least once:
+     * if the platform backend cannot actually see the key (e.g. XWayland not
+     * seeing native Wayland clients, unmapped key), it never trusts a "no"
+     * answer and degrades to the pre-existing event-only behavior instead of
+     * force-stopping valid recordings.
+     */
+    startPTTKeyWatch() {
+        this.stopPTTKeyWatch();
+        if (!KeyState.isAvailable()) {
+            Logger.warn('PTT key watch: no OS key-state backend available, '
+                + 'relying on keyup events only');
+            return;
+        }
+        const triggerKey = this.config.get('shortcuts.trigger', 'Space');
+        const pollMs = 250;
+        const armTimeoutPolls = 8; // 2s to observe the key down, else untrust
+        let armed = false;
+        let polls = 0;
+        Logger.log(`PTT key watch: polling state of ${triggerKey} every ${pollMs}ms`);
+        this.pttKeyWatcher = setInterval(() => {
+            const down = KeyState.isDown(triggerKey);
+            if (down === null) {
+                Logger.warn('PTT key watch: key state query failed, disarming');
+                this.stopPTTKeyWatch();
+                return;
+            }
+            if (!armed) {
+                if (down) {
+                    armed = true;
+                } else if (++polls >= armTimeoutPolls) {
+                    Logger.warn('PTT key watch: backend never reported ' + triggerKey
+                        + ' down, disabling force-stop (untrustworthy backend)');
+                    this.stopPTTKeyWatch();
+                }
+                return;
+            }
+            if (!down) {
+                Logger.log('PTT key watch: OS reports key released '
+                    + '(keyup event missed?) - stopping recording');
+                this.window.webContents.send('stopRecording');
+                this.stopPTTKeyWatch();
+            }
+        }, pollMs);
+    }
+
+    stopPTTKeyWatch() {
+        if (this.pttKeyWatcher) {
+            clearInterval(this.pttKeyWatcher);
+            this.pttKeyWatcher = null;
+        }
     }
 
     animateBounds(targetBounds, duration, fixMouse = true) {

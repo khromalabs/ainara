@@ -328,6 +328,16 @@ class ComRing extends BaseComponent {
             return;
         }
 
+        // Main-process force-stop for missed keyup events (see #19 item 5):
+        // ComRingWindow polls the OS key state while recording and sends this
+        // when the physical key is up but no keyup event arrived.
+        ipcRenderer.on('stopRecording', () => {
+            if (this.state.isRecording) {
+                console.log('ComRing: Received stopRecording (forced by key watch)');
+                this.stopRecording();
+            }
+        });
+
         // Add window visibility listeners
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
@@ -1139,6 +1149,16 @@ class ComRing extends BaseComponent {
     }
 
     async enterTypingMode() {
+        // If a recording is still in flight (e.g. a previous transcription
+        // result opened review mode while the user had already started a
+        // second recording), stop the capture first: once focus moves to the
+        // ChatDisplay window, Space keyup events no longer reach this window
+        // and the recording would stay stuck. Stopping here preserves the
+        // audio captured so far and sends it through the normal STT flow.
+        if (this.state.isRecording) {
+            console.log('enterTypingMode: recording in flight - stopping capture first');
+            this.stopRecording();
+        }
         this.text = "";
         // Set state in window
         await ipcRenderer.invoke('set-typing-mode-state', true);
