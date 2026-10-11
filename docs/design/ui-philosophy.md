@@ -92,6 +92,20 @@ linger out of habit, and empty states should generally not exist — if there is
 nothing to show, the surface should not be there at all. The resting state of
 Polaris is the ring (or nothing).
 
+It is worth being honest that these two halves are not equally solved.
+**Appearing is the easy half**: it is event-driven (a result arrives, the user
+summons input) and the triggers are unambiguous. **Dissolving is the hard
+half**, because it requires inferring that the user is actually *done* with a
+surface — and that intent is not directly observable. What looks obvious for
+the ring (blur = free the screen, voice continues) is a blunt proxy for
+reading or comparison surfaces, and no better automatic signal (turn
+completion, lull decay) has been settled on yet. This is the defining open
+problem of the absent interface as a paradigm: an interface that appears
+perfectly but never leaves is not absent at all. Current candidates and the
+discussion live in #19; until a principled signal exists, the pragmatic rule
+is that every surface must at least be *cheap to dismiss* (Escape, blur in
+ring mode), never requiring management.
+
 ### Voice survives the interface
 
 The assistant is audible even when nothing is visible. Visual UI is an
