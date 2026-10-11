@@ -328,6 +328,29 @@ class ChatDisplay extends BaseComponent {
                 ipcRenderer.on('save-text', () => {
                 });
 
+                // Keyboard focus recovery (#19): a click on this surface (including
+                // one that passes through the transparent ComRing above it) blurs
+                // the textarea while the window keeps OS focus, leaving the app
+                // with no focused editable element - every key dead until an
+                // external blur resets everything.
+                document.addEventListener('mousedown', (e) => {
+                    if (this.textInput.style.display !== 'block') return;
+                    // Let clicks on rendered messages behave normally (text selection)
+                    if (e.target.closest && e.target.closest('.message')) return;
+                    if (e.target !== this.textInput) {
+                        // Keep the textarea focused
+                        e.preventDefault();
+                    }
+                });
+                document.addEventListener('keydown', (e) => {
+                    // Escape exits typing mode even when the textarea lost focus
+                    // (its own keydown handler covers the focused case).
+                    if (e.key === 'Escape' && e.target !== this.textInput &&
+                        this.textInput.style.display === 'block') {
+                        this.exitTypingMode();
+                    }
+                });
+
                 console.log('ChatDisplay: IPC listeners setup complete');
                 ipcRenderer.send('chatDisplay-ready');
 
