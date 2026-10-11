@@ -85,6 +85,18 @@ Hard corners and hard edges read as "things to be avoided" — obstacles. The
 system should feel like it flows: panels slide, views cross-fade, presence
 fades in and out. Nothing snaps.
 
+### Type is big, reading is effortless
+
+Because the interface is minimal, text is not one element among many — it is
+the interface. That is a side advantage to be exploited deliberately: with no
+buttons, icons or chrome competing for space, fonts can and should be
+reasonably big. Generous type is not an accessibility afterthought or a
+nicety; it follows from the same intent as everything else — everything feels
+easy. Reading, interacting, nothing to be interpreted. If text on screen
+demands squinting or leaning in, the surface is carrying too much, or the
+type is carrying too little. Panels contributed by skills and Nexus apps
+should hold this bar: a few large words beat many small ones.
+
 ### Appear on demand, dissolve when done
 
 Surfaces exist only while there is an active exchange. Windows should not
