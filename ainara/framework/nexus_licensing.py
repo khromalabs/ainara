@@ -40,7 +40,7 @@ Two independent pieces live here:
    is ``manifest.creatorId``; the signature travels in
    ``manifest.signature`` (base58). This binds the declared identity to
    a Solana key the vendor controls, preventing spoofed app releases
-   (someone else shipping a bundle claiming ``khromalabs/ataria``).
+   (someone else shipping a bundle claiming ``acme/sampleapp``).
    Surfaced by the runtime today; intended to become MANDATORY for every
    bundle at install time.
 """

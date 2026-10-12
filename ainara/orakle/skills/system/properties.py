@@ -320,7 +320,7 @@ class SystemProperties(Skill):
         app: Annotated[
             Optional[str],
             "Skill name, Nexus App name, or configuration prefix "
-            "(e.g. 'ataria', 'skills.nexus.khromalabs.ataria', 'screener')",
+            "(e.g. 'sampleapp', 'skills.nexus.acme.sampleapp', 'my_skill')",
         ] = None,
         keywords: Annotated[
             Optional[str],
@@ -333,7 +333,7 @@ class SystemProperties(Skill):
             " its new value."
             " All keys must already exist in the property catalog and be"
             " compliant with the property's JSON schema. Example:"
-            " {'skills.nexus.khromalabs.ataria.crypto.tradingaccount.breakeven_buffer_pct':"
+            " {'skills.nexus.acme.sampleapp.crypto.tradingaccount.breakeven_buffer_pct':"
             " 0.15}."
             " Use dry_run=true to validate without saving.",
         ] = None,
@@ -352,7 +352,7 @@ class SystemProperties(Skill):
 
         For 'update', `updates` must be a dict mapping full config keys to
         new values, e.g.
-        {"skills.nexus.khromalabs.ataria.crypto.tradingaccount.breakeven_buffer_pct": 0.15}.
+        {"skills.nexus.acme.sampleapp.crypto.tradingaccount.breakeven_buffer_pct": 0.15}.
         """
         if action == "list":
             return self._list_properties(

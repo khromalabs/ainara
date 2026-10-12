@@ -49,7 +49,15 @@ class OrakleScheduler:
         _scheduler_instance = self
         self.cap_manager = capabilities_manager
         self.config = config
-        self.scheduler = BackgroundScheduler(jobstores=jobstores)
+        # APScheduler waits on a monotonic timer but checks lateness against the
+        # wall clock, and its default misfire grace is 1s. An NTP correction that
+        # steps the clock forward by more than a second during a long wait would
+        # otherwise drop the run silently ("was missed by 0:00:01.2"). Mirrors
+        # scripts/scheduler.py (PR #15).
+        self.scheduler = BackgroundScheduler(
+            jobstores=jobstores,
+            job_defaults={"misfire_grace_time": 300, "coalesce": True},
+        )
         # Default to localhost pybridge if not configured
         self.pybridge_url = config.get(
             "scheduler.pybridge_url", "http://127.0.0.1:8101"
@@ -132,6 +140,12 @@ class OrakleScheduler:
                 "coalesce": False
             }
 
+            # TODO(cleanup): this per-job misfire_grace_time handling is dead
+            # code — the actual assignment below is commented out, so a
+            # misfire_grace_time in the job config never reaches add_job and
+            # only flips coalesce. Since job_defaults now carries a sane grace
+            # (see __init__), either wire the assignment back up or remove this
+            # block and document that per-job grace is not supported.
             # Handle misfire_grace_time explicitly if present.
             # If not present, we let APScheduler use its default (usually 1s/strict).
             if "misfire_grace_time" in job_config:

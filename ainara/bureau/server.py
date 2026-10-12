@@ -66,17 +66,23 @@ def _terminate_step(step_id: str, task: Dict[str, Any], reason: str) -> None:
         # Nothing to kill – maybe already finished or never started
         return
 
+    if task.get("termination_requested"):
+        # Already requested. The timeout monitor calls this every second
+        # while a step is over its limit; re-requesting would reset the
+        # grace-period clock below, so the hard kill would never come.
+        return
+
     logger.warning(
         f"Step {step_id} termination requested ({reason}). "
         "Attempting graceful shutdown."
     )
 
-    # 1️⃣  Gentle termination (SIGINT / CTRL_BREAK_EVENT)
+    # 1️⃣  Termination request. Steps run as multiprocessing.Process, which
+    # has no send_signal() (that is subprocess.Popen's API). terminate() is
+    # SIGTERM on POSIX and TerminateProcess on Windows, where a
+    # multiprocessing child has no console-signal route.
     try:
-        if os.name == "nt":
-            proc.send_signal(signal.CTRL_BREAK_EVENT)
-        else:
-            proc.terminate()  # SIGTERM on POSIX
+        proc.terminate()
     except Exception as e:  # pragma: no cover – defensive
         logger.error(f"Error sending graceful signal to step {step_id}: {e}")
 

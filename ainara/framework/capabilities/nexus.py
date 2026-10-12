@@ -18,6 +18,7 @@
 
 import logging
 import mimetypes
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -69,13 +70,14 @@ class NexusSkillProvider(BasePythonSkillProvider):
         )
 
         if not self.nexus_path.is_dir():
-            logger.warning(
-                f"Nexus path '{self.nexus_path}' does not exist or is not a"
-                " directory."
+            # Legacy fallback root only — never auto-create it. Nexus apps
+            # are independent repos/installs (nexus.dev_apps / installed
+            # apps); an empty ainara/nexus in the source tree serves no
+            # purpose and would silently resurrect a removed directory.
+            logger.info(
+                f"Nexus path '{self.nexus_path}' does not exist — skipped "
+                "(legacy primary root; dev_apps/installed roots remain active)"
             )
-            # Don't create in frozen mode - it should be bundled
-            if not getattr(sys, "frozen", False):
-                self.nexus_path.mkdir(parents=True, exist_ok=True)
 
     def _collect_bundle_config_params(
         self,

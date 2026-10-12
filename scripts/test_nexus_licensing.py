@@ -52,8 +52,8 @@ def test_identity():
     kp = Keypair()
     manifest = {
         "schemaVersion": "1.0",
-        "name": "ataria",
-        "provider": "khromalabs",
+        "name": "sampleapp",
+        "provider": "acme",
         "version": "0.1.0",
         "description": "test",
         "creatorId": str(kp.pubkey()),
@@ -97,46 +97,147 @@ def test_identity():
 
 
 def test_fail_closed():
-    saved = os.environ.pop("AINARA_NEXUS_LICENSING_PATH", None)
-    try:
-        mgr = SubscriptionManager(FakeStorage())
-        assert mgr.available is False
-        assert mgr.subscription_message("a", "b") is None
-        assert mgr.get_status("a", "b") == {
-            "subscribed": False,
-            "reason": "licensing_unavailable",
-            "vendor": "a",
-            "app": "b",
-        }
-        ok, msg, info = mgr.verify_subscription(
-            "a", "b", {}, None, WALLET, [1], "m"
-        )
-        assert ok is False and info is None and "unavailable" in msg.lower()
-        assert mgr.revoke("a", "b") is False
-        # open bundles: targets derivation still works locally
-        assert mgr.protection_targets({"collection": " C "}, "CR") == ("C", "CR")
-        print("ok  closed core absent -> fail-closed across the seam")
-    finally:
-        if saved is not None:
-            os.environ["AINARA_NEXUS_LICENSING_PATH"] = saved
+    """Closed core absent -> SubscriptionManager unavailable, all calls
+    refuse. Simulates a machine without the closed core via a meta-path
+    blocker (a source venv may legitimately have the wheel installed)."""
+    import subprocess
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    env = {
+        k: v for k, v in os.environ.items()
+        if k != "AINARA_NEXUS_LICENSING_PATH"
+    }
+    env["PYTHONPATH"] = str(repo)
+    probe = r"""
+import importlib.abc
+import sys
+
+
+class _BlockCore(importlib.abc.MetaPathFinder):
+    # Simulate a machine without the closed core.
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "nexuslicensing" or fullname.startswith("nexuslicensing."):
+            raise ModuleNotFoundError("blocked (test)", name=fullname)
+        return None
+
+
+sys.meta_path.insert(0, _BlockCore())
+
+
+class FakeStorage:
+    def __init__(self):
+        self.meta = {}
+
+    def get_metadata(self, key):
+        return self.meta.get(key)
+
+    def set_metadata(self, key, value):
+        self.meta[key] = value
+
+    def delete_metadata(self, keys):
+        for k in keys:
+            self.meta.pop(k, None)
+
+
+from ainara.framework.nexus_licensing import SubscriptionManager
+mgr = SubscriptionManager(FakeStorage())
+assert mgr.available is False
+assert mgr.subscription_message("a", "b") is None
+assert mgr.get_status("a", "b") == {
+    "subscribed": False,
+    "reason": "licensing_unavailable",
+    "vendor": "a",
+    "app": "b",
+}
+ok, msg, info = mgr.verify_subscription(
+    "a", "b", {}, None, "9xzW4bYLhMq8fKbVHbB7Yt9E6jLdVmHhVdPzH4CwKq8A", [1], "m"
+)
+assert ok is False and info is None and "unavailable" in msg.lower()
+assert mgr.revoke("a", "b") is False
+assert mgr.protection_targets({"collection": " C "}, "CR") == ("C", "CR")
+print("PROBE-OK")
+"""
+    r = subprocess.run(
+        [sys.executable, "-c", probe], env=env,
+        capture_output=True, text=True, timeout=120,
+    )
+    assert r.returncode == 0 and "PROBE-OK" in r.stdout, (
+        "fail-closed seam broken\n" + r.stdout[-800:] + r.stderr[-800:]
+    )
+    print("ok  closed core absent -> fail-closed across the seam")
 
 
 def test_crash_resilience():
     """Core found but broken (no build secret) -> manager degrades to
-    fail-closed; Pybridge startup must never crash on licensing."""
-    saved_secret = os.environ.pop("AINARA_BUILD_SECRET", None)
-    os.environ["AINARA_NEXUS_LICENSING_PATH"] = LICENSING_ROOT
+    fail-closed; Pybridge startup must never crash on licensing.
+
+    Runs in a subprocess whose sys.path puts a deliberately BROKEN
+    checkout (package copied alone, no build/) AHEAD of everything else,
+    so the resolution order itself is exercised: a machine with the
+    wheel installed must still be able to test the broken-core path.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="nexuslic_broken_"))
+    shutil.copytree(
+        pathlib.Path(LICENSING_ROOT) / "nexuslicensing",
+        tmp / "nexuslicensing",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    env = {k: v for k, v in os.environ.items() if k != "AINARA_BUILD_SECRET"}
+    env["AINARA_NEXUS_LICENSING_PATH"] = str(tmp)
+    env["PYTHONPATH"] = os.pathsep.join([str(tmp), str(repo)])
+    probe = r"""
+import sys
+
+
+class FakeStorage:
+    def __init__(self):
+        self.meta = {}
+
+    def get_metadata(self, key):
+        return self.meta.get(key)
+
+    def set_metadata(self, key, value):
+        self.meta[key] = value
+
+    def delete_metadata(self, keys):
+        for k in keys:
+            self.meta.pop(k, None)
+
+
+import nexuslicensing
+assert nexuslicensing.__file__.startswith(sys.path[0]), (
+    "broken checkout must shadow any installed core: "
+    + nexuslicensing.__file__)
+try:
+    import nexuslicensing.auth_core  # noqa: F401 — must raise (no secret)
+    raise SystemExit("broken checkout unexpectedly resolved its secret")
+except RuntimeError:
+    pass
+
+from ainara.framework.nexus_licensing import SubscriptionManager
+mgr = SubscriptionManager(FakeStorage())
+assert mgr.available is False, "broken core must degrade, not raise"
+ok, msg, info = mgr.verify_subscription(
+    "a", "b", {}, None, "9xzW4bYLhMq8fKbVHbB7Yt9E6jLdVmHhVdPzH4CwKq8A", [1], "m"
+)
+assert ok is False and info is None
+print("PROBE-OK")
+"""
     try:
-        mgr = SubscriptionManager(FakeStorage())
-        assert mgr.available is False, "broken core must degrade, not raise"
-        ok, msg, info = mgr.verify_subscription(
-            "a", "b", {}, None, WALLET, [1], "m"
+        r = subprocess.run(
+            [sys.executable, "-c", probe], env=env,
+            capture_output=True, text=True, timeout=120,
         )
-        assert ok is False and info is None
+        assert r.returncode == 0 and "PROBE-OK" in r.stdout, (
+            "broken core must degrade, not raise\n"
+            + r.stdout[-800:] + r.stderr[-800:]
+        )
         print("ok  core present but broken -> fail-closed, no startup crash")
     finally:
-        if saved_secret is not None:
-            os.environ["AINARA_BUILD_SECRET"] = saved_secret
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_delegation():
@@ -148,8 +249,8 @@ def test_delegation():
     assert mgr.available, "closed core should load from the dev checkout"
 
     # canonical message + identifier validation
-    assert mgr.subscription_message("Khromalabs", "Ataria") == (
-        "Authorize Ainara Nexus subscription: khromalabs/ataria"
+    assert mgr.subscription_message("Acme", "Sampleapp") == (
+        "Authorize Ainara Nexus subscription: acme/sampleapp"
     )
     try:
         mgr.subscription_message("bad vendor", "app")
@@ -175,21 +276,21 @@ def test_delegation():
     mgr._core._execute_rpc_check = lambda wallet, c, cr: True
     try:
         ok, msg, info = mgr.verify_subscription(
-            "khromalabs", "ataria",
+            "acme", "sampleapp",
             {"mode": "nft-license", "collection": "COLLMINT"},
             "CREATORKEY",
             WALLET, [1] * 64,
-            "Authorize Ainara Nexus subscription: khromalabs/ataria",
+            "Authorize Ainara Nexus subscription: acme/sampleapp",
         )
         assert ok, msg
         assert info["code"] and info["expires_at"] and info["wallet"] == WALLET
 
-        st = mgr.get_status("khromalabs", "ataria")
+        st = mgr.get_status("acme", "sampleapp")
         assert st["subscribed"] is True and st["code"] == info["code"]
         assert st["mode"] == "nft-license"
 
-        assert mgr.revoke("khromalabs", "ataria") is True
-        st = mgr.get_status("khromalabs", "ataria")
+        assert mgr.revoke("acme", "sampleapp") is True
+        st = mgr.get_status("acme", "sampleapp")
         assert st["subscribed"] is False and st["reason"] == "no_subscription"
         print("ok  issuance/status/revoke delegate to the closed core")
     finally:

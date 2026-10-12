@@ -60,6 +60,37 @@ class LoggingManager:
             self._logger.handlers = handlers
             self._logger.setLevel(level)
 
+    @staticmethod
+    def _rotation_config():
+        """(max_bytes, backup_count) for the rotating file handler.
+
+        Canonical keys are ``logging.rotation.max_size_mb`` /
+        ``logging.rotation.backup_count`` — the same keys the scheduler uses for
+        its captured service logs (see scripts/scheduler.py), read as real
+        megabytes. Falls back to the legacy ``logging.max_size_mb`` /
+        ``logging.backup_count`` keys, which historically held raw bytes despite
+        their "_mb" name (issue #14); they are now interpreted as megabytes like
+        the canonical keys, so a value set there meaning MB behaves correctly.
+        Invalid values fall back to the 10 MB / 5 backups defaults.
+        """
+        max_mb = config.get(
+            "logging.rotation.max_size_mb",
+            config.get("logging.max_size_mb", 10),
+        )
+        backup_count = config.get(
+            "logging.rotation.backup_count",
+            config.get("logging.backup_count", 5),
+        )
+        try:
+            max_bytes = int(float(max_mb) * 1024 * 1024)
+        except (TypeError, ValueError):
+            max_bytes = 10 * 1024 * 1024
+        try:
+            backup_count = max(1, int(backup_count))
+        except (TypeError, ValueError):
+            backup_count = 5
+        return max_bytes, backup_count
+
     def setup(
         self,
         log_dir=None,
@@ -98,10 +129,11 @@ class LoggingManager:
         # File handler setup
         if log_dir:
             log_file = os.path.join(log_dir, log_name)
+            max_bytes, backup_count = self._rotation_config()
             file_handler = RotatingFileHandler(
                 log_file,
-                maxBytes=config.get("logging.max_size_mb", 1024 * 1024),
-                backupCount=config.get("logging.backup_count", 5),
+                maxBytes=max_bytes,
+                backupCount=backup_count,
             )
             file_handler.setLevel(log_level)
             file_formatter = logging.Formatter(

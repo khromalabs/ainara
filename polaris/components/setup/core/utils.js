@@ -137,7 +137,7 @@ function getKeyDescription(pathArray) {
             url: null,
             description: 'Configure IMAP accounts for email integration'
         },
-        // TODO This only applies to Polaris "Supporters Edition" it should only appear if Ataria is installed
+        // TODO This only applies to Polaris "Supporters Edition" it should only appear if a gated Nexus App is installed
         // same in ainara.yaml.defaults
         'hyperliquid': {
             url: 'https://app.hyperliquid.xyz/join/AINARA',
