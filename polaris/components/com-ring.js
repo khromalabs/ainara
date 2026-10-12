@@ -94,6 +94,10 @@ class ComRing extends BaseComponent {
             };
             this.isWindowVisible = false;
             this.isProcessingUserMessage = false;
+            // #19 item 7: a ChatDisplay draft was stashed into the input
+            // history (relayed via main, gated by ui.educationalHints);
+            // consumed by showDraftRecoveryHint() on the next window-show.
+            this.hasStashedDraft = false;
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
             this.currentView = 'ring';
@@ -342,6 +346,7 @@ class ComRing extends BaseComponent {
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
+            this.showDraftRecoveryHint();
             console.log('window-show: isWindowVisible true');
             var backendConfig;
             try {
@@ -456,6 +461,11 @@ class ComRing extends BaseComponent {
             //     // auto shrink if on chat-history mode
             //     this.switchToRingView();
             // }
+        });
+
+        // #19 item 7: the ChatDisplay renderer stashed a draft on hide
+        ipcRenderer.on('draft-stashed', () => {
+            this.hasStashedDraft = true;
         });
 
         ipcRenderer.on('not-on-animation', () => {
@@ -1729,6 +1739,31 @@ Visit our project site at: https://ainara.app
         this.ringContainer.classList.remove('document-view');
         ipcRenderer.send('set-view-mode', { view: 'ring', fixMouse: false });
         this.documentView.hide();
+    }
+
+    /**
+     * Transient educative hint for stashed drafts (#19 item 7).
+     *
+     * The draft is NOT destroyed on blur — the hide handler pushes it into
+     * the input history and ↑ recovers it — but that recovery is
+     * undiscoverable: the user returns to an empty input and reasonably
+     * believes the recording is lost. Educate at the moment of need: when
+     * the UI comes back with a stashed draft pending, flash a soft hint
+     * that fades after a couple of seconds. Shown once per stash, only
+     * when there is something to recover — no standing chrome.
+     */
+    showDraftRecoveryHint() {
+        if (!this.hasStashedDraft) return;
+        this.hasStashedDraft = false;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        sttStatus.textContent = '↑ recover previous text';
+        sttStatus.classList.add('active');
+        setTimeout(() => {
+            sttStatus.classList.remove('active');
+            sttStatus.textContent = '';
+            this.updateIdleStatus();
+        }, 2500);
     }
 
     abortLLMResponse() {

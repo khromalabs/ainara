@@ -304,6 +304,11 @@ class ChatDisplay extends BaseComponent {
                         console.log('ChatDisplay: Saving message in history');
                         this.messageHistory.push(text);
                         this.historyIndex = this.messageHistory.length;
+                        // #19 item 7: let the ring flash the recovery hint
+                        // when the UI comes back. Gate lives main-side
+                        // (ui.educationalHints) so educative reminders are
+                        // disabled in one place.
+                        ipcRenderer.send('draft-stashed');
                     }
                 });
 

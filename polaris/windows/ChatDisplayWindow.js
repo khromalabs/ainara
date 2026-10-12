@@ -209,6 +209,20 @@ class ChatDisplayWindow extends BaseWindow {
             this.window.webContents.send('typing-key-pressed', key);
         });
 
+        // #19 item 7: the ChatDisplay renderer stashed a draft into its
+        // input history on hide. Relay to the ring, which owns the
+        // transient hint UI. ui.educationalHints is the single switch for
+        // educative reminders — expert users can silence them all here.
+        ipcMain.on('draft-stashed', () => {
+            if (!this.config.get('ui.educationalHints', true)) {
+                return;
+            }
+            const comRing = this.manager.getWindow('comRing');
+            if (comRing) {
+                comRing.window.webContents.send('draft-stashed');
+            }
+        });
+
         ipcMain.on('focus-chat-display', () => {
             Logger.log('ChatDisplayWindow: Focusing window');
             this.show();
