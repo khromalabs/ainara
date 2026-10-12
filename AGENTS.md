@@ -56,10 +56,13 @@ before proposing changes that cut against them.
   that → Nexus.
 
 ### Skill conventions
-- One skill = one `.py` + OPTIONALLY one `SKILL.md` (agentskills.io front-matter),
-  structured returns (`{"success": bool, "result"|"error"}`), quality
-  `matcher_info` (it drives routing), and all persistent data under
-  `get_data_dir()` — never outside it.
+- One skill = one `.py` + OPTIONALLY one `SKILL.md` (agentskills.io
+  front-matter), structured returns (`{"success": bool, "result"|"error"}`),
+  quality `matcher_info` (it drives routing), and all persistent data under
+  `get_data_dir()` (core skills) or `get_nexus_app_data_dir()` (Nexus apps —
+  resolves `<data>/nexus/.data/<vendor>.<bundle>/`, mirrors the `.apps` code
+  layout, and is safe to call from inside app modules, unlike `get_data_dir()`
+  which is forbidden there) — never outside it.
 
 ### Config hygiene
 - Key names must mean what they say (`logging.rotation.max_size_mb` is real
