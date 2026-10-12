@@ -239,7 +239,7 @@ class ComRingWindow extends BaseWindow {
         }
         const triggerKey = this.config.get('shortcuts.trigger', 'Space');
         const pollMs = 250;
-        const armTimeoutPolls = 8; // 2s to observe the key down, else untrust
+        const armTimeoutPolls = 4; // 1s to observe the key down, else untrust
         let armed = false;
         let polls = 0;
         Logger.log(`PTT key watch: polling state of ${triggerKey} every ${pollMs}ms`);
