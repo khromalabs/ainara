@@ -104,6 +104,9 @@ class ComRing extends BaseComponent {
             this.docFormat = 'text';
             this.navigatingHistory = false;
             this.isLLMStreaming = false;
+            // Long-recording transcription hint (#19)
+            this.recordingStartedAt = null;
+            this.transcriptionHintActive = false;
 
             this.state = {
                 keyPressed: false,
@@ -869,6 +872,7 @@ class ComRing extends BaseComponent {
 
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (result) => {
+            this.clearTranscribingHint();
             if (this.isProcessingUserMessage) {
                 console.log("setupTranscriptionHandler: isProcessingUserMessage=true, avoiding concurrent entry");
                 return;
@@ -1080,6 +1084,7 @@ class ComRing extends BaseComponent {
 
         this.ignoreIncomingEvents = false;
         this.state.isRecording = true;
+        this.recordingStartedAt = Date.now();
         this.state.isAwaitingResponse = false;
         this.silenceStartTimestamp = null; // Reset VAD
 
@@ -1106,6 +1111,7 @@ class ComRing extends BaseComponent {
                 // Send to STT (Passive Mode)
                 try {
                     const result = await this.stt.transcribe(audioBlob);
+                    this.clearTranscribingHint();
 
                     // [MODIFIED] Handle both object (new) and string (legacy) formats
                     let text = '';
@@ -1138,6 +1144,7 @@ class ComRing extends BaseComponent {
                     }
                 } catch (e) {
                     console.error('Transcription failed:', e);
+                    this.clearTranscribingHint();
                     this.showInfo('Transcription failed', true);
                     // Error - reset state
                     this.state.isAwaitingResponse = false;
@@ -1302,6 +1309,7 @@ class ComRing extends BaseComponent {
         this.circle.classList.add('awaiting');
 
         this.state.isAwaitingResponse = true;
+        this.maybeShowTranscribingHint();
         this.innerCircle.style.opacity = 0;
 
         // Resume Wake Word Listening state (if enabled)
@@ -1742,6 +1750,38 @@ Visit our project site at: https://ainara.app
     }
 
     /**
+     * Long-recording progress hint (#19).
+     *
+     * STT is normally near-instant, so per-transcription progress chrome
+     * would be pure noise. But for long recordings the user stares at the
+     * 'awaiting' ring with no signal that anything is happening. Show a
+     * transient 'Transcribing…' status only when the recording exceeded
+     * stt.transcriptionHintAfterSec, held until the result lands.
+     */
+    maybeShowTranscribingHint() {
+        const startedAt = this.recordingStartedAt;
+        this.recordingStartedAt = null;
+        if (!startedAt) return;
+        const thresholdSec = this.config.get('stt.transcriptionHintAfterSec', 5);
+        if ((Date.now() - startedAt) / 1000 < thresholdSec) return;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        sttStatus.textContent = 'Transcribing…';
+        sttStatus.classList.add('active');
+        this.transcriptionHintActive = true;
+    }
+
+    clearTranscribingHint() {
+        if (!this.transcriptionHintActive) return;
+        this.transcriptionHintActive = false;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        sttStatus.classList.remove('active');
+        sttStatus.textContent = '';
+        this.updateIdleStatus();
+    }
+
+    /**
      * Transient educative hint for stashed drafts (#19 item 7).
      *
      * The draft is NOT destroyed on blur — the hide handler pushes it into
@@ -1757,7 +1797,7 @@ Visit our project site at: https://ainara.app
         this.hasStashedDraft = false;
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
         if (!sttStatus) return;
-        sttStatus.textContent = '↑ recover previous text';
+        sttStatus.textContent = 'Hint: Up arrow key to recover text';
         sttStatus.classList.add('active');
         setTimeout(() => {
             sttStatus.classList.remove('active');

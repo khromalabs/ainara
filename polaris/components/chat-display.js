@@ -297,6 +297,13 @@ class ChatDisplay extends BaseComponent {
                     this.exitTypingMode();
                 });
 
+                ipcRenderer.on('focus-pending-input', () => {
+                    // Deferred-restore focus (#19): background work landed
+                    // while the app was hidden and the user returned with a
+                    // review decision pending (typing mode).
+                    this.textInput.focus();
+                });
+
                 ipcRenderer.on('hide', () => {
                     console.log('ChatDisplay: Saving message in history');
                     const text = this.textInput.value.trim();
