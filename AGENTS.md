@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository. It follows the [agents.md](https://agents.md) convention; `CLAUDE.md` is a symlink to this file for tools that only look for that name.
 
 ## Project Overview
 
@@ -13,9 +13,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Bureau** – Agents and Agents orchestration plan server.
 
 Plus **Nexus Apps**: third-party bundleable skill/UI applications (see the "Nexus Apps & Subscriptions" section below). Polaris ships as a single fully open-source edition; there is no edition/wallet gate — licensing exists only per-Nexus-bundle.
-
-### OUTDATED:
-- **Kommander** – Alternative CLI interface (legacy/WIP/very outdated)
 
 ## Design Philosophy & Goals
 
@@ -36,7 +33,7 @@ before proposing changes that cut against them.
 - **Authorization for sensitive operations is a framework responsibility, not
   a per-skill one.** Whether a potentially insecure operation (e.g. generating
   and writing code) prompts per operation, is allowed by default, or is
-  entirely restricted is a user-level policy — being designed in issue #18
+  entirely restricted is a user-level policy — being designed in Github issue #18
   (core authorization/policy system), not logic embedded in individual skills
   (skills must not implement their own confirmation UX: it would be both
   inconsistent across skills and unskippable for users who opt out).
@@ -44,7 +41,7 @@ before proposing changes that cut against them.
   default** behind a config flag (e.g. `skills.builder.enabled: false`) so
   they can land and be reviewed without being exposed ungated.
 
-### Tiered skills model (see `docs/proposals/optional-skills-registry.md`, issue #17)
+### Tiered skills model (see `docs/proposals/optional-skills-registry.md`, Github issue #17)
 - **Core skills** (`ainara/orakle/skills/`) must be universally useful: *would
   virtually every user expect it to just work on first run?* If not, it
   belongs in the curated optional registry or the user's own directory.
@@ -59,7 +56,7 @@ before proposing changes that cut against them.
   that → Nexus.
 
 ### Skill conventions
-- One skill = one `.py` + one `SKILL.md` (agentskills.io front-matter),
+- One skill = one `.py` + OPTIONALLY one `SKILL.md` (agentskills.io front-matter),
   structured returns (`{"success": bool, "result"|"error"}`), quality
   `matcher_info` (it drives routing), and all persistent data under
   `get_data_dir()` — never outside it.
@@ -74,6 +71,18 @@ before proposing changes that cut against them.
   the gitignored home for local working notes.
 - GitHub issues are the canonical discussion/decision record; tracked docs
   mirror the agreed state back.
+
+## Branching, PRs & Releases
+
+- Development happens on per-minor-version dev branches named
+  `dev<major><minor>` (e.g. `dev012` hosts all 0.12.x work — 0.12.0,
+  0.12.1, ...); `master` holds the last published state.
+- Contributions go through GitHub pull requests against the current dev
+  branch.
+- Version metadata is only bumped at public release time, so it can lag
+  behind the active dev branch (e.g. the code may still read 0.11 while
+  work happens on `dev012`). Do not "fix" version mismatches across inner
+  references unless explicitly asked.
 
 ## Installing Python+Node Dependencies
 
@@ -142,6 +151,7 @@ There is no unified test runner. Tests are individual scripts:
 bash scripts/nexus_state_check.sh
 
 # Nexus licensing seam + installer protocol gates (offline)
+# (these require the private licensing core — expected to fail from a public checkout)
 python scripts/test_nexus_licensing.py
 python scripts/test_nexus_installer.py
 
@@ -163,6 +173,20 @@ python scripts/other/test_cuda.py
 
 `nexus_state_check.sh` anchors (EXPECT_GITLINK etc.) must be advanced
 with every submodule pin commit — a RED state check blocks further work.
+
+## Linting
+
+Run the linters on any files you modified before finishing:
+
+```bash
+# JavaScript (Polaris, scripts) — flat config in eslint.config.mjs
+npx eslint <changed .js files>
+
+# Python — config in .flake8
+flake8 <changed .py files>
+```
+
+There are no lint npm scripts; invoke the tools directly as shown.
 
 ## Building Standalone Executables
 
@@ -242,7 +266,7 @@ in the real config to test installed copies), and `data.directory`
 
 ### Adding a New User Skill
 
-Skills can be added in `users_skills > directory` (as per ainara.yaml config) without needing to touch the core skills, skills there will be prefixed in the Orakle `/capabilities` endpoint with `user_`. Nexus interfaces (web components) are available for user skills as well.
+Skills can be added in the `user_skills > directory` (as per ainara.yaml config) without needing to touch the core skills, skills there will be prefixed in the Orakle `/capabilities` endpoint with `user_`. Nexus interfaces (web components) are available for user skills as well.
 
 ## Nexus Apps & Subscriptions
 
@@ -254,28 +278,37 @@ manifests. Contracts that must not be broken:
   `<data.directory>/nexus/.apps/<vendor>.<app>/`. Identity (`provider` +
   `name`) is manifest-derived, never directory-derived; first-wins dedup
   across `nexus.dev_apps` → installed apps → primary root.
-- **Identity scheme (byte-identical across implementations — pack.py,
-  nexus_sign.py, framework/nexus_licensing.py)**: canonical JSON (sorted
-  keys, compact separators, `signature` field excluded) signed with the
-  creator's ed25519 Solana key; verified against `manifest.creatorId`.
-  Fail-closed: missing/invalid signature = untrusted.
-- **Licensing**: per-bundle subscriptions only. The closed core
-  (`nexuslicensing.auth_core.NexusSubscriptionCore`, optional import,
-  absent in public checkouts → fail-closed) issues machine-bound,
-  app-bound tokens; Polaris has NO app-level auth (the Supporters
-  Edition and its `/auth/*` endpoints are fully retired). Source runs
-  need `AINARA_NEXUS_LICENSING_PATH` pointing at the closed licensing
-  checkout; packaged builds ship the compiled package.
+- **Identity scheme (byte-identical across implementations —
+  `framework/nexus_licensing.py` and the private packing/signing
+  tools)**: canonical JSON (sorted keys, compact separators,
+  `signature` field excluded) signed with the creator's ed25519 Solana
+  key; verified against `manifest.creatorId`. Fail-closed: missing/invalid
+  signature = untrusted.
+- **Licensing**: per-bundle subscriptions only. The licensing core
+  (`nexuslicensing.auth_core.NexusSubscriptionCore`) is private and
+  closed-source — it is NOT distributed with this repo. The import is
+  optional and absent from public checkouts → fail-closed by design, so
+  licensing-dependent tests and guards cannot run from a public checkout.
+  Packaged builds ship the compiled core; source runs get it via the
+  prebuilt `nexuslicensing` wheel (this repo only carries the installer,
+  `scripts/install_nexus_licensing.py`). README's "Nexus licensing
+  (optional)" section is the canonical, up-to-date reference. Note there
+  is currently no public code for authoring gated Nexus apps. Polaris has
+  NO app-level auth (the Supporters Edition and its `/auth/*` endpoints
+  are fully retired).
 - **Install protocol v0**: `https://<host>/.well-known/nexus-app.json`
   (default TLD `.nexus`), doc self-signed by `creatorId`; installer
   verifies doc identity → artifact sha256 → inner manifest identity →
-  atomic swap. Platform tags match pack.py (`linux-x86_64`, `win-x86_64`,
-  ...), `universal` fallback.
+  atomic swap. Platform tags: `linux-x86_64`, `win-x86_64`, ..., with
+  `universal` fallback.
 - **Pack pipeline** (in each bundle repo): P0 lint → P1 registries →
   P2 stage/augment → **P2a identity signing (unconditional)** → P2b
   guard injection + PyArmor (protected only) → P3 zip → P5 verify.
-  See the bundle repo's `notes/pack_and_install.md`.
-- **Guard contract**: `inject_license_guards.py` (licensing checkout)
-  extracts `_machine_id`, `_derive_key`, `_machine_hash`,
-  `_verify_session_token` + `TOKEN_VERSION`, `KDF_INFO`,
-  `TOKEN_MAX_AGE` from `auth_core.py` — those symbol names are frozen.
+- **Guard contract**: the guard-injection tooling lives in the private
+  authoring/licensing tooling (currently in a closed-source, not distributed yet
+  repo — a temporary arrangement while the Nexus infrastructure
+  matures), NOT in this repo or in any specific Nexus app bundle. It is
+  planned to move into a future "Nexus Developer Toolkit". The contract
+  itself: it extracts `_machine_id`, `_derive_key`, `_machine_hash`,
+  `_verify_session_token` + `TOKEN_VERSION`, `KDF_INFO`, `TOKEN_MAX_AGE`
+  from `auth_core.py` — those symbol names are frozen.

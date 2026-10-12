@@ -103,6 +103,19 @@ class ChatDisplayWindow extends BaseWindow {
         this.loadContent('./components/chat-display.html');
         this.setupEventHandlers();
         this.isTypingMode = false;
+        this.pendingRestore = false;
+
+        // #19: background STT/LLM completion must not pop this window up
+        // on its own while the application is hidden (user switched to
+        // another app mid-processing). Content keeps landing in the hidden
+        // renderer; the next visibility restore (F1, tray click, ...)
+        // surfaces it with everything the user missed while away.
+        this.manager.on('visibility-changed', (state) => {
+            if (state === 'active' && this.pendingRestore) {
+                this.pendingRestore = false;
+                this.restoreAfterBackgroundWork();
+            }
+        });
 
         this.window.webContents.on('did-finish-load', () => {
             Logger.log('ChatDisplayWindow: Window finished loading');
@@ -124,6 +137,35 @@ class ChatDisplayWindow extends BaseWindow {
             //     }
             // }, 1000);
         });
+    }
+
+    /**
+     * Show the window only if the application is visible; otherwise defer.
+     * (#19) STT/LLM completion while the user has abandoned the application
+     * must not surface this window alone, without the ComRing. The next
+     * visibility restore handles the deferred reveal.
+     */
+    showOrDefer() {
+        if (this.manager && !this.manager.isAnyVisible()) {
+            this.pendingRestore = true;
+            return;
+        }
+        this.show();
+    }
+
+    /**
+     * Deferred reveal on return (#19): the app comes back with everything
+     * that landed while the user was away already in the transcript.
+     * Focus goes to this window only when the user has a review decision
+     * pending (typing mode); otherwise the default restore focus (comRing,
+     * next question ready) applies — matching the uninterrupted flow.
+     */
+    restoreAfterBackgroundWork() {
+        this.show();
+        if (this.isTypingMode) {
+            this.window.focus();
+            this.send('focus-pending-input');
+        }
     }
 
     setupEventHandlers() {
@@ -185,10 +227,8 @@ class ChatDisplayWindow extends BaseWindow {
 
         ipcMain.on('llm-stream', (event, text) => {
             Logger.log('ChatDisplayWindow: Chat response received:', JSON.stringify(text));
-            // Ensure window is visible
-            if (!this.window.isVisible()) {
-                this.show();
-            }
+            // Ensure window is visible (deferred if the app is hidden)
+            this.showOrDefer();
             this.window.webContents.send('add-ai-message', text);
             Logger.log('ChatDisplayWindow: AI message forwarded to chat display');
         });
@@ -203,16 +243,30 @@ class ChatDisplayWindow extends BaseWindow {
 
         ipcMain.on('typing-key-pressed', (event, key) => {
             Logger.log('ChatDisplayWindow: Typing key received:', key);
-            if (!this.window.isVisible()) {
-                this.show();
-            }
+            this.showOrDefer();
             this.window.webContents.send('typing-key-pressed', key);
+        });
+
+        // #19 item 7: the ChatDisplay renderer stashed a draft into its
+        // input history on hide. Relay to the ring, which owns the
+        // transient hint UI. ui.educationalHints is the single switch for
+        // educative reminders — expert users can silence them all here.
+        ipcMain.on('draft-stashed', () => {
+            if (!this.config.get('ui.educationalHints', true)) {
+                return;
+            }
+            const comRing = this.manager.getWindow('comRing');
+            if (comRing) {
+                comRing.window.webContents.send('draft-stashed');
+            }
         });
 
         ipcMain.on('focus-chat-display', () => {
             Logger.log('ChatDisplayWindow: Focusing window');
-            this.show();
-            this.window.focus();
+            this.showOrDefer();
+            if (this.window.isVisible()) {
+                this.window.focus();
+            }
         });
 
         // Add handlers for animation events

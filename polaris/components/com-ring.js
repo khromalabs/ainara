@@ -94,12 +94,19 @@ class ComRing extends BaseComponent {
             };
             this.isWindowVisible = false;
             this.isProcessingUserMessage = false;
+            // #19 item 7: a ChatDisplay draft was stashed into the input
+            // history (relayed via main, gated by ui.educationalHints);
+            // consumed by showDraftRecoveryHint() on the next window-show.
+            this.hasStashedDraft = false;
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
             this.currentView = 'ring';
             this.docFormat = 'text';
             this.navigatingHistory = false;
             this.isLLMStreaming = false;
+            // Long-recording transcription hint (#19)
+            this.recordingStartedAt = null;
+            this.transcriptionHintActive = false;
 
             this.state = {
                 keyPressed: false,
@@ -328,10 +335,21 @@ class ComRing extends BaseComponent {
             return;
         }
 
+        // Main-process force-stop for missed keyup events (see #19 item 5):
+        // ComRingWindow polls the OS key state while recording and sends this
+        // when the physical key is up but no keyup event arrived.
+        ipcRenderer.on('stopRecording', () => {
+            if (this.state.isRecording) {
+                console.log('ComRing: Received stopRecording (forced by key watch)');
+                this.stopRecording();
+            }
+        });
+
         // Add window visibility listeners
         ipcRenderer.on('window-show', async () => {
             console.log('ComRing: Received window-show event');
             this.isWindowVisible = true;
+            this.showDraftRecoveryHint();
             console.log('window-show: isWindowVisible true');
             var backendConfig;
             try {
@@ -446,6 +464,11 @@ class ComRing extends BaseComponent {
             //     // auto shrink if on chat-history mode
             //     this.switchToRingView();
             // }
+        });
+
+        // #19 item 7: the ChatDisplay renderer stashed a draft on hide
+        ipcRenderer.on('draft-stashed', () => {
+            this.hasStashedDraft = true;
         });
 
         ipcRenderer.on('not-on-animation', () => {
@@ -878,6 +901,7 @@ class ComRing extends BaseComponent {
 
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (result) => {
+            this.clearTranscribingHint();
             if (this.isProcessingUserMessage) {
                 console.log("setupTranscriptionHandler: isProcessingUserMessage=true, avoiding concurrent entry");
                 return;
@@ -1089,6 +1113,7 @@ class ComRing extends BaseComponent {
 
         this.ignoreIncomingEvents = false;
         this.state.isRecording = true;
+        this.recordingStartedAt = Date.now();
         this.state.isAwaitingResponse = false;
         this.silenceStartTimestamp = null; // Reset VAD
 
@@ -1115,6 +1140,7 @@ class ComRing extends BaseComponent {
                 // Send to STT (Passive Mode)
                 try {
                     const result = await this.stt.transcribe(audioBlob);
+                    this.clearTranscribingHint();
 
                     // [MODIFIED] Handle both object (new) and string (legacy) formats
                     let text = '';
@@ -1147,6 +1173,7 @@ class ComRing extends BaseComponent {
                     }
                 } catch (e) {
                     console.error('Transcription failed:', e);
+                    this.clearTranscribingHint();
                     this.showInfo('Transcription failed', true);
                     // Error - reset state
                     this.state.isAwaitingResponse = false;
@@ -1168,6 +1195,16 @@ class ComRing extends BaseComponent {
     }
 
     async enterTypingMode() {
+        // If a recording is still in flight (e.g. a previous transcription
+        // result opened review mode while the user had already started a
+        // second recording), stop the capture first: once focus moves to the
+        // ChatDisplay window, Space keyup events no longer reach this window
+        // and the recording would stay stuck. Stopping here preserves the
+        // audio captured so far and sends it through the normal STT flow.
+        if (this.state.isRecording) {
+            console.log('enterTypingMode: recording in flight - stopping capture first');
+            this.stopRecording();
+        }
         this.text = "";
         // Set state in window
         await ipcRenderer.invoke('set-typing-mode-state', true);
@@ -1301,6 +1338,7 @@ class ComRing extends BaseComponent {
         this.circle.classList.add('awaiting');
 
         this.state.isAwaitingResponse = true;
+        this.maybeShowTranscribingHint();
         this.innerCircle.style.opacity = 0;
 
         // Resume Wake Word Listening state (if enabled)
@@ -1738,6 +1776,63 @@ Visit our project site at: https://ainara.app
         this.ringContainer.classList.remove('document-view');
         ipcRenderer.send('set-view-mode', { view: 'ring', fixMouse: false });
         this.documentView.hide();
+    }
+
+    /**
+     * Long-recording progress hint (#19).
+     *
+     * STT is normally near-instant, so per-transcription progress chrome
+     * would be pure noise. But for long recordings the user stares at the
+     * 'awaiting' ring with no signal that anything is happening. Show a
+     * transient 'Transcribing…' status only when the recording exceeded
+     * stt.transcriptionHintAfterSec, held until the result lands.
+     */
+    maybeShowTranscribingHint() {
+        const startedAt = this.recordingStartedAt;
+        this.recordingStartedAt = null;
+        if (!startedAt) return;
+        const thresholdSec = this.config.get('stt.transcriptionHintAfterSec', 5);
+        if ((Date.now() - startedAt) / 1000 < thresholdSec) return;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        sttStatus.textContent = 'Transcribing…';
+        sttStatus.classList.add('active');
+        this.transcriptionHintActive = true;
+    }
+
+    clearTranscribingHint() {
+        if (!this.transcriptionHintActive) return;
+        this.transcriptionHintActive = false;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        sttStatus.classList.remove('active');
+        sttStatus.textContent = '';
+        this.updateIdleStatus();
+    }
+
+    /**
+     * Transient educative hint for stashed drafts (#19 item 7).
+     *
+     * The draft is NOT destroyed on blur — the hide handler pushes it into
+     * the input history and ↑ recovers it — but that recovery is
+     * undiscoverable: the user returns to an empty input and reasonably
+     * believes the recording is lost. Educate at the moment of need: when
+     * the UI comes back with a stashed draft pending, flash a soft hint
+     * that fades after a couple of seconds. Shown once per stash, only
+     * when there is something to recover — no standing chrome.
+     */
+    showDraftRecoveryHint() {
+        if (!this.hasStashedDraft) return;
+        this.hasStashedDraft = false;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        sttStatus.textContent = 'Hint: Up Arrow key recovers previous text';
+        sttStatus.classList.add('active');
+        setTimeout(() => {
+            sttStatus.classList.remove('active');
+            sttStatus.textContent = '';
+            this.updateIdleStatus();
+        }, 3000);
     }
 
     abortLLMResponse() {

@@ -209,10 +209,6 @@ wheels) lists the current version and per-file sha256; the installer
 verifies it before installing, so a manually downloaded wheel should be
 checked against it too.
 
-Developers authoring gated bundles use a private licensing checkout
-instead, pointed at via `AINARA_NEXUS_LICENSING_PATH` — not needed by
-end users, and not required by packaged builds.
-
 This framework is expected to fold into a future "Nexus Developer
 Toolkit"; until then it is distributed as-is via the wheel above.
 
@@ -264,7 +260,7 @@ This will:
 - `npm run setup` bootstraps the full source-run environment (Python venv + Node dependencies).
 - `npm start` boots the app in source mode; `npm run start:bundle` uses the packaged executables.
 - There is no unified test runner; tests are individual scripts (`scripts/test_*.py`, `scripts/evaluation/tests/`, `bash scripts/nexus_state_check.sh`).
-- `CLAUDE.md` contains additional references for developers and AI agents working on the framework (architecture conventions, Nexus contracts, adding skills).
+- `AGENTS.md` contains additional references for developers and AI agents working on the framework (architecture conventions, Nexus contracts, adding skills).
 
 ## The Nexus platform
 
