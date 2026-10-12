@@ -1797,7 +1797,7 @@ Visit our project site at: https://ainara.app
         this.hasStashedDraft = false;
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
         if (!sttStatus) return;
-        sttStatus.textContent = 'Hint: Up arrow key to recover text';
+        sttStatus.textContent = 'Hint: Press up arrow key to recover text';
         sttStatus.classList.add('active');
         setTimeout(() => {
             sttStatus.classList.remove('active');
