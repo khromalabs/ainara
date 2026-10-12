@@ -364,6 +364,17 @@ async function appFirstInitializationTasks() {
             const comRing = windowManager.getWindow('comRing');
             setTimeout(() => {
                 if (comRing) {
+                    // Deferred background work (#19): when a review decision
+                    // is pending (typing mode restored while the app was
+                    // hidden), the ChatDisplay keeps the system focus — the
+                    // user must see the cursor blinking ready to send or
+                    // edit. Refocusing the ring here would leave the app
+                    // keyboard-dead on that surface.
+                    const chatDisplay = windowManager.getWindow('chatDisplay');
+                    if (chatDisplay && chatDisplay.isTypingMode) {
+                        chatDisplay.window.focus();
+                        return;
+                    }
                     if(firstTimeShow) {
                         // ugly hack to force focus
                         comRing.minimize();
