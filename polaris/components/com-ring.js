@@ -1797,13 +1797,13 @@ Visit our project site at: https://ainara.app
         this.hasStashedDraft = false;
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
         if (!sttStatus) return;
-        sttStatus.textContent = 'Hint: press the Up arrow key to recover the previous text';
+        sttStatus.textContent = 'Hint: Up Arrow key recovers previous text';
         sttStatus.classList.add('active');
         setTimeout(() => {
             sttStatus.classList.remove('active');
             sttStatus.textContent = '';
             this.updateIdleStatus();
-        }, 4000);
+        }, 3000);
     }
 
     abortLLMResponse() {
