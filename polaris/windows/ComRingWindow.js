@@ -97,6 +97,10 @@ class ComRingWindow extends BaseWindow {
         });
 
         ipcMain.on('ptt-start', async () => {
+            // Arm the OS key-state watcher (#19 item 5): if Electron drops
+            // the Space keyup, this is what forces the release. The paired
+            // stop happens in the 'ptt-stop' handler / beforeHide.
+            this.startPTTKeyWatch();
             if (this.config.get('stt.lowerVolume', true)) {
                 try {
                     this.originalVolume = await loudness.getVolume();
