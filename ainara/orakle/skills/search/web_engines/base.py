@@ -37,8 +37,20 @@ class SearchResult:
         self.author = None
         self.image_url = None
 
+        # Engine-defined structured metadata for vertical results (e.g. a
+        # jobs engine might use keys like "company", "salary_min",
+        # "salary_max", "salary_currency", "location", "tags"; a real
+        # estate engine completely different ones). The base class stays
+        # topic-agnostic: key names, semantics and formatting belong to
+        # each engine, and consumers must treat unknown keys as opaque.
+        # Engines that populate this should also surface the relevant
+        # details in ``snippet`` (human-readable) so the context reaches
+        # LLM fusion and response synthesis. Included in to_dict() only
+        # when non-empty.
+        self.metadata: Dict[str, Any] = {}
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "title": self.title,
             "url": self.link,
             "snippet": self.snippet,
@@ -46,8 +58,14 @@ class SearchResult:
             "relevance_score": self.relevance_score,
             "published_date": self.published_date,
             "author": self.author,
-            "image_url": self.image_url
+            "image_url": self.image_url,
         }
+        # Engine-defined metadata is only included when non-empty; it is
+        # copied so callers cannot mutate the result's state through the
+        # dict returned by to_dict()
+        if self.metadata:
+            result["metadata"] = dict(self.metadata)
+        return result
 
 
 class SearchEngineBase(ABC):
