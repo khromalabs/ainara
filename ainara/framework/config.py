@@ -21,6 +21,7 @@ import inspect
 import logging
 import os
 import platform
+import re
 import shutil
 import sys
 import time
@@ -52,6 +53,20 @@ def nexus_prefix_from_module_name(module_name: str) -> str:
             rel = module_name[len(module_prefix):]
             return config_prefix + rel if rel else config_prefix
     return ""
+
+def nexus_app_id_from_module_name(module_name: str) -> Optional[str]:
+    """Return the ``vendor.bundle`` app id for a Nexus module, or None.
+
+    Nexus app code is registered under the namespace
+    ``ainara.nexus.<vendor>.<bundle>`` (see
+    ``register_bundle_namespace``), so any module inside an app carries
+    its manifest-derived identity in its import name.
+    """
+    parts = module_name.split(".")
+    if len(parts) >= 4 and parts[0] == "ainara" and parts[1] == "nexus":
+        return f"{parts[2]}.{parts[3]}"
+    return None
+
 
 def _get_caller_nexus_prefix() -> str:
     """Walk the stack to find the first Nexus module and derive its prefix."""
@@ -285,6 +300,55 @@ class ConfigManager:
         # Ensure the directory exists
         os.makedirs(data_dir, exist_ok=True)
         return data_dir
+
+    def get_nexus_app_data_dir(self, app_id: Optional[str] = None) -> Optional[Path]:
+        """Return the standard per-app data directory for a Nexus app.
+
+        Layout: ``<data.directory>/nexus/.data/<vendor>.<bundle>/``
+
+        Mirrors the code-side layout (installed bundles live under
+        ``<data.directory>/nexus/.apps/<app_id>``): the identifier is the
+        manifest-derived ``vendor.bundle`` pair, and the directory is a
+        sibling of ``.apps`` so user data survives app updates,
+        reinstalls and uninstalls (the updater atomically swaps code
+        bundle directories, never data ones).
+
+        Resolution order:
+          1. Explicit ``app_id`` (``"vendor.bundle"``).
+          2. Caller introspection: the first stack frame whose module
+             belongs to a registered Nexus app (same mechanism as
+             ``_get_caller_nexus_prefix``).
+
+        Returns None when no identity can be resolved (call from outside
+        any Nexus app): callers decide how to degrade, this method never
+        raises for a missing identity. Invalid ids raise ValueError.
+
+        Uses unscoped config access internally: Nexus modules are
+        forbidden from ``get()``/``set()`` for scoped keys, and this
+        must work when called from inside an app.
+        """
+        if app_id is None:
+            frame = inspect.currentframe()
+            try:
+                caller = frame.f_back
+                while caller:
+                    module_name = caller.f_globals.get("__name__", "")
+                    app_id = nexus_app_id_from_module_name(module_name)
+                    if app_id:
+                        break
+                    caller = caller.f_back
+            finally:
+                del frame
+        if not app_id:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", app_id):
+            raise ValueError(
+                f"Invalid Nexus app id: {app_id!r} (expected 'vendor.bundle')"
+            )
+        base = self._get_unscoped("data.directory") or self.get_default_data_dir()
+        app_dir = Path(str(base)) / "nexus" / ".data" / app_id
+        app_dir.mkdir(parents=True, exist_ok=True)
+        return app_dir
 
     def _get_config_template_path(self):
         """Get the path to the default configuration template"""
@@ -937,3 +1001,15 @@ def get_data_dir() -> Path:
     unset (e.g. before a config file has been written).
     """
     return Path(config.get("data.directory") or config.get_default_data_dir())
+
+
+def get_nexus_app_data_dir(app_id: Optional[str] = None) -> Optional[Path]:
+    """Return the standard per-app data directory for a Nexus app.
+
+    Convenience mirror of :func:`get_data_dir` for Nexus apps; see
+    :meth:`ConfigManager.get_nexus_app_data_dir` for the layout and
+    identity resolution rules. Note that unlike :func:`get_data_dir`,
+    this is safe to call from inside Nexus modules (it does not go
+    through the scoped-config guard).
+    """
+    return config.get_nexus_app_data_dir(app_id)
