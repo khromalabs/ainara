@@ -153,11 +153,12 @@ class SearchWeb(Skill):
     def _update_docstring(self):
         """Dynamically update the class docstring with available engines"""
         if not self.engines:
-            self.__doc__ = (
+            doc = (
                 "Search the internet for information about any topic, product,"
                 " news, current events, or factual questions. No search"
                 " engines are currently configured."
             )
+            type(self).__doc__ = doc
             return
 
         # Get list of available engines
@@ -189,7 +190,10 @@ class SearchWeb(Skill):
                 f" {specialty} search (optimized for"
                 f" {', '.join(engines_list)})."
             )
-        self.__doc__ = doc
+        # Set on the class so the dynamic specialties advertise through
+        # ``instance.__class__.__doc__`` during capability discovery (an
+        # instance-attribute assignment would only shadow it)
+        type(self).__doc__ = doc
 
     def _update_search_type_contract(self):
         """Derive the valid search types from the live engine pool.
