@@ -35,6 +35,19 @@ logger = logging.getLogger(__name__)
 class SearchWeb(Skill):
     """Search the internet for information about any topic or product or news or current events or just anything not present in your built-in knowledge."""
 
+    # Search types that are always valid regardless of the engine pool;
+    # any additional type declared as a specialty by an initialized engine
+    # (core or contributed) is appended dynamically (see
+    # ``_update_search_type_contract``).
+    CORE_SEARCH_TYPES = [
+        "comprehensive",
+        "academic",
+        "recent",
+        "exploratory",
+        "news",
+        "crypto",
+    ]
+
     if not config.get("apis.search"):
         hiddenCapability = True
         # embeddings factor 3 makes the skill always selected, avoid if it
@@ -56,7 +69,10 @@ class SearchWeb(Skill):
     def __init__(self):
         super().__init__()
         self.engines = {}
+        self.engine_specialties = {}
+        self.valid_search_types = list(self.CORE_SEARCH_TYPES)
         self._initialize_engines()
+        self._update_search_type_contract()
         self.llm = None
 
         # Update docstring with available engines
@@ -73,55 +89,46 @@ class SearchWeb(Skill):
         # Discover all available engine implementations
         engine_classes = discover_engines()
 
-        # Initialize each discovered engine if configured
+        # Initialize each discovered engine
         for engine_name, engine_class in engine_classes.items():
             engine_config = search_config.get(engine_name, {})
 
-            # SearXNG is keyless and opt-in: it only joins the engine pool
-            # when the user configured a base_url (empty/missing = engine
-            # disabled).
-            if engine_name == "searxng":
-                base_url = (engine_config.get("base_url") or "").strip()
-                if not base_url:
-                    logger.info(
-                        "SearXNG search engine disabled: no base_url"
-                        " configured"
-                    )
-                    continue
-                try:
-                    self.engines[engine_name] = engine_class(
-                        base_url=base_url,
-                        api_key=engine_config.get("api_key"),
-                        category_map=engine_config.get("category_map"),
-                    )
-                    logger.info("SearXNG search engine initialized")
-                except Exception as e:
-                    logger.error(
-                        f"Failed to initialize {engine_name} search: {str(e)}"
-                    )
+            try:
+                if engine_class.REQUIRES_API_KEY:
+                    # Keyed engine: only instantiate when a key is present.
+                    # Google is the current exception needing a second
+                    # credential (cx).
+                    api_key = engine_config.get("api_key")
+                    if not api_key:
+                        continue
+                    if engine_name == "google":
+                        cx = engine_config.get("cx")
+                        if not cx:
+                            continue
+                        instance = engine_class(api_key, cx)
+                    else:
+                        instance = engine_class(api_key)
+                else:
+                    # Keyless engine: instantiated from its (possibly
+                    # empty) config section; the engine itself decides
+                    # through ``is_available`` whether that configuration
+                    # is sufficient (e.g. SearXNG requires a base_url).
+                    instance = engine_class(**engine_config)
+            except Exception as e:
+                logger.error(
+                    f"Failed to initialize {engine_name} search: {str(e)}"
+                )
                 continue
 
-            # Check if this engine has an API key configured
-            if api_key := engine_config.get("api_key"):
-                try:
-                    # Handle special case for Google which needs both api_key and cx
-                    if engine_name == "google":
-                        if cx := engine_config.get("cx"):
-                            self.engines[engine_name] = engine_class(
-                                api_key, cx
-                            )
-                            logger.info("Google search engine initialized")
-                    else:
-                        # For other engines, just pass the API key
-                        self.engines[engine_name] = engine_class(api_key)
-                        logger.info(
-                            f"{engine_name.capitalize()} search engine"
-                            " initialized"
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to initialize {engine_name} search: {str(e)}"
-                    )
+            if not instance.is_available:
+                logger.info(
+                    f"{engine_name} search engine disabled: configuration"
+                    " incomplete"
+                )
+                continue
+
+            self.engines[engine_name] = instance
+            logger.info(f"{engine_name.capitalize()} search engine initialized")
 
         if not self.engines:
             logger.warning(
@@ -162,34 +169,43 @@ class SearchWeb(Skill):
         )
 
         # Add search type specialties
-        if "news" in search_types:
-            news_engines = ", ".join(search_types["news"])
+        # Add search type specialties. Every type with specialized engines
+        # is advertised, including dynamically contributed ones (e.g. a
+        # vertical engine declaring "jobs")
+        for specialty, engines_list in search_types.items():
             doc += (
-                " Use search_type='news' for specialized news search"
-                f" (optimized for {news_engines})."
-            )
-
-        if "academic" in search_types:
-            academic_engines = ", ".join(search_types["academic"])
-            doc += (
-                " Use search_type='academic' for academic research (optimized"
-                f" for {academic_engines})."
-            )
-
-        if "exploratory" in search_types:
-            exploratory_engines = ", ".join(search_types["exploratory"])
-            doc += (
-                " Use search_type='exploratory' for exploratory searches"
-                f" (optimized for {exploratory_engines})."
-            )
-
-        if "crypto" in search_types:
-            crypto_engines = ", ".join(search_types["crypto"])
-            doc += (
-                " Use search_type='crypto' for exploratory searches"
-                f" (optimized for {crypto_engines})."
+                f" Use search_type='{specialty}' for specialized"
+                f" {specialty} search (optimized for"
+                f" {', '.join(engines_list)})."
             )
         self.__doc__ = doc
+
+    def _update_search_type_contract(self):
+        """Derive the valid search types from the live engine pool.
+
+        Core search types (``CORE_SEARCH_TYPES``) are always accepted; any
+        additional type declared as a specialty by an initialized engine is
+        appended. The ``run()`` ``search_type`` annotation is rebuilt
+        accordingly: capability schemas are generated at discovery time via
+        ``get_type_hints`` (after instantiation), so the dynamic type set
+        propagates to the LLM-facing tool schema. If the annotation rebuild
+        fails, the static fallback annotation remains in place and runtime
+        validation below still applies.
+        """
+        self.valid_search_types = list(self.CORE_SEARCH_TYPES)
+        for specialty in self.engine_specialties:
+            if specialty not in self.valid_search_types:
+                self.valid_search_types.append(specialty)
+
+        try:
+            self.run.__func__.__annotations__["search_type"] = Annotated[
+                Literal[tuple(self.valid_search_types)],
+                "Type of search to perform or best fitting topic",
+            ]
+        except Exception as e:
+            logger.warning(
+                f"Could not rebuild dynamic search_type annotation: {e}"
+            )
 
     def _collect_engine_specialties(self):
         """
@@ -251,16 +267,9 @@ class SearchWeb(Skill):
         # TODO disabled llm weights by now
         # self.llm = create_llm_backend(config.get("llm", {}))
 
-        # Validate search type
-        valid_search_types = [
-            "comprehensive",
-            "academic",
-            "recent",
-            "exploratory",
-            "news",
-            "crypto"
-        ]
-        if search_type not in valid_search_types:
+        # Validate search type against the dynamic set derived from the
+        # engine pool (core types + engine-declared specialties)
+        if search_type not in self.valid_search_types:
             search_type = "comprehensive"
 
         # Handle engine parameter - convert to list if it's a string
