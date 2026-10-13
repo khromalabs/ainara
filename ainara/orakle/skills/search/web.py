@@ -252,7 +252,16 @@ class SearchWeb(Skill):
         everything. If nothing survives the filter (e.g. a pool made only
         of vertical engines queried with a generic type), the full list is
         returned so the search still produces results.
+
+        Vertical search types (declared as a specialty by at least one
+        engine and not part of CORE_SEARCH_TYPES) are exclusive: engines
+        that do not declare the type are skipped, so a "jobs" query is not
+        diluted with general web results from generic engines.
         """
+        vertical = (
+            search_type not in self.CORE_SEARCH_TYPES
+            and bool(self.engine_specialties.get(search_type))
+        )
         selected = []
         for name in engines:
             mode = getattr(self.engines[name], "PARTICIPATION", "weighted")
@@ -274,6 +283,15 @@ class SearchWeb(Skill):
                     f"Engine '{name}' declares unknown participation mode"
                     f" '{mode}'; treating as 'weighted'"
                 )
+            if vertical and (
+                search_type
+                not in self.engines[name].get_search_type_specialties()
+            ):
+                logger.debug(
+                    f"Engine '{name}' skipped: '{search_type}' is a vertical"
+                    " search type it does not declare"
+                )
+                continue
             selected.append(name)
 
         if not selected and engines:
