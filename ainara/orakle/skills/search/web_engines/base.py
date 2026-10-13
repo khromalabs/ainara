@@ -18,7 +18,7 @@
 
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 
 class SearchResult:
@@ -52,6 +52,14 @@ class SearchResult:
 
 class SearchEngineBase(ABC):
     """Base class for all search engine implementations"""
+
+    # Whether the engine needs an API key to be usable. Keyless engines set
+    # this to False: SearchWeb then instantiates them from their
+    # ``apis.search.<name>`` config section (possibly empty) and the engine
+    # itself decides through ``is_available`` whether that configuration is
+    # sufficient (an empty/insufficient section = engine disabled). This
+    # replaces the previous hardcoded per-engine special cases.
+    REQUIRES_API_KEY: bool = True
 
     @abstractmethod
     async def search(
