@@ -226,6 +226,49 @@ class SearchWeb(Skill):
 
         logger.debug(f"Engine specialties: {self.engine_specialties}")
 
+    def _apply_participation(
+        self, engines: List[str], search_type: str
+    ) -> List[str]:
+        """Filter an engine list according to each engine's participation
+        mode.
+
+        "specialty" engines only join searches whose search_type matches
+        one of their declared specialties; "weighted" engines join
+        everything. If nothing survives the filter (e.g. a pool made only
+        of vertical engines queried with a generic type), the full list is
+        returned so the search still produces results.
+        """
+        selected = []
+        for name in engines:
+            mode = getattr(self.engines[name], "PARTICIPATION", "weighted")
+            if mode == "specialty":
+                if (
+                    search_type
+                    in self.engines[name].get_search_type_specialties()
+                ):
+                    selected.append(name)
+                else:
+                    logger.debug(
+                        f"Engine '{name}' skipped: participation='specialty'"
+                        f" and search_type='{search_type}' does not match its"
+                        " specialties"
+                    )
+                continue
+            if mode != "weighted":
+                logger.warning(
+                    f"Engine '{name}' declares unknown participation mode"
+                    f" '{mode}'; treating as 'weighted'"
+                )
+            selected.append(name)
+
+        if not selected and engines:
+            logger.info(
+                "No engine participates in search_type="
+                f"'{search_type}'; falling back to the full engine pool"
+            )
+            return list(engines)
+        return selected
+
     async def run(
         self,
         query: Annotated[str, "Search web query string"],
@@ -274,6 +317,9 @@ class SearchWeb(Skill):
 
         # Handle engine parameter - convert to list if it's a string
         engines_to_use = []
+        # Engines explicitly requested by name bypass the participation
+        # policy; pool-based selections do not
+        explicit_request = engine is not None and engine != "meta"
 
         if engine is None or engine == "meta":
             # Use all available engines for meta search
@@ -299,6 +345,17 @@ class SearchWeb(Skill):
                 "No valid engines specified, using all available engines"
             )
             available_engines = list(self.engines.keys())
+            # The fallback is pool-based, so the participation policy below
+            # applies to it even when the request was explicit
+            explicit_request = False
+
+        # Participation policy: "specialty" engines (e.g. vertical ones)
+        # only join searches whose search_type matches their declared
+        # specialties
+        if not explicit_request:
+            available_engines = self._apply_participation(
+                available_engines, search_type
+            )
 
         # Execute search
         try:

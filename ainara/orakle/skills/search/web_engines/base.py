@@ -79,6 +79,17 @@ class SearchEngineBase(ABC):
     # replaces the previous hardcoded per-engine special cases.
     REQUIRES_API_KEY: bool = True
 
+    # Participation mode in SearchWeb's engine pool:
+    #   - "weighted": joins every search, influence scaled by
+    #     get_default_weight(search_type). Default; classic meta-search
+    #     behavior.
+    #   - "specialty": only joins searches whose search_type matches one of
+    #     its get_search_type_specialties() entries (or when explicitly
+    #     requested via the engine parameter). Intended for vertical
+    #     engines (jobs, real estate, ...) that must not run on general
+    #     queries.
+    PARTICIPATION: str = "weighted"
+
     @abstractmethod
     async def search(
         self, query: str, num_results: int = 5, **kwargs
