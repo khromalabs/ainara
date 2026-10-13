@@ -20,6 +20,7 @@
 import asyncio
 import datetime
 import logging
+from pathlib import Path
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from ainara.framework.config import config
@@ -86,8 +87,18 @@ class SearchWeb(Skill):
         """Initialize search engines based on configuration"""
         search_config = config.get("apis.search", {})
 
+        # User-contributed engines live outside the package. They are
+        # regular SearchEngineBase implementations — same contract, same
+        # config convention (apis.search.<module name>) — and join the
+        # pool exactly like core engines (keyless or keyed, with their
+        # declared specialties, participation mode and weights)
+        extra_dirs = []
+        user_engines_dir = config.get("search.web.user_engines_directory")
+        if user_engines_dir:
+            extra_dirs.append(str(Path(user_engines_dir).expanduser()))
+
         # Discover all available engine implementations
-        engine_classes = discover_engines()
+        engine_classes = discover_engines(extra_dirs)
 
         # Initialize each discovered engine
         for engine_name, engine_class in engine_classes.items():

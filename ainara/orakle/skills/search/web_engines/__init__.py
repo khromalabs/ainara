@@ -18,22 +18,113 @@
 
 
 import importlib
+import importlib.util
 import inspect
 import logging
 import os
 import pkgutil
-from typing import Dict, Type
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Type, Union
 
 from .base import SearchEngineBase
 
 logger = logging.getLogger(__name__)
 
 
-def discover_engines() -> Dict[str, Type[SearchEngineBase]]:
+def _collect_engine_classes(
+    module, module_name: str, engines: Dict[str, Type[SearchEngineBase]]
+) -> None:
+    """Register the first SearchEngineBase subclass found in module.
+
+    The engine key is the module name (consistent with core engines).
+    Name collisions are refused with a warning: first source wins (core
+    engines are discovered before user-contributed ones).
     """
-    Dynamically discover all search engine implementations in the web_engines directory
+    for name, obj in inspect.getmembers(module):
+        if (
+            inspect.isclass(obj)
+            and issubclass(obj, SearchEngineBase)
+            and obj != SearchEngineBase
+        ):
+            if module_name in engines:
+                logger.warning(
+                    f"Search engine '{module_name}' already registered;"
+                    f" ignoring duplicate from {module.__name__}"
+                )
+                return
+            engines[module_name] = obj
+            logger.info(f"Discovered search engine: {module_name} -> {name}")
+            return
+
+
+def _discover_engines_in_directory(
+    directory: Path, engines: Dict[str, Type[SearchEngineBase]]
+) -> None:
+    """Discover user-contributed engines in a filesystem directory.
+
+    Each ``*.py`` file is imported as a top-level module after prepending
+    the directory to sys.path. Modules whose name would shadow an existing
+    module (stdlib, installed package or another engine) are refused with
+    a clear error instead of being imported — the same shadowing hazard
+    flagged for user skills in #17's open questions.
     """
-    engines = {}
+    if not directory.is_dir():
+        logger.warning(f"Search engines directory not found: {directory}")
+        return
+
+    for file_path in sorted(directory.glob("*.py")):
+        module_name = file_path.stem
+        if module_name.startswith(("_", ".")):
+            continue
+
+        existing_spec = importlib.util.find_spec(module_name)
+        if existing_spec is not None:
+            existing_origin = os.path.normpath(
+                os.path.abspath(existing_spec.origin or "")
+            )
+            if existing_origin != os.path.normpath(os.path.abspath(file_path)):
+                logger.error(
+                    f"Refusing to load search engine '{file_path}': module"
+                    f" name '{module_name}' would shadow an existing module"
+                    f" ({existing_origin or 'namespace package'}). Rename"
+                    " the file."
+                )
+                continue
+
+        if module_name in engines:
+            logger.warning(
+                f"User search engine '{module_name}' collides with an"
+                " already-registered engine; skipping"
+            )
+            continue
+
+        if str(directory) not in sys.path:
+            sys.path.insert(0, str(directory))
+        try:
+            module = importlib.import_module(module_name)
+            _collect_engine_classes(module, module_name, engines)
+        except Exception as e:
+            logger.error(
+                f"Error loading user search engine module {module_name}:"
+                f" {str(e)}"
+            )
+
+
+def discover_engines(
+    extra_dirs: Optional[List[Union[str, Path]]] = None,
+) -> Dict[str, Type[SearchEngineBase]]:
+    """Dynamically discover all search engine implementations.
+
+    Two sources, in priority order:
+
+    - the built-in ``web_engines`` package (core engines)
+    - each directory in ``extra_dirs`` (user-contributed engines, e.g.
+      ``search.web.user_engines_directory``), imported as top-level
+      modules with the same contract as core engines (subclass
+      SearchEngineBase, config section ``apis.search.<module name>``)
+    """
+    engines: Dict[str, Type[SearchEngineBase]] = {}
     # Get the directory of the current package
     package_dir = os.path.dirname(__file__)
 
@@ -45,16 +136,14 @@ def discover_engines() -> Dict[str, Type[SearchEngineBase]]:
         try:
             # Import the module
             module = importlib.import_module(f".{module_name}", __package__)
-
-            # Find all classes in the module that inherit from SearchEngineBase
-            for name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and
-                        issubclass(obj, SearchEngineBase) and
-                        obj != SearchEngineBase):
-                    # Use the module name as the engine key
-                    engines[module_name] = obj
-                    logger.info(f"Discovered search engine: {module_name} -> {name}")
+            _collect_engine_classes(module, module_name, engines)
         except Exception as e:
-            logger.error(f"Error loading search engine module {module_name}: {str(e)}")
+            logger.error(
+                f"Error loading search engine module {module_name}:"
+                f" {str(e)}"
+            )
+
+    for extra_dir in extra_dirs or []:
+        _discover_engines_in_directory(Path(extra_dir).expanduser(), engines)
 
     return engines
