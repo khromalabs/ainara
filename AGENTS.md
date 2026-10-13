@@ -233,7 +233,16 @@ pyinstaller scripts/pyinstaller/servers.spec
   - `skills/` – Skill plugins organized by category:
     - `code/` – Code intelligence, Neovim integration, parsing
     - `finance/` – Stocks; `nexus/` – Crypto/Solana integrations
-    - `search/` – Google, Perplexity, Tavily, NewsAPI, Metaphor
+    - `search/` – Meta-search (see `docs/meta-search.md`): `SearchWeb`
+      fans queries out to a pluggable engine pool (`search/web_engines/`,
+      one `SearchEngineBase` subclass per module, auto-discovered).
+      Engines are also user-contributable via
+      `search.web.user_engines_directory` (same contract, same config
+      convention `apis.search.<module name>`). Engine-declared
+      specialties become dynamic `search_type` values; vertical types
+      are engine-exclusive. Per-engine settings under
+      `apis.search.<name>`; search.web settings declared in
+      `resources/config.schema.json`.
     - `system/` – File ops, app launcher, clipboard, URL opener
     - `tools/` – Calculator, report generation
     - `messaging/` – Inbox/email
