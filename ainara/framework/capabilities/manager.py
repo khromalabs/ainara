@@ -210,6 +210,45 @@ class CapabilitiesManager:
             f" {num_nexus} Nexus skills)"
         )
 
+        # Engine-provider seam (#22): skills declaring a
+        # search_engine_descriptor are offered to consumer skills via a
+        # duck-typed hook, so no framework code needs to know about
+        # specific skill types
+        self._distribute_engine_providers()
+
+    def _distribute_engine_providers(self):
+        """Offer descriptor-carrying skills to engine-consumer skills.
+
+        Any capability instance exposing ``register_engine_providers``
+        (duck-typed; currently SearchWeb) receives the set of discovered
+        skills that declare a ``search_engine_descriptor``. Consumers
+        decide via their own configuration whether to accept them.
+        """
+        providers = {}
+        for cap_id, cap_data in self.capabilities.items():
+            instance = cap_data.get("instance")
+            if getattr(instance, "search_engine_descriptor", None):
+                providers[cap_id] = instance
+        if not providers:
+            return
+
+        logger.info(
+            f"Found {len(providers)} search-engine provider skill(s):"
+            f" {sorted(providers)}"
+        )
+        for cap_data in self.capabilities.values():
+            instance = cap_data.get("instance")
+            register = getattr(instance, "register_engine_providers", None)
+            if callable(register):
+                try:
+                    register(providers)
+                except Exception as e:
+                    logger.error(
+                        "Failed to register engine providers on"
+                        f" {type(instance).__name__}: {e}",
+                        exc_info=True,
+                    )
+
     def reload_capabilities(self):
         """Reload all capabilities (native skills and MCP tools)."""
         logger.info("Reloading all capabilities...")

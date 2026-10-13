@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
 
 from ainara.framework.config import nexus_prefix_from_module_name
 from ainara.framework.skill_properties import ConfigurablePropertiesMixin
@@ -42,6 +43,22 @@ class Skill(ConfigurablePropertiesMixin, ABC):
     hiddenCapability = False
     embeddings_boost_factor = 1.0
     default_schedule = None
+
+    # Search-engine provider descriptor (optional). Skills declaring it
+    # contribute a search engine to SearchWeb's pool — the adapter that
+    # wraps ``run()`` lives next to the engine base class
+    # (orakle/skills/search/web_engines/_skill_adapter.py); this attribute
+    # only documents the convention and enables generic discovery via
+    # getattr(). Expected shape (validated by the adapter):
+    #
+    #     search_engine_descriptor = {
+    #         "specialties": ["jobs"],       # required, non-empty
+    #         "participation": "specialty",  # "specialty" (default) | "weighted"
+    #         "weight": {"jobs": 1.0},       # optional, per search type
+    #     }
+    #
+    # Contributed engines are opt-in via search.web.contributed_engines.
+    search_engine_descriptor: Optional[Dict[str, Any]] = None
 
     def __init__(self):
         super().__init__()

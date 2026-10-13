@@ -27,6 +27,7 @@ from ainara.framework.skill import Skill
 # from ainara.framework.llm import create_llm_backend
 
 from .web_engines import discover_engines
+from .web_engines._skill_adapter import SkillEngineAdapter
 from .web_engines.base import SearchEngineBase, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class SearchWeb(Skill):
     def __init__(self):
         super().__init__()
         self.engines = {}
+        self.contributed_engines = {}
         self.engine_specialties = {}
         self.valid_search_types = list(self.CORE_SEARCH_TYPES)
         self._initialize_engines()
@@ -77,6 +79,74 @@ class SearchWeb(Skill):
 
         # Update docstring with available engines
         self._update_docstring()
+
+    def register_engine_providers(
+        self, providers: Dict[str, Any]
+    ) -> None:
+        """CapabilitiesManager hook: receive skills declaring a
+        ``search_engine_descriptor`` and adapt them into engine-pool
+        members (see SkillEngineAdapter).
+
+        Contributed engines are strictly opt-in via
+        ``search.web.contributed_engines``: false/missing (default) =
+        none; true = all; list of capability ids = only those. Registration
+        is idempotent (replaces the previous contributed set) and runs
+        after discovery, so the dynamic search-type contract and docstring
+        are refreshed here too.
+        """
+        self.contributed_engines = {}
+        if not providers:
+            return
+
+        opt_in = config.get("search.web.contributed_engines", False)
+        if opt_in is not True and not isinstance(opt_in, list):
+            logger.debug(
+                "Contributed search engines disabled"
+                " (search.web.contributed_engines not enabled)"
+            )
+            return
+        try:
+            timeout = float(
+                config.get("search.web.contributed_engine_timeout", 15)
+            )
+        except (TypeError, ValueError):
+            timeout = 15.0
+
+        for cap_id, skill in providers.items():
+            if opt_in is not True and cap_id not in opt_in:
+                continue
+            if cap_id in self.engines:
+                logger.warning(
+                    f"Contributed engine '{cap_id}' collides with an"
+                    " existing engine; skipping"
+                )
+                continue
+            descriptor = getattr(skill, "search_engine_descriptor", None)
+            try:
+                adapter = SkillEngineAdapter(
+                    skill=skill,
+                    descriptor=descriptor or {},
+                    engine_name=cap_id,
+                    timeout=timeout,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to adapt contributed engine '{cap_id}': {e}"
+                )
+                continue
+            self.engines[cap_id] = adapter
+            self.contributed_engines[cap_id] = adapter
+            logger.info(
+                f"Contributed search engine registered: {cap_id}"
+                f" (specialties: {adapter.get_search_type_specialties()})"
+            )
+
+        if self.contributed_engines:
+            # Refresh the dynamic contract: contributed specialties become
+            # search types and the docstring advertises them
+            self._collect_engine_specialties()
+            self._update_search_type_contract()
+            self._update_docstring()
 
     # def reload(self):
     #     super().reload(config)
