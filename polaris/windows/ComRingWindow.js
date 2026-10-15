@@ -46,11 +46,22 @@ class ComRingWindow extends BaseWindow {
             onBlur: async (window, manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
                 // Don't auto-hide if in typing mode
-                if (window.prefix === 'comRing' &&
-                    window.isVisible() && !chatDisplay.isTypingMode) {
-                    window.window.webContents.send('window-hide');
-                    window.hide();
+                if (window.prefix !== 'comRing' ||
+                    !window.isVisible() || chatDisplay.isTypingMode) {
+                    return;
                 }
+                // Document view (#19 item 1): yield-on-blur is a ring-mode
+                // behavior. In document view the window stays up (the user may
+                // be comparing against another app), but an in-flight capture
+                // must not survive focus loss (#19 item 5) — do explicitly
+                // what beforeHide would have done, without dissolving.
+                if (window.isDocumentView) {
+                    window.window.webContents.send('stopRecording');
+                    window.stopPTTKeyWatch();
+                    return;
+                }
+                window.window.webContents.send('window-hide');
+                window.hide();
             },
             onFocus: () => {
                 Logger.log('ComRingWindow RECEIVED FOCUS');
@@ -160,6 +171,14 @@ class ComRingWindow extends BaseWindow {
                 this.window.setMinimumSize(400, 300);
                 this.animateBounds({ x: targetX, y: targetY, width: docWidth, height: docHeight }, 400);
                 this.isDocumentView = true;
+
+                // Explicit z-order (#19 item 8): both windows are alwaysOnTop,
+                // so their relative stacking is OS-dependent. Keep the input
+                // bar deterministically above the document surface.
+                const chatDisplay = this.manager.getWindow('chatDisplay');
+                if (chatDisplay) {
+                    chatDisplay.window.moveTop();
+                }
 
             } else if (args.view === 'ring' && this.isDocumentView) {
                 // Restore original size and position
