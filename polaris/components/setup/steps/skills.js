@@ -1379,14 +1379,18 @@ function renderNexusChangesBlock(s, sinceVersion) {
     const label = newer.length
         ? `${n} change(s) available update v${entries[0].version} — click to see more`
         : '';
-    return `
-        <div class="nexus-changes-block">
-            <details class="nexus-changes">
-                <summary>${label}</summary>
-                <pre class="nexus-changes-text">${escapeHtml(text)}</pre>
-            </details>
-        </div>
-    `;
+
+    if(label)
+        return `
+            <div class="nexus-changes-block">
+                <details class="nexus-changes">
+                    <summary>${label}</summary>
+                    <pre class="nexus-changes-text">${escapeHtml(text)}</pre>
+                </details>
+            </div>
+        `;
+    else 
+        return '';
 }
 
 // Best-effort update discovery for installed Nexus apps: resolves each
