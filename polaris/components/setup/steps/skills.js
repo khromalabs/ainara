@@ -17,6 +17,7 @@
 // Lesser General Public License for more details.
 
 const utils = require('../core/utils');
+const { marked } = require('marked');
 
 module.exports = {
     id: 'skills',
@@ -1318,29 +1319,101 @@ function countChangeBullets(text) {
     return String(text || '').split('\n').filter(l => /^\s*[-*]\s+/.test(l)).length;
 }
 
+// Defense-in-depth sanitizer for rendered markdown: CHANGES.md is
+// creator-signed content, but the wizard window must never become an
+// XSS surface — strip script-ish elements, on* handlers and
+// javascript: URLs from the parsed HTML before it enters the DOM.
+function sanitizeMarkdownHtml(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll(
+        'script, style, iframe, object, embed, link, meta, base, form'
+    ).forEach(el => el.remove());
+    tpl.content.querySelectorAll('*').forEach(el => {
+        for (const attr of [...el.attributes]) {
+            const name = attr.name.toLowerCase();
+            if (name.startsWith('on')) el.removeAttribute(attr.name);
+            else if ((name === 'href' || name === 'src') &&
+                     /^\s*javascript:/i.test(attr.value)) {
+                el.removeAttribute(attr.name);
+            }
+        }
+    });
+    return tpl.content;
+}
+
 // Full-history modal for an installed bundle: renders the CHANGES.md
 // served from disk by Pybridge (GET /nexus/app/<vendor>/<app>/changes)
-// in a <pre>, exactly as the creator authored it. Reuses the wizard's
-// .modal-overlay pattern from setup.css; self-contained styling on the
-// <pre> so the modal does not depend on step-scoped styles. Closes on
-// ×, backdrop click or Escape.
-function openNexusChangelogModal(vendor, app, data) {
+// as GitHub-style markdown (marked, already a dependency), sanitized
+// before insertion. Reuses the wizard's .modal-overlay pattern from
+// setup.css; markdown styles are scoped inside the overlay so the modal
+// does not depend on step-scoped styles. Closes on ×, backdrop click or
+// Escape; markdown links open in the user's browser via open-external.
+function openNexusChangelogModal(vendor, app, data, openExternal) {
     document.querySelectorAll('.nexus-changes-modal').forEach(m => m.remove());
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay nexus-changes-modal';
     const title = `${capitalize(app)} — Changelog` +
         (data.version ? ` (v${data.version})` : '');
     overlay.innerHTML = `
+        <style>
+            .nexus-changelog-md h1,
+            .nexus-changelog-md h2 {
+                border-bottom: 1px solid #e9ecef;
+                padding-bottom: 0.3em;
+            }
+            .nexus-changelog-md h1 { font-size: 1.3em; }
+            .nexus-changelog-md h2 { font-size: 1.15em; margin-top: 1.2em; }
+            .nexus-changelog-md h3 { font-size: 1.05em; }
+            .nexus-changelog-md p { margin: 0.5em 0; }
+            .nexus-changelog-md ul,
+            .nexus-changelog-md ol { padding-left: 1.5em; margin: 0.5em 0; }
+            .nexus-changelog-md li { margin: 0.25em 0; }
+            .nexus-changelog-md a { color: #007bff; }
+            .nexus-changelog-md code {
+                background: #f0f1f3;
+                border-radius: 3px;
+                font-family: monospace;
+                font-size: 0.9em;
+                padding: 0.1em 0.3em;
+            }
+            .nexus-changelog-md pre {
+                background: #f6f8fa;
+                border-radius: 6px;
+                overflow-x: auto;
+                padding: 10px;
+            }
+            .nexus-changelog-md pre code { background: none; padding: 0; }
+            .nexus-changelog-md blockquote {
+                border-left: 3px solid #ddd;
+                color: #666;
+                margin: 0.5em 0;
+                padding: 0.1em 1em;
+            }
+            .nexus-changelog-md hr {
+                border: none;
+                border-top: 1px solid #e9ecef;
+                margin: 1em 0;
+            }
+        </style>
         <div class="modal-content">
             <div class="modal-header">
                 <h2>${escapeHtml(title)}</h2>
                 <button type="button" class="close-modal-btn" aria-label="Close">×</button>
             </div>
-            <div class="modal-body">
-                <pre style="margin:0;background:#f8f9fa;border:1px solid #e9ecef;border-radius:6px;padding:12px;white-space:pre-wrap;word-wrap:break-word;font-family:monospace;font-size:0.85em;color:#444;">${escapeHtml(data.content || '')}</pre>
-            </div>
+            <div class="modal-body nexus-changelog-md"></div>
         </div>
     `;
+    const bodyEl = overlay.querySelector('.modal-body');
+    bodyEl.appendChild(
+        sanitizeMarkdownHtml(marked.parse(String(data.content || ''))));
+    bodyEl.addEventListener('click', (e) => {
+        const link = e.target.closest('a[href]');
+        if (link) {
+            e.preventDefault();
+            openExternal(link.href);
+        }
+    });
     const close = () => overlay.remove();
     overlay.querySelector('.close-modal-btn').addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
@@ -1694,7 +1767,7 @@ function setupNexusLifecycleListeners(ctx) {
                         alert(data.message || 'Changelog unavailable.');
                         return;
                     }
-                    openNexusChangelogModal(vendor, app, data);
+                    openNexusChangelogModal(vendor, app, data, openExternal);
                 } catch (err) {
                     alert('Changelog unavailable: ' + err.message);
                 }
