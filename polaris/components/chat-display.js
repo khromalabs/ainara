@@ -34,6 +34,10 @@ class ChatDisplay extends BaseComponent {
         this.inputHandler = this.autoResizeTextArea.bind(this);
         this.messageHistory = [];
         this.historyIndex = 0;
+        // In-progress draft stashed when ArrowUp leaves the end of the
+        // history, restored when ArrowDown returns there (#19): an accidental
+        // ArrowUp while editing a long message must never destroy it.
+        this.stashedDraft = null;
     }
 
     autoResizeTextArea() {
@@ -101,6 +105,7 @@ class ChatDisplay extends BaseComponent {
                 if (text) {
                     this.messageHistory.push(text);
                     this.historyIndex = this.messageHistory.length;
+                    this.stashedDraft = null; // draft became a history entry
                     this.addMessage(text, 1, false);
                     console.log("SENDING process-typed-message");
                     ipcRenderer.send('process-typed-message', text);
@@ -113,6 +118,16 @@ class ChatDisplay extends BaseComponent {
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 if (this.historyIndex > 0) {
+                    // Leaving the draft position (end of history): stash the
+                    // message being edited so it can be restored with
+                    // ArrowDown. Never overwrite the stash with the draft
+                    // currently restored from it, so an accidental edit +
+                    // ArrowUp cannot destroy the original either.
+                    if (this.historyIndex === this.messageHistory.length &&
+                        this.textInput.value &&
+                        this.textInput.value !== this.stashedDraft) {
+                        this.stashedDraft = this.textInput.value;
+                    }
                     this.historyIndex--;
                     this.textInput.value = this.messageHistory[this.historyIndex];
                     this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
@@ -125,8 +140,16 @@ class ChatDisplay extends BaseComponent {
                     if (this.historyIndex < this.messageHistory.length) {
                         this.textInput.value = this.messageHistory[this.historyIndex];
                     } else {
-                        this.textInput.value = '';
+                        // Back at the draft position: restore the message
+                        // that was being edited when ArrowUp was pressed.
+                        this.textInput.value = this.stashedDraft !== null ? this.stashedDraft : '';
                     }
+                    this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
+                    this.autoResizeTextArea();
+                } else if (this.stashedDraft !== null && !this.textInput.value) {
+                    // Already at the draft position with an emptied box:
+                    // ArrowDown brings the draft back.
+                    this.textInput.value = this.stashedDraft;
                     this.textInput.selectionStart = this.textInput.selectionEnd = this.textInput.value.length;
                     this.autoResizeTextArea();
                 }
@@ -151,6 +174,10 @@ class ChatDisplay extends BaseComponent {
         this.typingArea.style.opacity = '0';
         this.textInput.style.display = 'none';
         this.textInput.value = '';
+        // Exiting typing mode is either an explicit send (draft became a
+        // history entry) or an explicit discard (Escape): the stash is not
+        // meant to survive either.
+        this.stashedDraft = null;
         this.autoResizeTextArea();
         this.container.style.marginBottom = '0';
         ipcRenderer.send('exit-typing-mode');
@@ -307,16 +334,28 @@ class ChatDisplay extends BaseComponent {
                 ipcRenderer.on('hide', () => {
                     console.log('ChatDisplay: Saving message in history');
                     const text = this.textInput.value.trim();
-                    if (text) {
+                    // Push only genuinely new drafts: an unmodified recalled
+                    // entry (value === history[historyIndex]) or a value
+                    // identical to the last pushed one must not create
+                    // phantom duplicates in the history (#19).
+                    if (text &&
+                        text !== this.messageHistory[this.historyIndex] &&
+                        text !== this.messageHistory[this.messageHistory.length - 1]) {
                         console.log('ChatDisplay: Saving message in history');
                         this.messageHistory.push(text);
-                        this.historyIndex = this.messageHistory.length;
                         // #19 item 7: let the ring flash the recovery hint
                         // when the UI comes back. Gate lives main-side
                         // (ui.educationalHints) so educative reminders are
-                        // disabled in one place.
+                        // disabled in one place. Only when something new was
+                        // actually stashed.
                         ipcRenderer.send('draft-stashed');
                     }
+                    // The draft lives in history now: start the next session
+                    // with a clean box, anchored at the end, and no stash.
+                    this.historyIndex = this.messageHistory.length;
+                    this.stashedDraft = null;
+                    this.textInput.value = '';
+                    this.autoResizeTextArea();
                 });
 
                 ipcRenderer.on('typing-key-pressed', async (event, key) => {
@@ -329,9 +368,17 @@ class ChatDisplay extends BaseComponent {
                             });
                         } else {
                             this.textInput.value = key;
+                            // Injected text (transcription or first keystroke)
+                            // is a fresh draft at the end of the history:
+                            // re-anchor the navigation index so ArrowUp stashes
+                            // it instead of navigating from a stale position.
+                            // Only for text: arrow keys must keep the position
+                            // the navigation just moved to (#19).
+                            this.historyIndex = this.messageHistory.length;
                         }
                     } else {
                         this.textInput.value += key;
+                        this.historyIndex = this.messageHistory.length;
                     }
                     this.autoResizeTextArea();
                     this.textInput.focus();
