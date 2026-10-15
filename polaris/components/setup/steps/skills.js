@@ -1377,8 +1377,8 @@ function renderNexusChangesBlock(s, sinceVersion) {
     // Update cards show what's new since the installed version; fresh
     // install / up-to-date cards just present the latest version.
     const label = newer.length
-        ? `${n} change(s) available update — click to see more`
-        : `${n} change(s) in v${entries[0].version} — click to see more`;
+        ? `${n} change(s) available update v${entries[0].version} — click to see more`
+        : '';
     return `
         <div class="nexus-changes-block">
             <details class="nexus-changes">
