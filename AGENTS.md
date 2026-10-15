@@ -105,6 +105,31 @@ before proposing changes that cut against them.
   work happens on `dev012`). Do not "fix" version mismatches across inner
   references unless explicitly asked.
 
+### Commit messages
+
+Follow the Linux-kernel convention, not conventional commits: no
+`feat(...)`/`fix(...)`/`chore(...)` type prefixes, no parenthesized
+scopes. Start the subject with the name of the touched subsystem or
+component, followed by a lowercase, imperative summary of the change:
+
+```
+polaris: deterministic ChatDisplay/ComRing z-order in document view
+orakle: vertical search types are engine-exclusive
+```
+
+- Pick the subsystem from the top-level area of the change (`polaris`,
+  `orakle`, `pybridge`, `bureau`, `nexus`, `docs`, `scripts`, ...). For
+  narrowly-scoped changes a finer path-like prefix is fine
+  (`orakle/skills/search: ...`).
+- Subject: ~50 chars when reasonable, no trailing period, imperative
+  mood ("fix", not "fixed"/"fixes").
+- Reference GitHub issues in the subject when applicable (`(... #22)`)
+  or in the body (`Closes #22`).
+- If the body explains *why* rather than *what*, it earns its place;
+  otherwise the subject alone is fine.
+- Do not rewrite or rebase existing commits to this format — it applies
+  to new commits only.
+
 ## Installing Python+Node Dependencies
 
 One-shot, idempotent bootstrap (creates `.venv`, installs Python + Node deps, downloads the Kokoro TTS model files into `resources/tts/models/` (~354 MB; see `scripts/fetch_models.py`), installs `ainara` in editable mode; safe to re-run):
