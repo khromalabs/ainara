@@ -83,6 +83,12 @@ class ComRingWindow extends BaseWindow {
         this.isDocumentView = false;
         this.originalVolume = null;
         this.onAnimation = false;
+        // Session-level backend trust for the PTT key watch (#19 item 5): set
+        // once the OS key-state backend has ever reported the trigger key
+        // down. From then on an "up" report is trusted even within a
+        // recording that never showed a down (e.g. the key was released
+        // before the first poll after a fast tap).
+        this.pttKeyWatchTrusted = false;
     }
 
     setupEventHandlers() {
@@ -224,11 +230,19 @@ class ComRingWindow extends BaseWindow {
      * trusting the event stream, it samples the physical key state and forces
      * a stop when the OS reports the key up.
      *
-     * The watcher must first "arm" by observing the key down at least once:
-     * if the platform backend cannot actually see the key (e.g. XWayland not
-     * seeing native Wayland clients, unmapped key), it never trusts a "no"
-     * answer and degrades to the pre-existing event-only behavior instead of
-     * force-stopping valid recordings.
+     * The watcher "arms" either immediately (the renderer only sends
+     * 'ptt-start' in response to a physical keydown, so the key is down *now*
+     * - an immediate first poll confirms it) or on the first poll that
+     * observes the key down. If the platform backend cannot actually see the
+     * key (e.g. XWayland not seeing native Wayland clients, unmapped key), it
+     * never trusts a "no" answer and degrades to the pre-existing event-only
+     * behavior instead of force-stopping valid recordings. However, once the
+     * backend has proven it can see the trigger key at any point in this
+     * session (pttKeyWatchTrusted), an "up" report is trusted even if this
+     * particular recording never showed a down - that means the key was
+     * released before the first poll (fast tap, delayed start), and if the
+     * recording is still going the keyup event was dropped and the force-stop
+     * is exactly what is needed.
      */
     startPTTKeyWatch() {
         this.stopPTTKeyWatch();
@@ -240,9 +254,13 @@ class ComRingWindow extends BaseWindow {
         const triggerKey = this.config.get('shortcuts.trigger', 'Space');
         const pollMs = 250;
         const armTimeoutPolls = 4; // 1s to observe the key down, else untrust
-        let armed = false;
+        // Immediate first poll: arm without waiting for the first interval
+        // tick, so a short tap or a delayed ptt-start cannot slip past.
+        let armed = KeyState.isDown(triggerKey) === true;
+        if (armed) this.pttKeyWatchTrusted = true;
         let polls = 0;
-        Logger.log(`PTT key watch: polling state of ${triggerKey} every ${pollMs}ms`);
+        Logger.log(`PTT key watch: polling state of ${triggerKey} every ${pollMs}ms`
+            + (armed ? ' (armed immediately)' : ''));
         this.pttKeyWatcher = setInterval(() => {
             const down = KeyState.isDown(triggerKey);
             if (down === null) {
@@ -250,20 +268,20 @@ class ComRingWindow extends BaseWindow {
                 this.stopPTTKeyWatch();
                 return;
             }
-            if (!armed) {
-                if (down) {
-                    armed = true;
-                } else if (++polls >= armTimeoutPolls) {
-                    Logger.warn('PTT key watch: backend never reported ' + triggerKey
-                        + ' down, disabling force-stop (untrustworthy backend)');
-                    this.stopPTTKeyWatch();
-                }
+            if (down) {
+                if (!armed) Logger.log('PTT key watch: armed (key observed down)');
+                armed = true;
+                this.pttKeyWatchTrusted = true;
                 return;
             }
-            if (!down) {
+            if (armed || this.pttKeyWatchTrusted) {
                 Logger.log('PTT key watch: OS reports key released '
                     + '(keyup event missed?) - stopping recording');
                 this.window.webContents.send('stopRecording');
+                this.stopPTTKeyWatch();
+            } else if (++polls >= armTimeoutPolls) {
+                Logger.warn('PTT key watch: backend never reported ' + triggerKey
+                    + ' down, disabling force-stop (untrustworthy backend)');
                 this.stopPTTKeyWatch();
             }
         }, pollMs);
