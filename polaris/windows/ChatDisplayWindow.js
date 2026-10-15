@@ -32,6 +32,10 @@ class ChatDisplayWindow extends BaseWindow {
             onShow: (window, manager) => {
                 const chatDisplay = manager.getWindow('chatDisplay');
                 chatDisplay.window.setFocusable(true);
+                // Defensive z-order (#19 item 8): if the ComRing is in
+                // document view, both windows are alwaysOnTop and relative
+                // stacking is OS-dependent — keep the input bar on top.
+                chatDisplay.window.moveTop();
                 if (chatDisplay) {
                     chatDisplay.send('ready-for-transcription');
                     if (chatDisplay.isTypingMode) {
