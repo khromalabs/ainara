@@ -345,7 +345,14 @@ class ChatDisplay extends BaseComponent {
                 // the textarea while the window keeps OS focus, leaving the app
                 // with no focused editable element - every key dead until an
                 // external blur resets everything.
-                document.addEventListener('mousedown', (e) => {
+                //
+                // The listener must live on the shadowRoot, NOT on document:
+                // events retargeted across the shadow boundary arrive with
+                // e.target = the custom element host, so a document-level
+                // guard can never match the inner textarea (or .message),
+                // and preventDefault() fired on every click, killing caret
+                // placement for mouse-based text correction entirely.
+                this.shadowRoot.addEventListener('mousedown', (e) => {
                     if (this.textInput.style.display !== 'block') return;
                     // Let clicks on rendered messages behave normally (text selection)
                     if (e.target.closest && e.target.closest('.message')) return;
@@ -357,7 +364,10 @@ class ChatDisplay extends BaseComponent {
                 document.addEventListener('keydown', (e) => {
                     // Escape exits typing mode even when the textarea lost focus
                     // (its own keydown handler covers the focused case).
-                    if (e.key === 'Escape' && e.target !== this.textInput &&
+                    // Use composedPath()[0] for the real target: e.target is
+                    // retargeted to the host for events from the shadow DOM.
+                    const realTarget = e.composedPath ? e.composedPath()[0] : e.target;
+                    if (e.key === 'Escape' && realTarget !== this.textInput &&
                         this.textInput.style.display === 'block') {
                         this.exitTypingMode();
                     }
