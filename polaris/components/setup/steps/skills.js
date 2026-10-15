@@ -1034,6 +1034,27 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
             .nexus-trust-label { color: #999; }
             .nexus-addr { font-family: monospace; }
             .nexus-explorer-link { font-size: 0.95em; }
+            .nexus-changes { margin: 8px 0 0 0; font-size: 0.88em; }
+            .nexus-changes summary {
+                cursor: pointer; color: #007bff; user-select: none;
+            }
+            .nexus-changes summary:hover { text-decoration: underline; }
+            .nexus-changes-text {
+                background: #f8f9fa;
+                border: 1px solid #e9ecef;
+                border-radius: 6px;
+                padding: 10px 12px;
+                margin: 8px 0 0 0;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                font-family: monospace;
+                font-size: 0.9em;
+                color: #444;
+                max-height: 220px;
+                overflow-y: auto;
+            }
+            .nexus-changes-history { font-size: 0.9em; }
+            .nexus-changes-block { margin: 8px 0; }
             .nexus-app-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
             .nexus-app-actions button {
                 padding: 6px 12px;
@@ -1269,6 +1290,7 @@ function renderNexusRemoteCard(s) {
             <div class="nexus-app-badges">${bits.join(' ')}</div>
             ${s.gated ? '<div class="nexus-remote-desc">NFT ownership (verified on-chain) is required to install this app and to keep it running. Verify with your wallet below if needed.</div>' : ''}
             ${s.description ? `<div class="nexus-remote-desc">${escapeHtml(s.description)}</div>` : ''}
+            ${renderNexusChangesBlock(s, s.installed_version)}
             ${nexusExplorerLinks({
                 // resolve_source only returns after identity verification
                 // of the doc, so remote cards are verified by construction
@@ -1290,6 +1312,44 @@ function compareVersions(a, b) {
         if (d !== 0) return d;
     }
     return 0;
+}
+
+function countChangeBullets(text) {
+    return String(text || '').split('\n').filter(l => /^\s*[-*]\s+/.test(l)).length;
+}
+
+// Pre-install changelog block from the bundle doc's optional, signed
+// 'changes'/'changesUrl' fields (informational, fail-open: absent or
+// malformed fields simply render nothing). Shows the raw markdown of the
+// latest published version — or, when updating, everything newer than
+// the installed version — in a <pre>, exactly as the creator authored
+// it. The full history opens the creator-published CHANGES.md in the
+// browser (handled by the .nexus-changes-history click delegate).
+function renderNexusChangesBlock(s, sinceVersion) {
+    const all = (Array.isArray(s.changes) ? s.changes : [])
+        .filter(ch => ch && ch.version && ch.text);
+    if (!all.length) return '';
+    const newer = sinceVersion
+        ? all.filter(ch => compareVersions(ch.version, sinceVersion) > 0)
+        : [];
+    const entries = newer.length ? newer : all.slice(0, 1);
+    const n = Math.max(
+        entries.reduce((acc, ch) => acc + countChangeBullets(ch.text), 0), 1);
+    const text = entries.map(ch =>
+        `v${ch.version}${ch.date ? ` — ${ch.date}` : ''}\n${String(ch.text).trim()}`
+    ).join('\n\n');
+    const history = s.changesUrl
+        ? ` <a href="#" class="nexus-changes-history" ` +
+          `data-url="${escapeHtml(s.changesUrl)}">View full history</a>`
+        : '';
+    return `
+        <div class="nexus-changes-block">
+            <details class="nexus-changes">
+                <summary>(${n}) changes — click to see more</summary>
+                <pre class="nexus-changes-text">${escapeHtml(text)}</pre>
+            </details>${history}
+        </div>
+    `;
 }
 
 // Best-effort update discovery for installed Nexus apps: resolves each
@@ -1336,6 +1396,18 @@ async function checkNexusUpdates(ctx, nexusApps) {
                 btn.dataset.source = data.source_host || a.app;
                 btn.textContent = `Update to v${data.latest}`;
                 actions.prepend(btn);
+            }
+
+            // Changelog for the new version (same block as remote cards,
+            // informational and fail-open; inserted once)
+            const changesHtml = renderNexusChangesBlock(data, a.version);
+            if (changesHtml && !card.querySelector('.nexus-changes-block')) {
+                const block = document.createElement('div');
+                // innerHTML is safe: renderNexusChangesBlock escapes all
+                // creator-controlled text via escapeHtml
+                block.innerHTML = changesHtml;
+                if (actions) card.insertBefore(block, actions);
+                else card.appendChild(block);
             }
         } catch {
             // Degrade silently: no update clue on lookup failure.
@@ -1563,6 +1635,14 @@ function setupNexusLifecycleListeners(ctx) {
                 e.preventDefault();
                 const kind = explorer.dataset.kind === 'token' ? 'token' : 'account';
                 openExternal(`https://solscan.io/${kind}/${explorer.dataset.addr}`);
+                return;
+            }
+
+            // Full changelog history (creator-published CHANGES.md)
+            const history = e.target.closest('.nexus-changes-history');
+            if (history) {
+                e.preventDefault();
+                if (history.dataset.url) openExternal(history.dataset.url);
                 return;
             }
 

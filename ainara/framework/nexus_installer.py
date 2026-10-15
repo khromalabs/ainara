@@ -48,6 +48,7 @@ import urllib.request
 import uuid
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ainara.framework.nexus_licensing import verify_manifest_identity
 
@@ -202,10 +203,48 @@ def pick_artifact(doc: dict) -> dict:
     )
 
 
+def _informational_changes(doc: dict) -> dict:
+    """Optional UI changelog fields (informational only, never gate
+    install): ``changesUrl`` points at the creator-published full
+    CHANGES.md, ``changes`` is a newest-first list of per-version entries
+    with raw markdown ``text`` for the pre-install card. Both are part of
+    the identity-signed doc, so they are creator-authenticated; absent or
+    malformed fields are simply omitted (fail-open)."""
+    out: dict = {}
+    url = doc.get("changesUrl")
+    if isinstance(url, str) and url.strip():
+        parsed = urlparse(url.strip())
+        loopback = LOOPBACK_RE.match(parsed.hostname or "")
+        if parsed.scheme == "https" or (parsed.scheme == "http" and loopback):
+            out["changesUrl"] = url.strip()
+        else:
+            logger.warning("Ignoring non-https changesUrl in bundle doc")
+    changes = doc.get("changes")
+    if isinstance(changes, list):
+        entries = []
+        for ch in changes:
+            if not isinstance(ch, dict):
+                continue
+            version, text = ch.get("version"), ch.get("text")
+            if not (
+                isinstance(version, str) and version.strip()
+                and isinstance(text, str) and text.strip()
+            ):
+                continue
+            entry = {"version": version.strip(), "text": text.strip()}
+            date = ch.get("date")
+            if isinstance(date, str) and date.strip():
+                entry["date"] = date.strip()
+            entries.append(entry)
+        if entries:
+            out["changes"] = entries
+    return out
+
+
 def _summary(doc: dict) -> dict:
     protection = doc.get("protection") or {}
     gated = protection.get("mode") == "nft-license"
-    return {
+    summary = {
         "vendor": doc["vendor"].strip().lower(),
         "app": doc["app"].strip().lower(),
         "latest": doc["latest"].strip(),
@@ -215,6 +254,8 @@ def _summary(doc: dict) -> dict:
         "protection": protection.get("mode") or "open",
         "collection": (protection.get("collection") or "").strip() or None,
     }
+    summary.update(_informational_changes(doc))
+    return summary
 
 
 def resolve_source(source: str) -> dict:

@@ -330,7 +330,12 @@ manifests. Contracts that must not be broken:
   (default TLD `.nexus`), doc self-signed by `creatorId`; installer
   verifies doc identity → artifact sha256 → inner manifest identity →
   atomic swap. Platform tags: `linux-x86_64`, `win-x86_64`, ..., with
-  `universal` fallback.
+  `universal` fallback. Optional informational fields `changesUrl`
+  (creator-published full `CHANGES.md`) and `changes` (newest-first
+  per-version raw-markdown entries, derived from `payload/CHANGES.md`
+  by the pack pipeline) power the wizard's pre-install "what's new"
+  card; they are creator-authenticated via the doc signature and
+  fail-open (never gate install).
 - **Pack pipeline** (in each bundle repo): P0 lint → P1 registries →
   P2 stage/augment → **P2a identity signing (unconditional)** → P2b
   guard injection + PyArmor (protected only) → P3 zip → P5 verify.
