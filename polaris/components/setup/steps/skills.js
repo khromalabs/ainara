@@ -1053,7 +1053,6 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
                 max-height: 220px;
                 overflow-y: auto;
             }
-            .nexus-changes-history { font-size: 0.9em; }
             .nexus-changes-block { margin: 8px 0; }
             .nexus-app-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
             .nexus-app-actions button {
@@ -1234,6 +1233,7 @@ function renderNexusAppHeader(state) {
     if (state.gated && !(state.subscription && state.subscription.subscribed)) {
         actions.push(`<button type="button" class="nexus-subscribe-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Verify wallet</button>`);
     }
+    actions.push(`<button type="button" class="nexus-changelog-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}" title="Full changelog, read from the installed bundle">Changelog</button>`);
     actions.push(`<button type="button" class="nexus-uninstall-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Uninstall</button>`);
 
     return `
@@ -1318,13 +1318,49 @@ function countChangeBullets(text) {
     return String(text || '').split('\n').filter(l => /^\s*[-*]\s+/.test(l)).length;
 }
 
+// Full-history modal for an installed bundle: renders the CHANGES.md
+// served from disk by Pybridge (GET /nexus/app/<vendor>/<app>/changes)
+// in a <pre>, exactly as the creator authored it. Reuses the wizard's
+// .modal-overlay pattern from setup.css; self-contained styling on the
+// <pre> so the modal does not depend on step-scoped styles. Closes on
+// ×, backdrop click or Escape.
+function openNexusChangelogModal(vendor, app, data) {
+    document.querySelectorAll('.nexus-changes-modal').forEach(m => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay nexus-changes-modal';
+    const title = `${capitalize(app)} — Changelog` +
+        (data.version ? ` (v${data.version})` : '');
+    overlay.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>${escapeHtml(title)}</h2>
+                <button type="button" class="close-modal-btn" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <pre style="margin:0;background:#f8f9fa;border:1px solid #e9ecef;border-radius:6px;padding:12px;white-space:pre-wrap;word-wrap:break-word;font-family:monospace;font-size:0.85em;color:#444;">${escapeHtml(data.content || '')}</pre>
+            </div>
+        </div>
+    `;
+    const close = () => overlay.remove();
+    overlay.querySelector('.close-modal-btn').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    const onKey = (e) => {
+        if (e.key === 'Escape') {
+            close();
+            document.removeEventListener('keydown', onKey);
+        }
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+}
+
 // Pre-install changelog block from the bundle doc's optional, signed
-// 'changes'/'changesUrl' fields (informational, fail-open: absent or
-// malformed fields simply render nothing). Shows the raw markdown of the
-// latest published version — or, when updating, everything newer than
-// the installed version — in a <pre>, exactly as the creator authored
-// it. The full history opens the creator-published CHANGES.md in the
-// browser (handled by the .nexus-changes-history click delegate).
+// 'changes' field (informational, fail-open: absent or malformed fields
+// simply render nothing). Shows the raw markdown of the latest published
+// version — or, when updating, everything newer than the installed
+// version — in a <pre>, exactly as the creator authored it. The full
+// history lives in the installed bundle's own CHANGES.md, surfaced by
+// the card's 'Changelog' button (disk-served modal).
 function renderNexusChangesBlock(s, sinceVersion) {
     const all = (Array.isArray(s.changes) ? s.changes : [])
         .filter(ch => ch && ch.version && ch.text);
@@ -1338,16 +1374,17 @@ function renderNexusChangesBlock(s, sinceVersion) {
     const text = entries.map(ch =>
         `v${ch.version}${ch.date ? ` — ${ch.date}` : ''}\n${String(ch.text).trim()}`
     ).join('\n\n');
-    const history = s.changesUrl
-        ? ` <a href="#" class="nexus-changes-history" ` +
-          `data-url="${escapeHtml(s.changesUrl)}">View full history</a>`
-        : '';
+    // Update cards show what's new since the installed version; fresh
+    // install / up-to-date cards just present the latest version.
+    const label = newer.length
+        ? `${n} change(s) available update — click to see more`
+        : `${n} change(s) in v${entries[0].version} — click to see more`;
     return `
         <div class="nexus-changes-block">
             <details class="nexus-changes">
-                <summary>(${n}) changes — click to see more</summary>
+                <summary>${label}</summary>
                 <pre class="nexus-changes-text">${escapeHtml(text)}</pre>
-            </details>${history}
+            </details>
         </div>
     `;
 }
@@ -1638,11 +1675,25 @@ function setupNexusLifecycleListeners(ctx) {
                 return;
             }
 
-            // Full changelog history (creator-published CHANGES.md)
-            const history = e.target.closest('.nexus-changes-history');
-            if (history) {
-                e.preventDefault();
-                if (history.dataset.url) openExternal(history.dataset.url);
+            // Full changelog history (installed bundle's own CHANGES.md,
+            // read from disk by Pybridge — no external URL)
+            const changelogBtn = e.target.closest('.nexus-changelog-btn');
+            if (changelogBtn) {
+                const vendor = changelogBtn.dataset.vendor;
+                const app = changelogBtn.dataset.app;
+                try {
+                    const resp = await fetch(
+                        `${pybridgeUrl}/nexus/app/${encodeURIComponent(vendor)}` +
+                        `/${encodeURIComponent(app)}/changes`);
+                    const data = await resp.json();
+                    if (!resp.ok || data.success === false) {
+                        alert(data.message || 'Changelog unavailable.');
+                        return;
+                    }
+                    openNexusChangelogModal(vendor, app, data);
+                } catch (err) {
+                    alert('Changelog unavailable: ' + err.message);
+                }
                 return;
             }
 
