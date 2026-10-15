@@ -69,6 +69,24 @@ before proposing changes that cut against them.
   megabytes — issue #14 is the cautionary tale). Prefer correctly-named
   canonical keys; when renaming, keep a fallback to legacy keys.
 
+### Polaris frontend (renderer) gotchas
+- All component UI lives in a shadow root: a `document`-level listener sees
+  events retargeted to the custom element host, never to inner elements.
+  Guards that match on `e.target` must attach to `this.shadowRoot` or use
+  `e.composedPath()[0]`.
+- `set-state-before-await`: async event handlers that flip UI state (e.g.
+  `isRecording` on PTT keydown) must set the state synchronously before any
+  `await`, or a fast complementary event (keyup) lands in the gap and is
+  dropped.
+- Mouse capture on the transparent windows is gated by
+  `setIgnoreMouseEvents` (ChatDisplay captures only in typing mode); CSS
+  `pointer-events` alone does not make an Electron window click-through.
+- Debugging workflow: run with `AINARA_LOG_ELECTRON=1` — renderer
+  `console.log` lines are captured (with `file:line`) into
+  `/tmp/electron.log`; instrument state transitions with a `[Tag]` prefix,
+  reproduce, read the trace. Details:
+  `docs/design/polaris-windowing-model.md`.
+
 ### Repo conventions
 - `docs/` holds tracked, shareable documentation and proposals; `notes/` is
   the gitignored home for local working notes.

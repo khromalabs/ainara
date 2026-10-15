@@ -163,6 +163,15 @@ Parallel existing paths:
 - FSM refactor leveraging the constructor TODO: IDLE → LISTENING →
   ENDPOINTING → PROCESSING → SPEAKING. Replaces the soup of ~10 boolean flags
   (symptom: "not showing 2nd time").
+- Known landmines in the current typing-mode web (all verified while fixing
+  #19 — see `docs/design/polaris-windowing-model.md`): two sources of truth
+  for typing mode (main-side flag vs renderer state) that diverge; the
+  renderer component's own `isTypingMode` is never assigned (always
+  `undefined`, so `typing-key-pressed` always re-enters typing mode);
+  `ChatDisplayWindow.onBlur` sends a `set-typing-mode-state` event no
+  renderer listens for (dead code), so typing mode persists across
+  hide/show cycles; `exit-typing-mode` has multiple handlers across two
+  windows with unclear ownership.
 - PyAudio `listen()` and MediaRecorder become legacy; duration cap on every
   path.
 
