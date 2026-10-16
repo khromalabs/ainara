@@ -100,7 +100,7 @@ class SystemFileop(Skill):
             return {"success": False, "error": "File does not exist"}
 
         try:
-            content = path.read_text()
+            content = path.read_text(encoding="utf-8", errors="replace")
             return {"success": True, "content": content}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -112,7 +112,7 @@ class SystemFileop(Skill):
             return {"success": False, "error": "No content provided"}
 
         try:
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

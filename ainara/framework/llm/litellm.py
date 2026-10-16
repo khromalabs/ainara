@@ -16,11 +16,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import asyncio
 import json
 import os
+import queue
 import re
+import threading
 from datetime import datetime
-from typing import Generator, List, Optional, Union
+from typing import Generator, Iterable, List, Optional, Union
 
 import litellm
 import pkg_resources
@@ -28,6 +31,77 @@ import pkg_resources
 from ainara.framework.config import ConfigManager
 
 from .base import LLMBackend
+
+# The request timeout is a per-read timeout: it only fires after that long
+# with no bytes at all. A provider that keeps the connection alive without
+# answering defeats it (an overloaded DeepSeek replies 200, then sends a
+# blank keep-alive line every ~60s), so the call blocks until the provider
+# hangs up and callers never get to fall back. These cap the wall-clock
+# wait instead; override per provider with `response_deadline` (seconds,
+# whole non-streaming call) and `first_chunk_deadline` (seconds, until a
+# stream yields its first chunk).
+DEFAULT_RESPONSE_DEADLINE = 300.0
+DEFAULT_FIRST_CHUNK_DEADLINE = 120.0
+
+_STREAM_END = object()
+
+
+def _call_with_deadline(fn, deadline: float, label: str, /, **kwargs):
+    """Run ``fn(**kwargs)`` and raise TimeoutError after ``deadline``s.
+
+    The call runs in a daemon thread. On timeout that thread is abandoned
+    and ends when the provider finally closes the connection.
+    """
+    outcome = queue.Queue(maxsize=1)
+
+    def run():
+        try:
+            outcome.put((True, fn(**kwargs)))
+        except BaseException as e:
+            outcome.put((False, e))
+
+    threading.Thread(target=run, daemon=True, name="llm-completion").start()
+    try:
+        ok, value = outcome.get(timeout=deadline)
+    except queue.Empty:
+        raise TimeoutError(
+            f"{label} returned no response within {deadline:.0f}s"
+        ) from None
+    if not ok:
+        raise value
+    return value
+
+
+def _first_chunk_deadline(
+    stream: Iterable, deadline: float, model: str
+) -> Generator:
+    """Yield from ``stream``, raising TimeoutError if the first chunk takes
+    longer than ``deadline``s. Later chunks rely on the read timeout."""
+    chunks = queue.Queue()
+
+    def pump():
+        try:
+            for chunk in stream:
+                chunks.put((True, chunk))
+            chunks.put((True, _STREAM_END))
+        except BaseException as e:
+            chunks.put((False, e))
+
+    threading.Thread(target=pump, daemon=True, name="llm-stream").start()
+    first = True
+    while True:
+        try:
+            ok, item = chunks.get(timeout=deadline if first else None)
+        except queue.Empty:
+            raise TimeoutError(
+                f"{model} streamed nothing within {deadline:.0f}s"
+            ) from None
+        if not ok:
+            raise item
+        if item is _STREAM_END:
+            return
+        first = False
+        yield item
 
 
 class LiteLLM(LLMBackend):
@@ -440,14 +514,37 @@ class LiteLLM(LLMBackend):
             )
 
             try:
-                response = self.completion(**completion_kwargs)
+                if stream:
+                    response = self.completion(**completion_kwargs)
+                else:
+                    response = _call_with_deadline(
+                        self.completion,
+                        float(
+                            provider.get(
+                                "response_deadline", DEFAULT_RESPONSE_DEADLINE
+                            )
+                        ),
+                        provider["model"],
+                        **completion_kwargs,
+                    )
                 # self.logger.info(
                 #     "Received response from LLM:" + pprint.pformat(response)
                 # )
 
                 if stream:
                     self.logger.info("Streaming response enabled")
-                    return self._handle_streaming_response(response)
+                    return self._handle_streaming_response(
+                        _first_chunk_deadline(
+                            response,
+                            float(
+                                provider.get(
+                                    "first_chunk_deadline",
+                                    DEFAULT_FIRST_CHUNK_DEADLINE,
+                                )
+                            ),
+                            provider["model"],
+                        )
+                    )
                 else:
                     self.logger.info("Got complete response")
                     full_response = self._handle_normal_response(response)
@@ -596,7 +693,23 @@ class LiteLLM(LLMBackend):
             )
 
             try:
-                response = await self.acompletion(**completion_kwargs)
+                if stream:
+                    response = await self.acompletion(**completion_kwargs)
+                else:
+                    deadline = float(
+                        provider.get(
+                            "response_deadline", DEFAULT_RESPONSE_DEADLINE
+                        )
+                    )
+                    try:
+                        response = await asyncio.wait_for(
+                            self.acompletion(**completion_kwargs), deadline
+                        )
+                    except asyncio.TimeoutError:
+                        raise TimeoutError(
+                            f"{provider['model']} returned no response"
+                            f" within {deadline:.0f}s"
+                        ) from None
                 self.logger.info("Received async response from LLM")
 
                 if stream:

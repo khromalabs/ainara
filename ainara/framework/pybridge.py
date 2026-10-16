@@ -1326,6 +1326,39 @@ def create_app():
         except InstallerError as e:
             return jsonify({"ok": False, "reason": e.reason, "message": str(e)}), 400
 
+    @app.route("/nexus/app/<vendor>/<application>/changes", methods=["GET"])
+    def nexus_app_changes(vendor, application):
+        """Full changelog of an installed bundle: the CHANGES.md shipped
+        at the bundle root, read straight from disk. Consumed by the
+        Polaris wizard's 'Changelog' modal — no external URL involved."""
+        found = _find_nexus_bundle(vendor, application)
+        if not found:
+            return jsonify({
+                "success": False,
+                "message": f"Nexus app '{vendor}/{application}' not found",
+            }), 404
+        v, a, payload_dir, manifest = found
+        changes_path = payload_dir / "CHANGES.md"
+        if not changes_path.is_file():
+            return jsonify({
+                "success": False,
+                "message": "This bundle does not ship a CHANGES.md",
+            }), 404
+        try:
+            content = changes_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            return jsonify({
+                "success": False,
+                "message": f"Failed to read changelog: {e}",
+            }), 500
+        return jsonify({
+            "success": True,
+            "vendor": v,
+            "app": a,
+            "version": manifest.get("version"),
+            "content": content,
+        })
+
     @app.route("/config/status", methods=["GET"])
     def get_config_status():
         """Return the validation status of the initial user configuration."""

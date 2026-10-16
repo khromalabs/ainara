@@ -1319,9 +1319,19 @@ function appSetupEventHandlers() {
     });
 
     // Handle user skills directory selection from setup wizard
-    ipcMain.handle('select-user-skills-directory', async (event) => {
+    ipcMain.handle('select-user-skills-directory', async () => {
         const result = await dialog.showOpenDialog({
             title: 'Select User Skills Directory',
+            properties: ['openDirectory']
+        });
+        return result;
+    });
+
+    // Handle user search engines directory selection from setup wizard
+    // (search.web.user_engines_directory, issue #22)
+    ipcMain.handle('select-user-engines-directory', async () => {
+        const result = await dialog.showOpenDialog({
+            title: 'Select User Search Engines Directory',
             properties: ['openDirectory']
         });
         return result;

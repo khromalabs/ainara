@@ -17,6 +17,7 @@
 // Lesser General Public License for more details.
 
 const utils = require('../core/utils');
+const { marked } = require('marked');
 
 module.exports = {
     id: 'skills',
@@ -213,12 +214,26 @@ async function saveSkillsConfig(ctx) {
             });
         }
 
-        // Save user skills directory if modified
+        // Save user skills directory if modified (clearing the field
+        // removes the key so user skills are effectively disabled)
         if (ctx.modifiedFields.skills.has('user_skills')) {
             const userSkillsInput = document.getElementById('user-skills-directory');
             if (userSkillsInput && userSkillsInput.value.trim()) {
                 if (!backendConfig.user_skills) backendConfig.user_skills = {};
                 backendConfig.user_skills.directory = userSkillsInput.value.trim();
+            } else {
+                deleteNested(backendConfig, 'user_skills.directory');
+            }
+        }
+        // Save user search engines directory if modified (issue #22;
+        // clearing the field disables user-contributed engines)
+        if (ctx.modifiedFields.skills.has('user_engines')) {
+            const userEnginesInput = document.getElementById('user-engines-directory');
+            if (userEnginesInput && userEnginesInput.value.trim()) {
+                setNested(backendConfig, 'search.web.user_engines_directory',
+                    userEnginesInput.value.trim());
+            } else {
+                deleteNested(backendConfig, 'search.web.user_engines_directory');
             }
         }
         // Save Nexus App overrides
@@ -1034,6 +1049,26 @@ function generateNexusUI(properties, backendConfig, nexusApps) {
             .nexus-trust-label { color: #999; }
             .nexus-addr { font-family: monospace; }
             .nexus-explorer-link { font-size: 0.95em; }
+            .nexus-changes { margin: 8px 0 0 0; font-size: 0.88em; }
+            .nexus-changes summary {
+                cursor: pointer; color: #007bff; user-select: none;
+            }
+            .nexus-changes summary:hover { text-decoration: underline; }
+            .nexus-changes-text {
+                background: #f8f9fa;
+                border: 1px solid #e9ecef;
+                border-radius: 6px;
+                padding: 10px 12px;
+                margin: 8px 0 0 0;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                font-family: monospace;
+                font-size: 0.9em;
+                color: #444;
+                max-height: 220px;
+                overflow-y: auto;
+            }
+            .nexus-changes-block { margin: 8px 0; }
             .nexus-app-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
             .nexus-app-actions button {
                 padding: 6px 12px;
@@ -1213,6 +1248,7 @@ function renderNexusAppHeader(state) {
     if (state.gated && !(state.subscription && state.subscription.subscribed)) {
         actions.push(`<button type="button" class="nexus-subscribe-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Verify wallet</button>`);
     }
+    actions.push(`<button type="button" class="nexus-changelog-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}" title="Full changelog, read from the installed bundle">Changelog</button>`);
     actions.push(`<button type="button" class="nexus-uninstall-btn" data-vendor="${escapeHtml(state.vendor)}" data-app="${escapeHtml(state.app)}">Uninstall</button>`);
 
     return `
@@ -1269,6 +1305,7 @@ function renderNexusRemoteCard(s) {
             <div class="nexus-app-badges">${bits.join(' ')}</div>
             ${s.gated ? '<div class="nexus-remote-desc">NFT ownership (verified on-chain) is required to install this app and to keep it running. Verify with your wallet below if needed.</div>' : ''}
             ${s.description ? `<div class="nexus-remote-desc">${escapeHtml(s.description)}</div>` : ''}
+            ${renderNexusChangesBlock(s, s.installed_version)}
             ${nexusExplorerLinks({
                 // resolve_source only returns after identity verification
                 // of the doc, so remote cards are verified by construction
@@ -1290,6 +1327,157 @@ function compareVersions(a, b) {
         if (d !== 0) return d;
     }
     return 0;
+}
+
+function countChangeBullets(text) {
+    return String(text || '').split('\n').filter(l => /^\s*[-*]\s+/.test(l)).length;
+}
+
+// Defense-in-depth sanitizer for rendered markdown: CHANGES.md is
+// creator-signed content, but the wizard window must never become an
+// XSS surface — strip script-ish elements, on* handlers and
+// javascript: URLs from the parsed HTML before it enters the DOM.
+function sanitizeMarkdownHtml(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll(
+        'script, style, iframe, object, embed, link, meta, base, form'
+    ).forEach(el => el.remove());
+    tpl.content.querySelectorAll('*').forEach(el => {
+        for (const attr of [...el.attributes]) {
+            const name = attr.name.toLowerCase();
+            if (name.startsWith('on')) el.removeAttribute(attr.name);
+            else if ((name === 'href' || name === 'src') &&
+                     /^\s*javascript:/i.test(attr.value)) {
+                el.removeAttribute(attr.name);
+            }
+        }
+    });
+    return tpl.content;
+}
+
+// Full-history modal for an installed bundle: renders the CHANGES.md
+// served from disk by Pybridge (GET /nexus/app/<vendor>/<app>/changes)
+// as GitHub-style markdown (marked, already a dependency), sanitized
+// before insertion. Reuses the wizard's .modal-overlay pattern from
+// setup.css; markdown styles are scoped inside the overlay so the modal
+// does not depend on step-scoped styles. Closes on ×, backdrop click or
+// Escape; markdown links open in the user's browser via open-external.
+function openNexusChangelogModal(vendor, app, data, openExternal) {
+    document.querySelectorAll('.nexus-changes-modal').forEach(m => m.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay nexus-changes-modal';
+    const title = `${capitalize(app)} — Changelog` +
+        (data.version ? ` (v${data.version})` : '');
+    overlay.innerHTML = `
+        <style>
+            .nexus-changelog-md h1,
+            .nexus-changelog-md h2 {
+                border-bottom: 1px solid #e9ecef;
+                padding-bottom: 0.3em;
+            }
+            .nexus-changelog-md h1 { font-size: 1.3em; }
+            .nexus-changelog-md h2 { font-size: 1.15em; margin-top: 1.2em; }
+            .nexus-changelog-md h3 { font-size: 1.05em; }
+            .nexus-changelog-md p { margin: 0.5em 0; }
+            .nexus-changelog-md ul,
+            .nexus-changelog-md ol { padding-left: 1.5em; margin: 0.5em 0; }
+            .nexus-changelog-md li { margin: 0.25em 0; }
+            .nexus-changelog-md a { color: #007bff; }
+            .nexus-changelog-md code {
+                background: #f0f1f3;
+                border-radius: 3px;
+                font-family: monospace;
+                font-size: 0.9em;
+                padding: 0.1em 0.3em;
+            }
+            .nexus-changelog-md pre {
+                background: #f6f8fa;
+                border-radius: 6px;
+                overflow-x: auto;
+                padding: 10px;
+            }
+            .nexus-changelog-md pre code { background: none; padding: 0; }
+            .nexus-changelog-md blockquote {
+                border-left: 3px solid #ddd;
+                color: #666;
+                margin: 0.5em 0;
+                padding: 0.1em 1em;
+            }
+            .nexus-changelog-md hr {
+                border: none;
+                border-top: 1px solid #e9ecef;
+                margin: 1em 0;
+            }
+        </style>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>${escapeHtml(title)}</h2>
+                <button type="button" class="close-modal-btn" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body nexus-changelog-md"></div>
+        </div>
+    `;
+    const bodyEl = overlay.querySelector('.modal-body');
+    bodyEl.appendChild(
+        sanitizeMarkdownHtml(marked.parse(String(data.content || ''))));
+    bodyEl.addEventListener('click', (e) => {
+        const link = e.target.closest('a[href]');
+        if (link) {
+            e.preventDefault();
+            openExternal(link.href);
+        }
+    });
+    const close = () => overlay.remove();
+    overlay.querySelector('.close-modal-btn').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    const onKey = (e) => {
+        if (e.key === 'Escape') {
+            close();
+            document.removeEventListener('keydown', onKey);
+        }
+    };
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+}
+
+// Pre-install changelog block from the bundle doc's optional, signed
+// 'changes' field (informational, fail-open: absent or malformed fields
+// simply render nothing). Shows the raw markdown of the latest published
+// version — or, when updating, everything newer than the installed
+// version — in a <pre>, exactly as the creator authored it. The full
+// history lives in the installed bundle's own CHANGES.md, surfaced by
+// the card's 'Changelog' button (disk-served modal).
+function renderNexusChangesBlock(s, sinceVersion) {
+    const all = (Array.isArray(s.changes) ? s.changes : [])
+        .filter(ch => ch && ch.version && ch.text);
+    if (!all.length) return '';
+    const newer = sinceVersion
+        ? all.filter(ch => compareVersions(ch.version, sinceVersion) > 0)
+        : [];
+    const entries = newer.length ? newer : all.slice(0, 1);
+    const n = Math.max(
+        entries.reduce((acc, ch) => acc + countChangeBullets(ch.text), 0), 1);
+    const text = entries.map(ch =>
+        `v${ch.version}${ch.date ? ` — ${ch.date}` : ''}\n${String(ch.text).trim()}`
+    ).join('\n\n');
+    // Update cards show what's new since the installed version; fresh
+    // install / up-to-date cards just present the latest version.
+    const label = newer.length
+        ? `${n} change(s) available update v${entries[0].version} — click to see more`
+        : '';
+
+    if(label)
+        return `
+            <div class="nexus-changes-block">
+                <details class="nexus-changes">
+                    <summary>${label}</summary>
+                    <pre class="nexus-changes-text">${escapeHtml(text)}</pre>
+                </details>
+            </div>
+        `;
+    else 
+        return '';
 }
 
 // Best-effort update discovery for installed Nexus apps: resolves each
@@ -1336,6 +1524,18 @@ async function checkNexusUpdates(ctx, nexusApps) {
                 btn.dataset.source = data.source_host || a.app;
                 btn.textContent = `Update to v${data.latest}`;
                 actions.prepend(btn);
+            }
+
+            // Changelog for the new version (same block as remote cards,
+            // informational and fail-open; inserted once)
+            const changesHtml = renderNexusChangesBlock(data, a.version);
+            if (changesHtml && !card.querySelector('.nexus-changes-block')) {
+                const block = document.createElement('div');
+                // innerHTML is safe: renderNexusChangesBlock escapes all
+                // creator-controlled text via escapeHtml
+                block.innerHTML = changesHtml;
+                if (actions) card.insertBefore(block, actions);
+                else card.appendChild(block);
             }
         } catch {
             // Degrade silently: no update clue on lookup failure.
@@ -1566,6 +1766,28 @@ function setupNexusLifecycleListeners(ctx) {
                 return;
             }
 
+            // Full changelog history (installed bundle's own CHANGES.md,
+            // read from disk by Pybridge — no external URL)
+            const changelogBtn = e.target.closest('.nexus-changelog-btn');
+            if (changelogBtn) {
+                const vendor = changelogBtn.dataset.vendor;
+                const app = changelogBtn.dataset.app;
+                try {
+                    const resp = await fetch(
+                        `${pybridgeUrl}/nexus/app/${encodeURIComponent(vendor)}` +
+                        `/${encodeURIComponent(app)}/changes`);
+                    const data = await resp.json();
+                    if (!resp.ok || data.success === false) {
+                        alert(data.message || 'Changelog unavailable.');
+                        return;
+                    }
+                    openNexusChangelogModal(vendor, app, data, openExternal);
+                } catch (err) {
+                    alert('Changelog unavailable: ' + err.message);
+                }
+                return;
+            }
+
             // Verify wallet (installed app, lapsed): portal reads the
             // local manifest; on success the card flips back to active
             const subBtn = e.target.closest('.nexus-subscribe-btn');
@@ -1761,6 +1983,19 @@ function generateUserSkillsUI() {
                 </div>
                 <p class="field-description">Leave empty to disable user skills.</p>
             </div>
+            <div class="form-group">
+                <label for="user-engines-directory">User Web Search Engines Directory:</label>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <input type="text" id="user-engines-directory" placeholder="e.g., ~/my_search_engines" style="flex:1;">
+                    <button id="browse-user-engines-btn" class="btn btn-secondary">Browse…</button>
+                </div>
+                <p class="field-description">
+                    Optional directory with your own web search engines for the meta-search skill
+                    (one SearchEngineBase class per .py file; see resources/examples/user_web_engines
+                    for a working sample). Per-engine settings go under apis.search.&lt;engine name&gt;.
+                    Leave empty to disable user engines. Changes take effect after Orakle restarts.
+                </p>
+            </div>
         </div>
     `;
 }
@@ -1790,6 +2025,37 @@ function setupUserSkillsListeners(ctx, backendConfig) {
                     }
                 } catch (error) {
                     console.error('Error selecting user skills directory:', error);
+                }
+            });
+        }
+    }
+
+    // User-contributed search engines (search.web.user_engines_directory,
+    // issue #22): same UI pattern as the user skills directory
+    const userEnginesInput = document.getElementById('user-engines-directory');
+    const browseUserEnginesBtn = document.getElementById('browse-user-engines-btn');
+
+    if (userEnginesInput) {
+        if (backendConfig?.search?.web?.user_engines_directory) {
+            userEnginesInput.value = backendConfig.search.web.user_engines_directory;
+        }
+
+        userEnginesInput.addEventListener('input', () => {
+            ctx.modifiedFields.skills.add('user_engines');
+            updateSkillsNextButtonState(ctx);
+        });
+
+        if (browseUserEnginesBtn) {
+            browseUserEnginesBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ctx.ipcRenderer.invoke('select-user-engines-directory');
+                    if (result && !result.canceled && result.filePaths && result.filePaths[0]) {
+                        userEnginesInput.value = result.filePaths[0];
+                        ctx.modifiedFields.skills.add('user_engines');
+                        updateSkillsNextButtonState(ctx);
+                    }
+                } catch (error) {
+                    console.error('Error selecting user search engines directory:', error);
                 }
             });
         }

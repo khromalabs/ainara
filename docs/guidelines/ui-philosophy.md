@@ -155,14 +155,19 @@ mechanisms.
 | Escape (document view) | Returns to the ring view |
 | Tab (ring) | Shows chat history |
 | Tab (history / document view) | Returns to the ring |
-| Arrow up (input bar) | Recovers a previously edited draft |
-| Window blur | Ring view hides (voice continues); typing mode is cancelled |
+| Arrow up / down (input bar) | Steps through previous drafts; the in-progress draft is stashed and restored; ↓ ends on an empty input |
+| Window blur | Ring view hides (voice continues); typing mode is intended to be cancelled (currently persists main-side — known landmine, see the windowing model reference) |
 
 The `WindowManager` (`polaris/windows/WindowManager.js`) and the per-window
 handlers (`getHandlers()` in each window class) enforce the show/hide/focus
 lifecycle; window-level chrome (always-on-top, focusable, transparency) is
 configured there, not in the web components. New windows should plug into this
 lifecycle rather than managing their own visibility rules.
+
+The mechanics behind these interactions — mouse-event gating, shadow-DOM
+event retargeting, input history semantics, the PTT release defense, and the
+debugging workflow — are documented in
+[polaris-windowing-model.md](polaris-windowing-model.md).
 
 ## Guidance for contributors (skills, Nexus apps, panels)
 

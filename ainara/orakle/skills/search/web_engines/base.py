@@ -18,7 +18,7 @@
 
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 
 class SearchResult:
@@ -37,8 +37,20 @@ class SearchResult:
         self.author = None
         self.image_url = None
 
+        # Engine-defined structured metadata for vertical results (e.g. a
+        # jobs engine might use keys like "company", "salary_min",
+        # "salary_max", "salary_currency", "location", "tags"; a real
+        # estate engine completely different ones). The base class stays
+        # topic-agnostic: key names, semantics and formatting belong to
+        # each engine, and consumers must treat unknown keys as opaque.
+        # Engines that populate this should also surface the relevant
+        # details in ``snippet`` (human-readable) so the context reaches
+        # LLM fusion and response synthesis. Included in to_dict() only
+        # when non-empty.
+        self.metadata: Dict[str, Any] = {}
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "title": self.title,
             "url": self.link,
             "snippet": self.snippet,
@@ -46,12 +58,37 @@ class SearchResult:
             "relevance_score": self.relevance_score,
             "published_date": self.published_date,
             "author": self.author,
-            "image_url": self.image_url
+            "image_url": self.image_url,
         }
+        # Engine-defined metadata is only included when non-empty; it is
+        # copied so callers cannot mutate the result's state through the
+        # dict returned by to_dict()
+        if self.metadata:
+            result["metadata"] = dict(self.metadata)
+        return result
 
 
 class SearchEngineBase(ABC):
     """Base class for all search engine implementations"""
+
+    # Whether the engine needs an API key to be usable. Keyless engines set
+    # this to False: SearchWeb then instantiates them from their
+    # ``apis.search.<name>`` config section (possibly empty) and the engine
+    # itself decides through ``is_available`` whether that configuration is
+    # sufficient (an empty/insufficient section = engine disabled). This
+    # replaces the previous hardcoded per-engine special cases.
+    REQUIRES_API_KEY: bool = True
+
+    # Participation mode in SearchWeb's engine pool:
+    #   - "weighted": joins every search, influence scaled by
+    #     get_default_weight(search_type). Default; classic meta-search
+    #     behavior.
+    #   - "specialty": only joins searches whose search_type matches one of
+    #     its get_search_type_specialties() entries (or when explicitly
+    #     requested via the engine parameter). Intended for vertical
+    #     engines (jobs, real estate, ...) that must not run on general
+    #     queries.
+    PARTICIPATION: str = "weighted"
 
     @abstractmethod
     async def search(

@@ -35,12 +35,15 @@ class Web_EnginesSearxng(SearchEngineBase):
     "search.formats" list in the instance's settings.yml, otherwise requests
     with format=json are rejected (HTTP 403).
 
-    The engine is opt-in: SearchWeb only instantiates it when
-    apis.search.searxng.base_url is configured (leave it empty to disable
+    The engine is keyless (REQUIRES_API_KEY = False): SearchWeb instantiates
+    it from the apis.search.searxng config section and it joins the engine
+    pool only when base_url is configured there (leave it empty to disable
     SearXNG entirely). In practice base_url is the only setting most users
     need; api_key is entirely optional and rarely required (only for
     instances behind an authenticated reverse proxy).
     """
+
+    REQUIRES_API_KEY = False
 
     # Classic searx/searxng service default. Note the official SearXNG Docker
     # image instead exposes the instance on port 8080; adjust via config if
@@ -53,8 +56,10 @@ class Web_EnginesSearxng(SearchEngineBase):
         api_key: Optional[str] = None,
         category_map: Optional[Dict[str, str]] = None,
     ):
-        # Normalize trailing slashes so we can safely append "/search"
-        self.base_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        # None until the user configures one: availability (and therefore
+        # opt-in) hinges on an explicitly configured base_url. The default
+        # URL is only used as a fallback at request time.
+        self.base_url = base_url.rstrip("/") if base_url else None
         self.api_key = api_key
         # Optional mapping from SearchWeb search types to SearXNG categories,
         # e.g. {"news": "news", "academic": "science"}
@@ -62,9 +67,10 @@ class Web_EnginesSearxng(SearchEngineBase):
 
     @property
     def is_available(self) -> bool:
-        # SearXNG requires no credentials; a base_url is always present
-        # (defaulted), so the engine is considered available
-        return True
+        # SearXNG requires no credentials, but it is opt-in: only join the
+        # pool when the user configured an instance URL (empty/missing
+        # base_url = engine disabled)
+        return bool(self.base_url)
 
     def get_search_type_specialties(self) -> List[str]:
         """Specialties depend on the per-instance category configuration"""
@@ -129,7 +135,7 @@ class Web_EnginesSearxng(SearchEngineBase):
             # token auth; plain SearXNG instances require no key
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        url = f"{self.base_url}/search"
+        url = f"{self.base_url or self.DEFAULT_BASE_URL}/search"
 
         try:
             async with aiohttp.ClientSession() as session:

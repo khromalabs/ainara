@@ -135,6 +135,17 @@ class BaseWindow {
     }
 
     hide() {
+        // #19 item 9: every hide of the ring must be attributable. The stack
+        // identifies the synchronous caller (WindowManager.hideAll, the
+        // auto-updater, a blur handler, ...); correlate with the
+        // WindowManager [HideTrace] lines for the async triggers.
+        if (this.prefix === 'comRing') {
+            Logger.log('[HideTrace] comRing hide() entered', {
+                isFocused: this.isFocused(),
+                isVisible: this.isVisible(),
+                stack: new Error().stack,
+            });
+        }
         this.window.hide();
         // NOTE: background throttling is kept disabled (see webPreferences.backgroundThrottling)
         // even while hidden - enabling it here throttles renderer timers and was causing

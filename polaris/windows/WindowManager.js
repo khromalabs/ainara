@@ -101,7 +101,7 @@ class WindowManager extends EventEmitter {
                 // Add delay to allow focus to settle on another window
                 setTimeout(() => {
                     if (!this.isAnyApplicationWindowFocused()) {
-                        Logger.log('WindowManager: Focus lost to external window - hiding all windows');
+                        Logger.log(`WindowManager: Focus lost to external window - hiding all windows (blur source: ${window.prefix})`);
                         this.hideAll(true);
                         // // Call this window's specific blur handler if it exists
                         // if (window.handlers.onBlur) {
@@ -201,6 +201,15 @@ class WindowManager extends EventEmitter {
     }
 
     hideAll(force = false) {
+        // #19 item 9: trace who dissolve-calls come from. The stack exposes
+        // the caller (blur net timeout, IPC 'hide-window', tray, updater...);
+        // the snapshot shows what the focus check saw at that instant.
+        const snapshot = this.getWindows()
+            .map(w => `${w.prefix}:${w.isVisible() ? 'visible' : 'hidden'}${w.isFocused() ? '+focused' : ''}`)
+            .join(' ');
+        Logger.log(`[HideTrace] hideAll(force=${force}) windows=[${snapshot}]`, {
+            stack: new Error().stack,
+        });
         if (force || !this.isAnyApplicationWindowFocused()) {
             this.windows.forEach(window => {
                 if (window.isVisible()) {

@@ -69,6 +69,24 @@ before proposing changes that cut against them.
   megabytes — issue #14 is the cautionary tale). Prefer correctly-named
   canonical keys; when renaming, keep a fallback to legacy keys.
 
+### Polaris frontend (renderer) gotchas
+- All component UI lives in a shadow root: a `document`-level listener sees
+  events retargeted to the custom element host, never to inner elements.
+  Guards that match on `e.target` must attach to `this.shadowRoot` or use
+  `e.composedPath()[0]`.
+- `set-state-before-await`: async event handlers that flip UI state (e.g.
+  `isRecording` on PTT keydown) must set the state synchronously before any
+  `await`, or a fast complementary event (keyup) lands in the gap and is
+  dropped.
+- Mouse capture on the transparent windows is gated by
+  `setIgnoreMouseEvents` (ChatDisplay captures only in typing mode); CSS
+  `pointer-events` alone does not make an Electron window click-through.
+- Debugging workflow: run with `AINARA_LOG_ELECTRON=1` — renderer
+  `console.log` lines are captured (with `file:line`) into
+  `/tmp/electron.log`; instrument state transitions with a `[Tag]` prefix,
+  reproduce, read the trace. Details:
+  `docs/design/polaris-windowing-model.md`.
+
 ### Repo conventions
 - `docs/` holds tracked, shareable documentation and proposals; `notes/` is
   the gitignored home for local working notes.
@@ -86,6 +104,31 @@ before proposing changes that cut against them.
   behind the active dev branch (e.g. the code may still read 0.11 while
   work happens on `dev012`). Do not "fix" version mismatches across inner
   references unless explicitly asked.
+
+### Commit messages
+
+Follow the Linux-kernel convention, not conventional commits: no
+`feat(...)`/`fix(...)`/`chore(...)` type prefixes, no parenthesized
+scopes. Start the subject with the name of the touched subsystem or
+component, followed by a lowercase, imperative summary of the change:
+
+```
+polaris: deterministic ChatDisplay/ComRing z-order in document view
+orakle: vertical search types are engine-exclusive
+```
+
+- Pick the subsystem from the top-level area of the change (`polaris`,
+  `orakle`, `pybridge`, `bureau`, `nexus`, `docs`, `scripts`, ...). For
+  narrowly-scoped changes a finer path-like prefix is fine
+  (`orakle/skills/search: ...`).
+- Subject: ~50 chars when reasonable, no trailing period, imperative
+  mood ("fix", not "fixed"/"fixes").
+- Reference GitHub issues in the subject when applicable (`(... #22)`)
+  or in the body (`Closes #22`).
+- If the body explains *why* rather than *what*, it earns its place;
+  otherwise the subject alone is fine.
+- Do not rewrite or rebase existing commits to this format — it applies
+  to new commits only.
 
 ## Installing Python+Node Dependencies
 
@@ -233,7 +276,16 @@ pyinstaller scripts/pyinstaller/servers.spec
   - `skills/` – Skill plugins organized by category:
     - `code/` – Code intelligence, Neovim integration, parsing
     - `finance/` – Stocks; `nexus/` – Crypto/Solana integrations
-    - `search/` – Google, Perplexity, Tavily, NewsAPI, Metaphor
+    - `search/` – Meta-search (see `docs/meta-search.md`): `SearchWeb`
+      fans queries out to a pluggable engine pool (`search/web_engines/`,
+      one `SearchEngineBase` subclass per module, auto-discovered).
+      Engines are also user-contributable via
+      `search.web.user_engines_directory` (same contract, same config
+      convention `apis.search.<module name>`). Engine-declared
+      specialties become dynamic `search_type` values; vertical types
+      are engine-exclusive. Per-engine settings under
+      `apis.search.<name>`; search.web settings declared in
+      `resources/config.schema.json`.
     - `system/` – File ops, app launcher, clipboard, URL opener
     - `tools/` – Calculator, report generation
     - `messaging/` – Inbox/email
@@ -303,7 +355,12 @@ manifests. Contracts that must not be broken:
   (default TLD `.nexus`), doc self-signed by `creatorId`; installer
   verifies doc identity → artifact sha256 → inner manifest identity →
   atomic swap. Platform tags: `linux-x86_64`, `win-x86_64`, ..., with
-  `universal` fallback.
+  `universal` fallback. Optional informational fields `changesUrl`
+  (creator-published full `CHANGES.md`) and `changes` (newest-first
+  per-version raw-markdown entries, derived from `payload/CHANGES.md`
+  by the pack pipeline) power the wizard's pre-install "what's new"
+  card; they are creator-authenticated via the doc signature and
+  fail-open (never gate install).
 - **Pack pipeline** (in each bundle repo): P0 lint → P1 registries →
   P2 stage/augment → **P2a identity signing (unconditional)** → P2b
   guard injection + PyArmor (protected only) → P3 zip → P5 verify.

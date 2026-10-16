@@ -1103,17 +1103,35 @@ class ComRing extends BaseComponent {
     async startRecording() {
         if (this.state.isRecording) return;
 
+        // Flag the recording synchronously, BEFORE any await (#19 item 5):
+        // initializeAudioStream() can take hundreds of ms (first use, or after
+        // every cleanAudio() when the wake word is off), and a keyup landing
+        // inside that window used to be dropped by the isRecording check in
+        // the keyup handler - the recording then started with the key already
+        // up and stayed stuck. ptt-start also goes out first so the
+        // main-process key watch arms while the key is still physically down.
+        this.state.isRecording = true;
+        this.recordingStartedAt = Date.now();
+        ipcRenderer.send('ptt-start');
+
         // Ensure audio is initialized
         if (!this.mediaStream) {
             await this.initializeAudioStream();
+            if (!this.state.isRecording) {
+                // The key was released (and stopRecording ran) while audio
+                // was initializing: nothing was captured, so undo the
+                // 'awaiting' UI that stopRecording already applied.
+                console.log('ComRing: recording aborted during audio init');
+                this.state.isAwaitingResponse = false;
+                this.circle.classList.remove('awaiting');
+                this.clearTranscribingHint();
+                return;
+            }
         }
 
-        ipcRenderer.send('ptt-start');
         ipcRenderer.send('wakeword-status', 'active'); // Update tray to purple
 
         this.ignoreIncomingEvents = false;
-        this.state.isRecording = true;
-        this.recordingStartedAt = Date.now();
         this.state.isAwaitingResponse = false;
         this.silenceStartTimestamp = null; // Reset VAD
 

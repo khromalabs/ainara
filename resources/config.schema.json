@@ -3,6 +3,22 @@
     "title": "Ainara Configuration Schema",
     "type": "object",
     "properties": {
+        "search": {
+            "type": "object",
+            "description": "Meta-search configuration (SearchWeb skill).",
+            "properties": {
+                "web": {
+                    "type": "object",
+                    "description": "Web meta-search settings.",
+                    "properties": {
+                        "user_engines_directory": {
+                            "type": "string",
+                            "description": "Directory scanned for user-contributed search engines (SearchEngineBase modules, one class per .py file). Each module is imported as a top-level module; per-engine settings go under apis.search.<module name>."
+                        }
+                    }
+                }
+            }
+        },
         "skills": {
             "type": "object",
             "description": "Container for skills configuration.",
