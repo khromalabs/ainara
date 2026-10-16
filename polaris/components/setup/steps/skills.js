@@ -214,12 +214,26 @@ async function saveSkillsConfig(ctx) {
             });
         }
 
-        // Save user skills directory if modified
+        // Save user skills directory if modified (clearing the field
+        // removes the key so user skills are effectively disabled)
         if (ctx.modifiedFields.skills.has('user_skills')) {
             const userSkillsInput = document.getElementById('user-skills-directory');
             if (userSkillsInput && userSkillsInput.value.trim()) {
                 if (!backendConfig.user_skills) backendConfig.user_skills = {};
                 backendConfig.user_skills.directory = userSkillsInput.value.trim();
+            } else {
+                deleteNested(backendConfig, 'user_skills.directory');
+            }
+        }
+        // Save user search engines directory if modified (issue #22;
+        // clearing the field disables user-contributed engines)
+        if (ctx.modifiedFields.skills.has('user_engines')) {
+            const userEnginesInput = document.getElementById('user-engines-directory');
+            if (userEnginesInput && userEnginesInput.value.trim()) {
+                setNested(backendConfig, 'search.web.user_engines_directory',
+                    userEnginesInput.value.trim());
+            } else {
+                deleteNested(backendConfig, 'search.web.user_engines_directory');
             }
         }
         // Save Nexus App overrides
@@ -1969,6 +1983,19 @@ function generateUserSkillsUI() {
                 </div>
                 <p class="field-description">Leave empty to disable user skills.</p>
             </div>
+            <div class="form-group">
+                <label for="user-engines-directory">User Web Search Engines Directory:</label>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <input type="text" id="user-engines-directory" placeholder="e.g., ~/my_search_engines" style="flex:1;">
+                    <button id="browse-user-engines-btn" class="btn btn-secondary">Browse…</button>
+                </div>
+                <p class="field-description">
+                    Optional directory with your own web search engines for the meta-search skill
+                    (one SearchEngineBase class per .py file; see resources/examples/user_web_engines
+                    for a working sample). Per-engine settings go under apis.search.&lt;engine name&gt;.
+                    Leave empty to disable user engines. Changes take effect after Orakle restarts.
+                </p>
+            </div>
         </div>
     `;
 }
@@ -1998,6 +2025,37 @@ function setupUserSkillsListeners(ctx, backendConfig) {
                     }
                 } catch (error) {
                     console.error('Error selecting user skills directory:', error);
+                }
+            });
+        }
+    }
+
+    // User-contributed search engines (search.web.user_engines_directory,
+    // issue #22): same UI pattern as the user skills directory
+    const userEnginesInput = document.getElementById('user-engines-directory');
+    const browseUserEnginesBtn = document.getElementById('browse-user-engines-btn');
+
+    if (userEnginesInput) {
+        if (backendConfig?.search?.web?.user_engines_directory) {
+            userEnginesInput.value = backendConfig.search.web.user_engines_directory;
+        }
+
+        userEnginesInput.addEventListener('input', () => {
+            ctx.modifiedFields.skills.add('user_engines');
+            updateSkillsNextButtonState(ctx);
+        });
+
+        if (browseUserEnginesBtn) {
+            browseUserEnginesBtn.addEventListener('click', async () => {
+                try {
+                    const result = await ctx.ipcRenderer.invoke('select-user-engines-directory');
+                    if (result && !result.canceled && result.filePaths && result.filePaths[0]) {
+                        userEnginesInput.value = result.filePaths[0];
+                        ctx.modifiedFields.skills.add('user_engines');
+                        updateSkillsNextButtonState(ctx);
+                    }
+                } catch (error) {
+                    console.error('Error selecting user search engines directory:', error);
                 }
             });
         }
