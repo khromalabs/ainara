@@ -85,6 +85,10 @@ class SearchWeb(Skill):
 
     def _initialize_engines(self):
         """Initialize search engines based on configuration"""
+        # Engines that were discovered but did not join the pool, with a
+        # short reason (surfaced by _update_docstring so users can see in
+        # the wizard's final step why an expected engine is missing)
+        self.disabled_engines = {}
         search_config = config.get("apis.search", {})
 
         # User-contributed engines live outside the package. They are
@@ -111,10 +115,16 @@ class SearchWeb(Skill):
                     # credential (cx).
                     api_key = engine_config.get("api_key")
                     if not api_key:
+                        self.disabled_engines[engine_name] = (
+                            "API key not configured"
+                        )
                         continue
                     if engine_name == "google":
                         cx = engine_config.get("cx")
                         if not cx:
+                            self.disabled_engines[engine_name] = (
+                                "search engine ID (cx) not configured"
+                            )
                             continue
                         instance = engine_class(api_key, cx)
                     else:
@@ -129,12 +139,16 @@ class SearchWeb(Skill):
                 logger.error(
                     f"Failed to initialize {engine_name} search: {str(e)}"
                 )
+                self.disabled_engines[engine_name] = "initialization failed"
                 continue
 
             if not instance.is_available:
                 logger.info(
                     f"{engine_name} search engine disabled: configuration"
                     " incomplete"
+                )
+                self.disabled_engines[engine_name] = (
+                    "configuration incomplete"
                 )
                 continue
 
@@ -158,12 +172,28 @@ class SearchWeb(Skill):
                 " news, current events, or factual questions. No search"
                 " engines are currently configured."
             )
+            if self.disabled_engines:
+                disabled_str = ", ".join(self.disabled_engines.keys())
+                doc += (
+                    f" Engines detected but disabled: {disabled_str}"
+                    " (incomplete configuration)."
+                )
             type(self).__doc__ = doc
             return
 
-        # Get list of available engines
-        engine_names = list(self.engines.keys())
-        engines_str = ", ".join(engine_names)
+        # Split the live pool by participation mode: "weighted" engines
+        # join every search (general providers), "specialty" engines only
+        # run for their declared search types (verticals). Advertising the
+        # difference keeps the provider list honest — a vertical engine
+        # must not read as a general-purpose provider.
+        weighted_names = [
+            name for name, engine in self.engines.items()
+            if engine.PARTICIPATION != "specialty"
+        ]
+        vertical_names = [
+            name for name, engine in self.engines.items()
+            if engine.PARTICIPATION == "specialty"
+        ]
 
         # Get list of search types with specialized engines
         search_types = {}
@@ -176,9 +206,23 @@ class SearchWeb(Skill):
         # Build docstring
         doc = (
             "Search the internet for information about any topic, product,"
-            " news, current events, or factual questions using multiple"
-            f" search providers ({engines_str})."
+            " news, current events, or factual questions"
         )
+        if weighted_names:
+            doc += f" using multiple search providers ({', '.join(weighted_names)})."
+        else:
+            doc += "."
+        if vertical_names:
+            doc += (
+                " Additional specialized providers run only for their"
+                f" matching search_type: {', '.join(vertical_names)}."
+            )
+        if self.disabled_engines:
+            disabled_str = ", ".join(
+                f"{name} ({reason})"
+                for name, reason in self.disabled_engines.items()
+            )
+            doc += f" Engines detected but disabled: {disabled_str}."
 
         # Add search type specialties
         # Add search type specialties. Every type with specialized engines
