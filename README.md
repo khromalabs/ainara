@@ -134,7 +134,7 @@ Beyond the built-in skills, Ainara can run **Nexus Apps**: third-party bundles o
 The currently available skills already integrated in the Ainara AI Assistant Framework:
 
 - **Finance Stocks**: Get stock market information.
-- **Search Engines (SearXNG, Google, Metaphor, NewsAPI, Perplexity, Tavily)**: Perform combined web searches using various search engines.
+- **Search Engines (SearXNG, Google, Metaphor, NewsAPI, Perplexity, Tavily)**: Perform combined web searches using various search engines. The engine pool is extensible: users can contribute their own engines (keyless or keyed, general-purpose or vertical) via the **Skills tab → User Web Search Engines Directory** in the setup wizard; a working sample lives in `resources/examples/user_web_engines/` (see `docs/architecture/meta-search.md` for the full engine contract).
 - **System Clipboard**: Read and write the system clipboard.
 - **System Finder**: Intelligent file search with LLM-assisted disambiguation and location reveal.
 - **Time Weather**: Get weather information.
@@ -143,7 +143,7 @@ The currently available skills already integrated in the Ainara AI Assistant Fra
 
 ## Writing skills
 
-The framework proposes a really simple approach towards skill definition: skills can be self-contained in a Python module, and a `_components` subdirectory can optionally provide a visual template interface to the skill. The assistant will generate the interface automatically, but the skill data is injected in the conversation. Since version 0.11 users can create and use their own skills in the distributed bundle. Check `resources/examples/user_skill/tools/hello.py`.
+The framework proposes a really simple approach towards skill definition: skills can be self-contained in a Python module, and a `_components` subdirectory can optionally provide a visual template interface to the skill. The assistant will generate the interface automatically, but the skill data is injected in the conversation. Since version 0.11 users can create and use their own skills in the distributed bundle. Check `resources/examples/user_skills/tools/hello.py`.
 
 ## Configuration
 

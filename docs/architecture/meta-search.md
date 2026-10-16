@@ -81,7 +81,24 @@ before returning.
 
 ## User-contributed engines
 
-1. Set the directory in `ainara.yaml`:
+Users own their machines and their code: any engine a user installs is
+trusted to declare whatever participation mode fits its purpose. The
+framework does not restrict user engines — the two modes just have
+different, clearly documented consequences so the choice is an informed
+one:
+
+- `"specialty"` (recommended for vertical engines): the engine only runs
+  when the search `search_type` matches one of its declared specialties
+  (or is explicitly requested). General searches are untouched.
+- `"weighted"`: the engine joins **every** meta-search, with influence
+  scaled by its `get_default_weight(search_type)`. This is the right
+  choice for a general-purpose provider meant to enrich all queries
+  (e.g. another web index, a private corpus). Be aware the engine's
+  results will appear on every search — a niche or slow source will
+  dilute and slow down general searches, so pick weights accordingly.
+
+1. Set the directory in `ainara.yaml` (or in the setup wizard,
+   **Skills tab → User Search Engines Directory**):
    ```yaml
    search:
      web:
@@ -98,7 +115,8 @@ Safety: a user module whose name would shadow an existing module
 error instead of imported (the sys.path shadowing hazard flagged for
 user skills in #17). Files starting with `_` are skipped.
 
-Example minimal engine:
+Example minimal engine (a complete, working sample ships in
+`resources/examples/user_web_engines/wikipedia_search.py`):
 
 ```python
 from ainara.orakle.skills.search.web_engines.base import (
