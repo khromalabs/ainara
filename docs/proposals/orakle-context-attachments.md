@@ -3,7 +3,7 @@
 **Status:** Draft — discussion and decision tracking in [Issue #26](https://github.com/khromalabs/ainara/issues/26); this document is the versioned record, with major decisions from the thread backported here.
 **Author:** Rubén Gómez
 **Date:** 2026-10-17
-**Related:** [Issue #26](https://github.com/khromalabs/ainara/issues/26) (discussion), Issue #18 (framework policy doctrine — skills request, framework bounds), Issue #17 (tiered skills model — shared skill-metadata surface). Implementation files: Orakle middleware (`ainara/framework/orakle_middleware.py`), chat manager persistence flow (`ainara/framework/chat_manager.py`), GREEN memories (`ainara/framework/green_memories.py`), ChatMemory (`ainara/framework/chat_memory.py`). Adjacent but out of scope: Nexus `state` (control-panel) UI kind, Polaris context-window status feedback.
+**Related:** [Issue #26](https://github.com/khromalabs/ainara/issues/26) (discussion), Issue #18 (framework policy doctrine — skills request, framework bounds), Issue #17 (tiered skills model — shared skill-metadata surface). Implementation files: Orakle middleware (`ainara/framework/orakle_middleware.py`), two-stage matcher (`ainara/framework/matcher/transformers.py` — stage-1 embeddings; outdated module name), chat manager persistence flow (`ainara/framework/chat_manager.py`), GREEN memories (`ainara/framework/green_memories.py`), ChatMemory (`ainara/framework/chat_memory.py`). Adjacent but out of scope: Polaris context-window status feedback.
 
 ---
 
@@ -316,8 +316,11 @@ _orakle_attachment_|{"id": "...", "skill": "read_file",
   `chat_manager.py` **unchanged**: the stub is just part of
   `processed_answer`.
 - The `summary` is written to be **semantically matchable** — it is the
-  target of the retrieval pass (GREEN's title-reinforcement instinct
-  applied to stubs).
+  target of the retrieval pass. The matcher's reinforcement mechanisms
+  apply here directly: domain-context duplication and `**boost**`
+  keyword markup (see `OrakleMatcherTransformers.register_skill`) — the
+  "title reinforcement" instinct, with a concrete, already-tested
+  mechanism instead of an aspiration.
 - **Self-sufficient**: a future session reading only the stub can still
   reason about what it was. A cold session with an empty store degrades
   gracefully (re-answer from the summary, or re-invoke via recipe).
@@ -358,14 +361,28 @@ class AttachmentStore:
 ### 6.3 The retrieval / rehydration pass
 
 Runs wherever GREEN memory retrieval runs today (the `memories=` path
-feeding `_process_llm_response_stream`), as a sibling:
+feeding `_process_llm_response_stream`), as a sibling. Retrieval is
+**embeddings from day one** — no lexical-only interim: the machinery is
+already in-process, so the original argument for a lexical first step
+(no new machinery) does not apply.
+
+The pass reuses the **two-stage matcher's infrastructure**
+(`ainara/framework/matcher/transformers.py`) rather than building a new
+index: a second registry instance of the same class (or a sibling of
+`OrakleMatcherBase`) **sharing the same Fastembed model instance** — one
+model load per process, which matters on RAM-constrained systems. Stubs
+register at creation (`register(stub_id, summary, metadata)`); each
+turn runs `match(query, threshold, top_k)`. The matcher's spaCy query
+cleaning (`_clean_query`) carries over as-is.
 
 ```
-1. Match stub summaries against the current user query.
-   - v1: lexical / keyword match on summaries + explicit refs.
-   - v2: embeddings over stub summaries (the MiniLM model is already
-     loaded in the process for the matcher and GREEN; a small in-memory
-     index; a session holds a handful to a few dozen attachments).
+1. Match stub summaries against the current user query:
+   embeddings over stubs via the shared matcher registry
+   (`orakle.attachments.threshold` / `.top_k`; a session holds a
+   handful to a few dozen attachments, so this is cheap — Fastembed's
+   ONNX runtime keeps the tax small). Optional LLM escalation only
+   when results are ambiguous — the same two-stage shape as skill
+   matching: cheap semantic stage 1, precise stage 2.
 2. For each match, consult the store:
    - recipe record   → re-execute the skill with stored params (fresh)
    - snapshot record → run the validator; inject the labeled block
@@ -561,6 +578,7 @@ This fits the user-is-authoritative philosophy.
 | `orakle.attachments.spill_dir` | none | Optional disk spill for large payloads |
 | `orakle.attachments.raw_max_bytes` | e.g. 64000 | Size ceiling → clamp to `summarize` |
 | `orakle.attachments.top_k` | 3 | Max attachments rehydrated per turn |
+| `orakle.attachments.threshold` | matcher-sibling default | Minimum similarity for the retrieval pass (§6.3) |
 | `orakle.attachments.max_bytes_per_turn` | e.g. 8192 | Rehydrated byte budget per turn |
 | `orakle.nexus.data_inline_max_bytes` | e.g. 16384 | Render payloads above this become persistent blobs + `data_ref` (§6.8) |
 | `orakle.nexus.analysis_max_bytes` | e.g. 8192 | Cap on the model-channel digest/analysis payload of UI skills |
@@ -581,18 +599,25 @@ engineering for agents ("context as a working set, not a transcript"):
 - **File-system-as-context patterns** (coding agents) — data lives
   somewhere addressable; the model reads what it needs.
 
-Ainara is unusually well positioned for this: the retrieval half (GREEN)
-and the addressing half (deterministic skill calls with structured
-results) already exist. This design adds only the store-and-stub step in
-between — and, via the recipe mode, a memoization layer that the
-industry approaches implement as "just re-run the tool".
+Ainara is unusually well positioned for this: the retrieval half and the
+addressing half already exist. The **retrieval** precedent is the
+two-stage matcher's stage 1 (`ainara/framework/matcher/transformers.py`):
+cheap, embeddings-first semantic filtering over short semantic texts
+(the `matcher_info` definitions) — the original in-repo finding. GREEN
+is its derivative application to memory retrieval; this proposal's
+attachment retrieval is the third application of the same pattern,
+reusing the matcher's machinery directly (§6.3). The **addressing**
+half is the deterministic skill calls with structured results. This
+design adds only the store-and-stub step in between — and, via the
+recipe mode, a memoization layer that the industry approaches implement
+as "just re-run the tool".
 
 ## 10. Phasing
 
 | Phase | Contents | Risk |
 |---|---|---|
 | **1** | `context_policy` / `rehydrate` / `replayable` / `snapshot_validator` declarations · stub format · `attachment_created` chunk in `chat_manager` · AttachmentStore with **recipe records only** (`reexecute`) · capture metadata in every record from day one · registration-time consistency checks | Minimal; inert until a skill opts in |
-| **2** | Retrieval pass (lexical first, embeddings later) · re-execute rehydration · `snapshot` records with validators · enforcement ceilings (now uniform across UI/non-UI model channels) · nexus inline ceiling (`data_ref` in transcript, digest in conversation) · budget config | Additive to turn setup |
+| **2** | Retrieval pass (embeddings from day one, via shared matcher machinery) · re-execute rehydration · `snapshot` records with validators · enforcement ceilings (now uniform across UI/non-UI model channels) · nexus inline ceiling (`data_ref` in transcript, digest in conversation) · budget config | Additive to turn setup |
 | **3** | Explicit `<context ref>` tag · render-channel hydration endpoint (`GET /attachments/<id>` in PyBridge; Polaris fetch-on-render) · staleness labeling polish · per-invocation selection hints · prompt-discipline tuning | Touches the stream parser (fiddliest part) |
 
 Phase 1 is safe to land behind zero declarations: nothing changes until a
@@ -636,6 +661,13 @@ resolved by §6.8: the paradigm difference is expressible as
    PyBridge (local-first, single user — but ids must not be guessable
    across contexts), and whether Polaris fetches eagerly on render or
    lazily on component request.
+9. **Shared semantic-index utility**: the attachment registry shares
+   the matcher's Fastembed model instance (§6.3). Options: a second
+   `OrakleMatcherBase`-family instance vs. extracting a general
+   semantic-index utility usable by matcher, attachments and possibly
+   GREEN. The latter would also force the overdue rename of the
+   outdated `matcher/transformers.py` module name (Fastembed, not
+   Transformers, for a while now).
 
 ---
 
