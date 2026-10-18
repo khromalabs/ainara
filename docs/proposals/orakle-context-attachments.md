@@ -490,7 +490,10 @@ authorization policy proposal):
   (Today the interpretation pass is an *unintentional* sanitization
   boundary; this design makes that role deliberate.)
 - **Size ceiling**: results over `orakle.attachments.raw_max_bytes`
-  clamp to `summarize`.
+  clamp to `summarize`. Note the clamp is a *policy* mechanism — it
+  decides what is kept — and presupposes the *feasibility* machinery of
+  §6.9: a digest pass still has to see the data, and oversized results
+  require the degradation ladder there.
 - These ceilings apply to the **model channel of every skill, UI or
   not**, in one code path — a UI skill declaring `attach` on web/file
   content is clamped exactly like a non-UI one. The render channel has
@@ -543,6 +546,72 @@ What this unifies:
   `rehydrate = "snapshot"` is the natural default for `ui` skills;
   non-UI skills keep the `reexecute`/`snapshot` choice of §5.2.
 
+### 6.9 Context budgets and oversized results
+
+Three injection points threaten the context window, with different
+exposure:
+
+| Injection point | Exposure |
+|---|---|
+| Rehydration | Capped by construction (`max_bytes_per_turn`) |
+| Main conversation | Never receives payloads (invariant 1) |
+| **Digestion/interpretation prompts** | **The real hole — unbounded today**: `stream_command_interpretation` inlines the full raw result; a 200 KB file already overflows there, with or without this design |
+
+**The ledger (day-one guard).** Every prompt-building site consults a
+budget ledger before building its prompt:
+
+```
+available = context_window               # llm.context_window_tokens
+         − reserve_pct                   # answer + follow-up headroom
+         − persona/system/recent history # measured
+         − memories                      # GREEN injection
+         − rehydrated attachments        # already capped
+```
+
+Design choices for v1 (deliberately simple): a **percentage reserve**
+rather than selector-coupled answer-size hints — the ledger stays
+policy-light, and can adopt selector hints later if needed; bytes
+converted with a conservative `chars_per_token` factor (multilingual
+ratios are noisy — err generous); history counts as *soft* usage (the
+existing idle-time summary/shrink in `chat_manager.py` can compact it
+on demand — it rescues future turns, never the current one, so the
+ledger remains the hard per-turn gate) while attachments/digests count
+as *hard* (they must fit this turn or be degraded). The ledger protects
+the existing interpretation path too — it is not attachments-specific.
+
+**The degradation ladder** for results that do not fit the digestion
+budget (the skill stays dumb; the framework decides; reject is last):
+
+1. **Skill-side digest** — the skill has full data access without an
+   LLM: structure, outline, stats. The UI-skill `analysis` payload
+   (§6.8) generalizes: any skill may return one (`digest_mode =
+   "skill"`). Preferred tier: free, fast, and often all the model
+   needed — it usually never needed the raw bytes, only the map of
+   them.
+2. **Chunked map-reduce digestion** — split into
+   chunk-fits-budget pieces → per-chunk digest passes (map) → reduce
+   into the final digest.
+3. **Slice retrieval** — the chunks from step 2 are kept as *chunk
+   stubs* with their own embeddings; follow-up questions rehydrate the
+   one relevant slice (budget-capped) instead of re-running anything.
+   This resolves §11.1 for the oversized tier: chunking is not the
+   default retrieval model, it is the oversized-attachment tier. Stub =
+   whole-file map; chunk stubs = the territory.
+4. **Agent offload** — route the whole analysis to an ephemeral Bureau
+   agent with its own context (the `requires_agent` path already
+   exists); conclusions return, data never enters the chat context.
+5. **Reject with guidance** — only when even chunking is unreasonable
+   (`orakle.context.digest_max_map_calls`), and always actionable
+   ("split the file" / "agent offload when available"), never a bare
+   error.
+
+Worked example — the motivating scenario: 128 KB window ≈ ~32 K tokens;
+a 200 KB text file ≈ ~50 K tokens — it cannot fit, whole *or* digested
+whole. Ladder: skill-side digest (preferred, free) → chunked digestion
+(~24 KB chunks ≈ 9 map calls + 1 reduce on local hardware — slow, hence
+user-visible "analyzing a large file" feedback) → chunk stubs so
+follow-ups pull single slices.
+
 ## 7. What deliberately does not change
 
 - **The Orakle frontend** — natural-language tags, no schemas in context.
@@ -582,6 +651,11 @@ This fits the user-is-authoritative philosophy.
 | `orakle.attachments.max_bytes_per_turn` | e.g. 8192 | Rehydrated byte budget per turn |
 | `orakle.nexus.data_inline_max_bytes` | e.g. 16384 | Render payloads above this become persistent blobs + `data_ref` (§6.8) |
 | `orakle.nexus.analysis_max_bytes` | e.g. 8192 | Cap on the model-channel digest/analysis payload of UI skills |
+| `llm.context_window_tokens` | autodetect/config | Window size used by the ledger (§6.9) |
+| `orakle.context.reserve_pct` | 25 | Answer + follow-up headroom kept free (§6.9) |
+| `orakle.context.chars_per_token` | 3 (conservative) | Bytes→tokens conversion, multilingual-safe (§6.9) |
+| `orakle.context.digest_chunk_bytes` | e.g. 24576 | Chunk size for map-reduce digestion of oversized results (§6.9) |
+| `orakle.context.digest_max_map_calls` | e.g. 12 | Sanity cap → beyond it, reject tier with guidance (§6.9) |
 
 ## 9. Relationship to modern practice
 
@@ -616,9 +690,9 @@ as "just re-run the tool".
 
 | Phase | Contents | Risk |
 |---|---|---|
-| **1** | `context_policy` / `rehydrate` / `replayable` / `snapshot_validator` declarations · stub format · `attachment_created` chunk in `chat_manager` · AttachmentStore with **recipe records only** (`reexecute`) · capture metadata in every record from day one · registration-time consistency checks | Minimal; inert until a skill opts in |
-| **2** | Retrieval pass (embeddings from day one, via shared matcher machinery) · re-execute rehydration · `snapshot` records with validators · enforcement ceilings (now uniform across UI/non-UI model channels) · nexus inline ceiling (`data_ref` in transcript, digest in conversation) · budget config | Additive to turn setup |
-| **3** | Explicit `<context ref>` tag · render-channel hydration endpoint (`GET /attachments/<id>` in PyBridge; Polaris fetch-on-render) · staleness labeling polish · per-invocation selection hints · prompt-discipline tuning | Touches the stream parser (fiddliest part) |
+| **1** | `context_policy` / `rehydrate` / `replayable` / `snapshot_validator` declarations · stub format · `attachment_created` chunk in `chat_manager` · AttachmentStore with **recipe records only** (`reexecute`) · capture metadata in every record from day one · registration-time consistency checks · **budget ledger** (turn gate + digestion gate, §6.9 — guards the existing interpretation path too) | Minimal; inert until a skill opts in (ledger excepted: it guards from day one) |
+| **2** | Retrieval pass (embeddings from day one, via shared matcher machinery) · re-execute rehydration · `snapshot` records with validators · enforcement ceilings (now uniform across UI/non-UI model channels) · nexus inline ceiling (`data_ref` in transcript, digest in conversation) · skill-side digest tier (§6.9) · budget config | Additive to turn setup |
+| **3** | Explicit `<context ref>` tag · render-channel hydration endpoint (`GET /attachments/<id>` in PyBridge; Polaris fetch-on-render) · chunked map-reduce digestion + slice retrieval (chunk stubs, §6.9) · staleness labeling polish · per-invocation selection hints · prompt-discipline tuning | Touches the stream parser (fiddliest part) |
 
 Phase 1 is safe to land behind zero declarations: nothing changes until a
 skill says `context_policy = "attach"`.
@@ -627,6 +701,9 @@ Deferred / adjacent (noted, not designed here):
 
 - Polaris context-window status feedback (a UX metric worth surfacing,
   especially on < 64 KB systems — separate task).
+- Agent offload as ladder tier 4 (§6.9): the `requires_agent` path
+  exists; wiring oversized analyses to ephemeral Bureau agents can come
+  after the in-context tiers.
 
 (The former "Nexus `state` (control-panel) UI kind" deferred item is
 resolved by §6.8: the paradigm difference is expressible as
@@ -634,10 +711,11 @@ resolved by §6.8: the paradigm difference is expressible as
 
 ## 11. Open points
 
-1. **Embedding target for retrieval**: stub summaries only (atomic,
-   GREEN-like — current lean) vs. chunked payloads (better recall on
-   "what was the exact value in row 3"). Start lexical regardless; make
-   this a config escalation.
+1. **Embedding target for retrieval**: stub summaries (atomic,
+   matcher-style) for the normal tier — resolved; **chunked payloads**
+   for the oversized-attachment tier (§6.9 ladder tier 3), where slices
+   become retrievable. Chunk-embedding parameters: defer to
+   implementation.
 2. **Digest authoring for `summarize`**: skill-provided analysis payload
    (preferred for UI skills — they know what their visualization shows)
    vs. reuse of the interpretation prompt vs. a dedicated
