@@ -549,6 +549,7 @@ class DocumentView extends BaseComponent {
     }
 
     appendDocumentContent(content, format = 'text') {
+        console.log(`[DocTrace] appendDocumentContent: ${content ? content.length : 0} chars (${format})`);
         if (format !== 'chat-history') {
             return;
         }
@@ -566,17 +567,77 @@ class DocumentView extends BaseComponent {
         }
 
         const newContentHtml = this.parseMarkdown(content, true);
-        const indicator = contentArea.querySelector('.streaming-indicator');
         const newHtml = "<BR>" + newContentHtml;
-        if (indicator) {
-            indicator.insertAdjacentHTML('beforebegin', newHtml);
-        } else {
-            contentArea.insertAdjacentHTML('beforeend', newHtml);
-        }
+        // The transient user-turn echo of the in-flight exchange, if still
+        // present, is superseded by this formatted content — drop it so the
+        // same words don't appear twice.
+        contentArea.querySelector('.live-user-turn')?.remove();
+        contentArea.insertAdjacentHTML('beforeend', newHtml);
         // Add this line to hydrate frames
         this.hydrateNexusFrames(contentArea);
         this.initAllSortableTables();
         contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'smooth' });
+    }
+
+    /**
+     * "Answering" badge in the chat-history view while an answer streams
+     * (#19 item 3): the in-flight process is made visible at the end of
+     * the log; the floating karaoke lines carry the answer text itself.
+     */
+    setStreamingActive(active) {
+        const chatItem = this.container?.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
+        const contentArea = chatItem?.querySelector('.document-content');
+        if (!contentArea) return;
+
+        if (active) {
+            if (contentArea.querySelector('.streaming-indicator')) return;
+
+            const indicator = document.createElement('div');
+            indicator.className = 'streaming-indicator';
+            indicator.textContent = 'Answering';
+            contentArea.appendChild(indicator);
+            contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+        } else {
+            contentArea.querySelector('.streaming-indicator')?.remove();
+        }
+    }
+
+    clearTransientEchoes() {
+        const chatItem = this.container?.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
+        chatItem?.querySelectorAll('.live-user-turn').forEach(el => el.remove());
+    }
+
+    /**
+     * Transient in-document echo of the current exchange's user turn
+     * (#19 item 3): the formatted, persisted pair only lands on
+     * 'completed' — without this the user's message is invisible for the
+     * whole streaming period. Re-invocations update in place.
+     */
+    appendUserTurn(text) {
+        console.log(`[DocTrace] appendUserTurn: ${text.length} chars`);
+        const chatItem = this.container?.querySelector(
+            '.document-item[data-format="chat-history"]'
+        );
+        const contentArea = chatItem?.querySelector('.document-content');
+        if (!contentArea || !text) return;
+
+        let turn = contentArea.querySelector('.live-user-turn');
+        if (!turn) {
+            turn = document.createElement('div');
+            turn.className = 'live-user-turn';
+            contentArea.appendChild(turn);
+        }
+        turn.textContent = text;
+
+        const nearBottom =
+            contentArea.scrollHeight - contentArea.scrollTop - contentArea.clientHeight < 80;
+        if (nearBottom) {
+            contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
+        }
     }
 
     getSelectedText() {
@@ -798,26 +859,6 @@ class DocumentView extends BaseComponent {
                 iframe.src = 'about:blank';
             }
             this.container.removeChild(child);
-        }
-    }
-
-    setStreamingActive(active) {
-        const chatItem = this.container?.querySelector(
-            '.document-item[data-format="chat-history"]'
-        );
-        const contentArea = chatItem?.querySelector('.document-content');
-        if (!contentArea) return;
-
-        if (active) {
-            if (contentArea.querySelector('.streaming-indicator')) return;
-
-            const indicator = document.createElement('div');
-            indicator.className = 'streaming-indicator';
-            indicator.textContent = 'Answering';
-            contentArea.appendChild(indicator);
-            contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'auto' });
-        } else {
-            contentArea.querySelector('.streaming-indicator')?.remove();
         }
     }
 }

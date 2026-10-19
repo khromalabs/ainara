@@ -94,6 +94,9 @@ class ComRingWindow extends BaseWindow {
         this.isDocumentView = false;
         this.originalVolume = null;
         this.onAnimation = false;
+        // Latest view switch requested while a resize animation was running
+        // (#19 item 3); applied when the animation completes.
+        this.pendingViewMode = null;
         // Session-level backend trust for the PTT key watch (#19 item 5): set
         // once the OS key-state backend has ever reported the trigger key
         // down. From then on an "up" report is trusted even within a
@@ -105,7 +108,7 @@ class ComRingWindow extends BaseWindow {
     setupEventHandlers() {
         super.setupBaseEventHandlers();
 
-        const { ipcMain, screen } = require('electron');
+        const { ipcMain } = require('electron');
 
         ipcMain.on('show-window', async () => {
             if (this.manager && !this.isVisible()) {
@@ -147,48 +150,15 @@ class ComRingWindow extends BaseWindow {
 
         ipcMain.on('set-view-mode', (event, args) => {
             if (this.onAnimation) {
-                // prevent reentry
+                // #19 item 3: never drop a view switch. During the resize
+                // animation, remember the latest requested target and apply
+                // it on completion — dropping it here left renderer and main
+                // with divergent views (the streamed answer then never
+                // reached the document the user was looking at).
+                this.pendingViewMode = args;
                 return;
             }
-            if (args.view === 'document' && !this.isDocumentView) {
-                const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().size;
-
-                // const docWidth = this.config.get('documentView.width', 800);
-                // const docWidth = this.config.get('documentView.width', 800);
-                const docHeight = screenHeight * .90
-                const docWidth = screenWidth * .90
-
-                // Store current position before resizing
-                if (!this.isDocumentView) {
-                    const [currentX, currentY] = this.window.getPosition();
-                    this.originalPosition = [currentX, currentY];
-                }
-
-                const targetX = Math.round((screenWidth - docWidth) / 2);
-                const targetY = Math.round((screenHeight - docHeight) / 2);
-
-                this.window.setResizable(true);
-                this.window.setMinimumSize(400, 300);
-                this.animateBounds({ x: targetX, y: targetY, width: docWidth, height: docHeight }, 400);
-                this.isDocumentView = true;
-
-                // Explicit z-order (#19 item 8): both windows are alwaysOnTop,
-                // so their relative stacking is OS-dependent. Keep the input
-                // bar deterministically above the document surface.
-                const chatDisplay = this.manager.getWindow('chatDisplay');
-                if (chatDisplay) {
-                    chatDisplay.window.moveTop();
-                }
-
-            } else if (args.view === 'ring' && this.isDocumentView) {
-                // Restore original size and position
-                const [originalWidth, originalHeight] = this.originalSize;
-                this.window.setMinimumSize(originalWidth, originalHeight);
-                let fixMouse = 'fixMouse' in args ? args.fixMouse : true;
-                this.animateBounds({ x: this.originalPosition[0], y: this.originalPosition[1], width: originalWidth, height: originalHeight }, 400, fixMouse);
-                this.window.setResizable(false);
-                this.isDocumentView = false;
-            }
+            this.applyViewMode(args);
         });
 
         ipcMain.on('com-ring-focus', () => {
@@ -313,6 +283,52 @@ class ComRingWindow extends BaseWindow {
         }
     }
 
+    // Applies a view switch: expands the window to document size or
+    // restores it to ring size. Called directly, or after a resize
+    // animation finishes when a switch was requested mid-animation
+    // (pendingViewMode, #19 item 3).
+    applyViewMode(args) {
+        const { screen } = require('electron');
+        console.log(`[ViewTrace] applyViewMode: ${args.view} (isDocumentView=${this.isDocumentView}, pending=${!!this.pendingViewMode})`);
+        if (args.view === 'document' && !this.isDocumentView) {
+            const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().size;
+
+            const docHeight = screenHeight * .90
+            const docWidth = screenWidth * .90
+
+            // Store current position before resizing
+            if (!this.isDocumentView) {
+                const [currentX, currentY] = this.window.getPosition();
+                this.originalPosition = [currentX, currentY];
+            }
+
+            const targetX = Math.round((screenWidth - docWidth) / 2);
+            const targetY = Math.round((screenHeight - docHeight) / 2);
+
+            this.window.setResizable(true);
+            this.window.setMinimumSize(400, 300);
+            this.animateBounds({ x: targetX, y: targetY, width: docWidth, height: docHeight }, 400);
+            this.isDocumentView = true;
+
+            // Explicit z-order (#19 item 8): both windows are alwaysOnTop,
+            // so their relative stacking is OS-dependent. Keep the input
+            // bar deterministically above the document surface.
+            const chatDisplay = this.manager.getWindow('chatDisplay');
+            if (chatDisplay) {
+                chatDisplay.window.moveTop();
+            }
+
+        } else if (args.view === 'ring' && this.isDocumentView) {
+            // Restore original size and position
+            const [originalWidth, originalHeight] = this.originalSize;
+            this.window.setMinimumSize(originalWidth, originalHeight);
+            let fixMouse = 'fixMouse' in args ? args.fixMouse : true;
+            this.animateBounds({ x: this.originalPosition[0], y: this.originalPosition[1], width: originalWidth, height: originalHeight }, 400, fixMouse);
+            this.window.setResizable(false);
+            this.isDocumentView = false;
+        }
+    }
+
     animateBounds(targetBounds, duration, fixMouse = true) {
         return new Promise(resolve => {
             const startBounds = this.window.getBounds();
@@ -353,6 +369,13 @@ class ComRingWindow extends BaseWindow {
                     }
                     this.onAnimation = false;
                     this.window.webContents.send('not-on-animation');
+                    // Apply a view switch requested mid-animation (#19 item 3)
+                    if (this.pendingViewMode) {
+                        const pending = this.pendingViewMode;
+                        this.pendingViewMode = null;
+                        Logger.log(`[ViewTrace] applying queued view switch after animation: ${pending.view}`);
+                        this.applyViewMode(pending);
+                    }
                     resolve();
                 }
             }, 16); // ~60 FPS
