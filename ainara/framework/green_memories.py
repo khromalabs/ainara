@@ -56,6 +56,14 @@ MIN_RELEVANCE_THRESHOLD = 0.2
 MEMORY_MAX_WORDS = 80
 MEMORY_SOFT_MAX_WORDS = 60
 
+# Reasoning effort for GREEN memory-generation LLM calls (profile summary,
+# recent memories summary). Reasoning models (e.g. gpt-oss on Groq) default to
+# 'medium', whose analysis channel alone can exhaust the provider's default
+# completion budget on large memory payloads -> empty `content` responses.
+# 'low' collapses reasoning tokens by ~10x while the compression prompts are
+# simple enough not to need more.
+MEMORY_REASONING_EFFORT = "low"
+
 # Define a set of stopwords for normalization.
 # We use spaCy's list and can extend it if needed.
 STOPWORDS = set(SPACY_STOP_WORDS)
@@ -328,7 +336,7 @@ class GREENMemories:
 
             try:
                 llm = self._get_memory_llm(provider_name)
-                return task(llm), provider_name
+                result = task(llm)
             except Exception as exc:
                 logger.warning(
                     "Memory LLM provider %r failed: %s",
@@ -337,6 +345,24 @@ class GREENMemories:
                 )
                 if provider_name is not None:
                     blacklist.add(provider_name)
+                continue
+
+            # Some providers (reasoning models with a capped completion
+            # budget) return HTTP-success with an EMPTY `content` when the
+            # analysis channel consumes all tokens. An empty string is a
+            # failure, not a result: fall through to the next provider.
+            # (None is a legitimate result meaning "nothing to generate".)
+            if isinstance(result, str) and not result.strip():
+                logger.warning(
+                    "Memory LLM provider %r returned an empty response;"
+                    " trying next provider",
+                    provider_name,
+                )
+                if provider_name is not None:
+                    blacklist.add(provider_name)
+                continue
+
+            return result, provider_name
 
         return self._ALL_MEMORY_PROVIDERS_FAILED, None
 
@@ -911,9 +937,10 @@ class GREENMemories:
             return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
+                reasoning_effort=MEMORY_REASONING_EFFORT,
             )
 
-        result, _provider_used = self._run_with_memory_llm(_task)
+        result, provider_used = self._run_with_memory_llm(_task)
 
         if result is self._ALL_MEMORY_PROVIDERS_FAILED:
             logger.error(
@@ -923,7 +950,11 @@ class GREENMemories:
             return "User profile couldn't be generated"
 
         if result is not None:
-            logger.info(f"Generated user profile summary: {result[:150]}...")
+            logger.info(
+                "Generated user profile summary via %s: %s...",
+                provider_used,
+                result[:150],
+            )
 
         return result
 
@@ -931,17 +962,19 @@ class GREENMemories:
         self, top_k: Optional[int] = None
     ) -> Optional[str]:
         """
-        Generates a narrative summary of the most recently discussed topics.
+        Generates a recent timeline of events and open threads from the most
+        recently updated memories.
 
-        This method fetches the most recently updated memories and asks the LLM to
-        synthesize them into a coherent paragraph.
+        This method fetches the most recently updated memories and asks the LLM
+        to select and compress them into a chronological event chain (newest
+        first) plus a list of pending/open items, so the assistant can resume
+        previous conversations with accurate state.
 
         Args:
-            top_k: The number of top recent memories to use for the summary.
+            top_k: The number of top recent memories to consider.
 
         Returns:
-            A string containing the narrative of recent memories, or None if no
-            memories exist.
+            A string containing the timeline, or None if no memories exist.
         """
         logger.info("Generating recent memories summary...")
 
@@ -990,43 +1023,13 @@ class GREENMemories:
             formatted_memories = []
             for mem in recent_memories:
                 memory_text = mem['memory']
-                last_updated = mem.get('last_updated')
-                created_at = mem.get('created_at')
-
+                # Single [last-mentioned] stamp: the timeline only needs
+                # recency markers, not first-seen (the old dual stamp fed
+                # the retired recurring() aggregation).
                 last_updated_terse = format_relative_time_terse(
-                    last_updated
+                    mem.get('last_updated')
                 )
-                created_at_terse = format_relative_time_terse(created_at)
-
-                show_both = False
-                if created_at and last_updated:
-                    try:
-                        created_dt = datetime.fromisoformat(created_at)
-                        updated_dt = datetime.fromisoformat(last_updated)
-
-                        if created_dt.tzinfo is None:
-                            created_dt = created_dt.replace(
-                                tzinfo=timezone.utc
-                            )
-                        if updated_dt.tzinfo is None:
-                            updated_dt = updated_dt.replace(
-                                tzinfo=timezone.utc
-                            )
-
-                        gap_seconds = (
-                            updated_dt - created_dt
-                        ).total_seconds()
-                        show_both = gap_seconds > 300
-                    except (ValueError, TypeError):
-                        pass
-
-                if show_both and created_at_terse and last_updated_terse:
-                    formatted_memories.append(
-                        f"- [first seen: {created_at_terse} |"
-                        f" last mentioned: {last_updated_terse}]"
-                        f" {memory_text}"
-                    )
-                elif last_updated_terse:
+                if last_updated_terse:
                     formatted_memories.append(
                         f"- [{last_updated_terse}] {memory_text}"
                     )
@@ -1043,9 +1046,10 @@ class GREENMemories:
             return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
+                reasoning_effort=MEMORY_REASONING_EFFORT,
             )
 
-        result, _provider_used = self._run_with_memory_llm(_task)
+        result, provider_used = self._run_with_memory_llm(_task)
 
         if result is self._ALL_MEMORY_PROVIDERS_FAILED:
             logger.error(
@@ -1056,7 +1060,9 @@ class GREENMemories:
 
         if result is not None:
             logger.info(
-                f"Generated recent memories summary: {result[:150]}..."
+                "Generated recent memories summary via %s: %s...",
+                provider_used,
+                result[:150],
             )
 
         return result

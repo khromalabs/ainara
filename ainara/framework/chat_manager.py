@@ -1311,6 +1311,13 @@ class ChatManager:
         reasoning, such as specific verbs, question structures, and comparative language.
         """
         # TEMP disable this heuristic in LiteLLM models
+        # TODO(llm): re-enable for LiteLLM providers. The heuristic worked
+        # well with Ollama (local models adapt effort to the query — great
+        # speed/intelligence compromise). The LiteLLM side was disabled in
+        # 2025-10 after providers rejecting `reasoning_effort` broke main
+        # chat; the safe re-enable plan (get_supported_openai_params
+        # preflight, client-side UnsupportedParamsError, per-call scoping)
+        # is documented in the TODO block in llm/litellm.py chat().
         selected_provider_id = config.get("llm.selected_provider", "")
         if (
             not self.reasoning_heuristic_enabled

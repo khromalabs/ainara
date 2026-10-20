@@ -434,6 +434,7 @@ class LiteLLM(LLMBackend):
         stream: bool = False,
         provider: dict = None,
         reasoning_level: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM"""
         # Check if we're using the placeholder provider
@@ -485,6 +486,37 @@ class LiteLLM(LLMBackend):
             }
 
             # Add reasoning effort if requested and supported
+            #
+            # TODO(llm): Resume adaptive reasoning for LiteLLM providers.
+            #
+            # This block used to translate ChatManager's text-heuristic
+            # reasoning level (see ChatManager.
+            # _calculate_reasoning_level_heuristic — spaCy-based score of how
+            # much reasoning a query needs) into an effort level. It was
+            # disabled here and gated to ollama/ providers only (2025-10)
+            # after some providers rejected the parameter on every main-chat
+            # call, breaking conversations with no fallback.
+            #
+            # What we learned since (2026-10-20 investigation of empty GREEN
+            # recent-memories summaries):
+            #   - litellm.supports_reasoning() is the WRONG guard: it reports
+            #     capability, not parameter support, and returns True even for
+            #     providers that reject reasoning_effort (e.g. zai).
+            #   - litellm.get_supported_openai_params(model) is the correct
+            #     preflight: it correctly flagged zai/glm-5.3-flash as the
+            #     only rejector in the memories chain.
+            #   - Rejection raises UnsupportedParamsError CLIENT-side (no API
+            #     call, no quota), so it is cheap to catch and skip.
+            #   - Live probe (2026-10-20): mimo/gemini/deepseek/claude/grok
+            #     accept or silently ignore the param; only zai rejects.
+            #   - The explicit-effort mechanism below (reasoning_effort
+            #     kwarg, added for GREEN memory summaries) already works and
+            #     degrades gracefully via _run_with_memory_llm's provider
+            #     fallback.
+            #
+            # Re-enable plan: preflight with get_supported_openai_params,
+            # map the heuristic's float level to low/medium/high, and skip
+            # the param (not the call) when unsupported.
             if reasoning_level is not None and reasoning_level > 0:
                 if litellm.supports_reasoning(model=provider["model"]):
                     reasoning_effort_str = "low"
@@ -504,6 +536,22 @@ class LiteLLM(LLMBackend):
                     self.logger.warning(
                         "Reasoning requested but not supported by model"
                         f" {provider['model']}"
+                    )
+
+            # Explicit per-call reasoning effort (internal tier calls such as
+            # GREEN memories generation). Takes precedence over the
+            # reasoning_level heuristic above.
+            if reasoning_effort is not None:
+                if litellm.supports_reasoning(model=provider["model"]):
+                    completion_kwargs["reasoning_effort"] = reasoning_effort
+                    self.logger.info(
+                        f"Requesting explicit '{reasoning_effort}' reasoning"
+                        f" effort for model {provider['model']}"
+                    )
+                else:
+                    self.logger.warning(
+                        "Explicit reasoning effort requested but not"
+                        f" supported by model {provider['model']}; ignoring"
                     )
 
             self.logger.info(
@@ -590,6 +638,7 @@ class LiteLLM(LLMBackend):
         stream: bool = False,
         provider: dict = None,
         reasoning_level: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM (async version)"""
         # Check if we're using the placeholder provider
@@ -663,6 +712,8 @@ class LiteLLM(LLMBackend):
             }
 
             # Add reasoning effort if requested and supported
+            # (TODO(llm): resume adaptive reasoning — see the detailed note
+            # in chat(); this is the async mirror of that block.)
             if reasoning_level is not None and reasoning_level > 0:
                 if litellm.supports_reasoning(model=provider["model"]):
                     reasoning_effort_str = "low"
@@ -682,6 +733,20 @@ class LiteLLM(LLMBackend):
                     self.logger.warning(
                         "Reasoning requested but not supported by model"
                         f" {provider['model']} (async)"
+                    )
+
+            # Explicit per-call reasoning effort (see chat()).
+            if reasoning_effort is not None:
+                if litellm.supports_reasoning(model=provider["model"]):
+                    completion_kwargs["reasoning_effort"] = reasoning_effort
+                    self.logger.info(
+                        f"Requesting explicit '{reasoning_effort}' reasoning"
+                        f" effort for model {provider['model']} (async)"
+                    )
+                else:
+                    self.logger.warning(
+                        "Explicit reasoning effort requested but not"
+                        f" supported by model {provider['model']}; ignoring"
                     )
 
             self.logger.info(
