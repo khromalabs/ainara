@@ -113,9 +113,12 @@ class ComRing extends BaseComponent {
             // flowing (fast karaoke in ring view, in-document stream in
             // chat-history); cleared on 'completed'.
             this.playbackMuted = false;
-            // #19 item 3: hold-Esc interrupt gesture (wired to the backend
-            // interrupt endpoint in Stage B/C).
+            // #19 item 3: hold-Esc silence gesture — stops TTS playback
+            // and karaoke display for the rest of the exchange.
             this.escapeHoldTimer = null;
+            // #19 item 3: gate closed while the exchange is silenced —
+            // streamed chunks are ignored until 'completed' resets it.
+            this.exchangeSilenced = false;
             // #19 item 3: muted-mode fast karaoke queue — chunks are
             // released to chat-display one at a time, waiting for each
             // reveal to complete (animation-completed backpressure), so
@@ -645,7 +648,7 @@ class ComRing extends BaseComponent {
             if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
                     this.onEscapeDuringExchange(event);
-                } else {
+                } else if (!event.repeat) {
                     console.log('Escape in document view: switching back to ring view.');
                     this.switchToRingView();
                 }
@@ -663,7 +666,9 @@ class ComRing extends BaseComponent {
                     event.stopPropagation();
                     ipcRenderer.send('com-ring-focus');
                     return;
-                } else {
+                } else if (!event.repeat) {
+                    // Press-only: auto-repeats of a held Escape must not
+                    // hide the UI if the exchange ended mid-hold (#19 item 3)
                     console.log("Escape triggers hide-window-all");
                     this.ignoreIncomingEvents = true;
                     ipcRenderer.send('hide-window-all');
@@ -861,16 +866,28 @@ class ComRing extends BaseComponent {
 
     // Transient exchange status (#19 item 3): muted-state hint while
     // playback is muted and the answer is still streaming; queue count
-    // while user turns are waiting. Cleared on 'completed' / flush.
+    // while user turns are waiting. Cleared on 'completed' / flush. Once
+    // the exchange is silenced, the "Stopped" flash is the status — the
+    // hint would be stale (the gesture was already performed).
     updateExchangeStatus() {
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
         if (!sttStatus) return;
-        if (!this.state.isProcessingLLM && !this.isProcessingMessage) return;
         const queued = this.pendingUserMessages.length;
+        if (this.exchangeSilenced) {
+            // Silenced: the "Stopped" flash is the status and the muted
+            // gesture hint is stale (already performed) — but queued turns
+            // still deserve their count.
+            if (queued > 0) {
+                sttStatus.textContent = `Queued (${queued})`;
+                sttStatus.classList.add('active');
+            }
+            return;
+        }
+        if (!this.state.isProcessingLLM && !this.isProcessingMessage) return;
         if (this.playbackMuted) {
             sttStatus.textContent = queued > 0
-                ? `Muted (${queued} queued): hold Esc to interrupt answer`
-                : 'Muted: hold Esc to interrupt answer';
+                ? `Muted (${queued} queued): hold Esc to stop message reproduction`
+                : 'Muted: hold Esc to stop message reproduction';
             sttStatus.classList.add('active');
         } else if (queued > 0) {
             sttStatus.textContent = `Queued (${queued})`;
@@ -933,14 +950,18 @@ class ComRing extends BaseComponent {
     }
 
     // #19 item 3: Escape while an exchange is in flight. First press mutes
-    // playback ("stop talking"); further presses are no-ops — the
-    // interrupt gesture is *holding* Esc (interruptLLMResponse below).
+    // playback ("stop talking"); further presses are no-ops — the silence
+    // gesture is *holding* Esc (silenceExchange below).
     onEscapeDuringExchange(event) {
         if (!event.repeat) {
             this.armEscapeHold();
+        } else {
+            // Auto-repeats only serve hold detection — a hold that outlives
+            // the exchange must not re-trigger press actions (#19 item 3)
+            return;
         }
         if (this.playbackMuted) {
-            console.log('Escape while muted: no-op (hold Esc to interrupt)');
+            console.log('Escape while muted: no-op (hold Esc to go silent)');
             return;
         }
         this.abortLLMResponse();
@@ -950,7 +971,7 @@ class ComRing extends BaseComponent {
         if (this.escapeHoldTimer) return;
         this.escapeHoldTimer = setTimeout(() => {
             this.escapeHoldTimer = null;
-            this.interruptLLMResponse();
+            this.silenceExchange();
         }, 700);
     }
 
@@ -961,10 +982,52 @@ class ComRing extends BaseComponent {
         }
     }
 
-    interruptLLMResponse() {
-        // Recognized gesture; the actual cancellation (cooperative backend
-        // interrupt + `_(interrupted)_` badge) lands with Stage B/C.
-        console.log('Escape hold detected: interrupt requested (wiring pending, #19 item 3)');
+    // #19 item 3: hold-Esc action — silence the exchange. TTS playback
+    // and karaoke display stop for the rest of the answer; generation
+    // continues and the complete, unmarked answer lands in the record at
+    // 'completed'. The "Answering" badge (document view) stays as the
+    // honest in-flight signal.
+    silenceExchange() {
+        if (this.exchangeSilenced) return;
+        this.exchangeSilenced = true;
+
+        // Stop phrase playback: drain the paced fast-karaoke queue, any
+        // pending TTS audio and the karaoke display itself.
+        this.mutedStreamQueue = [];
+        if (this.mutedStreamRelease) this.mutedStreamRelease();
+        this.messageQueue.forEach(queued => {
+            if (queued && queued.audio) {
+                this.closeTTSAudioContext(queued.audio);
+            }
+        });
+        this.messageQueue = [];
+        this.isProcessingMessage = false;
+        this.currentMessageId = null;
+        this.animationResolvers.forEach(resolver => resolver());
+        this.animationResolvers.clear();
+        this.animationTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.animationTimeouts.clear();
+        this.audioTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.audioTimeouts.clear();
+        if (this.currentAudio) {
+            this.closeTTSAudioContext(this.currentAudio);
+            this.currentAudio.pause();
+            this.currentAudio.src = '';
+            this.currentAudio = null;
+        }
+        ipcRenderer.send('llm-aborted');
+
+        // Transient acknowledgment — silence itself carries the message;
+        // the completed teardown refreshes the log.
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (sttStatus) {
+            sttStatus.textContent = 'Stopped';
+            sttStatus.classList.add('active');
+            setTimeout(() => {
+                sttStatus.classList.remove('active');
+                sttStatus.textContent = '';
+            }, 1500);
+        }
     }
 
     async processUserMessage(message, typed = false) {
@@ -1589,6 +1652,7 @@ class ComRing extends BaseComponent {
         this.playbackMuted = false;
         // Drop any muted-stream backlog from a previous exchange (#19 item 3)
         this.mutedStreamQueue = [];
+        this.exchangeSilenced = false;
         // The user turn of the exchange — echoed into an open chat-history
         // view immediately, since the persisted pair only lands on
         // 'completed' (#19 item 3).
@@ -2373,6 +2437,13 @@ Visit our project site at: https://ainara.app
         // console.log("\n--- EVENT ---\nevent: " + event.event + "\ntype:" + event.type + "\ncontent:"+ JSON.stringify(event.content));
         switch(event.event) {
             case 'stream':
+                // #19 item 3: while the exchange is silenced (hold-Esc),
+                // ignore streamed chunks — the answer keeps generating and
+                // lands complete in the record at 'completed'. Nothing is
+                // displayed.
+                if (this.exchangeSilenced) {
+                    break;
+                }
                 if (event.type === 'message') {
                     const content = event.content.content;
                     const messageId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -2568,8 +2639,11 @@ Visit our project site at: https://ainara.app
 
             case 'completed':
                 if (event.type === 'signal') {
+                    console.log(`[DocTrace] completed signal: view=${this.currentView}/${this.docFormat} muted=${this.playbackMuted}`);
                     this.circle.classList.remove('skill-active');
                     this.isLLMStreaming = false;
+                    // #19 item 3: reopen the silence gate
+                    this.exchangeSilenced = false;
 
                     // #19 item 3: end of the abort limbo — the answer has
                     // finished streaming, so muted playback and its status
