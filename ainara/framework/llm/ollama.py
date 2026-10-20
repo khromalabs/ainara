@@ -269,7 +269,10 @@ class OllamaLLM(LLMBackend):
         stream: bool = True,
         provider: Optional[Dict] = None,
         reasoning_level: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Union[str, Generator[str, None, None]]:
+        # reasoning_effort is accepted for interface parity; Ollama has no
+        # equivalent effort knob (thinking is boolean via use_thinking below).
         messages = self._prepare_messages_for_ollama(chat_history)
 
         logger.info(
@@ -346,7 +349,10 @@ class OllamaLLM(LLMBackend):
         stream: bool = True,
         provider: Optional[Dict] = None,
         reasoning_level: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Union[str, AsyncGenerator[str, None]]:
+        # reasoning_effort is accepted for interface parity; Ollama has no
+        # equivalent effort knob.
         messages = self._prepare_messages_for_ollama(chat_history)
 
         logger.info(

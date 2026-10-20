@@ -202,6 +202,7 @@ class LLMBackend(ABC):
         chat_history: list = None,
         stream: bool = False,
         reasoning_level: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Union[Tuple[str, Optional[str]], Generator]:
         """Process text using the LLM backend
 
@@ -210,6 +211,10 @@ class LLMBackend(ABC):
             system_message: Optional system message to prepend
             chat_history: Optional list of previous messages
             stream: Whether to stream the response
+            reasoning_level: 0.0-1.0 heuristic; translated to an effort level
+                by backends that support it (main-chat path)
+            reasoning_effort: Explicit effort hint (e.g. "low") for internal
+                tier calls; takes precedence over reasoning_level
 
         Returns:
             Processed text response or generator for streaming
