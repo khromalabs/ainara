@@ -419,13 +419,14 @@ th[data-sort]:hover .tablesort__icon {
 
 /* Transient user-turn echo (#19 item 3) — the persisted exchange only
    lands on 'completed'; the echo keeps the user's message visible in the
-   log meanwhile. Same speaker convention as the persisted history. */
+   log meanwhile. The "now" stamp reuses the log's timestamp <code>
+   styling and deliberately makes no time claim (see appendUserTurn);
+   italics mark it as a slightly different concept than a clock reading. */
 .live-user-turn {
     margin: 8px 4px;
     white-space: pre-wrap;
 }
 
-.live-user-turn::before {
-    content: 'U: ';
-    font-weight: bold;
+.live-turn-stamp {
+    font-style: italic;
 }

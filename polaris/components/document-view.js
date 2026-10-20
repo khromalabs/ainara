@@ -616,6 +616,11 @@ class DocumentView extends BaseComponent {
      * (#19 item 3): the formatted, persisted pair only lands on
      * 'completed' — without this the user's message is invisible for the
      * whole streaming period. Re-invocations update in place.
+     *
+     * The stamp is a literal "now" label styled like the log's timestamp
+     * code blocks (same <code> styling), NOT a clock reading: it marks the
+     * message just dropped without ever claiming a time that could differ
+     * from the persisted entry's own stamp on refresh.
      */
     appendUserTurn(text) {
         console.log(`[DocTrace] appendUserTurn: ${text.length} chars`);
@@ -629,9 +634,20 @@ class DocumentView extends BaseComponent {
         if (!turn) {
             turn = document.createElement('div');
             turn.className = 'live-user-turn';
+            const stamp = document.createElement('code');
+            stamp.className = 'live-turn-stamp';
+            stamp.textContent = 'now';
+            const prefix = document.createElement('strong');
+            prefix.textContent = 'U: ';
+            const body = document.createElement('span');
+            body.className = 'live-turn-text';
+            turn.appendChild(stamp);
+            turn.appendChild(document.createTextNode(' '));
+            turn.appendChild(prefix);
+            turn.appendChild(body);
             contentArea.appendChild(turn);
         }
-        turn.textContent = text;
+        turn.querySelector('.live-turn-text').textContent = text;
 
         const nearBottom =
             contentArea.scrollHeight - contentArea.scrollTop - contentArea.clientHeight < 80;
