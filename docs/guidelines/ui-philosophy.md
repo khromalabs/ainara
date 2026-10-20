@@ -126,12 +126,22 @@ looks at the screen should still be able to have a complete exchange.
 
 When the assistant's speech *is* visualized, it appears as karaoke-style text
 that flows upward and disappears as soon as the spoken expression ends. This
-is the voice's only visual trace, and its ephemerality is deliberate: speech
-in a real conversation leaves no residue, so neither should its
-visualization. The spoken words are not log entries to be scrolled or
-managed — they exist for the moment they are heard, then vanish. (Chat
+is the voice's only visual trace — **in every view mode**: the chat history
+window shows the same floating lines over its "Answering" badge rather than
+a second, persistent rendering of the answer, because the log is a record of
+the conversation, not a parallel chat surface. The trace's ephemerality is
+deliberate: speech in a real conversation leaves no residue, so neither
+should its visualization. The spoken words are not log entries to be scrolled
+or managed — they exist for the moment they are heard, then vanish, and the
+complete answer is recalled through the record when the exchange ends. (Chat
 history remains available on demand through the conversation surface, as an
 explicit act of recall — not as a permanent fixture.)
+
+Reproduction can be stepped down without touching the record: a press of
+Escape mutes the voice and lets the karaoke run at reading speed; holding it
+stops the reproduction entirely — voice *and* floating text — while the
+answer finishes generating into the history. Neither gesture ever marks or
+cuts the recorded answer: the log is what was said, always complete.
 
 ### Content over chrome
 
@@ -150,12 +160,14 @@ mechanisms.
 | --- | --- |
 | Any letter / number key | Enters typing mode; input bar appears with generous font |
 | Escape (in typing mode) | Closes the input bar |
-| Escape (ring, response in flight) | Aborts the ongoing LLM response |
+| Escape (ring or document view, response in flight) — press | Mutes reproduction: TTS stops, the answer keeps streaming as fast karaoke, and lands complete in the chat history when generation ends |
+| Escape (ring or document view, response in flight) — hold | Stops message reproduction: TTS and karaoke both stop; the answer still completes into the chat history, unmarked |
 | Escape (ring, idle) | Hides all windows |
 | Escape (document view) | Returns to the ring view |
 | Tab (ring) | Shows chat history |
 | Tab (history / document view) | Returns to the ring |
 | Arrow up / down (input bar) | Steps through previous drafts; the in-progress draft is stashed and restored; ↓ ends on an empty input |
+| User turn while a response is in flight | Queued (never dropped); dispatched, newline-joined, when the answer finishes |
 | Window blur | Ring view hides (voice continues); typing mode is intended to be cancelled (currently persists main-side — known landmine, see the windowing model reference) |
 
 The `WindowManager` (`polaris/windows/WindowManager.js`) and the per-window
@@ -234,8 +246,11 @@ this section only mirrors it so readers of the design doc know these are
 open, not settled.
 
 - **UI state-visibility & lifecycle issues** — blur vs. document view, exit
-  signals, TTS abort limbo, in-flight concurrency, stuck push-to-talk:
-  tracked in #19.
+  signals, in-flight user turns, stuck push-to-talk, live documents vs. the
+  open record: tracked in #19. The TTS abort limbo and in-flight
+  concurrency are resolved (mute/silence reproduction model + turn
+  queueing, `dev012-streamui`); exit signals and the document-arrival
+  policy (item 10) remain open.
 - **STT experience / capture & transport rework** — the conversational loop
   is only as good as its weakest half; phased plan in
   `docs/proposals/stt-pipeline-rework.md`, tracked in #20.
