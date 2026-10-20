@@ -58,8 +58,10 @@ Use this KEY information, such as the user name, to personalize your responses:
 {{/user_profile_summary}}
 {{#recent_memories_summary}}
 
-## TOPICS DISCUSSED IN RECENT CONVERSATIONS
-Use this information to maintain conversation continuity:
+## RECENT TIMELINE
+Recent events and open threads from previous conversations, newest first.
+Use this to maintain conversation continuity and naturally resume pending
+topics when relevant ("OPEN" items are unresolved):
 {{{recent_memories_summary}}}
 {{/recent_memories_summary}}
 {{#last_chat_timestamp}}
