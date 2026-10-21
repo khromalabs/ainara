@@ -64,6 +64,40 @@ before proposing changes that cut against them.
   layout, and is safe to call from inside app modules, unlike `get_data_dir()`
   which is forbidden there) — never outside it.
 
+### The class docstring is the in-conversation skill contract
+- The class docstring is the ONLY skill description the LLM sees during a
+  conversation — no full skill description reaches the Orakle system prompt;
+  `matcher_info` is used for semantic routing only. With multi-action skills
+  (one `run()` dispatching on an `action` parameter) the docstring must
+  enumerate every action compactly, following the
+  `Actions: name=meaning (params), ...` pattern (reference implementation:
+  Ataria's `crypto/tradingaccount.py`).
+- Document behavioral rules the agent must respect there too — not just in
+  code: parameter semantics the agent can't guess (e.g. "quantity 0
+  removes"), hard limits (e.g. "every write enforces a spending cap, fails
+  closed"), and what is deliberately NOT implemented (e.g. "checkout stays
+  manual") so the agent frames expectations correctly.
+- Declare `run()` parameters with `Annotated[...]` descriptions — that is
+  how the LLM learns to fill arguments. Return structured errors
+  (`{"success": False, "result": msg}`) instead of raising so the agent can
+  explain the failure to the user; wrap blocking network I/O in
+  `asyncio.to_thread` inside `async run()`.
+
+### User skills & skill UI components
+- User skills live under `user_skills.directory` in category subdirs
+  (`shopping/supermarket.py`); the class name is derived from the namespace
+  path (`shopping/supermarket.py` → class `ShoppingSupermarket`) and the
+  capability gets the `user_` prefix at discovery.
+- A skill can ship a web component: `_components/<ClassName>/` at the
+  user-skills root (`index.html`, `script.js`, `style.css`), matched to the
+  skill by class name. Components are strictly presentational — they
+  receive the skill's structured result via postMessage → `render(data)`
+  and must never do their own API access; all state changes flow through
+  the skill so auth/budget/guard logic stays in one auditable place.
+- Shared Python dependencies go in `requirements.txt` at the user-skills
+  root; the provider installs them at startup (prefer the framework venv
+  itself — a separate per-skills interpreter is usually redundant).
+
 ### Config hygiene
 - Key names must mean what they say (`logging.rotation.max_size_mb` is real
   megabytes — issue #14 is the cautionary tale). Prefer correctly-named

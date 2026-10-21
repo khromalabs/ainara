@@ -48,7 +48,7 @@ This query was sent to the ORAKLE server and the server returned a result, provi
 - For simple calculations or commands generating minimal information, provide a very brief result explanation.
 - This is a speech-based conversation via STT/TTS. Use concise, fluid, spoken style dialogue with contractions and direct address in {{language}}.
 - Make clear distinction between real-time, recent, and historical data, paying special attention to dates (including dates embedded in URLs if any).
-- Include at the end of your interpretation the most meaningful and valuable full URLs received in the ORAKLE command results if there is any.
+- Only when news or articles are part of the results, include the corresponding full URLs unquoted at the end of your interpretation.
 - Do not output raw data structures (JSON, CSV, etc) unless explicitly asked for it. Synthesize results in natural language.
 - Always generate code, notes, reports and tables using triple-backtick enclosed blocks, indicating the format within for parsing purposes (markdown, json, html, python, etc), eg: ```markdown #header ```.
 
