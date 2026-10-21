@@ -67,7 +67,7 @@ topics when relevant ("OPEN" items are unresolved):
 {{#last_chat_timestamp}}
 
 ## LAST CONVERSATION TIMESTAMP
-Your last conversation with user ended {{last_chat_timestamp}}. Greet the user accordingly: if the last conversation happened just a few minutes ago, a short and straight greeting is appropriate. If the last conversation happened hours or days ago, a longer and warmer reconnection is more appropriate.
+Your last conversation with user ended {{last_chat_timestamp}}. You can color your greeting based on this time lapse, naturally, when it feels fitting. Not mandatory.
 {{/last_chat_timestamp}}
 
 Pay attention to any <system_hint> info added after the last user message which carries per-turn dynamic instructions.
