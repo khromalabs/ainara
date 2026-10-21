@@ -380,6 +380,9 @@ th[data-sort]:hover .tablesort__icon {
     cursor: pointer;
 }
 
+/* "Answering" badge at the end of the chat-history log while an answer
+   streams (#19 item 3): shows the in-flight process; the floating
+   karaoke lines carry the answer text itself. */
 .streaming-indicator {
     position: relative;
     display: block;
@@ -412,4 +415,18 @@ th[data-sort]:hover .tablesort__icon {
 @keyframes streaming-pulse {
     0%, 100% { opacity: 0.2; transform: scale(0.8); }
     50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Transient user-turn echo (#19 item 3) — the persisted exchange only
+   lands on 'completed'; the echo keeps the user's message visible in the
+   log meanwhile. The "now" stamp reuses the log's timestamp <code>
+   styling and deliberately makes no time claim (see appendUserTurn);
+   italics mark it as a slightly different concept than a clock reading. */
+.live-user-turn {
+    margin: 8px 4px;
+    white-space: pre-wrap;
+}
+
+.live-turn-stamp {
+    font-style: italic;
 }

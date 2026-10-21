@@ -28,6 +28,12 @@ class ChatDisplay extends BaseComponent {
         this.maxVisibleMessages = 5;
         this.messageTimeouts = [];
         this.animationTimeouts = [];
+        // Serialized karaoke reveals (#19 item 3): chunks arriving while
+        // playback is muted skip the com-ring TTS queue (the thing that
+        // normally sequences them), so reveals must be chained here to keep
+        // phrases appearing one after another instead of all at once.
+        this.aiAnimationChain = Promise.resolve();
+        this.aiAnimationGeneration = 0;
         const { ipcRenderer } = require('electron');
         this.ipcRenderer = ipcRenderer;
         this.keydownHandler = null;
@@ -197,6 +203,10 @@ class ChatDisplay extends BaseComponent {
         }
         this.animationTimeouts = [];
 
+        // Invalidate any queued karaoke reveals (#19 item 3)
+        this.aiAnimationGeneration++;
+        this.aiAnimationChain = Promise.resolve();
+
         // Reset container
         if (this.container) {
             // Remove all messages
@@ -283,13 +293,11 @@ class ChatDisplay extends BaseComponent {
                                 if (textContent) {
                                     // Pass the messageId from the event to addMessage
                                     const messageId = content.content.messageId;
-                                    const messageElement = this.addMessage(
+                                    this.queueAIAnimation(
                                         textContent,
                                         content.content.flags.duration,
-                                        true,
                                         messageId
                                     );
-                                    this.animateAIResponse(messageElement, content.content.flags.duration);
                                 }
                             }
                         }
@@ -545,9 +553,30 @@ class ChatDisplay extends BaseComponent {
         });
     }
 
-    async animateAIResponse(messageElement, duration) {
-        if (!messageElement) return;
+    // Serialized karaoke reveals (#19 item 3): chunks arriving while
+    // playback is muted skip the com-ring TTS queue (the thing that
+    // normally sequences them), so reveals are chained here. The message
+    // element is only added to the DOM — and its fade timer armed — when
+    // the chain reaches it: a new phrase must not appear, fade or take
+    // layout space while the previous one is still revealing.
+    queueAIAnimation(text, duration, messageId) {
+        const generation = this.aiAnimationGeneration;
+        const run = this.aiAnimationChain.then(() => {
+            // A cleanupState() since this was queued supersedes it
+            if (generation !== this.aiAnimationGeneration) return;
+            // Chunks without a TTS duration (non-audio paths) fall back to
+            // reading-rate pacing instead of an immediately-fading NaN timer.
+            const safeDuration = (typeof duration === 'number' && duration > 0)
+                ? duration
+                : Math.max(1, text.length / 18);
+            const messageElement = this.addMessage(text, safeDuration, true, messageId);
+            return this.runAIAnimation(messageElement, safeDuration);
+        });
+        this.aiAnimationChain = run.catch(() => {});
+        return run;
+    }
 
+    async runAIAnimation(messageElement, duration) {
         const characters = messageElement.querySelectorAll('.character');
         const charDelay = duration / characters.length;
 

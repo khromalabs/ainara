@@ -98,12 +98,34 @@ class ComRing extends BaseComponent {
             // history (relayed via main, gated by ui.educationalHints);
             // consumed by showDraftRecoveryHint() on the next window-show.
             this.hasStashedDraft = false;
+            // #19 items 3/4: user turns arriving while an exchange is in
+            // flight are queued here, never dropped, and dispatched
+            // newline-joined when the current answer finishes streaming.
+            this.pendingUserMessages = [];
             this.keyCheckInterval = null;
             console.log('ComRing: Config manager initialized');
             this.currentView = 'ring';
             this.docFormat = 'text';
             this.navigatingHistory = false;
             this.isLLMStreaming = false;
+            // #19 item 3: TTS playback muted by abort (Escape or implicit
+            // voice barge-in). The LLM stream keeps running and text keeps
+            // flowing (fast karaoke in ring view, in-document stream in
+            // chat-history); cleared on 'completed'.
+            this.playbackMuted = false;
+            // #19 item 3: hold-Esc silence gesture — stops TTS playback
+            // and karaoke display for the rest of the exchange.
+            this.escapeHoldTimer = null;
+            // #19 item 3: gate closed while the exchange is silenced —
+            // streamed chunks are ignored until 'completed' resets it.
+            this.exchangeSilenced = false;
+            // #19 item 3: muted-mode fast karaoke queue — chunks are
+            // released to chat-display one at a time, waiting for each
+            // reveal to complete (animation-completed backpressure), so
+            // the visual stream stays strictly sequential.
+            this.mutedStreamQueue = [];
+            this.mutedStreamActive = false;
+            this.mutedStreamRelease = null;
             // Long-recording transcription hint (#19)
             this.recordingStartedAt = null;
             this.transcriptionHintActive = false;
@@ -480,10 +502,6 @@ class ComRing extends BaseComponent {
         });
 
         ipcRenderer.on('process-typed-message', async (event, message) => {
-            if (this.isProcessingUserMessage) {
-                console.log("process-typed-message: isProcessingUserMessage=true, avoiding concurrent entry");
-                return;
-            }
             this.isProcessingUserMessage = true;
 
             if (message.trim() === '/history') {
@@ -514,7 +532,7 @@ class ComRing extends BaseComponent {
                 console.log('Handling /refresh command');
                 ipcRenderer.send('refresh-frontend');
             } else {
-                await this.processUserMessage(message, true);
+                await this.queueOrProcessUserMessage(message, true);
             }
             this.isProcessingUserMessage = false;
         });
@@ -628,9 +646,9 @@ class ComRing extends BaseComponent {
             // console.log("EVENT KEYDOWN");
             // console.log(event);
             if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
-                if (this.messageQueue.length > 0) {
-                    this.abortLLMResponse();
-                } else {
+                if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
+                    this.onEscapeDuringExchange(event);
+                } else if (!event.repeat) {
                     console.log('Escape in document view: switching back to ring view.');
                     this.switchToRingView();
                 }
@@ -643,13 +661,14 @@ class ComRing extends BaseComponent {
                 // console.log("EVENT ESCAPE");
                 // Always abort any ongoing LLM response first
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
-                    console.log('Escape triggers abort LLM response');
-                    this.abortLLMResponse();
+                    this.onEscapeDuringExchange(event);
                     event.preventDefault();
                     event.stopPropagation();
                     ipcRenderer.send('com-ring-focus');
                     return;
-                } else {
+                } else if (!event.repeat) {
+                    // Press-only: auto-repeats of a held Escape must not
+                    // hide the UI if the exchange ended mid-hold (#19 item 3)
                     console.log("Escape triggers hide-window-all");
                     this.ignoreIncomingEvents = true;
                     ipcRenderer.send('hide-window-all');
@@ -663,12 +682,14 @@ class ComRing extends BaseComponent {
                 if (event.key === 'Tab' && !isTypingMode) {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (!this.onAnimation) {
-                        if (this.currentView === 'ring') {
-                            await this.fetchAndDisplayChatHistory();
-                        } else if (this.currentView === 'document') {
-                            this.switchToRingView();
-                        }
+                    // #19 item 3: view switching is never gated on the window-
+                    // resize animation lock — ComRingWindow queues the latest
+                    // resize target instead of dropping the switch, so the
+                    // gesture can't be silently eaten mid-exchange.
+                    if (this.currentView === 'ring') {
+                        await this.fetchAndDisplayChatHistory();
+                    } else if (this.currentView === 'document') {
+                        this.switchToRingView();
                     }
                     return;
                 }
@@ -710,6 +731,10 @@ class ComRing extends BaseComponent {
 
         document.addEventListener('keyup', (event) => {
             // console.log("keyup");
+            // Releasing Escape cancels a pending hold-to-interrupt (#19 item 3)
+            if (event.key === this.config.get('shortcuts.hide', 'Escape')) {
+                this.clearEscapeHold();
+            }
             // If we were recording and the modifier key was released
             if (this.state.isRecording &&
                 event.code === this.triggerKey) {
@@ -762,6 +787,11 @@ class ComRing extends BaseComponent {
     updateIdleStatus() {
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
         if (!sttStatus) return;
+
+        // #19 items 3/4: the exchange status (muted hint, queue count)
+        // takes precedence over idle notification text.
+        if (this.playbackMuted || this.pendingUserMessages.length > 0)
+            return;
 
         // Check if busy with higher priority states
         // Note: isProcessingLLM is excluded so notifications can show while text streams (after thinking stops)
@@ -816,9 +846,196 @@ class ComRing extends BaseComponent {
     }
 
 
+    // #19 items 3/4: user turns arriving while an exchange is in flight are
+    // queued, never dropped and never started concurrently. Queued turns are
+    // newline-joined and dispatched when the current answer finishes
+    // streaming (flush points: processUserMessage tail, TTS queue drain).
+    queueUserMessage(text) {
+        this.pendingUserMessages.push(text);
+        console.log(`User message queued during in-flight exchange (${this.pendingUserMessages.length} pending)`);
+        this.updateExchangeStatus();
+    }
+
+    async queueOrProcessUserMessage(text, typed = false) {
+        if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
+            this.queueUserMessage(text);
+            return;
+        }
+        await this.processUserMessage(text, typed);
+    }
+
+    // Transient exchange status (#19 item 3): muted-state hint while
+    // playback is muted and the answer is still streaming; queue count
+    // while user turns are waiting. Cleared on 'completed' / flush. Once
+    // the exchange is silenced, the "Stopped" flash is the status — the
+    // hint would be stale (the gesture was already performed).
+    updateExchangeStatus() {
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (!sttStatus) return;
+        const queued = this.pendingUserMessages.length;
+        if (this.exchangeSilenced) {
+            // Silenced: the "Stopped" flash is the status and the muted
+            // gesture hint is stale (already performed) — but queued turns
+            // still deserve their count.
+            if (queued > 0) {
+                sttStatus.textContent = `Queued (${queued}), waiting for response completion...`;
+                sttStatus.classList.add('active');
+            }
+            return;
+        }
+        if (!this.state.isProcessingLLM && !this.isProcessingMessage) return;
+        if (this.playbackMuted) {
+            sttStatus.textContent = queued > 0
+                ? `Muted (${queued} queued): hold Esc to stop response playback`
+                : 'Muted: hold Esc to stop response playback';
+            sttStatus.classList.add('active');
+        } else if (queued > 0) {
+            sttStatus.textContent = `Queued (${queued}), waiting for response completion...`;
+            sttStatus.classList.add('active');
+        }
+    }
+
+    // #19 item 3: karaoke continues (fast) while playback is muted — the
+    // text stream is the clue that the answer is still being produced.
+    // Pacing: never slower than the chunk's TTS duration, floored at a
+    // brisk-but-comfortable reading speed (~18 chars/s, a step above the
+    // ~13 chars/s of natural speech), bounded to keep tiny chunks from
+    // strobing and huge ones from outstaying their welcome.
+    fastStreamDuration(content) {
+        const text = (content && content.content) || '';
+        const original = content && content.flags && content.flags.duration;
+        const byReading = Math.min(5, Math.max(0.6, text.length / 18));
+        return Math.min(typeof original === 'number' ? original : Infinity, byReading);
+    }
+
+    streamChunkFast(event) {
+        const content = event && event.content && event.content.content;
+        if (!content) return;
+        // #19 item 3: backpressure — one chunk is released to chat-display
+        // at a time; the next waits for the previous reveal to complete
+        // (animation-completed), mirroring the TTS queue's sequencing.
+        this.mutedStreamQueue.push(event);
+        this.processMutedStreamQueue();
+    }
+
+    processMutedStreamQueue() {
+        if (this.mutedStreamActive || this.mutedStreamQueue.length === 0) return;
+        const event = this.mutedStreamQueue.shift();
+        const content = event.content.content;
+        const messageId = content.messageId;
+        const fastDuration = this.fastStreamDuration(content);
+        // chat-display's karaoke reveal derives its speed from
+        // flags.duration, so a compressed duration is the whole trick.
+        const fastEvent = JSON.parse(JSON.stringify(event));
+        fastEvent.content.content.flags.duration = fastDuration;
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(watchdog);
+            ipcRenderer.removeListener('animation-completed', onCompleted);
+            this.mutedStreamActive = false;
+            this.mutedStreamRelease = null;
+            this.processMutedStreamQueue();
+        };
+        const onCompleted = (evt, data) => {
+            if (data && data.messageId === messageId) finish();
+        };
+        // Watchdog: a lost animation-completed must not stall the stream.
+        const watchdog = setTimeout(finish, fastDuration * 1000 + 2000);
+        ipcRenderer.on('animation-completed', onCompleted);
+        this.mutedStreamActive = true;
+        this.mutedStreamRelease = finish;
+        ipcRenderer.send('llm-stream', fastEvent);
+    }
+
+    // #19 item 3: Escape while an exchange is in flight. First press mutes
+    // playback ("stop talking"); further presses are no-ops — the silence
+    // gesture is *holding* Esc (silenceExchange below).
+    onEscapeDuringExchange(event) {
+        if (!event.repeat) {
+            this.armEscapeHold();
+        } else {
+            // Auto-repeats only serve hold detection — a hold that outlives
+            // the exchange must not re-trigger press actions (#19 item 3)
+            return;
+        }
+        if (this.playbackMuted) {
+            console.log('Escape while muted: no-op (hold Esc to go silent)');
+            return;
+        }
+        this.abortLLMResponse();
+    }
+
+    armEscapeHold() {
+        if (this.escapeHoldTimer) return;
+        this.escapeHoldTimer = setTimeout(() => {
+            this.escapeHoldTimer = null;
+            this.silenceExchange();
+        }, 700);
+    }
+
+    clearEscapeHold() {
+        if (this.escapeHoldTimer) {
+            clearTimeout(this.escapeHoldTimer);
+            this.escapeHoldTimer = null;
+        }
+    }
+
+    // #19 item 3: hold-Esc action — silence the exchange. TTS playback
+    // and karaoke display stop for the rest of the answer; generation
+    // continues and the complete, unmarked answer lands in the record at
+    // 'completed'. The "Answering" badge (document view) stays as the
+    // honest in-flight signal.
+    silenceExchange() {
+        if (this.exchangeSilenced) return;
+        this.exchangeSilenced = true;
+
+        // Stop phrase playback: drain the paced fast-karaoke queue, any
+        // pending TTS audio and the karaoke display itself.
+        this.mutedStreamQueue = [];
+        if (this.mutedStreamRelease) this.mutedStreamRelease();
+        this.messageQueue.forEach(queued => {
+            if (queued && queued.audio) {
+                this.closeTTSAudioContext(queued.audio);
+            }
+        });
+        this.messageQueue = [];
+        this.isProcessingMessage = false;
+        this.currentMessageId = null;
+        this.animationResolvers.forEach(resolver => resolver());
+        this.animationResolvers.clear();
+        this.animationTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.animationTimeouts.clear();
+        this.audioTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.audioTimeouts.clear();
+        if (this.currentAudio) {
+            this.closeTTSAudioContext(this.currentAudio);
+            this.currentAudio.pause();
+            this.currentAudio.src = '';
+            this.currentAudio = null;
+        }
+        ipcRenderer.send('llm-aborted');
+
+        // Transient acknowledgment — silence itself carries the message;
+        // the completed teardown refreshes the log.
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (sttStatus) {
+            sttStatus.textContent = 'Playback stopped';
+            sttStatus.classList.add('active');
+            setTimeout(() => {
+                sttStatus.classList.remove('active');
+                sttStatus.textContent = '';
+            }, 1500);
+        }
+    }
+
     async processUserMessage(message, typed = false) {
         console.log('processUserMessage:', message);
         this.ignoreIncomingEvents = false;
+        // A new exchange always starts with playback live; a lingering mute
+        // can only exist if the previous stream ended without 'completed'.
+        this.playbackMuted = false;
         if (!typed) {
             // Show user message in display window
             ipcRenderer.send('transcription-received', message);
@@ -841,6 +1058,16 @@ class ComRing extends BaseComponent {
         }
         this.state.isAwaitingResponse = false;
         this.circle.classList.remove('awaiting');
+
+        // #19 items 3/4: dispatch user turns queued while this exchange was
+        // in flight, newline-joined into a single conversational turn.
+        if (this.pendingUserMessages.length > 0) {
+            const queued = this.pendingUserMessages.splice(0).join('\n');
+            console.log('Flushing queued user messages:', queued);
+            // Show the combined turn in the display window
+            ipcRenderer.send('transcription-received', queued);
+            await this.processUserMessage(queued, true);
+        }
     }
 
 
@@ -873,10 +1100,6 @@ class ComRing extends BaseComponent {
     setupTranscriptionHandler() {
         this.stt.onTranscriptionResult = async (result) => {
             this.clearTranscribingHint();
-            if (this.isProcessingUserMessage) {
-                console.log("setupTranscriptionHandler: isProcessingUserMessage=true, avoiding concurrent entry");
-                return;
-            }
 
             // [MODIFIED] Handle both object (new) and string (legacy) formats
             let text = '';
@@ -895,7 +1118,7 @@ class ComRing extends BaseComponent {
                     ipcRenderer.send('typing-key-pressed', text);
                     ipcRenderer.send('focus-chat-display');
                 } else {
-                    await this.processUserMessage(text);
+                    await this.queueOrProcessUserMessage(text);
                 }
             }
         };
@@ -1074,6 +1297,16 @@ class ComRing extends BaseComponent {
     async startRecording() {
         if (this.state.isRecording) return;
 
+        // Implicit playback barge-in (#19 item 3): the user starting to
+        // speak while the assistant is talking means "stop talking" — mute
+        // playback (same semantics as the Escape abort) while the answer
+        // keeps streaming. The resulting transcription then flows through
+        // the normal queueing policy (items 3/4). Synchronous, before any
+        // await, so it cannot race the recording state below.
+        if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
+            this.abortLLMResponse();
+        }
+
         // Flag the recording synchronously, BEFORE any await (#19 item 5):
         // initializeAudioStream() can take hundreds of ms (first use, or after
         // every cleanAudio() when the wake word is off), and a keyup landing
@@ -1152,7 +1385,7 @@ class ComRing extends BaseComponent {
                             this.state.isAwaitingResponse = false;
                             this.circle.classList.remove('awaiting');
                         } else {
-                            await this.processUserMessage(text);
+                            await this.queueOrProcessUserMessage(text);
                         }
                     } else {
                         // Empty transcription - reset state
@@ -1414,7 +1647,20 @@ class ComRing extends BaseComponent {
     async processAIResponse(userInput) {
         // Reset ignore flag when starting new request
         this.ignoreIncomingEvents = false;
+        // A new exchange always starts with playback live; a lingering mute
+        // can only exist if the previous stream ended without 'completed'.
+        this.playbackMuted = false;
+        // Drop any muted-stream backlog from a previous exchange (#19 item 3)
+        this.mutedStreamQueue = [];
+        this.exchangeSilenced = false;
+        // The user turn of the exchange — echoed into an open chat-history
+        // view immediately, since the persisted pair only lands on
+        // 'completed' (#19 item 3).
+        this.exchangeUserTurn = '';
         this.state.isProcessingLLM = true;
+        if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+            this.documentView.appendUserTurn(userInput);
+        }
         try {
             const response = await fetch(this.pybridgeEndpoints.chat, {
                 method: 'POST',
@@ -1463,6 +1709,9 @@ class ComRing extends BaseComponent {
             this.state.isProcessingLLM = false;
         } finally {
             this.state.isProcessingLLM = false;
+            // The transient user-turn echo is superseded by the persisted
+            // history
+            this.exchangeUserTurn = '';
             // this.window.focus();
         }
     }
@@ -1638,6 +1887,8 @@ Visit our project site at: https://ainara.app
 
             const historyContent = data.history ? data.history.substring(data.history.indexOf('\n')).trim() : '';
 
+            console.log(`[DocTrace] fetchAndAppend: got ${data.history ? data.history.length : 0} chars, appending=${historyContent ? historyContent.length : 0} chars`);
+
             if (historyContent) {
                 this.documentView.appendDocumentContent(historyContent, 'chat-history');
                 this.lastMessageTimestamp = data.last_timestamp; // Update timestamp
@@ -1688,6 +1939,13 @@ Visit our project site at: https://ainara.app
                     next: data.has_next,
                     date: this.historyDate
                 });
+                // #19 item 3: the document now exists — echo the user turn
+                // and restore the "Answering" badge (clear() above wipes
+                // anything set before the reload).
+                this.mirrorUserTurnToDocument();
+                if (this.isLLMStreaming) {
+                    this.documentView.setStreamingActive(true);
+                }
                 sttStatus.classList.remove('active');
                 sttStatus.textContent = '';
                 this.updateIdleStatus();
@@ -1744,9 +2002,25 @@ Visit our project site at: https://ainara.app
         this.navigatingHistory = false;
     }
 
+    // #19 item 3: echo the current exchange's user turn into a freshly
+    // loaded chat-history document — the persisted pair only lands on
+    // 'completed', and without this the user's message is invisible for
+    // the whole streaming period.
+    mirrorUserTurnToDocument() {
+        if (this.exchangeUserTurn) {
+            this.documentView.appendUserTurn(this.exchangeUserTurn);
+        }
+    }
+
     switchToDocumentView(format) {
+        console.log(`[ViewTrace] switchToDocumentView: ${this.currentView} -> document/${format}, streaming=${this.isLLMStreaming}, muted=${this.playbackMuted}`);
         this.currentView = 'document';
         this.docFormat = format;
+        if (format === 'chat-history' && this.isLLMStreaming) {
+            // "Answering" badge in the document view while the answer
+            // streams — the floating lines carry the text itself (#19 item 3)
+            this.documentView.setStreamingActive(true);
+        }
         if (format != 'chat-history') {
             // ensure we don't mix content windows with chat-history windows
             this.documentView.closeChatHistory();
@@ -1754,13 +2028,10 @@ Visit our project site at: https://ainara.app
         ipcRenderer.send('set-view-mode', { view: 'document' });
         this.ringContainer.classList.add('document-view');
         this.documentView.show();
-
-        if (format === 'chat-history' && this.isLLMStreaming) {
-            this.documentView.setStreamingActive(true);
-        }
     }
 
     switchToRingView() {
+        console.log(`[ViewTrace] switchToRingView: document/${this.docFormat} -> ring, streaming=${this.isLLMStreaming}, muted=${this.playbackMuted}`);
         this.currentView = 'ring';
         this.ringContainer.classList.remove('document-view');
         ipcRenderer.send('set-view-mode', { view: 'ring', fixMouse: false });
@@ -1825,15 +2096,28 @@ Visit our project site at: https://ainara.app
     }
 
     abortLLMResponse() {
-        console.log('Interrupting playback (stream continues in background)');
+        console.log('Aborting speech playback (stream continues in background, #19 item 3)');
 
-        // Set flag to ignore incoming events
-        this.ignoreIncomingEvents = true;
+        // Mute playback only: the LLM stream keeps running and text keeps
+        // flowing as fast karaoke (the floating lines are the answer's
+        // single visual trace, in every view mode). Full event flow stays
+        // live — dropping signals here is what created the old "limbo"
+        // where the completed answer never reached the chat-history view.
+        this.playbackMuted = true;
 
         // Release AudioContexts for any messages still sitting in the queue -
         // they were created up front when the message streamed in, so an
         // unplayed queued message still holds an open context that would
         // otherwise leak here.
+        // #19 item 3: chunks queued for playback were never displayed as
+        // karaoke yet — hand them to the paced fast-karaoke queue so muting
+        // doesn't hide the head of the answer. Ordering stays consistent:
+        // the chunk currently animating is ahead of these.
+        this.messageQueue.forEach(queued => {
+            if (queued && queued.event && !(queued.content && queued.content.flags && queued.content.flags.skill)) {
+                this.streamChunkFast(queued.event);
+            }
+        });
         this.messageQueue.forEach(queued => {
             if (queued && queued.audio) {
                 this.closeTTSAudioContext(queued.audio);
@@ -1877,41 +2161,43 @@ Visit our project site at: https://ainara.app
         const ringContainer = this.shadowRoot.querySelector('.ring-container');
         ringContainer.classList.remove('loading');
 
-        // Reset status message
-        const sttStatus = this.shadowRoot.querySelector('.stt-status');
-        sttStatus.classList.remove('active');
-        sttStatus.textContent = '';
-
         // Keep isProcessingLLM true so processAIResponse() continues reading
         // the stream and lets the backend finish persisting the full message.
+        // Keep isLLMStreaming and the streaming indicator up as well: the
+        // answer is still arriving and now streams as text into chat-history
+        // (#19 item 3). The 'completed' signal clears them.
         this.state.isAwaitingResponse = false;
 
-        this.isLLMStreaming = false;
-        if (this.currentView === 'document' && this.docFormat === 'chat-history') {
-            this.documentView.setStreamingActive(false);
+        // NOTE (#19 item 3): no 'llm-aborted' send here — muting must keep
+        // the karaoke text flowing (the currently-speaking line finishes its
+        // animation; fast chunks follow). ChatDisplay cleanup will ride the
+        // interrupt/cancel path instead.
+
+        // Persistent transient status until the stream completes; if the
+        // exchange had already finished streaming (playback-only abort,
+        // e.g. barge-in during the TTS tail), fall back to the brief
+        // "Aborted" flash.
+        this.updateExchangeStatus();
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (sttStatus && !sttStatus.classList.contains('active')) {
+            sttStatus.textContent = 'Aborted';
+            sttStatus.classList.add('active');
+            setTimeout(() => {
+                sttStatus.classList.remove('active');
+                sttStatus.textContent = '';
+                this.updateIdleStatus();
+            }, 1000);
         }
-
-        // Notify chat-display about the abort
-        ipcRenderer.send('llm-aborted');
-
-        // Add brief "Aborted" feedback
-        sttStatus.textContent = 'Aborted';
-        sttStatus.classList.add('active');
-        setTimeout(() => {
-            sttStatus.classList.remove('active');
-            sttStatus.textContent = '';
-            this.updateIdleStatus();
-        }, 1000);
     }
 
 
     // Process message queue - handle text and audio in parallel
     async processMessageQueue() {
         // Add diagnostic logging
-        console.log(`Queue status: length=${this.messageQueue.length}, isProcessing=${this.isProcessingMessage}, ignoreEvents=${this.ignoreIncomingEvents}`);
+        console.log(`Queue status: length=${this.messageQueue.length}, isProcessing=${this.isProcessingMessage}, muted=${this.playbackMuted}`);
 
         // If already processing a message or queue is empty, return
-        if (this.isProcessingMessage || this.messageQueue.length === 0 || this.ignoreIncomingEvents) {
+        if (this.isProcessingMessage || this.messageQueue.length === 0 || this.playbackMuted) {
             return;
         }
 
@@ -1924,8 +2210,8 @@ Visit our project site at: https://ainara.app
             console.log(`Processing message: ${messageId}`);
             this.currentMessageId = messageId;
 
-            // Check if processing was aborted
-            if (this.ignoreIncomingEvents) {
+            // Check if playback was muted (abort / barge-in)
+            if (this.playbackMuted) {
                 throw new Error('Processing aborted');
             }
 
@@ -1933,7 +2219,7 @@ Visit our project site at: https://ainara.app
             const promises = [];
 
             // 1. Send message to chat display if not a skill
-            if (!content.flags.skill && !this.ignoreIncomingEvents && this.isWindowVisible) {
+            if (!content.flags.skill && !this.playbackMuted && this.isWindowVisible) {
                 console.log(`Sending message to chat display: ${messageId}`);
                 console.log(`isWindowVisible: ${this.isWindowVisible}`);
 
@@ -1984,7 +2270,7 @@ Visit our project site at: https://ainara.app
             }
 
             // 2. Start playing audio if available (in parallel with animation)
-            if (audio && !this.ignoreIncomingEvents) {
+            if (audio && !this.playbackMuted) {
                 console.log(`Playing audio for: ${messageId}`);
 
                 // Create audio completion promise
@@ -2123,11 +2409,20 @@ Visit our project site at: https://ainara.app
             this.currentMessageId = null;
 
             // Process next message if available and not aborted
-            if (this.messageQueue.length > 0 && !this.ignoreIncomingEvents) {
+            if (this.messageQueue.length > 0 && !this.playbackMuted) {
                 console.log(`Scheduling next message processing, queue length: ${this.messageQueue.length}`);
                 setTimeout(() => this.processMessageQueue(), 10);
             } else {
-                console.log(`No more messages to process or processing aborted. Queue length: ${this.messageQueue.length}, ignoreEvents: ${this.ignoreIncomingEvents}`);
+                console.log(`No more messages to process or playback muted. Queue length: ${this.messageQueue.length}, muted: ${this.playbackMuted}`);
+                // #19 items 3/4: the TTS queue drained after the answer
+                // finished streaming — dispatch user turns that were queued
+                // while playback was still running.
+                if (!this.state.isProcessingLLM && !this.playbackMuted && this.pendingUserMessages.length > 0) {
+                    const queued = this.pendingUserMessages.splice(0).join('\n');
+                    console.log('Flushing queued user messages (TTS drain):', queued);
+                    ipcRenderer.send('transcription-received', queued);
+                    this.processUserMessage(queued, true);
+                }
             }
         }
     }
@@ -2142,6 +2437,13 @@ Visit our project site at: https://ainara.app
         // console.log("\n--- EVENT ---\nevent: " + event.event + "\ntype:" + event.type + "\ncontent:"+ JSON.stringify(event.content));
         switch(event.event) {
             case 'stream':
+                // #19 item 3: while the exchange is silenced (hold-Esc),
+                // ignore streamed chunks — the answer keeps generating and
+                // lands complete in the record at 'completed'. Nothing is
+                // displayed.
+                if (this.exchangeSilenced) {
+                    break;
+                }
                 if (event.type === 'message') {
                     const content = event.content.content;
                     const messageId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -2160,8 +2462,15 @@ Visit our project site at: https://ainara.app
                         event.content.content.messageId = messageId;
                     }
 
-                    if (this.currentView === 'document' && this.docFormat === 'chat-history') {
-                        this.documentView.setStreamingActive(true);
+                    // #19 item 3: playback muted (Escape or voice barge-in)
+                    // — no TTS queueing; the text keeps flowing as fast
+                    // karaoke, in every view mode: the floating lines are
+                    // the answer's single visual trace.
+                    if (this.playbackMuted) {
+                        if (!content.flags.skill && this.isWindowVisible) {
+                            this.streamChunkFast(event);
+                        }
+                        break;
                     }
 
                     if (content.flags.audio && content.audio) {
@@ -2195,7 +2504,7 @@ Visit our project site at: https://ainara.app
 
                             const updateTTSVisualization = () => {
                                 // Check flag before updating visualization
-                                if (this.ignoreIncomingEvents) {
+                                if (this.playbackMuted) {
                                     audio.pause();
                                     this.updateVisualization('tts', 0);
                                     return;
@@ -2269,6 +2578,10 @@ Visit our project site at: https://ainara.app
                     } else if (event.content.state === 'stop') {
                         sttStatus.classList.remove('active');
                         sttStatus.textContent = '';
+                        // #19 item 3: reasoning can end long before the
+                        // answer finishes streaming — never wipe an active
+                        // exchange status ("Aborting...", queue count).
+                        this.updateExchangeStatus();
                     }
                 }
                 break;
@@ -2293,6 +2606,7 @@ Visit our project site at: https://ainara.app
                     if (event.content.state === 'start') {
                         this.isLLMStreaming = true;
                         if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                            // "Answering" badge in the document view (#19 item 3)
                             this.documentView.setStreamingActive(true);
                         }
                         this.circle.classList.add('loading');
@@ -2313,20 +2627,45 @@ Visit our project site at: https://ainara.app
                         this.circle.classList.remove('loading');
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
                         ringContainer.classList.remove('loading');
-                        // Hide the message
+                        // Hide the message — unless an exchange status is
+                        // active ("Aborting..." persists until the answer
+                        // finishes streaming, #19 item 3).
                         sttStatus.classList.remove('active');
                         sttStatus.textContent = '';
+                        this.updateExchangeStatus();
                     }
                 }
                 break;
 
             case 'completed':
                 if (event.type === 'signal') {
+                    console.log(`[DocTrace] completed signal: view=${this.currentView}/${this.docFormat} muted=${this.playbackMuted}`);
                     this.circle.classList.remove('skill-active');
                     this.isLLMStreaming = false;
+                    // #19 item 3: reopen the silence gate
+                    this.exchangeSilenced = false;
+
+                    // #19 item 3: end of the abort limbo — the answer has
+                    // finished streaming, so muted playback and its status
+                    // end here; queued user turns are flushed when the
+                    // exchange unwinds (processUserMessage tail).
+                    if (this.playbackMuted) {
+                        this.playbackMuted = false;
+                        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                        if (sttStatus) {
+                            sttStatus.classList.remove('active');
+                            sttStatus.textContent = '';
+                        }
+                    }
+
                     if (this.currentView === 'document' && this.docFormat === 'chat-history') {
+                        // Drop the transient user-turn echo: the formatted,
+                        // persisted exchange is appended right below.
+                        this.documentView.clearTransientEchoes();
                         await this.fetchAndAppendNewChatMessages();
                         this.documentView.setStreamingActive(false);
+                        // The persisted pair supersedes the echo
+                        this.exchangeUserTurn = '';
                     }
                 }
                 break;
