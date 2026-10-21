@@ -878,7 +878,7 @@ class ComRing extends BaseComponent {
             // gesture hint is stale (already performed) — but queued turns
             // still deserve their count.
             if (queued > 0) {
-                sttStatus.textContent = `Queued (${queued})`;
+                sttStatus.textContent = `Queued (${queued}), waiting for response completion...`;
                 sttStatus.classList.add('active');
             }
             return;
@@ -886,11 +886,11 @@ class ComRing extends BaseComponent {
         if (!this.state.isProcessingLLM && !this.isProcessingMessage) return;
         if (this.playbackMuted) {
             sttStatus.textContent = queued > 0
-                ? `Muted (${queued} queued): hold Esc to stop message reproduction`
-                : 'Muted: hold Esc to stop message reproduction';
+                ? `Muted (${queued} queued): hold Esc to stop response playback`
+                : 'Muted: hold Esc to stop response playback';
             sttStatus.classList.add('active');
         } else if (queued > 0) {
-            sttStatus.textContent = `Queued (${queued})`;
+            sttStatus.textContent = `Queued (${queued}), waiting for response completion...`;
             sttStatus.classList.add('active');
         }
     }
@@ -1021,7 +1021,7 @@ class ComRing extends BaseComponent {
         // the completed teardown refreshes the log.
         const sttStatus = this.shadowRoot.querySelector('.stt-status');
         if (sttStatus) {
-            sttStatus.textContent = 'Stopped';
+            sttStatus.textContent = 'Playback stopped';
             sttStatus.classList.add('active');
             setTimeout(() => {
                 sttStatus.classList.remove('active');
