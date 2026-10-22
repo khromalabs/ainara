@@ -22,9 +22,41 @@ from typing import Generator, Optional, Tuple, Union, List
 
 import requests
 
+# Context window assumptions for providers that do not declare a
+# 'context_window' and whose backend cannot resolve one.
+#
+# The failure modes are asymmetric:
+#   - Assuming TOO SMALL silently corrupts payloads: the prompt pipeline's
+#     fixed costs (system prompt + per-turn hint reserve) can crowd out the
+#     user's own message, and trimming may degrade the conversation to a
+#     system-only payload, which some providers reject outright (e.g. Z.ai
+#     error 1214, "The messages parameter is illegal" — 2026-10 incident).
+#   - Assuming TOO LARGE at worst triggers an explicit, self-explanatory
+#     server-side rejection when the model truly cannot fit the prompt.
+#
+# Cloud-hosted models have not shipped with windows anywhere near 4K in
+# years, so the safe default for cloud backends is a modern large window.
+DEFAULT_CLOUD_CONTEXT_WINDOW = 131072
+#
+# Local backends (Ollama, etc.) face real VRAM constraints and their
+# runtimes often default to small contexts, so the conservative assumption
+# is the honest one there.
+DEFAULT_LOCAL_CONTEXT_WINDOW = 8192
+#
+# Hard floor: below this, Ainara's fixed prompt pipeline (system prompt
+# plus per-turn hint reserve) does not reliably leave room for even a
+# single short user turn. Providers resolving below the floor are flagged
+# at initialization: this is a configuration problem, not a runtime one.
+MIN_VIABLE_CONTEXT_WINDOW = 8192
+
 
 class LLMBackend(ABC):
     """Base class for LLM backends"""
+
+    # Context window fallback when neither config nor backend resolution
+    # yields a value. Cloud backends keep the large default; local backends
+    # override this with DEFAULT_LOCAL_CONTEXT_WINDOW.
+    default_context_window = DEFAULT_CLOUD_CONTEXT_WINDOW
 
     def __init__(self, config: dict):
         self.config = config
@@ -127,7 +159,7 @@ class LLMBackend(ABC):
             self.logger.warning(
                 "No model name provided, using default context window."
             )
-            return 4096
+            return self.default_context_window
 
         # 1. Check for configured context window
         configured_context = provider_config.get("context_window")
@@ -136,7 +168,7 @@ class LLMBackend(ABC):
                 f"Using configured context window for {model_name}:"
                 f" {configured_context} tokens"
             )
-            return configured_context
+            return self._check_context_window_floor(model_name, configured_context)
         else:
             self.logger.info(
                 f"No context_window configured for {model_name} in"
@@ -151,20 +183,51 @@ class LLMBackend(ABC):
                     f"Using backend-provided context window for {model_name}:"
                     f" {backend_context} tokens"
                 )
-                return backend_context
+                return self._check_context_window_floor(
+                    model_name, backend_context
+                )
         except Exception as e:
             self.logger.warning(
                 "Could not fetch context window from backend for"
                 f" {model_name}: {e}"
             )
 
-        # 3. Default
-        default_window = 4096
+        # 3. Default (kind-aware: local backends fall back lower than
+        #    cloud ones — see DEFAULT_*_CONTEXT_WINDOW above)
+        default_window = self.default_context_window
         self.logger.warning(
             f"Unable to determine context window for {model_name}. Falling back to"
             f" default: {default_window} tokens"
         )
         return default_window
+
+    def _check_context_window_floor(self, model_name: str, window: int) -> int:
+        """Flag context windows below the system viability floor.
+
+        The floor is a configuration-time concern, not a runtime one: a
+        window this small cannot host Ainara's fixed prompt pipeline
+        alongside real conversation, and degrading silently would surface
+        later as unrelated provider errors. Placeholder providers (used
+        when no real provider is configured) are exempt.
+        """
+        if window >= MIN_VIABLE_CONTEXT_WINDOW:
+            return window
+
+        if self.provider.get("_placeholder", False):
+            self.logger.debug(
+                "Placeholder provider: skipping context window floor check"
+            )
+            return window
+
+        self.logger.error(
+            f"Context window for {model_name} resolves to {window} tokens,"
+            f" below Ainara's minimum viable floor of"
+            f" {MIN_VIABLE_CONTEXT_WINDOW} tokens: the system prompt and"
+            " per-turn hints may not leave room for even a short user turn."
+            " Declare a larger 'context_window' in the provider"
+            " configuration or switch to a provider with a bigger window."
+        )
+        return window
 
     def get_available_providers(self):
         """

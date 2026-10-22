@@ -25,7 +25,7 @@ from litellm import token_counter
 
 from ainara.framework.config import ConfigManager
 
-from .base import LLMBackend
+from .base import DEFAULT_LOCAL_CONTEXT_WINDOW, LLMBackend
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,10 @@ class OllamaLLM(LLMBackend):
     Direct Ollama LLM backend implementation using the official 'ollama' Python library.
     Uses /api/chat for primary interaction
     """
+
+    # Local runtime: real VRAM constraints and small runtime defaults make
+    # the conservative assumption the honest one (see base.py constants).
+    default_context_window = DEFAULT_LOCAL_CONTEXT_WINDOW
 
     def __init__(
         self, config_manager: ConfigManager, provider_config: dict = None
