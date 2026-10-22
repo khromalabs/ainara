@@ -196,8 +196,10 @@ class LLMBackend(ABC):
         #    cloud ones — see DEFAULT_*_CONTEXT_WINDOW above)
         default_window = self.default_context_window
         self.logger.warning(
-            f"Unable to determine context window for {model_name}. Falling back to"
-            f" default: {default_window} tokens"
+            f"Unable to determine context window for {model_name}."
+            f" ASSUMING {default_window} tokens (kind-aware default:"
+            " declared explicitly via 'context_window' to remove this"
+            " assumption)"
         )
         return default_window
 

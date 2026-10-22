@@ -148,17 +148,36 @@ class LiteLLM(LLMBackend):
         )
 
     def _fetch_backend_context_window(self, model_name: str) -> Optional[int]:
-        """Fetch context window from LiteLLM."""
+        """Fetch the true context window from LiteLLM's model registry.
+
+        Uses `max_input_tokens` (the full input/context window), NOT
+        `get_max_tokens()`, which returns the max *output* cap and can
+        undercount the usable window by an order of magnitude (e.g.
+        16384 vs 128000 for gpt-4o, 8192 vs 131072 for deepseek-chat).
+        Returns None for models missing from the registry (or entries
+        without an input window) so the kind-aware default governs —
+        an honest assumption beats a plausible wrong number.
+        """
         if not model_name:
             return None
         try:
-            max_tokens = litellm.get_max_tokens(model_name)
-            return max_tokens
+            model_info = litellm.get_model_info(model_name)
         except Exception as e:
             self.logger.warning(
-                f"Unable to get context window size from LiteLLM: {str(e)}"
+                f"Model {model_name} not found in LiteLLM's registry,"
+                f" cannot resolve its context window: {str(e)}"
             )
             return None
+
+        input_window = model_info.get("max_input_tokens")
+        if not input_window:
+            self.logger.warning(
+                f"LiteLLM's registry entry for {model_name} has no"
+                " 'max_input_tokens'; cannot resolve its context window"
+            )
+            return None
+
+        return input_window
 
     def get_context_window(self) -> int:
         """Return the cached context window size"""
