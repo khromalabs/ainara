@@ -878,14 +878,16 @@ class ChatManager:
         kept_exchanges = []
         tokens_used = 0
 
-        # Always keep the last exchange (most recent) regardless of token count
+        # Always keep the last exchange (most recent) regardless of token
+        # count. This MUST also cover the single-message case: dropping the
+        # newest user turn would leave a system-only payload, which some
+        # providers reject outright (e.g. Z.ai error 1214, "The messages
+        # parameter is illegal") and which breaks the conversation anchor.
         # TODO Group messages by role for more flexible exchange handling
-        if (
-            len(exchanges) >= 2
-        ):  # Assuming exchanges come in pairs (user + assistant)
-            last_exchange = exchanges[
-                -2:
-            ]  # Last user question and assistant response
+        if exchanges:
+            # Assuming full exchanges come in pairs (user + assistant)
+            take = 2 if len(exchanges) >= 2 else 1
+            last_exchange = exchanges[-take:]
 
             logger.info("Keeping last exchange regardless of token count:")
             for msg in last_exchange:
@@ -893,12 +895,13 @@ class ChatManager:
                     f"  - {msg.get('role', 'unknown')} message:"
                     f" {msg['tokens']} tokens"
                 )
-                kept_exchanges.insert(0, msg)
                 tokens_used += msg["tokens"]
+            # Prepend in original order (insert(0) per message would
+            # reverse the pair, placing the newest user turn before the
+            # assistant reply that preceded it)
+            kept_exchanges = list(last_exchange) + kept_exchanges
 
-            exchanges = exchanges[
-                :-2
-            ]  # Remove the last exchange from consideration
+            exchanges = exchanges[:-take]  # Remove from further consideration
             logger.info(f"Last exchange uses {tokens_used} tokens")
         else:
             logger.info("Not enough messages for a complete exchange")
