@@ -556,6 +556,19 @@ class ComRing extends BaseComponent {
             }
         });
 
+        // Skill panels can ask to close themselves (#28): a panel iframe
+        // posts {type: 'ainara:close-documents'} to its parent and we close
+        // only the sender's document — other open panels are left alone.
+        // When the surface empties, the 'documentview-empty' listener above
+        // returns us to the ring view.
+        window.addEventListener('message', (e) => {
+            const d = e.data;
+            if (d && typeof d === 'object' && d.type === 'ainara:close-documents') {
+                console.log('ComRing: a skill panel asked to close itself');
+                this.documentView.closeDocumentBySource(e.source);
+            }
+        });
+
         // Listen for history navigation events from the document-view component
         this.documentView.addEventListener('documentview-history-prev-clicked', () => this.navigateHistory('prev'));
         this.documentView.addEventListener('documentview-history-next-clicked', () => this.navigateHistory('next'));

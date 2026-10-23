@@ -35,10 +35,21 @@ a:hover {
 
 .document-container {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 16px;
+    /* Panels STACK on top of each other instead of sitting side by side:
+       every item shares the one grid cell, so the newest (last added) is
+       drawn on top at full size. Closing it (x) reveals the one
+       underneath. Previous side-by-side layout:
+       grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px; */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     height: 99%;
     overflow: auto;
+}
+
+.document-container > .document-item {
+    grid-area: 1 / 1;
+    min-height: 0;
+    box-shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.8);
 }
 
 .document-content::selection,

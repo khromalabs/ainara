@@ -860,6 +860,35 @@ class DocumentView extends BaseComponent {
         }
     }
 
+    /**
+     * Close the document (panel) whose iframe asked to be dismissed (#28):
+     * a skill panel can post `{type: 'ainara:close-documents'}` to its
+     * parent; we identify the sender by its contentWindow and close only
+     * that item — never the other open documents. If the container is left
+     * empty, 'empty' is emitted so the parent returns to the ring view
+     * (same contract as the per-item close button).
+     */
+    closeDocumentBySource(sourceWindow) {
+        if (!sourceWindow || !this.container) return;
+        const frames = this.container.querySelectorAll('iframe.nexus-frame');
+        for (const frame of frames) {
+            if (frame.contentWindow !== sourceWindow) continue;
+            const item = frame.closest('.document-item');
+            if (item) {
+                const iframe = item.querySelector('iframe');
+                if (iframe) {
+                    iframe.src = 'about:blank';
+                }
+                item.remove();
+
+                if (!this.container.firstElementChild) {
+                    this.emitEvent('empty');
+                }
+            }
+            return;
+        }
+    }
+
     clear() {
         // Destroy Pikaday instance if present
         if (this.pikadayInstance) {
