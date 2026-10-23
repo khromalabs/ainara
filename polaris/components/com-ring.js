@@ -2718,16 +2718,26 @@ Visit our project site at: https://ainara.app
                     const pathParts = event.content.component_path.split('/');
                     const componentName = pathParts[pathParts.length - 2];
                     this.switchToDocumentView('nexus');
-                    console.log("EVENT")
-                    console.log(JSON.stringify(event))
-                    this.documentView.addDocument(
+                    // Open-or-update keyed by the backend-computed panel_id
+                    // (#30): an existing panel for the same identity is
+                    // updated in place and brought to front, never cloned.
+                    this.documentView.upsertNexusDocument(
                         {
                             url: fullUrl,
-                            data: event.content.data
+                            data: event.content.data,
+                            panelId: event.content.panel_id
                         },
-                        'nexus',
                         componentName + "—" + event.content.query
                     );
+                }
+                break;
+
+            case 'closeNexus':
+                // Skill-initiated close (#30): the framework asked for a
+                // panel to be dismissed by panel_id. Nothing was rendered
+                // for this exchange; the interpretation text is the record.
+                if (event.type === 'ui') {
+                    this.documentView.closeDocumentByPanelId(event.content?.panel_id);
                 }
                 break;
 

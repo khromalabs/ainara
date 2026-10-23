@@ -82,6 +82,14 @@ before proposing changes that cut against them.
   (`{"success": False, "result": msg}`) instead of raising so the agent can
   explain the failure to the user; wrap blocking network I/O in
   `asyncio.to_thread` inside `async run()`.
+- Skills with a UI component declare their surface mode with the
+  `ui_mode` class attribute (`"view"` default, or `"panel"` for a
+  singleton living surface — see `docs/proposals/nexus-panel-mode.md`).
+  View-mode skills may set the reserved `instance_key` field in their
+  result to control when a re-invocation updates an existing panel;
+  panel-mode skills may set `close_panel: true` to ask the framework to
+  close their panel. These field names are reserved: never use them for
+  skill-specific data.
 
 ### User skills & skill UI components
 - User skills live under `user_skills.directory` in category subdirs

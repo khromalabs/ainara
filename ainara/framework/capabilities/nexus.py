@@ -34,6 +34,7 @@ from ainara.framework.skill import Skill
 from ainara.framework.skill_properties import ConfigurablePropertiesMixin
 
 from .skills import BasePythonSkillProvider
+from .base import resolve_ui_mode
 
 logger = logging.getLogger(__name__)
 
@@ -302,8 +303,24 @@ class NexusSkillProvider(BasePythonSkillProvider):
                 ).resolve()
                 if component_dir.is_dir():
                     # This skill has a verified UI component
+                    mode, ui_mode_error = resolve_ui_mode(cap_data)
+                    if ui_mode_error:
+                        # Fail-closed (#29): never guess a surface mode
+                        self.load_errors.append(
+                            {
+                                "skill_id": cap_id,
+                                "error": f"UI association dropped: {ui_mode_error}",
+                            }
+                        )
+                        logger.error(
+                            f"Skill '{cap_id}': {ui_mode_error}."
+                            " The skill loads headless (no UI component)."
+                        )
+                        continue
+
                     cap_data["ui"] = {
                         "component": component_name,
+                        "mode": mode,
                     }
                     # ui_path is for internal use by serve_component
                     cap_data["ui_path"] = str(ui_components_path)

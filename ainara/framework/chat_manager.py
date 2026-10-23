@@ -1107,6 +1107,10 @@ class ChatManager:
                 "data": data,
                 # "query": f"Test #{self.nexus_test} {vendor}/{bundle}/{component}",
                 "query": f"Test #{self.nexus_test}",
+                # Test surfaces behave as panels: re-running the test
+                # command updates the singleton instead of stacking (#30)
+                "mode": "panel",
+                "panel_id": component_path,
             }
             # Create a descriptive message for the chat history
             history_message = f"_orakle_nexus_data_|{json.dumps(nexus_data)}"
@@ -1166,6 +1170,9 @@ class ChatManager:
                 "component_path": component_path,
                 "data": data,
                 "query": "User Skill Test",
+                # Test surfaces behave as panels (#30)
+                "mode": "panel",
+                "panel_id": component_path,
             }
             history_message = f"_orakle_nexus_data_|{json.dumps(user_data)}"
             self.llm.add_msg(history_message, self.chat_history, "assistant")
@@ -1894,6 +1901,7 @@ class ChatManager:
                     bundle = chunk.get("bundle")
                     component = chunk.get("component")
                     query = chunk.get("query")
+                    mode = chunk.get("mode", "view")
                     skill_data = chunk.get("data", {})
 
                     if not component:
@@ -1914,10 +1922,41 @@ class ChatManager:
                             f"/user_skills/components/{component}/index.html"
                         )
 
+                    # Panel identity (#30, docs/proposals/nexus-panel-mode.md
+                    # §5): computed here once, vendor-agnostic — the frontend
+                    # never re-derives it by path-splitting. Panels are
+                    # singletons (component_path); views get one instance per
+                    # skill-declared instance key, falling back to the query.
+                    if mode == "panel":
+                        panel_id = component_path
+                    else:
+                        instance_key = None
+                        if isinstance(skill_data, dict):
+                            instance_key = skill_data.pop(
+                                "instance_key", None
+                            )
+                        if not instance_key:
+                            instance_key = query or component
+                        panel_id = f"{component_path}#{instance_key}"
+
+                    # Lifecycle verb (#30): the skill asked to close its own
+                    # panel. Nothing is rendered and no payload is inlined
+                    # into the history — the interpretation text below is
+                    # the conversation's record of the exchange.
+                    if chunk.get("close"):
+                        yield ndjson(
+                            "ui",
+                            "closeNexus",
+                            {"panel_id": panel_id},
+                        )
+                        continue
+
                     nexus_data = {
                         "component_path": component_path,
                         "data": skill_data,
                         "query": query,
+                        "mode": mode,
+                        "panel_id": panel_id,
                     }
 
                     # Create a descriptive message for the chat history

@@ -132,6 +132,20 @@ name), and vendor/bundle remains a routing concern, not an identity one.
 
 ## 6. Mode contracts (skill-author obligations)
 
+Implemented names (issues #29/#30):
+
+- **Declaration**: the ``ui_mode`` class attribute on the skill
+  (``"view"`` | ``"panel"``); validated at discovery by
+  ``capabilities.base.resolve_ui_mode`` — unknown values drop the UI
+  association and record a load error (fail-closed, never coerced).
+- **Instance key (view mode)**: the reserved ``instance_key`` field in
+  the skill's structured result (e.g. ``"BTC-USD/1D"``); fallback is the
+  raw query string.
+- **Skill-initiated close (panel mode)**: the reserved ``close_panel:``
+  ``true`` field in the structured result. The middleware extracts it
+  from the data (it never reaches the component or the history payload)
+  and ChatManager turns it into the ``closeNexus`` stream verb.
+
 Declared `mode` is a contract, documented in the class docstring /
 `SKILL.md` like the rest of the skill surface (`AGENTS.md` conventions).
 `panel` carries obligations, so creators don't stamp it on everything to
@@ -176,6 +190,9 @@ fail-closed spirit as the rest of the skill contract; unknown
   validation case.
 - The legacy `_orakle_nexus_data_` marker and history reproduction for
   views are preserved unchanged.
+
+- **Disable, don't delete** for every tier; see issue #17 (system-app
+  lifecycle model) for the cross-tier lifecycle matrix.
 
 ## 9. Open points
 

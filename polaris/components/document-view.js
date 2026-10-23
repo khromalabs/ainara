@@ -8,6 +8,11 @@ const pikadayCSS = fs.readFileSync(
     require.resolve('pikaday/css/pikaday.css'), 'utf8'
 );
 
+// LRU cap for view-mode panel instances (#30, proposal §9.1 — a config
+// key will replace this constant when surface settings land). Panel-mode
+// singletons are never evicted.
+const MAX_NEXUS_VIEW_PANELS = 5;
+
 class DocumentView extends BaseComponent {
 
     constructor() {
@@ -226,6 +231,11 @@ class DocumentView extends BaseComponent {
         const documentElement = document.createElement('div');
         documentElement.className = 'document-item';
         documentElement.dataset.format = format;
+        if (format === 'nexus' && content.panelId) {
+            // Panel identity computed backend-side (#30) — the frontend
+            // never re-derives it from the component path
+            documentElement.dataset.panelId = content.panelId;
+        }
 
         // Create header for all items
         const header = document.createElement('div');
@@ -857,6 +867,79 @@ class DocumentView extends BaseComponent {
             if (!this.container.firstElementChild) {
                 this.hide();
             }
+        }
+    }
+
+    /**
+     * Open-or-update a nexus panel keyed by its backend-computed
+     * panel_id (#30). An existing item for the same panel receives the
+     * fresh payload via postMessage and is brought to front (last in DOM
+     * order = top of the #28 stacking); otherwise a new panel is added.
+     * View instances (panel_id contains '#') are LRU-capped so repeated
+     * distinct queries cannot grow the surface unboundedly; panel-mode
+     * singletons are bounded by the number of panel skills and are
+     * never evicted.
+     */
+    upsertNexusDocument(content, title) {
+        if (content.panelId && this.container) {
+            const existing = this.container.querySelector(
+                `.document-item[data-panel-id="${CSS.escape(content.panelId)}"]`
+            );
+            if (existing) {
+                const iframe = existing.querySelector('iframe.nexus-frame');
+                if (iframe) {
+                    const dataToSend = content.data?.result || content.data;
+                    iframe.contentWindow?.postMessage(dataToSend, '*');
+                }
+                // Bring to front of the stacking order
+                this.container.appendChild(existing);
+                return;
+            }
+        }
+        this.addDocument(content, 'nexus', title);
+        this.enforceNexusViewCap();
+    }
+
+    /**
+     * Evict the oldest view instances beyond MAX_NEXUS_VIEW_PANELS
+     * (#30, proposal §9.1 — config key pending). Singletons untouched.
+     */
+    enforceNexusViewCap() {
+        if (!this.container) return;
+        const viewItems = [
+            ...this.container.querySelectorAll(
+                '.document-item[data-format="nexus"][data-panel-id]'
+            )
+        ].filter(item => item.dataset.panelId.includes('#'));
+        while (viewItems.length > MAX_NEXUS_VIEW_PANELS) {
+            const oldest = viewItems.shift();
+            const iframe = oldest.querySelector('iframe');
+            if (iframe) {
+                iframe.src = 'about:blank';
+            }
+            oldest.remove();
+        }
+    }
+
+    /**
+     * Close a nexus panel by its backend-computed panel_id (#30): the
+     * renderer-side counterpart of the 'closeNexus' stream verb (skill-
+     * initiated close). Same teardown contract as the close button.
+     */
+    closeDocumentByPanelId(panelId) {
+        if (!panelId || !this.container) return;
+        const item = this.container.querySelector(
+            `.document-item[data-panel-id="${CSS.escape(panelId)}"]`
+        );
+        if (!item) return;
+        const iframe = item.querySelector('iframe');
+        if (iframe) {
+            iframe.src = 'about:blank';
+        }
+        item.remove();
+
+        if (!this.container.firstElementChild) {
+            this.emitEvent('empty');
         }
     }
 

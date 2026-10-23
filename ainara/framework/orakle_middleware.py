@@ -1176,15 +1176,29 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 and skill_info.get("ui")
             ):
                 # If the skill is a nexus skill with a UI, yield nexus NDJSON
-                component_name = skill_info.get("ui", {}).get("component")
+                ui_info = skill_info.get("ui", {})
+                component_name = ui_info.get("component")
                 try:
                     result_data = json.loads(result)
+                    # Reserved result field (#30): a skill can ask the
+                    # framework to close its own panel instead of
+                    # rendering/updating it. Extracted from the data so it
+                    # never reaches the component or the history payload.
+                    close_requested = False
+                    if isinstance(result_data, dict):
+                        close_requested = bool(
+                            result_data.pop("close_panel", False)
+                        )
                     # Yield the special dictionary for ChatManager with a flat structure
                     yield {
                         "type": "nexus_skill_result",
                         "vendor": skill_info.get("vendor"),
                         "bundle": skill_info.get("bundle"),
                         "component": component_name,
+                        # Surface mode declared by the skill (issue #29);
+                        # resolution/validation happened at discovery.
+                        "mode": ui_info.get("mode", "view"),
+                        "close": close_requested,
                         "query": query,
                         "data": result_data,
                     }

@@ -17,7 +17,42 @@
 # Lesser General Public License for more details.
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
+
+# Valid surface modes for skills that declare a UI component
+# (docs/proposals/nexus-panel-mode.md, issue #29). Binary by design:
+# two behaviors means two components.
+UI_MODES = ("view", "panel")
+
+
+def resolve_ui_mode(cap_data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Resolve the declared surface mode for a skill with a UI component.
+
+    The mode is declared by the skill author as the ``ui_mode`` class
+    attribute on the skill (``"view"`` or ``"panel"``). Undeclared means
+    ``"view"`` — byte-identical behavior for every skill shipped before
+    the declaration existed.
+
+    Fail-closed (issue #29): an unknown declared value is never silently
+    coerced to a default. The caller receives an error and must drop the
+    skill's UI association (the skill keeps working headless), recording
+    it as a load error.
+
+    Returns:
+        (mode, error): ``mode`` is "view" or "panel", or None when the
+        declaration is invalid (then ``error`` describes why).
+    """
+    instance = cap_data.get("instance")
+    declared = getattr(instance, "ui_mode", None)
+    if declared is None:
+        return "view", None
+    if declared not in UI_MODES:
+        return None, (
+            f"invalid ui_mode {declared!r} (expected one of"
+            f" {', '.join(UI_MODES)})"
+        )
+    return declared, None
 
 
 class CapabilityProvider(ABC):

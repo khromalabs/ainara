@@ -34,7 +34,7 @@ from flask import send_from_directory
 from ainara.framework.connectors.router import ConnectorRouter
 from ainara.framework.mcp.client_manager import MCPClientManager
 
-from .base import CapabilityProvider
+from .base import CapabilityProvider, resolve_ui_mode
 
 logger = logging.getLogger(__name__)
 
@@ -651,9 +651,27 @@ class UserSkillProvider(BasePythonSkillProvider):
                     component_dir = (ui_components_path / component_name).resolve()
 
                     if component_dir.is_dir():
-                        cap_data["ui"] = {"component": component_name}
-                        cap_data["ui_path"] = str(ui_components_path)
-                        logger.info(f"Associated user skill '{new_cap_id}' with component '{component_name}'")
+                        mode, ui_mode_error = resolve_ui_mode(cap_data)
+                        if ui_mode_error:
+                            # Fail-closed (#29): never guess a surface mode
+                            self.load_errors.append(
+                                {
+                                    "skill_id": new_cap_id,
+                                    "error": f"UI association dropped: {ui_mode_error}",
+                                }
+                            )
+                            logger.error(
+                                f"Skill '{new_cap_id}': {ui_mode_error}."
+                                " The skill loads headless (no UI component)."
+                            )
+                        else:
+                            cap_data["ui"] = {
+                                "component": component_name,
+                                "mode": mode,
+                            }
+                            # ui_path is for internal use by serve_component
+                            cap_data["ui_path"] = str(ui_components_path)
+                            logger.info(f"Associated user skill '{new_cap_id}' with component '{component_name}' (mode: {mode})")
 
                 discovered[new_cap_id] = cap_data
 
