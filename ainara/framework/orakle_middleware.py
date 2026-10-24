@@ -171,6 +171,72 @@ class OrakleCapabilityFetcher:
         return skills
 
 
+def format_skill_block(skill_info: dict, score: Optional[float] = None) -> str:
+    """Render one skill's advertising block for LLM prompts.
+
+    Single source of truth for how a capability is advertised to an LLM:
+    the Orakle selection phase uses it per matched candidate (with the
+    match score) and Bureau uses it for the stable capability menu in
+    agent system prompts (without). Everything shown is derived from the
+    capability payload — description, matcher info and the parameters
+    declared in ``run()`` — so what the planning LLM sees can never
+    drift from what the selection LLM sees.
+    """
+    skill_id = skill_info.get("name", "unknown")
+    source_tag = "[USER]" if skill_id.startswith("user_") else "[SYSTEM]"
+    if score is not None:
+        header = (
+            f"## Skill id {skill_id} {source_tag} (match score: {score:.2f})\n\n"
+        )
+    else:
+        header = f"## Skill id {skill_id} {source_tag}\n\n"
+
+    block = header
+    block += (
+        "Description:"
+        f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n"
+    )
+    block += (
+        # Add only the first paragraph
+        f" {skill_info.get('matcher_info', '').split('\n\n')[0]}\n\n"
+    )
+
+    # Add parameters with descriptions
+    block += "Parameters:\n"
+    for param_name, param_info in (
+        skill_info.get("run_info", {}).get("parameters", {}).items()
+    ):
+        param_type = param_info.get("type", "any")
+        param_desc = param_info.get("description", "No description")
+        param_required = (
+            "Required" if param_info.get("required", False) else "Optional"
+        )
+        param_default = param_info.get("default", "None")
+
+        block += (
+            f"- {param_name} ({param_type}, {param_required}):"
+            f" {param_desc}"
+        )
+        if not param_info.get("required", False):
+            block += f" Default: {param_default}"
+        block += "\n"
+
+    block += "\n"
+    return block
+
+
+def format_capabilities_menu(capabilities: List[dict]) -> str:
+    """Render a stable capability menu for planning prompts.
+
+    Used by Bureau to advertise an agent's allowed skills in its system
+    prompt: the same blocks the selection LLM sees per invocation
+    (description, matcher info, parameters), without match scores.
+    """
+    return "".join(
+        format_skill_block(skill) + "\n---\n\n" for skill in capabilities
+    )
+
+
 class OrakleMiddleware:
     """
     Middleware for processing Orakle commands in streaming LLM responses.
@@ -799,55 +865,9 @@ class OrakleMiddleware:
                 continue
 
             # Format skill description with parameters
-            source_tag = "[USER]" if skill_id.startswith("user_") else "[SYSTEM]"
-            skill_desc = (
-                f"## Skill id {skill_id} {source_tag} (match score: {score:.2f})\n\n"
+            candidate_skills_text += (
+                format_skill_block(skill_info, score=score) + "\n---\n\n"
             )
-            skill_desc += (
-                "Description:"
-                f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n"
-            )
-            skill_desc += (
-                # Add only the first paragraph
-                f" {skill_info.get('matcher_info', '').split('\n\n')[0]}\n\n"
-            )
-
-            # Add parameters with descriptions
-            skill_desc += "Parameters:\n"
-            for param_name, param_info in (
-                skill_info.get("run_info", {}).get("parameters", {}).items()
-            ):
-                param_type = param_info.get("type", "any")
-                param_desc = param_info.get("description", "No description")
-                param_required = (
-                    "Required"
-                    if param_info.get("required", False)
-                    else "Optional"
-                )
-                param_default = param_info.get("default", "None")
-
-                skill_desc += (
-                    f"- {param_name} ({param_type}, {param_required}):"
-                    f" {param_desc}"
-                )
-                if not param_info.get("required", False):
-                    skill_desc += f" Default: {param_default}"
-                skill_desc += "\n"
-
-            skill_desc += "\n"
-
-            # # Add parameters if available
-            # if skill_info.get("parameters"):
-            #     skill_desc += "Parameters:\n"
-            #     for param in skill_info.get("parameters", []):
-            #         param_name = param.get("name", "unknown")
-            #         param_type = param.get("type", "any")
-            #         param_desc = param.get("description", "No description")
-            #         skill_desc += (
-            #             f"- {param_name} ({param_type}): {param_desc}\n"
-            #         )
-
-            candidate_skills_text += skill_desc + "\n---\n\n"
 
         # Use LLM to select the best skill and extract parameters
         template = (

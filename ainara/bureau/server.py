@@ -37,7 +37,10 @@ from ainara.framework.connectors.manager import ConnectorManager
 from ainara.framework.connectors.router import ConnectorRouter
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.logging_setup import logging_manager
-from ainara.framework.orakle_middleware import OrakleCapabilityFetcher
+from ainara.framework.orakle_middleware import (
+    OrakleCapabilityFetcher,
+    format_capabilities_menu,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -491,10 +494,13 @@ def run_agent_in_process(
             s for s in global_capabilities or [] if s["name"] in allowed_skills
         ]
 
-    # Build the Agent-specific system message
-    skills_hint_text = ", ".join(
-        [s["description"] for s in agent_capabilities]
-    )
+    # Build the Agent-specific system message. The agent plans multi-step
+    # goals from this prompt, so it gets the full capability menu (same
+    # blocks the Orakle selection LLM sees per invocation: description,
+    # matcher info and the parameters declared in run()) instead of raw
+    # docstrings — all of it derived from the capability payload, so
+    # parameter facts can never drift from hand-written text.
+    skills_hint_text = format_capabilities_menu(agent_capabilities)
     from ainara.framework.template_manager import TemplateManager
 
     base_system_message = TemplateManager().render(

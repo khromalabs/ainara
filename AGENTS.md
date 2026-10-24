@@ -64,19 +64,37 @@ before proposing changes that cut against them.
   layout, and is safe to call from inside app modules, unlike `get_data_dir()`
   which is forbidden there) — never outside it.
 
-### The class docstring is the in-conversation skill contract
-- The class docstring is the ONLY skill description the LLM sees during a
-  conversation — no full skill description reaches the Orakle system prompt;
-  `matcher_info` is used for semantic routing only. With multi-action skills
-  (one `run()` dispatching on an `action` parameter) the docstring must
-  enumerate every action compactly, following the
-  `Actions: name=meaning (params), ...` pattern (reference implementation:
-  Ataria's `crypto/tradingaccount.py`).
-- Document behavioral rules the agent must respect there too — not just in
-  code: parameter semantics the agent can't guess (e.g. "quantity 0
-  removes"), hard limits (e.g. "every write enforces a spending cap, fails
-  closed"), and what is deliberately NOT implemented (e.g. "checkout stays
-  manual") so the agent frames expectations correctly.
+### Where skill information reaches which LLM
+- Parameter facts (names, types, allowed values, defaults, per-action
+  semantics) live in the `run()` annotations — `Annotated[...]`
+  descriptions and `Literal` types — and are advertised MECHANICALLY
+  from the capability payload. Never hand-enumerate parameters in the
+  docstring: duplicated text drifts (a stale name teaches the LLM to
+  call the skill wrong), and matching names come from the annotations.
+  Dynamic value sets (e.g. an engine pool) belong in a `Literal` or
+  annotation description rebuilt at `__init__` time.
+- The Orakle selection LLM (per invocation) sees a block derived via
+  `format_skill_block()`: semantic docstring as `Description:`, first
+  `matcher_info` paragraph, and the parameters from the annotations.
+- Bureau agents see the same blocks, scoped to the blueprint's
+  `allowed_skills`, rendered into their system prompt by
+  `format_capabilities_menu()` — the agent plans multi-step goals from
+  that menu, so the annotations must fully describe each action's
+  requirements.
+- The class docstring is the SEMANTIC contract: what the skill is for,
+  plus behavioral rules the LLM must respect — not just in code:
+  parameter semantics the LLM can't guess (e.g. "quantity 0 removes"),
+  hard limits (e.g. "every write enforces a spending cap, fails
+  closed"), and what is deliberately NOT implemented (e.g. "checkout
+  stays manual") so the agent frames expectations correctly. It is
+  embedded for semantic routing (`matcher_info` drives candidate
+  matching), shown as the `Description:` line in selection prompts, and
+  surfaced to users in the wizard — keep it honest and compact. For
+  multi-action skills (one `run()` dispatching on an `action`
+  parameter), the ACTION PARAMETER's annotation is the action contract:
+  enumerate every action there (`'buy': ... requires ...`, ...),
+  following the reference implementation: Ataria's
+  `crypto/tradingaccount.py`.
 - Declare `run()` parameters with `Annotated[...]` descriptions — that is
   how the LLM learns to fill arguments. Return structured errors
   (`{"success": False, "result": msg}`) instead of raising so the agent can

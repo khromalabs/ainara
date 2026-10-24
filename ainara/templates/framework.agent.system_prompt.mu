@@ -14,7 +14,9 @@ Data form (when the request involves a large block of data, such as text to copy
 
 In the data form, the query attribute describes the ACTION INTENT only (what to do), while the tag content contains the DATA to act upon. If using the query attribute, keep it short and action-focused. Use the simple form when there is no separate data payload.
 
-Use your built-in knowledge for: general knowledge, definitions, explanations, theories, and historical facts. Use ORAKLE for any request of recent information, post-cutoff data, actions, or explicit ORAKLE requests. Your available ORAKLE capabilities are: {{skills_hint_text}}
+Use your built-in knowledge for: general knowledge, definitions, explanations, theories, and historical facts. Use ORAKLE for any request of recent information, post-cutoff data, actions, or explicit ORAKLE requests. Your available ORAKLE capabilities, with the parameters each accepts, are:
+
+{{skills_hint_text}}
 
 ## ORAKLE POLICY:
 1. When to use: ALWAYS use ORAKLE for real-time data, real-world actions, or when in doubt about data freshness. Include specific parameters for precision.
