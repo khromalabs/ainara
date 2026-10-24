@@ -212,34 +212,43 @@ class SearchWeb(Skill):
         on configuration and user-contributed engines), so — like the
         ``search_type`` Literal in ``_update_search_type_contract`` — the
         ``Annotated`` description is rebuilt at instantiation time from
-        the live pool, split by participation mode so a specialty (vertical)
-        engine is not mistaken for a general-purpose provider. The
-        rebuilt description propagates to the LLM-facing tool schema and
-        the Orakle parameter-extraction prompt via capability discovery.
+        the live pool. The description is a sequence of flat sentences
+        (one per constraint) rather than a nested ``label: value``
+        grouping: small local models parse plain sentences reliably,
+        and a specialty engine must not be mistaken for a
+        general-purpose provider. The rebuilt description propagates to
+        the LLM-facing tool schema and the Orakle parameter-extraction
+        prompt via capability discovery.
         """
         weighted_names = [
             name for name, engine in self.engines.items()
             if engine.PARTICIPATION != "specialty"
         ]
-        vertical_names = [
-            name for name, engine in self.engines.items()
-            if engine.PARTICIPATION == "specialty"
-        ]
 
         desc = (
             "Which search engine(s) to use, a single name or a list of"
-            " names. 'meta' or None uses all available engines"
+            " names. Omit or use 'meta' to search with all suitable"
+            " engines"
         )
-        parts = []
+        sentences = []
         if weighted_names:
-            parts.append("general: " + ", ".join(weighted_names))
-        if vertical_names:
-            parts.append(
-                "specialty (run only for their matching search_type): "
-                + ", ".join(vertical_names)
+            sentences.append("General engines: " + ", ".join(weighted_names))
+        # Restriction sentences only for specialty (vertical) engines.
+        # Participation declarations of general engines are pool-policy,
+        # not LLM-facing: an explicitly named engine is always valid,
+        # so enumerating them here would wrongly suggest otherwise.
+        for name, engine in self.engines.items():
+            if engine.PARTICIPATION != "specialty":
+                continue
+            specialties = engine.get_search_type_specialties()
+            if not specialties:
+                continue
+            types_str = ", ".join(f"'{s}'" for s in specialties)
+            sentences.append(
+                f"Engine '{name}' only works for search_type {types_str}"
             )
-        if parts:
-            desc += ". Available: " + "; ".join(parts)
+        if sentences:
+            desc += ". " + ". ".join(sentences) + "."
 
         try:
             self.run.__func__.__annotations__["engine"] = Annotated[
