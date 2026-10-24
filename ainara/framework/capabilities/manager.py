@@ -194,6 +194,30 @@ class CapabilitiesManager:
                     exc_info=True,
                 )
 
+        # Apply the user's capability denylist (`skills.disabled`: list of
+        # capability IDs). Disabled capabilities remain loaded — re-enabling
+        # them is cheap — but are excluded from the `llm` view (hence from
+        # routing, the matcher candidate pool and the scheduler) and fail
+        # closed on direct execution (execute_capability).
+        disabled_ids = self.config.get("skills.disabled", [])
+        if not isinstance(disabled_ids, list) or not all(
+            isinstance(cid, str) for cid in disabled_ids
+        ):
+            logger.warning(
+                "Ignoring invalid 'skills.disabled' config value"
+                f" (expected a list of strings): {disabled_ids!r}"
+            )
+            disabled_ids = []
+        disabled_set = set(disabled_ids)
+        for name, cap_data in self.capabilities.items():
+            cap_data["disabled"] = name in disabled_set
+        num_disabled = len(disabled_set & set(self.capabilities))
+        if num_disabled:
+            logger.info(
+                f"{num_disabled} capabilities disabled by config"
+                " (skills.disabled)."
+            )
+
         num_skills = len(
             [c for c in self.capabilities.values() if c["type"] == "skill"]
         )
@@ -233,6 +257,12 @@ class CapabilitiesManager:
             if cap_data.get("hidden", False):
                 continue
 
+            is_disabled = cap_data.get("disabled", False)
+            # The `llm` view feeds routing (matcher candidates, scheduler);
+            # disabled capabilities must not surface there.
+            if is_disabled and view_mode == "llm":
+                continue
+
             # Create a deep copy of run_info to safely modify parameters for the view
             run_info = copy.deepcopy(cap_data["run_info"])
 
@@ -242,6 +272,7 @@ class CapabilitiesManager:
                 "origin": cap_data["origin"],
                 "description": cap_data["description"],
                 "run_info": run_info,
+                "enabled": not is_disabled,
             }
 
             # Filter parameters based on view_mode
@@ -442,6 +473,12 @@ class CapabilitiesManager:
 
         if capability_data is None:
             raise ValueError(f"Capability '{name}' not found.")
+
+        if capability_data.get("disabled", False):
+            raise ValueError(
+                f"Capability '{name}' is disabled by configuration"
+                " (skills.disabled)."
+            )
 
         cap_type = capability_data["type"]
         provider = self.provider_map.get(cap_type)

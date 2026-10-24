@@ -780,6 +780,7 @@ input:disabled, button:disabled {
 #capabilities-list li {
     margin-bottom: 5px;
     font-size: 0.9em;
+    list-style-type: none;
 }
 
 /* Style for loading/error states */
@@ -1466,6 +1467,7 @@ input.capturing {
 .capability-group ul {
     padding-left: 20px;
     margin: 8px 0;
+    list-style-type: none;
 }
 
 .capability-group li {
@@ -1478,6 +1480,38 @@ input.capturing {
     padding: 1px 5px;
     border-radius: 4px;
     font-size: 0.95em;
+}
+
+/* Capability enable/disable toggles (finish step) */
+#capabilities-list {
+    list-style: none;
+    padding-left: 0;
+}
+
+.capability-item label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.capability-item input.capability-toggle {
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+.capability-item.disabled {
+    opacity: 0.55;
+}
+
+.core-disabled-tip {
+    margin: 8px 0 12px;
+    padding: 8px 12px;
+    background-color: #fff8e1;
+    border: 1px solid #ffe08a;
+    border-radius: 6px;
+    color: #7a5d00;
+    font-size: 0.88em;
 }
 
 /* ===== Task Model Routing (LLM step) ===== */

@@ -1,6 +1,69 @@
 const shortcuts = require('./shortcuts');
 
 let initialized = false;
+let markFinishModifiedFn = null;
+
+function escapeHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function updateCoreDisabledTip(disabledCoreCount) {
+    const section = document.getElementById('capabilities-section');
+    if (!section) return;
+
+    let tip = document.getElementById('core-disabled-tip');
+    if (disabledCoreCount > 0) {
+        if (!tip) {
+            tip = document.createElement('div');
+            tip.id = 'core-disabled-tip';
+            tip.className = 'core-disabled-tip';
+            section.insertBefore(tip, document.getElementById('capabilities-list'));
+        }
+        const noun = disabledCoreCount === 1 ? 'capability is' : 'capabilities are';
+        tip.textContent =
+            `${disabledCoreCount} core ${noun} currently disabled. Ainara will still work, ` +
+            'but that built-in functionality won\'t be available.';
+    } else if (tip) {
+        tip.remove();
+    }
+}
+
+function wireCapabilityToggles(ctx, listElement) {
+    if (listElement.dataset.togglesWired) return;
+    listElement.dataset.togglesWired = '1';
+
+    const { modifiedFields } = ctx;
+
+    listElement.addEventListener('change', (event) => {
+        const checkbox = event.target;
+        if (!checkbox.classList || !checkbox.classList.contains('capability-toggle')) {
+            return;
+        }
+
+        if (!checkbox.checked && checkbox.dataset.capCore === '1') {
+            const capId = checkbox.dataset.capId;
+            const confirmed = window.confirm(
+                `'${capId}' is a core capability of Ainara. Disabling it removes` +
+                    ' built-in functionality. Disable it anyway?'
+            );
+            if (!confirmed) {
+                checkbox.checked = true;
+                return;
+            }
+        }
+
+        if (markFinishModifiedFn) {
+            markFinishModifiedFn({ target: { id: 'capabilities-toggles' } });
+        } else {
+            modifiedFields.finish.add('capabilities-toggles');
+        }
+    });
+}
 
 async function init(ctx) {
     if (initialized) return;
@@ -18,6 +81,7 @@ async function init(ctx) {
         const nextButton = document.getElementById('main-next-btn');
         if (nextButton) nextButton.disabled = true;
     };
+    markFinishModifiedFn = markFinishModified;
 
     const startMinimizedCheckbox = document.getElementById('start-minimized-checkbox');
     if (startMinimizedCheckbox) {
@@ -144,8 +208,24 @@ async function loadAndDisplayCapabilities(ctx) {
 
     listElement.innerHTML = '<li class="loading">Loading capabilities...</li>';
 
+    // Current denylist comes from PyBridge (the persistence authority for
+    // ainara.yaml), not from Orakle: Orakle only applies skills.disabled at
+    // startup, so its view can be stale within a session.
+    let disabledSet = new Set();
     try {
-        const response = await fetch(ctx.config.get('orakle.api_url') + '/capabilities');
+        const backendConfig = await ctx.api.loadBackendConfig();
+        const disabledList = backendConfig?.skills?.disabled;
+        if (Array.isArray(disabledList)) {
+            disabledSet = new Set(disabledList);
+        }
+    } catch (error) {
+        // Degrade to all-enabled (matches a fresh Orakle startup) rather
+        // than blocking the whole capabilities review.
+        console.warn('Could not load backend config for skill toggles:', error);
+    }
+
+    try {
+        const response = await fetch(ctx.config.get('orakle.api_url') + '/capabilities?view=full');
         if (!response.ok) {
             throw new Error(`Failed to fetch capabilities: ${response.status} ${response.statusText}`);
         }
@@ -153,6 +233,7 @@ async function loadAndDisplayCapabilities(ctx) {
         const data = await response.json();
         if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
             listElement.innerHTML = '<li class="info">No specific capabilities listed by the backend.</li>';
+            updateCoreDisabledTip(0);
             return;
         }
 
@@ -163,7 +244,9 @@ async function loadAndDisplayCapabilities(ctx) {
                 id: skillId,
                 description: (skill.description || '').trim().split('\n')[0],
                 bundle: skill.bundle || '',
-                server: skill.server || ''
+                server: skill.server || '',
+                core: skill.type === 'skill',
+                disabled: disabledSet.has(skillId)
             };
 
             switch (skill.type) {
@@ -178,8 +261,13 @@ async function loadAndDisplayCapabilities(ctx) {
         const renderEntries = (entries) => entries
             .sort((a, b) => a.id.localeCompare(b.id))
             .map(entry => {
-                const suffix = entry.server ? ` <em>(server: ${entry.server})</em>` : '';
-                return `<li><code>${entry.id}</code> — ${entry.description}${suffix}</li>`;
+                const suffix = entry.server ? ` <em>(server: ${escapeHtml(entry.server)})</em>` : '';
+                return `<li class="capability-item${entry.disabled ? ' disabled' : ''}">` +
+                    '<label>' +
+                    `<input type="checkbox" class="capability-toggle" data-cap-id="${escapeHtml(entry.id)}"` +
+                    `${entry.core ? ' data-cap-core="1"' : ''}${entry.disabled ? '' : ' checked'}` +
+                    `><code>${escapeHtml(entry.id)}</code> — ${escapeHtml(entry.description)}${suffix}` +
+                    '</label></li>';
             })
             .join('');
 
@@ -210,9 +298,13 @@ async function loadAndDisplayCapabilities(ctx) {
         sections.push(renderGroup('Other Capabilities', groups.other));
 
         listElement.innerHTML = sections.filter(Boolean).join('') || '<li class="info">No capabilities available.</li>';
+
+        updateCoreDisabledTip(groups.native.filter(entry => entry.disabled).length);
+        wireCapabilityToggles(ctx, listElement);
     } catch (error) {
         console.error('Error loading capabilities:', error);
         listElement.innerHTML = `<li class="error">Failed to load capabilities: ${error.message}</li>`;
+        updateCoreDisabledTip(0);
     }
 }
 
@@ -261,6 +353,20 @@ async function saveFinishStepConfig(ctx) {
 
         if (modifiedFields.finish.has('comring-notifications-checkbox')) {
             config.set('ui.comringNotifications', document.getElementById('comring-notifications-checkbox').checked);
+        }
+
+        if (modifiedFields.finish.has('capabilities-toggles')) {
+            // Read-modify-write against a fresh load: the denylist is the
+            // set of currently unchecked toggles, everything else in the
+            // config is preserved as-is.
+            const backendConfig = await api.loadBackendConfig();
+            if (!backendConfig.skills) backendConfig.skills = {};
+            backendConfig.skills.disabled = Array.from(
+                document.querySelectorAll('#capabilities-list input.capability-toggle[data-cap-id]')
+            )
+                .filter(checkbox => !checkbox.checked)
+                .map(checkbox => checkbox.dataset.capId);
+            await api.saveBackendConfig(backendConfig, config.get('pybridge.api_url'));
         }
 
         config.saveConfig();
