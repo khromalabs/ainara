@@ -26,7 +26,7 @@ import subprocess
 import sys
 import venv
 from pathlib import Path
-from typing import (Annotated, Any, Dict, Optional, Union, get_args,
+from typing import (Annotated, Any, Dict, Literal, Optional, Union, get_args,
                     get_origin, get_type_hints, is_typeddict)
 from flask import send_from_directory
 
@@ -37,6 +37,88 @@ from ainara.framework.mcp.client_manager import MCPClientManager
 from .base import CapabilityProvider, resolve_ui_mode
 
 logger = logging.getLogger(__name__)
+
+_PRETTY_TYPE_NAMES = {
+    str: "string",
+    bool: "boolean",
+    int: "integer",
+    float: "number",
+    bytes: "bytes",
+    list: "list",
+    dict: "object",
+    set: "set",
+    tuple: "tuple",
+}
+
+_PLURALIZED = {
+    "string": "strings",
+    "integer": "integers",
+    "number": "numbers",
+    "boolean": "booleans",
+}
+
+
+def _pretty_type(hint: Any) -> str:
+    """Render a type hint as plain language for LLM-facing payloads.
+
+    Raw Python reprs (``typing.Union[str, typing.List[str], NoneType]``,
+    ``<class 'str'>``) waste tokens and read poorly in selection prompts
+    and Bureau capability menus; this maps them to compact text like
+    "string or list of strings". Unknown shapes fall back to a stripped
+    repr rather than raising.
+    """
+    if hint is type(None) or hint is None:
+        return "null"
+
+    origin = get_origin(hint)
+    args = get_args(hint)
+
+    if origin is Annotated:
+        if args:
+            return _pretty_type(args[0])
+        return "any"
+
+    if origin is Literal:
+        return "one of: " + ", ".join(repr(v) for v in args)
+
+    if origin is Union:
+        parts = []
+        for arg in args:
+            part = _pretty_type(arg)
+            if part != "null" and part not in parts:
+                parts.append(part)
+        # Optional[...] is Union[..., None]: optionality is already
+        # advertised by the parameter's "required" flag.
+        return " or ".join(parts) if parts else "null"
+
+    if origin in (list, set, frozenset):
+        base = {list: "list", set: "set", frozenset: "set"}[origin]
+        if args:
+            inner = _pretty_type(args[0])
+            return f"{base} of {_PLURALIZED.get(inner, inner)}"
+        return base
+
+    if origin is dict:
+        if args and len(args) == 2:
+            return f"object mapping {_pretty_type(args[0])} to {_pretty_type(args[1])}"
+        return "object"
+
+    if origin is tuple:
+        if args:
+            return "tuple of " + ", ".join(_pretty_type(a) for a in args)
+        return "tuple"
+
+    if hint is Any:
+        return "any"
+
+    if isinstance(hint, type):
+        if hint in _PRETTY_TYPE_NAMES:
+            return _PRETTY_TYPE_NAMES[hint]
+        name = getattr(hint, "__name__", None)
+        if name:
+            return name
+
+    return str(hint).replace("typing.", "")
 
 
 def _to_pascal(s: str) -> str:
@@ -253,7 +335,7 @@ class BasePythonSkillProvider(CapabilityProvider):
             type_hints = get_type_hints(method, include_extras=True)
 
             if "return" in type_hints:
-                details["return_type"] = str(type_hints["return"])
+                details["return_type"] = _pretty_type(type_hints["return"])
 
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
@@ -291,13 +373,21 @@ class BasePythonSkillProvider(CapabilityProvider):
                 # Generate JSON Schema for the type
                 json_schema = self._generate_json_schema(actual_type)
 
+                if param.default is param.empty:
+                    default_value = None
+                elif isinstance(
+                    param.default, (str, int, float, bool, list, dict, type(None))
+                ):
+                    # JSON-native: keep the real value; format_skill_block
+                    # prints "Default: None" for null either way.
+                    default_value = param.default
+                else:
+                    # Exotic defaults (Path, enum, ...) stay JSON-safe
+                    default_value = repr(param.default)
+
                 details["parameters"][param_name] = {
-                    "type": str(actual_type),
-                    "default": (
-                        "None"
-                        if param.default is param.empty
-                        else repr(param.default)
-                    ),
+                    "type": _pretty_type(actual_type),
+                    "default": default_value,
                     "required": param.default is param.empty,
                     "description": param_desc,
                     "hidden": is_hidden,
