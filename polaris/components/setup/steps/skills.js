@@ -289,12 +289,16 @@ function generateScheduleUI(capabilities, backendConfig) {
 
             const minutes = (override && override.minutes) ? override.minutes : (defaultSched.minutes || 10);
             const hasParams = cap.run_info?.parameters && Object.keys(cap.run_info.parameters).length > 0;
+            const disabledHtml = (cap.disabled_components && cap.disabled_components.length)
+                ? `<p style="font-size:0.75em; margin: 2px 0 0 0; color:#b36b00;">Disabled: ${cap.disabled_components.map(d => `${d.name} (${d.reason})`).join(', ')}</p>`
+                : "";
 
             rows += `
                 <tr class="schedule-row" data-skill="${name}" data-default-default=${defaultSched.default || false} data-default-minutes="${defaultSched.minutes || 10}">
                     <td style="max-width: 100px">
                         <i>${name}</i>
                         <p style="font-size:0.8em; margin: 2px 0 0 0; color: #666;">${cap.description ? cap.description.trim().split('\n')[0] : ""}</p>
+                        ${disabledHtml}
                     </td>
                     <td>
                         <label class="schedule-toggle">

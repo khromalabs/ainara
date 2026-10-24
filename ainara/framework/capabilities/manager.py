@@ -294,11 +294,23 @@ class CapabilitiesManager:
                 if "ui" in cap_data:
                     info["ui"] = cap_data["ui"]
 
-            # Expose default schedule only in 'full' mode
+            # Expose wizard-facing state only in 'full' mode
             if view_mode == "full":
                 instance = cap_data.get("instance")
                 if instance and hasattr(instance, "default_schedule"):
                     info["default_schedule"] = instance.default_schedule
+                # Skills can report disabled sub-components (e.g. search
+                # engines missing API keys) via this attribute; it is
+                # configuration feedback for the setup wizard, never part
+                # of the LLM-facing description.
+                if instance is not None:
+                    disabled_components = getattr(
+                        instance, "disabled_components", None
+                    )
+                    if disabled_components:
+                        info["disabled_components"] = copy.deepcopy(
+                            disabled_components
+                        )
 
             output_capabilities[name] = info
 

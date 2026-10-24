@@ -74,9 +74,17 @@ class SearchWeb(Skill):
         self.valid_search_types = list(self.CORE_SEARCH_TYPES)
         self._initialize_engines()
         self._update_search_type_contract()
+        self._update_engine_contract()
         self.llm = None
 
-        # Update docstring with available engines
+        # Wizard-facing configuration feedback lives here (rendered by the
+        # setup wizard from the 'full' capabilities view); the LLM-facing
+        # docstring stays purely semantic and never mentions it.
+        self.disabled_components = [
+            {"name": name, "reason": reason}
+            for name, reason in self.disabled_engines.items()
+        ]
+
         self._update_docstring()
 
     # def reload(self):
@@ -86,8 +94,9 @@ class SearchWeb(Skill):
     def _initialize_engines(self):
         """Initialize search engines based on configuration"""
         # Engines that were discovered but did not join the pool, with a
-        # short reason (surfaced by _update_docstring so users can see in
-        # the wizard's final step why an expected engine is missing)
+        # short reason (surfaced as the ``disabled_components`` attribute
+        # so users can see in the wizard's final step why an expected
+        # engine is missing)
         self.disabled_engines = {}
         search_config = config.get("apis.search", {})
 
@@ -165,27 +174,49 @@ class SearchWeb(Skill):
             self._collect_engine_specialties()
 
     def _update_docstring(self):
-        """Dynamically update the class docstring with available engines"""
+        """Keep the class docstring purely semantic (what the skill does).
+
+        This docstring is consumed in two places: it is embedded for
+        semantic routing, and it is shown as the ``Description:`` line to
+        the skill-selection LLM on every invocation. Parameter facts do
+        NOT belong here — valid search types are advertised through the
+        ``run()`` ``search_type`` Literal (see
+        ``_update_search_type_contract``) and the engine pool through the
+        ``engine`` annotation description (see
+        ``_update_engine_contract``). Configuration state (disabled
+        engines) is wizard-facing only, via ``disabled_components``.
+        """
         if not self.engines:
+            # This case is load-bearing: the selection LLM must know that
+            # search cannot succeed right now.
             doc = (
                 "Search the internet for information about any topic, product,"
                 " news, current events, or factual questions. No search"
-                " engines are currently configured."
+                " engines are currently configured, so searches will fail."
             )
-            if self.disabled_engines:
-                disabled_str = ", ".join(self.disabled_engines.keys())
-                doc += (
-                    f" Engines detected but disabled: {disabled_str}"
-                    " (incomplete configuration)."
-                )
-            type(self).__doc__ = doc
-            return
+        else:
+            doc = (
+                "Search the internet for information about any topic, product,"
+                " news, current events, or factual questions using multiple"
+                " search providers."
+            )
+        # Set on the class so it advertises through
+        # ``instance.__class__.__doc__`` during capability discovery (an
+        # instance-attribute assignment would only shadow it)
+        type(self).__doc__ = doc
 
-        # Split the live pool by participation mode: "weighted" engines
-        # join every search (general providers), "specialty" engines only
-        # run for their declared search types (verticals). Advertising the
-        # difference keeps the provider list honest — a vertical engine
-        # must not read as a general-purpose provider.
+    def _update_engine_contract(self):
+        """Rebuild the ``engine`` annotation description from the live pool.
+
+        The static annotation cannot enumerate engine names (they depend
+        on configuration and user-contributed engines), so — like the
+        ``search_type`` Literal in ``_update_search_type_contract`` — the
+        ``Annotated`` description is rebuilt at instantiation time from
+        the live pool, split by participation mode so a specialty (vertical)
+        engine is not mistaken for a general-purpose provider. The
+        rebuilt description propagates to the LLM-facing tool schema and
+        the Orakle parameter-extraction prompt via capability discovery.
+        """
         weighted_names = [
             name for name, engine in self.engines.items()
             if engine.PARTICIPATION != "specialty"
@@ -195,49 +226,27 @@ class SearchWeb(Skill):
             if engine.PARTICIPATION == "specialty"
         ]
 
-        # Get list of search types with specialized engines
-        search_types = {}
-        for engine_name, engine in self.engines.items():
-            for specialty in engine.get_search_type_specialties():
-                if specialty not in search_types:
-                    search_types[specialty] = []
-                search_types[specialty].append(engine_name)
-
-        # Build docstring
-        doc = (
-            "Search the internet for information about any topic, product,"
-            " news, current events, or factual questions"
+        desc = (
+            "Which search engine(s) to use, a single name or a list of"
+            " names. 'meta' or None uses all available engines"
         )
+        parts = []
         if weighted_names:
-            doc += f" using multiple search providers ({', '.join(weighted_names)})."
-        else:
-            doc += "."
+            parts.append("general: " + ", ".join(weighted_names))
         if vertical_names:
-            doc += (
-                " Additional specialized providers run only for their"
-                f" matching search_type: {', '.join(vertical_names)}."
+            parts.append(
+                "specialty (run only for their matching search_type): "
+                + ", ".join(vertical_names)
             )
-        if self.disabled_engines:
-            disabled_str = ", ".join(
-                f"{name} ({reason})"
-                for name, reason in self.disabled_engines.items()
-            )
-            doc += f" Engines detected but disabled: {disabled_str}."
+        if parts:
+            desc += ". Available: " + "; ".join(parts)
 
-        # Add search type specialties
-        # Add search type specialties. Every type with specialized engines
-        # is advertised, including dynamically contributed ones (e.g. a
-        # vertical engine declaring "jobs")
-        for specialty, engines_list in search_types.items():
-            doc += (
-                f" Use search_type='{specialty}' for specialized"
-                f" {specialty} search (optimized for"
-                f" {', '.join(engines_list)})."
-            )
-        # Set on the class so the dynamic specialties advertise through
-        # ``instance.__class__.__doc__`` during capability discovery (an
-        # instance-attribute assignment would only shadow it)
-        type(self).__doc__ = doc
+        try:
+            self.run.__func__.__annotations__["engine"] = Annotated[
+                Optional[Union[str, List[str]]], desc
+            ]
+        except Exception as e:
+            logger.warning(f"Could not rebuild dynamic engine annotation: {e}")
 
     def _update_search_type_contract(self):
         """Derive the valid search types from the live engine pool.

@@ -258,6 +258,14 @@ class BasePythonSkillProvider(CapabilityProvider):
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
                     continue
+                if param.kind in (
+                    inspect.Parameter.VAR_KEYWORD,
+                    inspect.Parameter.VAR_POSITIONAL,
+                ):
+                    # Call plumbing, not a user-facing parameter:
+                    # advertising it makes the selection LLM invent
+                    # arguments it was never told about.
+                    continue
 
                 param_type_hint = type_hints.get(param_name, Any)
                 param_desc = f"Parameter '{param_name}'"
