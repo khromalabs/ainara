@@ -417,49 +417,6 @@ class CapabilitiesManager:
 
         return properties
 
-    def get_all_capabilities_description(self) -> str:
-        """Generate a combined description of all capabilities for an LLM."""
-        description = "You have access to the following capabilities:\n"
-        sections = {
-            "skill": "\n=== Native Skills ===\n",
-            "user_skill": "\n=== User Skills ===\n",
-            "nexus": "\n=== Nexus Skills ===\n",
-            "mcp": "\n=== MCP Tools ===\n",
-        }
-        content = {"skill": "", "user_skill": "", "nexus": "", "mcp": ""}
-        found = {"skill": False, "user_skill": False, "nexus": False, "mcp": False}
-
-        for name, cap_data in self.capabilities.items():
-            if cap_data.get("hidden", False):
-                continue
-
-            cap_type = cap_data["type"]
-            if cap_type in self.provider_map:
-                provider = self.provider_map[cap_type]
-                content[cap_type] += provider.format_for_llm(cap_data)
-                found[cap_type] = True
-
-        if not found["skill"]:
-            content["skill"] = "(No native skills available)\n"
-        if not found["user_skill"]:
-            content["user_skill"] = "(No user skills available)\n"
-        if not found["nexus"]:
-            content["nexus"] = "(No Nexus skills available)\n"
-        if not found["mcp"]:
-            content["mcp"] = "(No MCP tools available or connected)\n"
-
-        return (
-            description
-            + sections["skill"]
-            + content["skill"]
-            + sections["user_skill"]
-            + content["user_skill"]
-            + sections["nexus"]
-            + content["nexus"]
-            + sections["mcp"]
-            + content["mcp"]
-        )
-
     def get_capability(self, name: str) -> Optional[Any]:
         """Get the instance (skill object or MCPTool) of a capability by name."""
         capability_data = self.capabilities.get(name)
