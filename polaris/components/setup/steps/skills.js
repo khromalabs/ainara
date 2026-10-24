@@ -30,12 +30,12 @@ module.exports = {
         await saveSkillsConfig(ctx);
     },
 
-    validate(ctx) {
+    validate() {
         return true; // Skills are optional
     },
 
-    updateNextButtonState(ctx) {
-        updateSkillsNextButtonState(ctx);
+    updateNextButtonState() {
+        updateSkillsNextButtonState();
     }
 };
 
@@ -140,7 +140,7 @@ async function generateSkillsUI(ctx) {
         // blocks or fails the wizard when the host is unreachable)
         checkNexusUpdates(ctx, nexusApps);
 
-        updateSkillsNextButtonState(ctx);
+        updateSkillsNextButtonState();
 
     } catch (error) {
         console.error('Error generating skills UI:', error);
@@ -153,7 +153,7 @@ async function generateSkillsUI(ctx) {
     }
 }
 
-function updateSkillsNextButtonState(ctx) {
+function updateSkillsNextButtonState() {
     const nextButton = document.getElementById('main-next-btn');
     if (nextButton) {
         nextButton.disabled = false;
@@ -359,12 +359,12 @@ function setupScheduleListeners(ctx) {
         checkbox.addEventListener('change', () => {
             input.disabled = !checkbox.checked;
             ctx.modifiedFields.skills.add('scheduler');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         });
 
         input.addEventListener('input', () => {
             ctx.modifiedFields.skills.add('scheduler');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         });
 
         const settingsBtn = row.querySelector('.settings-btn');
@@ -388,7 +388,7 @@ function setupScheduleListeners(ctx) {
     document.querySelectorAll('.param-input').forEach(input => {
         input.addEventListener('change', () => {
             ctx.modifiedFields.skills.add('scheduler');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         });
         if (input.tagName === 'INPUT' && input.type === 'text') {
              input.addEventListener('input', () => {
@@ -411,8 +411,8 @@ function showNexusDescriptionModal(btn) {
 
     let title;
     let description;
-    try { title = decodeURIComponent(rawTitle); } catch (e) { title = rawTitle; }
-    try { description = decodeURIComponent(rawDescription); } catch (e) { description = rawDescription; }
+    try { title = decodeURIComponent(rawTitle); } catch { title = rawTitle; }
+    try { description = decodeURIComponent(rawDescription); } catch { description = rawDescription; }
 
     const backdrop = document.createElement('div');
     backdrop.className = 'nexus-desc-modal-backdrop';
@@ -606,7 +606,7 @@ function updateNexusParamState(input) {
     let defaultVal;
     try {
         defaultVal = JSON.parse(defaultRaw);
-    } catch (e) {
+    } catch {
         defaultVal = null;
     }
 
@@ -621,7 +621,7 @@ function updateNexusParamState(input) {
     } else {
         try {
             currentVal = parseNexusValue(rawValue, valueType);
-        } catch (e) {
+        } catch {
             currentVal = null;
         }
     }
@@ -744,7 +744,7 @@ function renderNexusParam(prop, backendConfig) {
         : '';
     // ------------------------------------------------
 
-    let controlHtml = '';
+    let controlHtml;
 
     if (Array.isArray(schema.enum)) {
         const currentInEnum = schema.enum.some(opt => deepEqual(opt, currentValue));
@@ -773,7 +773,7 @@ function renderNexusParam(prop, backendConfig) {
     } else if (effectiveType === 'array' || effectiveType === 'object') {
         let textVal = '';
         if (currentValue !== undefined && currentValue !== null) {
-            try { textVal = JSON.stringify(currentValue, null, 2); } catch (e) { textVal = ''; }
+            try { textVal = JSON.stringify(currentValue, null, 2); } catch { textVal = ''; }
         }
         controlHtml = `<textarea id="${inputId}" class="nexus-param-input" data-full-key="${fullKey}" data-param="${prop.param}" data-value-type="${effectiveType}" data-default="${defJson}" data-schema="${schemaJson}">${escapeHtml(textVal)}</textarea>`;
     } else {
@@ -1605,7 +1605,7 @@ function setupNexusListeners(ctx) {
             const detailsEl = input.closest('details.nexus-skill');
             if (detailsEl) updateNexusSectionSummary(detailsEl);
             ctx.modifiedFields.skills.add('nexus');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         };
         input.addEventListener('change', markDirty);
         if (input.tagName === 'INPUT' && ['text', 'number'].includes(input.type)) {
@@ -1627,7 +1627,7 @@ function setupNexusListeners(ctx) {
             const detailsEl = input.closest('details.nexus-skill');
             if (detailsEl) updateNexusSectionSummary(detailsEl);
             ctx.modifiedFields.skills.add('nexus');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         });
     });
 
@@ -1649,7 +1649,7 @@ function setupNexusListeners(ctx) {
             });
 
             ctx.modifiedFields.skills.add('nexus');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
             alert(`All settings in ${appName} have been reset to defaults.`);
         });
     });
@@ -1818,7 +1818,7 @@ function setupNexusLifecycleListeners(ctx) {
                             setStatus(container, 'Subscription active!', 'success-message');
                             setTimeout(refreshUI, 800);
                         }
-                    } catch (err) { /* keep polling */ }
+                    } catch { /* keep polling */ }
                 }, 2000);
                 return;
             }
@@ -1851,7 +1851,7 @@ function setupNexusLifecycleListeners(ctx) {
                                 clearInterval(timer);
                                 refreshUI();
                             }
-                        } catch (err) { /* keep polling */ }
+                        } catch { /* keep polling */ }
                     }, 2000);
                 } catch (err) {
                     alert('Uninstall failed: ' + err.message);
@@ -1871,7 +1871,7 @@ function setupNexusLifecycleListeners(ctx) {
                 if (!source) return;
                 installBtn.disabled = true;
 
-                const waitForSubscription = (s) => new Promise((resolve) => {
+                const waitForSubscription = () => new Promise((resolve) => {
                     setStatus(card, 'NFT ownership required — complete the wallet sign, the app will install automatically…', 'info-message');
                     const started = Date.now();
                     const timer = setInterval(async () => {
@@ -1886,7 +1886,7 @@ function setupNexusLifecycleListeners(ctx) {
                                 clearInterval(timer);
                                 resolve(true);
                             }
-                        } catch (err) { /* keep polling */ }
+                        } catch { /* keep polling */ }
                     }, 2000);
                 });
 
@@ -1901,7 +1901,7 @@ function setupNexusLifecycleListeners(ctx) {
                                 clearInterval(timer);
                                 resolve();
                             }
-                        } catch (err) { /* keep polling */ }
+                        } catch { /* keep polling */ }
                     }, 2000);
                 });
 
@@ -1917,7 +1917,7 @@ function setupNexusLifecycleListeners(ctx) {
                         const needsSubscribe = s.gated && !(s.subscription && s.subscription.subscribed);
                         if (needsSubscribe) {
                             openExternal(portalUrl(s, false));
-                            const okSub = await waitForSubscription(s);
+                            const okSub = await waitForSubscription();
                             if (!okSub) {
                                 setStatus(card, 'Subscription timed out — try again.', 'error-message');
                                 installBtn.disabled = false;
@@ -2015,7 +2015,7 @@ function setupUserSkillsListeners(ctx, backendConfig) {
 
         userSkillsInput.addEventListener('input', () => {
             ctx.modifiedFields.skills.add('user_skills');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         });
 
         if (browseUserSkillsBtn) {
@@ -2025,7 +2025,7 @@ function setupUserSkillsListeners(ctx, backendConfig) {
                     if (result && !result.canceled && result.filePaths && result.filePaths[0]) {
                         userSkillsInput.value = result.filePaths[0];
                         ctx.modifiedFields.skills.add('user_skills');
-                        updateSkillsNextButtonState(ctx);
+                        updateSkillsNextButtonState();
                     }
                 } catch (error) {
                     console.error('Error selecting user skills directory:', error);
@@ -2046,7 +2046,7 @@ function setupUserSkillsListeners(ctx, backendConfig) {
 
         userEnginesInput.addEventListener('input', () => {
             ctx.modifiedFields.skills.add('user_engines');
-            updateSkillsNextButtonState(ctx);
+            updateSkillsNextButtonState();
         });
 
         if (browseUserEnginesBtn) {
@@ -2056,7 +2056,7 @@ function setupUserSkillsListeners(ctx, backendConfig) {
                     if (result && !result.canceled && result.filePaths && result.filePaths[0]) {
                         userEnginesInput.value = result.filePaths[0];
                         ctx.modifiedFields.skills.add('user_engines');
-                        updateSkillsNextButtonState(ctx);
+                        updateSkillsNextButtonState();
                     }
                 } catch (error) {
                     console.error('Error selecting user search engines directory:', error);
@@ -2175,7 +2175,7 @@ function saveNexusConfig(ctx, backendConfig) {
         let defaultVal;
         try {
             defaultVal = JSON.parse(defaultRaw);
-        } catch (e) {
+        } catch {
             defaultVal = undefined;
         }
 
@@ -2188,14 +2188,14 @@ function saveNexusConfig(ctx, backendConfig) {
         try {
             parsedValue = parseNexusValue(rawValue, valueType);
         } catch (e) {
-            throw new Error(`Invalid value for ${input.dataset.param || fullKey}: ${e.message}`);
+            throw new Error(`Invalid value for ${input.dataset.param || fullKey}: ${e.message}`, { cause: e });
         }
 
         const schemaRaw = decodeURIComponent(input.dataset.schema || '{}');
-        let schema = {};
+        let schema;
         try {
             schema = JSON.parse(schemaRaw);
-        } catch (e) {
+        } catch {
             schema = {};
         }
 
