@@ -579,6 +579,13 @@ class ComRing extends BaseComponent {
         this.documentView.addEventListener('documentview-history-today-clicked', () => this.fetchAndDisplayChatHistory());
         this.documentView.addEventListener('documentview-history-date-picked', (e) => this.fetchAndDisplayChatHistory(e.detail.date, false));
 
+        // Consent card decisions (#26 P2): the document-view is strictly
+        // presentational; com-ring owns the POST to the one-shot decision
+        // endpoint and the resumed system-initiated segment stream.
+        this.documentView.addEventListener('documentview-consent-decision', (e) => {
+            this.handleConsentDecision(e.detail);
+        });
+
         // Listen for search events
         this.documentView.addEventListener('documentview-search-requested', async (e) => {
             const query = e.detail.query;
@@ -1733,6 +1740,81 @@ class ComRing extends BaseComponent {
         }
     }
 
+    /**
+     * Consent-card decision handler (#26 P2). Posts the one-shot decision
+     * token to PyBridge; on approval the response is the resumed
+     * digestion as a system-initiated NDJSON segment, fed through the
+     * regular handleEvent machinery (loading signals, agent progress,
+     * streaming text, completed). Consent authority is this click — a
+     * spoken "yes" never reaches this path.
+     */
+    async handleConsentDecision({ decisionId, token, decision }) {
+        if (this.state.isProcessingLLM) {
+            // Another exchange owns the stream; the decision token stays
+            // valid until its TTL — the user can click again after it.
+            this.showInfo('Please wait for the current exchange to finish.');
+            this.documentView.updateConsentCard(decisionId, 'pending');
+            return;
+        }
+        this.state.isProcessingLLM = true;
+        if (decision === 'deny') {
+            this.documentView.updateConsentCard(decisionId, 'denied');
+        } else {
+            this.documentView.updateConsentCard(decisionId, 'started');
+        }
+        try {
+            const response = await fetch(
+                `${this.pybridgeEndpoint}/consent/${decisionId}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, decision }),
+                }
+            );
+            const contentType = response.headers.get('content-type') || '';
+            if (!response.ok || contentType.includes('application/json')) {
+                const body = await response.json().catch(() => ({}));
+                const expired = body.status === 'expired' || response.status === 410;
+                this.documentView.updateConsentCard(
+                    decisionId,
+                    expired ? 'expired' : 'denied'
+                );
+                if (decision !== 'deny' && !expired) {
+                    this.showInfo('The analysis could not be started.', true);
+                }
+                return;
+            }
+            // Streamed resumed segment — same event shapes as a chat turn.
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+                if (!this.state.isProcessingLLM) {
+                    reader.cancel();
+                    break;
+                }
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (line.trim()) {
+                        const event = JSON.parse(line);
+                        await this.handleEvent(event);
+                    }
+                }
+            }
+            this.documentView.updateConsentCard(decisionId, 'done');
+        } catch (error) {
+            console.error('[Consent] decision failed:', error);
+            this.showInfo(error, true);
+            this.documentView.updateConsentCard(decisionId, 'expired');
+        } finally {
+            this.state.isProcessingLLM = false;
+        }
+    }
+
     async showInfo(info, isError = false) {
         if (ERROR_WITH_CALL_TRACE) {
             let callstack = null;
@@ -2741,6 +2823,39 @@ Visit our project site at: https://ainara.app
                         this.documentView.clear();
                     }
                     this.switchToDocumentView(event.content.format);
+                }
+                break;
+
+            case 'consent_request':
+                // Consent card (#26 P2): framework-rendered decision
+                // surface for the offload spend axis. The payload carries
+                // the one-shot decision token — signal channel only, it
+                // must never enter visible conversation text. Opening the
+                // document view is the narration-to-button handoff: the
+                // user heard why; the card shows the framework-computed
+                // numbers and the mechanical decision buttons.
+                if (event.type === 'signal') {
+                    this.switchToDocumentView('consent');
+                    this.documentView.addDocument(
+                        event.content,
+                        'consent',
+                        'Approval needed'
+                    );
+                }
+                break;
+
+            case 'consent_result':
+                // Out-of-band resume status (#26 P2): 'expired' means the
+                // one-shot decision token was unknown, replayed or timed
+                // out — the card dies, nothing executes.
+                if (event.type === 'signal') {
+                    const status = event.content?.status;
+                    if (status !== 'approved') {
+                        this.documentView.updateConsentCard(
+                            event.content?.decision_id,
+                            'expired'
+                        );
+                    }
                 }
                 break;
 

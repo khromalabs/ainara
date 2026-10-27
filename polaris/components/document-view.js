@@ -227,6 +227,146 @@ class DocumentView extends BaseComponent {
         }
     }
 
+    /**
+     * Build the consent card DOM (issue #26 P2).
+     *
+     * Three decisions: approve once, always allow (flips the standing
+     * spend policy — the same deliberate decision as the wizard path),
+     * or deny. Buttons disable on first click; the card's status line is
+     * updated later by updateConsentCard() as the resumed run advances.
+     */
+    renderConsentCard(documentElement, content) {
+        documentElement.dataset.decisionId = content.decision_id;
+        const card = document.createElement('div');
+        card.className = 'consent-card';
+
+        const headline = document.createElement('div');
+        headline.className = 'consent-headline';
+        headline.textContent = 'Approval needed: multi-step analysis';
+        card.appendChild(headline);
+
+        const desc = document.createElement('div');
+        desc.className = 'consent-description';
+        desc.textContent =
+            'Analyzing this result needs a bounded agent run that may ' +
+            'incur costs on your LLM provider. Nothing runs until you ' +
+            'approve.';
+        card.appendChild(desc);
+
+        const est = content.estimate || {};
+        const rows = [
+            ['Provider', est.provider || 'unknown'],
+            ['Estimated input',
+                (est.est_input_tokens != null
+                    ? '~' + est.est_input_tokens.toLocaleString() + ' tokens'
+                    : 'unknown')],
+            ['Most', (est.max_calls != null ? est.max_calls : '?')
+                + ' LLM calls'],
+            ['Data size',
+                (est.payload_bytes != null
+                    ? Math.round(est.payload_bytes / 1024 * 10) / 10
+                        + ' KB'
+                    : 'unknown')],
+        ];
+        const table = document.createElement('div');
+        table.className = 'consent-estimate';
+        for (const [label, value] of rows) {
+            const row = document.createElement('div');
+            row.className = 'consent-estimate-row';
+            const l = document.createElement('span');
+            l.className = 'consent-estimate-label';
+            l.textContent = label;
+            const v = document.createElement('span');
+            v.className = 'consent-estimate-value';
+            v.textContent = value;
+            row.appendChild(l);
+            row.appendChild(v);
+            table.appendChild(row);
+        }
+        card.appendChild(table);
+
+        const ttl = content.ttl || 600;
+        const ttlNote = document.createElement('div');
+        ttlNote.className = 'consent-ttl';
+        ttlNote.textContent =
+            'This offer expires in ' + Math.round(ttl / 60) + ' minutes. ' +
+            'Voice confirmation is not accepted for this decision.';
+        card.appendChild(ttlNote);
+
+        const buttons = document.createElement('div');
+        buttons.className = 'consent-buttons';
+        const decisions = [
+            ['approve', 'Analyze once', 'primary'],
+            ['always_allow', 'Always allow', 'secondary'],
+            ['deny', 'Not now', 'secondary'],
+        ];
+        for (const [decision, label, style] of decisions) {
+            const b = document.createElement('button');
+            b.className = 'consent-button ' + style;
+            b.textContent = label;
+            b.addEventListener('click', () => {
+                // One click, one decision: freeze the card immediately
+                // (set-state-before-click lands synchronously).
+                this.setConsentButtonsEnabled(documentElement, false);
+                this.emitEvent('consent-decision', {
+                    decisionId: content.decision_id,
+                    token: content.token,
+                    decision: decision,
+                });
+            });
+            buttons.appendChild(b);
+        }
+        card.appendChild(buttons);
+
+        const status = document.createElement('div');
+        status.className = 'consent-status';
+        card.appendChild(status);
+
+        const contentArea = document.createElement('div');
+        contentArea.className = 'document-content consent-content';
+        contentArea.appendChild(card);
+        documentElement.appendChild(contentArea);
+    }
+
+    setConsentButtonsEnabled(documentElement, enabled) {
+        documentElement.querySelectorAll('.consent-button').forEach((b) => {
+            b.disabled = !enabled;
+        });
+    }
+
+    /**
+     * Update a pending consent card's status line (#26 P2). Unknown or
+     * already-resolved decision ids are ignored: only the pending card
+     * reacts.
+     */
+    updateConsentCard(decisionId, status) {
+        const el = this.container.querySelector(
+            `.document-item[data-decision-id="${decisionId}"]`
+        );
+        if (!el) return;
+        const statusEl = el.querySelector('.consent-status');
+        if (!statusEl) return;
+        const messages = {
+            started: 'Approved — analyzing; the result will stream into ' +
+                'the conversation when ready…',
+            done: 'Analysis completed.',
+            denied: 'Declined. Nothing was run or charged.',
+            expired: 'This offer expired — ask again to re-run the ' +
+                'analysis.',
+        };
+        if (!messages[status]) {
+            // Unknown/pending status: leave the status line untouched but
+            // re-arm the buttons so the decision can be re-taken.
+            this.setConsentButtonsEnabled(el, true);
+            return;
+        }
+        statusEl.textContent = messages[status];
+        statusEl.classList.add('visible');
+        if (status === 'expired' || status === 'denied') {
+            this.setConsentButtonsEnabled(el, false);
+        }
+    }
+
     addDocument(content, format = 'text', title, scrollBottom = true) {
         const documentElement = document.createElement('div');
         documentElement.className = 'document-item';
@@ -349,7 +489,7 @@ class DocumentView extends BaseComponent {
             // controls.appendChild(scrollBottomButton);
         }
 
-        if (format !== 'nexus') {
+        if (format !== 'nexus' && format !== 'consent') {
             const formatBadge = document.createElement('span');
             formatBadge.className = 'format-badge';
             formatBadge.textContent = format;
@@ -505,6 +645,20 @@ class DocumentView extends BaseComponent {
         header.appendChild(docInfo);
         header.appendChild(controls);
         documentElement.appendChild(header);
+
+        if (format === 'consent') {
+            // Consent card (#26 P2): the framework-rendered decision
+            // surface for the offload spend axis. Strictly presentational:
+            // the numbers come framework-computed in the signal payload
+            // (never model-stated) and the click decision is delegated to
+            // com-ring via 'consent-decision' — this component never
+            // performs the POST itself. textContent only throughout: the
+            // provider identifier derives from configuration, but the
+            // card is rendered inside a document stream.
+            this.renderConsentCard(documentElement, content);
+            this.container.appendChild(documentElement);
+            return;
+        }
 
         if (format === 'nexus') {
             // Create iframe for nexus content
