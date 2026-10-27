@@ -229,6 +229,21 @@
                             "type": "integer",
                             "default": 300,
                             "description": "Execution timeout (seconds) for the digestion agent."
+                        },
+                        "digest_cache": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean",
+                                    "default": true,
+                                    "description": "Reuse offload digests for byte-identical oversized results (payload-hash keyed, in-memory, session-scoped) instead of paying for a repeated digestion agent run (issue #26)."
+                                },
+                                "max_entries": {
+                                    "type": "integer",
+                                    "default": 8,
+                                    "description": "Maximum cached digests (LRU-evicted)."
+                                }
+                            }
                         }
                     }
                 },

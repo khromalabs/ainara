@@ -18,6 +18,7 @@
 
 
 import importlib
+import hashlib
 import inspect
 import json
 import logging
@@ -25,6 +26,7 @@ import os
 import re
 import threading
 import time
+from collections import OrderedDict
 from typing import Any, Dict, Generator, List, Optional, Union
 
 import requests
@@ -39,6 +41,48 @@ from ainara.framework.template_manager import TemplateManager
 # from ainara.framework.utils import format_orakle_command
 
 logger = logging.getLogger(__name__)
+
+
+class OffloadDigestCache:
+    """Session-scoped, payload-hash keyed cache of offload digests (#26).
+
+    Digestion of an oversized skill result costs a full bounded agent run
+    (~15–25 s and real tokens); follow-up requests that return the exact
+    same payload bytes must not pay that again. Entries are keyed on the
+    SHA-256 of the raw payload, so a hit is only ever possible for
+    byte-identical data — the cached digest is exactly as fresh as the
+    data received and no staleness labeling applies (§4 Rule 1).
+
+    Scope: in-memory with LRU eviction, never persisted. The middleware
+    lives inside the (single-user, local-first) session process, so its
+    lifetime is the session scope; cross-conversation reuse within the
+    session is correct by the payload-hash keying.
+    """
+
+    def __init__(self, max_entries: int = 8):
+        self.max_entries = max(1, int(max_entries))
+        self._entries: "OrderedDict[str, str]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def key(raw_result: str) -> str:
+        return hashlib.sha256(raw_result.encode("utf-8")).hexdigest()
+
+    def get(self, raw_result: str) -> Optional[str]:
+        k = self.key(raw_result)
+        with self._lock:
+            digest = self._entries.get(k)
+            if digest is not None:
+                self._entries.move_to_end(k)
+            return digest
+
+    def put(self, raw_result: str, digest: str) -> None:
+        k = self.key(raw_result)
+        with self._lock:
+            self._entries[k] = digest
+            self._entries.move_to_end(k)
+            while len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
 
 
 class OrakleCapabilityFetcher:
@@ -324,6 +368,24 @@ class OrakleMiddleware:
         # agents — concurrent oversized results reject with guidance
         # instead of stampeding a metered provider.
         self._offload_lock = threading.Lock()
+        # Digest cache (issue #26 P1.5): payload-hash keyed reuse of
+        # offload digests — N follow-ups on the same oversized payload
+        # pay for one digestion run. Session-scoped: in-memory, cleared
+        # on process restart; never persisted. Identical payload bytes
+        # mean the cached digest is exactly as fresh as the data
+        # received, so no staleness labeling applies.
+        self.digest_cache_enabled = self.config_manager.get(
+            "orakle.offload.digest_cache.enabled", True
+        )
+        self._digest_cache = (
+            OffloadDigestCache(
+                self.config_manager.get(
+                    "orakle.offload.digest_cache.max_entries", 8
+                )
+            )
+            if self.digest_cache_enabled
+            else None
+        )
 
         logger.info(
             "Initialized OrakleMiddleware with Transformer Matcher:"
@@ -1279,6 +1341,23 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 and self.enable_agent_spawn
                 and len(result) > self.offload_raw_max_bytes
             ):
+                # Digest cache (issue #26 P1.5): a previous digestion of
+                # these exact payload bytes is reused instead of paying
+                # for another bounded agent run. A hit is only possible
+                # for byte-identical data (payload-hash keying), so the
+                # cached digest is as fresh as the data received.
+                cached_digest = (
+                    self._digest_cache.get(result)
+                    if self._digest_cache
+                    else None
+                )
+                if cached_digest:
+                    logger.info(
+                        "ORAKLE: digest cache hit for oversized result"
+                        f" ({len(result)} bytes); reusing digest."
+                    )
+                    yield cached_digest
+                    return
                 yield "\n_orakle_loading_signal_|spawn_agent\n"
                 digest = yield from self._spawn_offload_digest(
                     raw_result=result,
@@ -1287,6 +1366,8 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     reasoning_level=final_reasoning_level,
                 )
                 if digest:
+                    if self._digest_cache:
+                        self._digest_cache.put(result, digest)
                     yield digest
                     return
                 # Reject with guidance: anything above the ceiling is by
@@ -1893,6 +1974,12 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         conversation. Kill-on-complete; the synchronous conversational
         envelope bounds the run via orakle.offload.max_turns/timeout.
 
+        The digestion goal is deliberately query-agnostic: the agent
+        produces a comprehensive, standalone digest of the payload so
+        the result can be cached by payload hash (P1.5) and reused for
+        any follow-up on the same bytes. `query` stays in the signature
+        for logging and the conversation context handed to the agent.
+
         Generator: relays run-journal progress chunks, then returns the
         digest text (or None on failure; the caller falls back to the
         regular interpretation path) as its yield-from value.
@@ -1959,11 +2046,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 user_context["recent_conversation"] = context_summary
 
             goal = (
-                f"User request: {query}\n\n"
-                "The following tool result is provided as context data."
-                " Read it and produce a digest that fully answers the user"
-                " request: include the relevant facts, figures and details"
-                " it contains, stated compactly.\n\n"
+                "The following tool result is provided as data to analyze."
+                " Read it and produce a comprehensive digest of its"
+                " contents: state the relevant facts, figures and details"
+                " it contains, compactly but without omitting anything a"
+                " reasonable follow-up question about this data might"
+                " need — the digest must stand on its own, independent of"
+                " any particular phrasing of a request.\n\n"
                 f"<tool_result>\n{raw_result}\n</tool_result>"
             )
 

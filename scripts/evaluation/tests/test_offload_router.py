@@ -20,7 +20,10 @@ import requests
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from ainara.framework.orakle_middleware import OrakleMiddleware  # noqa: 402
+from ainara.framework.orakle_middleware import (  # noqa: 402
+    OffloadDigestCache,
+    OrakleMiddleware,
+)
 
 SELECTION_JSON = json.dumps({
     "skill_id": "test_skill",
@@ -170,12 +173,17 @@ class TestOffloadRouter(unittest.TestCase):
             side_effect=lambda skill_id: self.skill_info)
 
         # Recording fake for the digestion agent (still mocked: Bureau
-        # is out of scope here).
+        # is out of scope here). Faithful to the real generator contract:
+        # relays progress chunks and RETURNS the digest text as the
+        # yield-from value (None on failure).
         def fake_offload(**kwargs):
             self.offload_calls.append(kwargs.get("raw_result"))
-            yield "_orakle_loading_signal_|spawn_agent\n"
-            if self.offload_digest is not None:
-                yield self.offload_digest
+            # The router owns the output channel: it yields the loading
+            # signal and the digest itself — the real spawn only returns
+            # the digest text as the yield-from value. The unreachable
+            # yield keeps this a generator (yield-from contract).
+            return self.offload_digest
+            yield  # unreachable
 
         self.middleware._spawn_offload_digest = fake_offload
 
@@ -447,6 +455,102 @@ class TestOffloadConcurrency(unittest.TestCase):
                 user_context={}, max_turns=4, execution_timeout=300,
             )
         self.assertEqual(mock_post.call_count, 2)
+
+
+class TestOffloadRouterDigestCache(TestOffloadRouter):
+    """Router-level digest-cache behavior (issue #26 P1.5); reuses the
+    TestOffloadRouter harness (mocked selection LLM + digestion agent)."""
+
+    # --- digest cache: payload-hash reuse (issue #26 P1.5) -------------
+
+    def test_digest_cache_hit_skips_second_spawn(self):
+        """A second request returning the exact same payload bytes
+        reuses the digest: one digestion run serves N follow-ups."""
+        big = "x" * (self.CEILING + 1)
+        self.middleware.enable_agent_spawn = True
+
+        first = self._chunk_text(self._run(big))
+        second = self._chunk_text(self._run(big))
+
+        self.assertEqual(self.offload_calls, [big])
+        self.assertIn("DIGESTED FINDINGS", first)
+        self.assertIn("DIGESTED FINDINGS", second)
+        # The cache-hit path never emits the loading signal.
+        self.assertEqual(first.count("spawn_agent"), 1)
+        self.assertEqual(second.count("spawn_agent"), 0)
+
+    def test_digest_cache_keyed_on_payload_bytes(self):
+        """A different payload is a different key: it digests again."""
+        self.middleware.enable_agent_spawn = True
+        self._run("x" * (self.CEILING + 1))
+        self._run("y" * (self.CEILING + 1))
+        self.assertEqual(len(self.offload_calls), 2)
+
+    def test_failed_digest_not_cached(self):
+        """A digestion failure (None) is not cached: the retry after
+        fixing the environment spawns again instead of hitting junk."""
+        big = "x" * (self.CEILING + 1)
+        self.middleware.enable_agent_spawn = True
+
+        self.offload_digest = None
+        self._run(big)
+        self.offload_digest = "DIGESTED FINDINGS"
+        chunks = self._run(big)
+
+        self.assertEqual(self.offload_calls, [big, big])
+        self.assertIn("DIGESTED FINDINGS", self._chunk_text(chunks))
+
+    def test_digest_cache_disabled_spawns_every_time(self):
+        big = "x" * (self.CEILING + 1)
+        self.middleware.enable_agent_spawn = True
+        self.middleware._digest_cache = None
+
+        self._run(big)
+        self._run(big)
+        self.assertEqual(self.offload_calls, [big, big])
+
+    def test_digest_cache_lru_eviction(self):
+        """Beyond max_entries the least-recently-used payload's digest
+        is evicted and that payload digests again."""
+        self.middleware.enable_agent_spawn = True
+        self.middleware._digest_cache = OffloadDigestCache(1)
+
+        self._run("a" * (self.CEILING + 1))
+        self._run("b" * (self.CEILING + 1))
+        self._run("a" * (self.CEILING + 1))
+
+        self.assertEqual(
+            self.offload_calls,
+            ["a" * (self.CEILING + 1), "b" * (self.CEILING + 1),
+             "a" * (self.CEILING + 1)],
+        )
+
+
+class TestOffloadDigestCache(unittest.TestCase):
+    """Direct tests for the payload-hash digest cache (issue #26 P1.5)."""
+
+    def test_key_stable_and_content_bound(self):
+        self.assertEqual(OffloadDigestCache.key("same"),
+                         OffloadDigestCache.key("same"))
+        self.assertNotEqual(OffloadDigestCache.key("a"),
+                            OffloadDigestCache.key("b"))
+
+    def test_lru_order_on_hit(self):
+        cache = OffloadDigestCache(2)
+        cache.put("a", "A")
+        cache.put("b", "B")
+        self.assertEqual(cache.get("a"), "A")  # a is now most-recent
+        cache.put("c", "C")  # evicts b (LRU), not a
+        self.assertIsNone(cache.get("b"))
+        self.assertEqual(cache.get("a"), "A")
+        self.assertEqual(cache.get("c"), "C")
+
+    def test_min_entries_clamped(self):
+        cache = OffloadDigestCache(0)
+        cache.put("a", "A")
+        cache.put("b", "B")
+        self.assertIsNone(cache.get("a"))
+        self.assertEqual(cache.get("b"), "B")
 
 
 if __name__ == "__main__":
