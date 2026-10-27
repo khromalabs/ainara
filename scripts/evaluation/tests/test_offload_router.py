@@ -766,6 +766,49 @@ class TestOffloadSpendPolicy(unittest.TestCase):
         self.config_values["llm"] = {}
         self.assertTrue(self.middleware._is_digestion_model_metered())
 
+    def test_card_payload_is_generic_and_localized(self):
+        """The card carries everything the renderer shows — title, quote,
+        localized buttons, note — so Polaris stays strictly
+        presentational and any future #18 client reuses the shape."""
+        self.middleware.current_language = "Spanish"
+        chunks = self._run("x" * (self.CEILING + 1))
+        card = self._card_chunks(chunks)[0]
+        self.assertEqual(card["title"], "¿Aceptas la sugerencia de Ainara?")
+        self.assertEqual(
+            card["quote"],
+            self.middleware._offload_consent_strings()["narration"])
+        labels = [b["label"] for b in card["buttons"]]
+        self.assertEqual(labels, ["Sí", "No", "Siempre"])
+        self.assertEqual(
+            [b["id"] for b in card["buttons"]],
+            ["approve", "deny", "always_allow"])
+        self.assertIn("10 min", card["note"])
+
+    def test_session_always_never_overrides_deny(self):
+        """An explicit standing 'deny' outranks the card's Always: the
+        card must not be able to talk the user's own configuration out
+        of power."""
+        self.middleware._session_spend_allow = True
+        self.config_values["orakle.offload.spend_policy"] = "deny"
+        self.assertEqual(self.middleware._offload_spend_policy(), "deny")
+
+    def test_session_always_is_memory_only(self):
+        """The upgrade is a plain attribute: a fresh middleware (reboot)
+        starts at the configured posture."""
+        self.middleware._session_spend_allow = True
+        self.config_values["orakle.offload.spend_policy"] = "ask"
+        self.assertEqual(self.middleware._offload_spend_policy(), "allow")
+        self.middleware._session_spend_allow = False
+        self.assertEqual(self.middleware._offload_spend_policy(), "ask")
+
+    def test_session_always_bypasses_the_card(self):
+        """After the Always button, the same trigger runs friction-free
+        for the rest of the session."""
+        self.middleware._session_spend_allow = True
+        chunks = self._run("x" * (self.CEILING + 1))
+        self.assertEqual(self.offload_calls, ["x" * (self.CEILING + 1)])
+        self.assertEqual(self._card_chunks(chunks), [])
+
 
 class TestOffloadConsentResume(unittest.TestCase):
     """The out-of-band resume path (issue #26 P2): approved cards run the
@@ -822,20 +865,45 @@ class TestOffloadConsentResume(unittest.TestCase):
             self.middleware._digest_cache.get("PAYLOAD"),
             "DIGESTED FINDINGS")
 
-    def test_always_allow_flips_standing_policy(self):
+    def test_always_allow_upgrades_session_only(self):
+        """The card's Always is deliberately LOW deliberation: it upgrades
+        the in-session posture only and never writes the config —
+        persistent standing consent belongs to the wizard (#26 P2
+        revision)."""
         card = self._card()
         gen = self.middleware.resume_offload_consent(
             card["decision_id"], card["token"], "always_allow")
         self.assertIsNotNone(gen)
         list(gen)
-        self.mock_config.set_exact.assert_called_once_with(
-            "orakle.offload.spend_policy", "allow")
+        self.mock_config.set_exact.assert_not_called()
+        self.assertTrue(self.middleware._session_spend_allow)
+        self.assertEqual(self.middleware._offload_spend_policy(), "allow")
 
-    def test_approve_does_not_flip_standing_policy(self):
+    def test_approve_does_not_touch_config(self):
         card = self._card()
         list(self.middleware.resume_offload_consent(
             card["decision_id"], card["token"], "approve"))
         self.mock_config.set_exact.assert_not_called()
+
+    # --- conversational close (#26 P2) ----------------------------------
+
+    def test_pending_and_invalidate(self):
+        """The conversational-close contract: pending is visible to the
+        hint while unanswered; the model-proposed close kills the token
+        server-side, so the offer can never be honored afterwards."""
+        card = self._card()
+        self.assertTrue(
+            self.middleware.has_pending_consent(card["decision_id"]))
+        self.assertTrue(
+            self.middleware.invalidate_offload_consent(
+                card["decision_id"]))
+        self.assertFalse(
+            self.middleware.has_pending_consent(card["decision_id"]))
+        # A closed card is a dead offer: even the real token resolves to
+        # None.
+        self.assertIsNone(self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve"))
+        self.assertEqual(self.offload_calls, [])
 
     def test_replay_and_bad_token_are_no_ops(self):
         card = self._card()
