@@ -1505,6 +1505,23 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         # ui-philosophy.md). A spoken "yes" carries no
                         # consent authority (ratified: mechanical input
                         # only).
+                        #
+                        # TODO(#26, P2+): this narration is a fixed,
+                        # English-only string. It should be model-
+                        # interpreted like skill_intention (see
+                        # framework.chat_manager.orakle_select_and_params.mu:
+                        # "Conversational sentence action preview… be
+                        # natural, match user's tone, avoid jargon"), so
+                        # every narration is query-adapted and in the
+                        # user's language. That fits the consent invariant
+                        # better, not worse — narration is the model
+                        # EXPLAINING; the card + one-shot token remain the
+                        # whole decision surface. Open design question:
+                        # the size trigger fires post-execution, after the
+                        # selection call, so the narration needs either a
+                        # cheap dedicated generation here (query + skill +
+                        # payload size in context) or an intent preview
+                        # carried over from selection time.
                         yield (
                             "\nThat's a lot of data for me to read in one"
                             " go. I can work through it step by step — it"
