@@ -811,6 +811,54 @@ agentic digestion on metered providers:
   stays `false` until the wizard step + progress UI land; the ledger
   rejection doubles as the discoverability path.
 
+### 2026-10-28 — P2 opens: consent card + spend policy implemented
+
+Branch `dev012-agentloop`. The spend/consent ratification above is now
+code:
+
+- **`orakle.offload.spend_policy` (`ask` | `allow` | `deny`, default
+  `ask`)** gates the mechanical size-ceiling trigger when the digestion
+  model is metered. Metered detection resolves the default `llm`
+  provider (the one Bureau agents fall back to): the Ollama backend is
+  local — no spend axis, every policy runs friction-free; anything else
+  is metered, and an unresolvable selection counts as metered
+  (fail-closed: consent is asked rather than silently skipped).
+- **The consent card** is emitted by the middleware after the trigger
+  fires (size ceiling + no cached digest + `ask` + metered): a fixed
+  framework narration (voice-to-button handoff) plus a
+  `consent_request` signal carrying a **one-shot, TTL'd decision token**
+  (`orakle.offload.consent_ttl`, 600 s) and **ledger-computed numbers**
+  (provider, payload bytes, ~2× payload tokens, turn bound) — never
+  model-stated. The turn ends with the card; a spoken "yes" has no
+  authority.
+- **`POST /consent/<decision_id>`** (PyBridge) is the consent authority:
+  the body must carry the decision token. `deny` / expiry are no-ops
+  that only retire the card. Wrong-token attempts do not burn a pending
+  decision (validation precedes the pop — garbage posts cannot destroy
+  a card the user is about to click). Approval resumes out-of-band:
+  the deferred digestion runs and the digest streams back as a
+  **system-initiated segment** — a focused system-segment emitter in
+  `chat_manager` (same sentence/TTS batching and doc-fence state
+  machine as a chat turn; run-journal chunks stay signal-only), whose
+  text lands in history and chat memory as its own assistant entry.
+- **Token hygiene**: the decision token rides only the mechanical
+  channel (card signal → Polaris); chat history keeps a redacted
+  `_orakle_consent_card_|<decision_id>` marker, so a model can never
+  see, replay or fabricate it.
+- **"Always allow"** (third card button) flips the standing policy via
+  `config.set_exact` — the same deliberate decision as the wizard path,
+  taken in context. It commits before the resumed run.
+- **Polaris**: the document view renders the card (strictly
+  presentational — buttons delegate to com-ring, which owns the POST
+  and the resumed stream fed through the regular event machinery);
+  `agent_progress` labels from the resumed run reuse the P2 com-ring
+  rendering.
+- Tests: 58 LLM-free unit tests (router policy matrix, registry
+  one-shot/TTL/no-burn, resume semantics, digest-cache interplay);
+  the pre-P2 mechanical router tests pin the `allow` posture.
+- **Next**: wizard standing-consent step (the wizard-facing `allow`
+  path this unblocks); live integration test of the card loop.
+
 ### 2026-10-27 — P1 + P1.5 implemented and live-tested
 
 Branch `dev012-agentloop`. Defaults preserve today's behavior except
