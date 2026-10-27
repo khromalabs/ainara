@@ -484,6 +484,19 @@ class ChatManager:
             )
             return
 
+        if "_orakle_agent_progress_" in sentence:
+            # Run-journal progress relay (issue #26): a stage label from
+            # a spawned agent's journal. Forwarded as a signal event so
+            # it never reaches TTS/text output; the com-ring renders it
+            # once Polaris handles the tag (P2).
+            label = (
+                sentence.split("|", 1)[1].strip()
+                if "|" in sentence
+                else ""
+            )
+            yield ndjson("signal", "agent_progress", {"label": label})
+            return
+
         try:
             cleaned_sentence = re.sub(r"^\[\d{1,2}:\d{2}\]\s*", "", sentence)
             audio_file, duration = self.tts.generate_audio(cleaned_sentence)
