@@ -34,6 +34,16 @@ class Skill(ConfigurablePropertiesMixin, ABC):
 
     Configuration that should be exposed to the wizard/assistant is declared
     through the class-level ``_PROPERTIES`` mapping.
+
+    Reserved result fields (extracted by the framework, never delivered to
+    components or history as skill data):
+
+      - ``close_panel`` — ask the framework to close the skill's panel
+        (panel-mode UI skills; issue #30).
+      - ``analysis`` — skill-side digest payload (issue #26, ladder tier
+        1): the skill's own distilled findings. Travels only on the model
+        channel: stripped from the result before render/history and fed
+        to the interpretation pass in place of the raw data.
     """
 
     # ------------------------------------------------------------------
