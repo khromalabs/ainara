@@ -230,6 +230,17 @@
                             "default": 300,
                             "description": "Execution timeout (seconds) for the digestion agent."
                         },
+                        "spend_policy": {
+                            "type": "string",
+                            "enum": ["ask", "allow", "deny"],
+                            "default": "ask",
+                            "description": "Consent posture for offload digestion when the digestion model is a metered (cloud, paid) provider (#26 P2, ratified with #18): 'ask' shows a framework-rendered consent card per oversized result, 'allow' is a deliberate standing consent (wizard or the card's always-allow button), 'deny' rejects with guidance. Local (non-metered) digestion runs under every policy."
+                        },
+                        "consent_ttl": {
+                            "type": "integer",
+                            "default": 600,
+                            "description": "Lifetime (seconds) of a pending consent-card decision token; expiry is a no-op — the card dies and nothing auto-executes (#26 P2)."
+                        },
                         "digest_cache": {
                             "type": "object",
                             "properties": {

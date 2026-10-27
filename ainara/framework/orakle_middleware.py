@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 
+import hmac
 import importlib
 import hashlib
 import inspect
@@ -24,8 +25,10 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from typing import Any, Dict, Generator, List, Optional, Union
 
@@ -83,6 +86,88 @@ class OffloadDigestCache:
             self._entries.move_to_end(k)
             while len(self._entries) > self.max_entries:
                 self._entries.popitem(last=False)
+
+
+class ConsentRegistry:
+    """Pending offload-consent decisions (#26 P2; pilot client of #18's
+    confirmation primitive).
+
+    Each entry holds a one-shot, TTL'd decision token plus the minimal
+    resume context for the out-of-band digestion run. The token rides
+    only the mechanical channel (the card's signal payload to Polaris);
+    chat history keeps a redacted decision-id marker, so a model can
+    neither learn nor replay it — and could not act on it anyway: consent
+    authority is the mechanical button click, never conversation text.
+    Expiry is a no-op by design (walker-away-safe): an unresolved card
+    simply dies; nothing auto-executes.
+    """
+
+    def __init__(self, ttl_seconds: int = 600):
+        self.ttl_seconds = max(1, int(ttl_seconds))
+        self._entries: "OrderedDict[str, dict]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def create(
+        self,
+        raw_result: str,
+        query: str,
+        chat_history: Optional[List[Dict]] = None,
+        reasoning_level: float = 0.0,
+        estimate: Optional[dict] = None,
+    ) -> dict:
+        """Register a pending decision; returns the card payload.
+
+        The full token is returned exactly once, for the signal channel;
+        the stored entry is what `resolve` checks against.
+        """
+        decision_id = uuid.uuid4().hex
+        token = secrets.token_urlsafe(32)
+        now = time.time()
+        entry = {
+            "token": token,
+            "expires_at": now + self.ttl_seconds,
+            "raw_result": raw_result,
+            "query": query,
+            "chat_history": chat_history,
+            "reasoning_level": reasoning_level,
+            "estimate": estimate or {},
+        }
+        with self._lock:
+            # Lazy sweep: drop expired entries so abandoned cards do not
+            # pin their payloads for the process lifetime.
+            expired = [
+                k
+                for k, v in self._entries.items()
+                if v["expires_at"] <= now
+            ]
+            for k in expired:
+                del self._entries[k]
+            self._entries[decision_id] = entry
+        return {
+            "decision_id": decision_id,
+            "token": token,
+            "ttl": self.ttl_seconds,
+            "estimate": estimate or {},
+        }
+
+    def resolve(self, decision_id: str, token: str) -> Optional[dict]:
+        """Consume a decision one-shot; None when unknown, replayed,
+        wrong-token or expired (the caller cannot distinguish, and does
+        not need to — every failure mode is a no-op).
+
+        A wrong token does NOT burn the pending decision: validation
+        happens before the pop, so garbage posts cannot destroy a card
+        the user is about to click."""
+        with self._lock:
+            entry = self._entries.get(decision_id)
+            if entry is None:
+                return None
+            if not hmac.compare_digest(entry["token"], token or ""):
+                return None
+            if entry["expires_at"] <= time.time():
+                del self._entries[decision_id]
+                return None
+            return self._entries.pop(decision_id)
 
 
 class OrakleCapabilityFetcher:
@@ -364,6 +449,18 @@ class OrakleMiddleware:
         self.context_chars_per_token = self.config_manager.get(
             "orakle.context.chars_per_token", 3
         )
+        # Consent for offload on metered providers (issue #26 P2,
+        # ratified with #18). orakle.offload.spend_policy (ask | allow |
+        # deny) gates the mechanical size-ceiling trigger when the
+        # digestion model is metered; 'ask' emits a framework-rendered
+        # consent card and ends the turn — approval resumes out-of-band.
+        # Read at trigger time, never cached: the "always allow" button
+        # and the wizard flip the standing policy mid-session.
+        self.offload_consent_ttl = self.config_manager.get(
+            "orakle.offload.consent_ttl", 600
+        )
+        self._consent_registry = ConsentRegistry(self.offload_consent_ttl)
+
         # Rate resilience (issue #26 P1.5): concurrency 1 for digestion
         # agents — concurrent oversized results reject with guidance
         # instead of stampeding a metered provider.
@@ -1358,6 +1455,69 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     )
                     yield cached_digest
                     return
+                # Spend axis (issue #26 P2, ratified with #18): on a
+                # metered digestion provider the mechanical size trigger
+                # becomes a consent boundary. The card is emitted by the
+                # framework after the trigger fires — the model can
+                # neither fabricate a request for what does not qualify
+                # nor skip one for what does. The turn ends with the
+                # card; approval resumes out-of-band
+                # (resume_offload_consent) and the digest streams back as
+                # a system-initiated segment. Local (non-metered)
+                # digestion keeps today's zero-friction behavior under
+                # every policy.
+                spend_policy = self.config_manager.get(
+                    "orakle.offload.spend_policy", "ask"
+                )
+                if self._is_digestion_model_metered():
+                    if spend_policy == "deny":
+                        logger.info(
+                            "ORAKLE: offload rejected by spend policy"
+                            " (deny)."
+                        )
+                        yield (
+                            "\nI retrieved the data but it is too large to"
+                            " analyze in one pass, and agentic analysis is"
+                            " disabled by your spending policy"
+                            " (orakle.offload.spend_policy). Try asking"
+                            " about a specific part of it, or change the"
+                            " setting if you want me to process it in"
+                            " steps.\n\n"
+                        )
+                        return
+                    if spend_policy == "ask":
+                        estimate = self._estimate_digest_spend(result)
+                        card = self._consent_registry.create(
+                            raw_result=result,
+                            query=query,
+                            chat_history=chat_history,
+                            reasoning_level=final_reasoning_level,
+                            estimate=estimate,
+                        )
+                        logger.info(
+                            "ORAKLE: offload consent required (spend_policy"
+                            "=ask, metered provider); card %s emitted.",
+                            card["decision_id"],
+                        )
+                        # Voice narration hands off to the button; the
+                        # card opens on screen with the framework-computed
+                        # numbers. A spoken "yes" carries no consent
+                        # authority (ratified: mechanical input only).
+                        yield (
+                            "\nThe result of that request is too large to"
+                            " read in one pass, and analyzing it needs a"
+                            " multi-step agent run that may incur costs on"
+                            " your provider. Tap the confirmation button on"
+                            " the screen if you'd like me to go ahead.\n\n"
+                        )
+                        yield {
+                            "type": "consent_request",
+                            "decision_id": card["decision_id"],
+                            "token": card["token"],
+                            "ttl": card["ttl"],
+                            "estimate": estimate,
+                        }
+                        return
                 yield "\n_orakle_loading_signal_|spawn_agent\n"
                 digest = yield from self._spawn_offload_digest(
                     raw_result=result,
@@ -1458,6 +1618,55 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             logger.debug(f"Added chat history to params for skill {skill_id}")
 
         return call_skill(self.orakle_servers, skill_id, params)
+
+    def _is_digestion_model_metered(self) -> bool:
+        """
+        Whether the digestion agent's LLM is a metered (cloud, paid)
+        provider (issue #26 P2). Bureau agents fall back to the default
+        llm provider, so the middleware resolves the same selection here.
+
+        Heuristic: the Ollama backend runs local models — no spend axis;
+        everything else (litellm against a cloud provider) is treated as
+        metered. Fail-closed: an unresolvable selection counts as
+        metered, so consent is asked rather than silently skipped.
+        """
+        llm_cfg = self.config_manager.get("llm", {}) or {}
+        selected = llm_cfg.get("selected_provider") or ""
+        provider_cfg = None
+        for p in llm_cfg.get("providers", []) or []:
+            if (
+                p.get("model") == selected
+                or p.get("name") == selected
+            ):
+                provider_cfg = p
+                break
+        backend = (provider_cfg or {}).get("provider") or llm_cfg.get(
+            "selected_backend", "litellm"
+        )
+        return not (selected.startswith("ollama/") or backend == "ollama")
+
+    def _estimate_digest_spend(self, raw_result: str) -> dict:
+        """
+        Ledger-computed cost estimate for the consent card (issue #26 P2).
+
+        Numbers on the card are framework-computed, never model-stated:
+        the payload token estimate (re-reads make the worst case roughly
+        twice the payload), the turn bound and the provider identifier.
+        """
+        chars_per_token = self.config_manager.get(
+            "orakle.context.chars_per_token", 3
+        )
+        llm_cfg = self.config_manager.get("llm", {}) or {}
+        provider = llm_cfg.get("selected_provider") or "default"
+        return {
+            "provider": provider,
+            "payload_bytes": len(raw_result),
+            "est_input_tokens": int(
+                len(raw_result) / max(chars_per_token, 1)
+            )
+            * 2,
+            "max_calls": self.offload_max_turns,
+        }
 
     def _extract_skill_analysis(self, result: str) -> tuple:
         """
@@ -2095,6 +2304,90 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             return None
         finally:
             self._offload_lock.release()
+
+    def discard_offload_consent(self, decision_id: str, token: str) -> bool:
+        """Consume a decision without executing it (the card's "not now"
+        button). Returns True when a live decision was consumed."""
+        return self._consent_registry.resolve(decision_id, token) is not None
+
+    def resume_offload_consent(
+        self, decision_id: str, token: str, decision: str
+    ) -> Optional[Generator[str, None, None]]:
+        """
+        Out-of-band resume of an approved offload consent (issue #26 P2).
+
+        The original turn ended with the consent card; this runs the
+        deferred digestion as a system-initiated segment. The decision
+        token is one-shot and TTL'd (ConsentRegistry): a stale, replayed
+        or fabricated decision resolves to None and the caller surfaces
+        an expired status — nothing auto-executes, ever.
+
+        'always_allow' flips the standing spend policy to 'allow' — the
+        same deliberate decision as the wizard path, taken in context
+        (ratified). It takes effect before the resumed run so even a
+        crash between the two leaves the standing consent recorded.
+
+        Returns the digest stream generator (progress relay chunks, then
+        the digest text itself), or None when the decision cannot be
+        honored (unknown/replayed/expired token, or a denial).
+        """
+        entry = self._consent_registry.resolve(decision_id, token)
+        if entry is None:
+            logger.warning(
+                "ORAKLE: consent decision %s could not be resolved"
+                " (unknown, replayed or expired).",
+                decision_id,
+            )
+            return None
+        if decision not in ("approve", "always_allow"):
+            return None
+
+        if decision == "always_allow":
+            logger.info(
+                "ORAKLE: standing spend policy flipped to 'allow' via"
+                " consent card (always-allow button)."
+            )
+            self.config_manager.set_exact(
+                "orakle.offload.spend_policy", "allow"
+            )
+
+        def _run() -> Generator[str, None, None]:
+            raw_result = entry["raw_result"]
+            # The registry may have sat at the TTL boundary while the
+            # user read the card; a digest cached in the meantime (or a
+            # concurrent card for the same bytes) still wins.
+            cached_digest = (
+                self._digest_cache.get(raw_result)
+                if self._digest_cache
+                else None
+            )
+            if cached_digest:
+                yield cached_digest
+                return
+            yield "\n_orakle_loading_signal_|spawn_agent\n"
+            digest = yield from self._spawn_offload_digest(
+                raw_result=raw_result,
+                query=entry["query"],
+                chat_history=entry["chat_history"],
+                reasoning_level=entry["reasoning_level"],
+            )
+            if digest:
+                if self._digest_cache:
+                    self._digest_cache.put(raw_result, digest)
+                yield digest
+                return
+            logger.warning(
+                "ORAKLE: approved offload digestion failed; rejecting with"
+                " guidance (no fallback, no auto-retry)."
+            )
+            yield (
+                "\nI started the analysis you approved, but it could not"
+                " be completed right now — nothing was charged twice and"
+                " no retry was attempted. Try asking about a specific"
+                " part of the data, or ask me again later.\n\n"
+            )
+
+        return _run()
 
     def _create_bureau_agent(
         self,
