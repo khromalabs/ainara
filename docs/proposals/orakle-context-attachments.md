@@ -850,8 +850,25 @@ where noted.
     (`agent/core.py`), and the digest was written as prose without
     the `<goal_complete>`/`<final_answer>` completion protocol
     (blueprint now states it).
-- **Deferred**: digest cache (payload-hash keyed; the last P1.5
-  item) → next; consent card, Polaris `agent_progress` rendering,
+- **Digest cache, the last P1.5 item** (`c2b864ae`):
+  payload-hash keyed reuse of offload digests — N follow-ups on the
+  same oversized payload pay for one digestion run (~15–25 s + real
+  tokens each otherwise). Design points:
+  - Keyed on SHA-256 of the raw payload bytes; a hit is only possible
+    for byte-identical data, so the cached digest is exactly as fresh
+    as the data received and §4 Rule 1 (no unlabeled stale data) holds
+    by construction — no staleness labeling applies.
+  - **Digestion goal made query-agnostic**: the agent now produces a
+    comprehensive, standalone digest of the payload instead of one
+    conditioned on the triggering query. This is the enabler for the
+    cache — a query-conditioned digest could not serve follow-ups.
+  - Session-scoped: in-memory `OrderedDict` with LRU eviction
+    (`orakle.offload.digest_cache.max_entries`, default 8), never
+    persisted; middleware lifetime = session scope. Off switch:
+    `orakle.offload.digest_cache.enabled` (default true).
+  - Failed digestions are not cached; a cache hit skips the loading
+    signal entirely (no agent run, instant response).
+- **Deferred**: consent card, Polaris `agent_progress` rendering,
   snapshot store + re-offload, Nexus render inline ceiling +
   `data_ref` hydration → P2; slice access for above-window payloads,
   `requires_analysis` semantic flag, ledger-driven interpretation
