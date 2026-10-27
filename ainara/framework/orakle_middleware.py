@@ -45,6 +45,56 @@ from ainara.framework.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
 
+# Interim localized narration for the offload consent card (#26 P2),
+# keyed by the chat_manager-resolved language name (pycountry), English
+# fallback. Kept as short as possible: this is spoken through TTS
+# configured for the user's language, and it is the moment that asks
+# for their attention and trust. Deliberately NOT the long-term design —
+# the TODO at the emission site covers the model-interpreted narration.
+OFFLOAD_CONSENT_NARRATIONS = {
+    "english": (
+        "That's a lot of data to read in one go. I can work through it"
+        " step by step — under a minute, and a bit of your paid plan."
+        " Tap the confirmation button on the screen to go ahead."
+    ),
+    "spanish": (
+        "Son muchos datos para leer de una vez. Puedo revisarlos paso a"
+        " paso: menos de un minuto, y un poco de tu plan de pago. Toca"
+        " el botón de confirmación en la pantalla para continuar."
+    ),
+    "french": (
+        "C'est beaucoup de données à lire d'un coup. Je peux les"
+        " parcourir étape par étape — moins d'une minute, et un peu de"
+        " forfait payant. Appuie sur le bouton de confirmation à"
+        " l'écran pour continuer."
+    ),
+    "italian": (
+        "Sono tanti dati da leggere in una volta. Posso esaminarli"
+        " passo per passo: meno di un minuto, e un po' di piano a"
+        " pagamento. Tocca il pulsante di conferma sullo schermo per"
+        " continuare."
+    ),
+    "portuguese": (
+        "São muitos dados para ler de uma vez. Posso analisá-los passo"
+        " a passo: menos de um minuto, e um pouco do plano pago. Toque"
+        " no botão de confirmação na tela para continuar."
+    ),
+    "hindi": (
+        "एक बार में पढ़ने के लिए बहुत सारा डेटा है। मैं इसे चरण दर चरण"
+        " देख सकता हूँ — एक मिनट से कम, और सशुल्क प्लान का थोड़ा"
+        " उपयोग। आगे बढ़ने के लिए स्क्रीन पर पुष्टि बटन दबाएँ।"
+    ),
+    "japanese": (
+        "一度に読むには大量のデータです。段階的に確認できます —"
+        " 1分以内、有料プランを少し使います。続けるには、画面の"
+        " 確認ボタンをタップしてください。"
+    ),
+    "chinese": (
+        "数据量很大，我会分步骤处理——通常不到一分钟，会用到一点"
+        "付费额度。想继续的话，请点按屏幕上的确认按钮。"
+    ),
+}
+
 
 class OffloadDigestCache:
     """Session-scoped, payload-hash keyed cache of offload digests (#26).
@@ -1507,28 +1557,27 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         # only).
                         #
                         # TODO(#26, P2+): this narration is a fixed,
-                        # English-only string. It should be model-
-                        # interpreted like skill_intention (see
+                        # localized string (OFFLOAD_CONSENT_NARRATIONS).
+                        # It should be model-interpreted like
+                        # skill_intention (see
                         # framework.chat_manager.orakle_select_and_params.mu:
                         # "Conversational sentence action preview… be
                         # natural, match user's tone, avoid jargon"), so
-                        # every narration is query-adapted and in the
-                        # user's language. That fits the consent invariant
-                        # better, not worse — narration is the model
-                        # EXPLAINING; the card + one-shot token remain the
-                        # whole decision surface. Open design question:
-                        # the size trigger fires post-execution, after the
-                        # selection call, so the narration needs either a
-                        # cheap dedicated generation here (query + skill +
-                        # payload size in context) or an intent preview
-                        # carried over from selection time.
+                        # every narration is query-adapted (the localized
+                        # string cannot mention WHAT the data is). That
+                        # fits the consent invariant better, not worse —
+                        # narration is the model EXPLAINING; the card +
+                        # one-shot token remain the whole decision
+                        # surface. Open design question: the size trigger
+                        # fires post-execution, after the selection call,
+                        # so the narration needs either a cheap dedicated
+                        # generation here (query + skill + payload size
+                        # in context) or an intent preview carried over
+                        # from selection time.
                         yield (
-                            "\nThat's a lot of data for me to read in one"
-                            " go. I can work through it step by step — it"
-                            " usually takes under a minute and uses a"
-                            " little extra of your paid plan. Tap the"
-                            " confirmation button on the screen if you'd"
-                            " like me to go ahead.\n\n"
+                            "\n"
+                            + self._offload_consent_narration()
+                            + "\n\n"
                         )
                         yield {
                             "type": "consent_request",
@@ -1664,6 +1713,20 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             "selected_backend", "litellm"
         )
         return not (selected.startswith("ollama/") or backend == "ollama")
+
+    def _offload_consent_narration(self) -> str:
+        """Localized consent narration for the TTS handoff (#26 P2).
+
+        Interim measure: a fixed string per language so the voice never
+        reads text in a language the TTS is not configured for. The
+        model-interpreted replacement is tracked in the TODO at the
+        emission site. English is the fallback when the session language
+        has no variant.
+        """
+        language = (self.current_language or "english").strip().lower()
+        return OFFLOAD_CONSENT_NARRATIONS.get(
+            language, OFFLOAD_CONSENT_NARRATIONS["english"]
+        )
 
     def _estimate_digest_spend(self, raw_result: str) -> dict:
         """
