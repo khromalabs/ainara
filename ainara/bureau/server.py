@@ -218,6 +218,26 @@ def timeout_monitor():
                 if not proc:
                     continue
 
+                # Drain the run journal (issue #26): structured progress
+                # entries pushed by the agent loop in the child process,
+                # surfaced via the status endpoint as the UI progress
+                # channel.
+                journal_queue = task.get("journal_queue")
+                if journal_queue is not None:
+                    while True:
+                        try:
+                            entry = journal_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        except Exception as e:
+                            logger.error(
+                                "Error reading journal queue for step"
+                                f" {step_id}: {e}"
+                            )
+                            break
+                        if isinstance(entry, dict):
+                            task.setdefault("journal", []).append(entry)
+
                 # Drain the result queue even while the child is alive.
                 # A child whose result payload exceeds the OS pipe buffer
                 # (~64 KiB) blocks forever in its exit flush until the
@@ -450,6 +470,7 @@ def run_agent_in_process(
     blacklisted_providers: Any = None,
     global_capabilities: list = None,
     conductor_agent: list = False,
+    journal_queue: multiprocessing.Queue = None,
 ) -> None:
     """
     Worker function executed inside a separate OS process.
@@ -538,6 +559,7 @@ def run_agent_in_process(
                 user_context=user_context,
                 system_message=final_system_message,
                 conductor_agent=conductor_agent,
+                journal_queue=journal_queue,
             )
 
             # Execute the agent and push the result onto the queue
@@ -644,6 +666,8 @@ def create_agent():
 
         # Create a Queue for the agent result
         result_queue = multiprocessing.Queue()
+        # Queue mirroring the agent's run journal (issue #26)
+        journal_queue = multiprocessing.Queue()
 
         # Launch a separate process for the agent
         process = multiprocessing.Process(
@@ -658,6 +682,7 @@ def create_agent():
                 result_queue,
                 None,  # blacklisted_providers
                 global_capabilities,
+                journal_queue,
             ),
         )
         process.start()
@@ -665,6 +690,8 @@ def create_agent():
         # Store process information for monitoring and result retrieval
         step_registry[agent_id]["process"] = process
         step_registry[agent_id]["result_queue"] = result_queue
+        step_registry[agent_id]["journal_queue"] = journal_queue
+        step_registry[agent_id]["journal"] = []
         step_registry[agent_id]["pid"] = process.pid
         step_registry[agent_id]["status"] = "RUNNING"
         step_registry[agent_id]["start_time"] = time.time()
@@ -705,7 +732,10 @@ def get_agent_status(agent_id):
     response_task = {
         k: v
         for k, v in task.items()
-        if k not in ("process", "result_queue", "pid", "termination_requested")
+        if k not in (
+            "process", "result_queue", "pid", "termination_requested",
+            "journal_queue",
+        )
     }
 
     if status == "PENDING" or status == "RUNNING":
