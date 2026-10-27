@@ -1,5 +1,6 @@
-# Issue #26 P1: unit tests for the offload-digest router and the reserved
-# skill-side 'analysis' digest field (orakle_middleware.py).
+# Issue #26 P1/P2: unit tests for the offload-digest router, the reserved
+# skill-side 'analysis' digest field, the spend-policy consent surface and
+# the out-of-band consent resume (orakle_middleware.py).
 #
 # Coverage is LLM-free: skill selection and the digestion agent are mocked,
 # so what is actually pinned is the routing decision surface —
@@ -21,6 +22,7 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
 from ainara.framework.orakle_middleware import (  # noqa: 402
+    ConsentRegistry,
     OffloadDigestCache,
     OrakleMiddleware,
 )
@@ -99,6 +101,10 @@ class TestOffloadRouter(unittest.TestCase):
         config_values = {
             "orakle.match_providers": [],
             "llm": {},
+            # These tests pin the MECHANICAL router; the spend-consent
+            # surface has its own test class. 'allow' bypasses the card
+            # so the pre-P2 routing expectations stay byte-identical.
+            "orakle.offload.spend_policy": "allow",
         }
 
         def config_get(key, default=None):
@@ -551,6 +557,335 @@ class TestOffloadDigestCache(unittest.TestCase):
         cache.put("b", "B")
         self.assertIsNone(cache.get("a"))
         self.assertEqual(cache.get("b"), "B")
+
+
+class TestConsentRegistry(unittest.TestCase):
+    """Direct tests for the one-shot, TTL'd decision registry (P2)."""
+
+    def setUp(self):
+        self.reg = ConsentRegistry(ttl_seconds=600)
+
+    def test_create_returns_card_payload(self):
+        card = self.reg.create(raw_result="DATA", query="q",
+                               estimate={"provider": "p"})
+        self.assertIn("decision_id", card)
+        self.assertIn("token", card)
+        self.assertEqual(card["ttl"], 600)
+        self.assertEqual(card["estimate"], {"provider": "p"})
+
+    def test_resolve_is_one_shot(self):
+        card = self.reg.create(raw_result="D", query="q")
+        entry = self.reg.resolve(card["decision_id"], card["token"])
+        self.assertEqual(entry["raw_result"], "D")
+        # Replayed decision: consumed, never resolves twice.
+        self.assertIsNone(
+            self.reg.resolve(card["decision_id"], card["token"]))
+
+    def test_wrong_token_does_not_burn_the_decision(self):
+        """Validation happens before the pop: a garbage post cannot
+        destroy a pending card the user is about to click."""
+        card = self.reg.create(raw_result="D", query="q")
+        self.assertIsNone(self.reg.resolve(card["decision_id"], "wrong"))
+        self.assertIsNotNone(
+            self.reg.resolve(card["decision_id"], card["token"]))
+
+    def test_expired_decision_is_a_no_op(self):
+        import time
+        card = self.reg.create(raw_result="D", query="q")
+        self.reg._entries[card["decision_id"]]["expires_at"] = (
+            time.time() - 1
+        )
+        self.assertIsNone(self.reg.resolve(
+            card["decision_id"], card["token"]))
+
+    def test_expired_entries_are_swept_lazily(self):
+        import time
+        stale = self.reg.create(raw_result="old", query="q")
+        self.reg._entries[stale["decision_id"]]["expires_at"] = (
+            time.time() - 1
+        )
+        self.reg.create(raw_result="new", query="q")
+        self.assertNotIn(stale["decision_id"], self.reg._entries)
+
+
+class TestOffloadSpendPolicy(unittest.TestCase):
+    """The spend axis on the router's mechanical trigger (issue #26 P2,
+    ratified with #18): the framework emits the consent card after the
+    trigger fires; the model can neither fabricate nor skip one."""
+
+    CEILING = 100
+
+    def setUp(self):
+        config_values = {
+            "orakle.match_providers": [],
+            # Default to a metered provider: the consent surface only
+            # applies on the metered axis.
+            "llm": {
+                "selected_provider": "gemini/gemini-flash",
+                "providers": [
+                    {"model": "gemini/gemini-flash",
+                     "provider": "litellm"}
+                ],
+            },
+            "orakle.offload.spend_policy": "ask",
+        }
+
+        def config_get(key, default=None):
+            return config_values.get(key, default)
+
+        self.config_values = config_values
+        self.mock_config = MagicMock()
+        self.mock_config.get.side_effect = config_get
+
+        with patch(
+            'ainara.framework.orakle_middleware.OrakleMatcherTransformers'
+        ):
+            self.middleware = OrakleMiddleware(
+                llm=MagicMock(),
+                orakle_servers=[],
+                system_message="SYSTEM",
+                config_manager=self.mock_config,
+                capabilities=[],
+            )
+
+        self.middleware.llm.chat.return_value = SELECTION_JSON
+        self.middleware.llm.get_context_window.return_value = 131072
+        self.middleware.matcher.match.return_value = [
+            {"skill_id": "test_skill", "score": 0.9},
+        ]
+        self.middleware.enable_agent_spawn = True
+        self.middleware.offload_raw_max_bytes = self.CEILING
+        self.middleware.template_manager = MagicMock()
+        self.middleware.template_manager.render.side_effect = (
+            lambda template, variables: json.dumps(variables, default=str)
+        )
+        self.middleware._get_chat_context = MagicMock(return_value=[])
+        self.middleware.execute_orakle_command = MagicMock(
+            side_effect=lambda skill_id, params, history: self.skill_result)
+        self.middleware._get_skill_info = MagicMock(return_value=None)
+
+        self.offload_calls = []
+
+        def fake_offload(**kwargs):
+            self.offload_calls.append(kwargs.get("raw_result"))
+            return "DIGESTED FINDINGS"
+            yield  # unreachable: keeps the generator contract
+
+        self.middleware._spawn_offload_digest = fake_offload
+
+    def _run(self, skill_result: str) -> list:
+        self.skill_result = skill_result
+        return list(self.middleware._process_orakle_request("query test"))
+
+    def _card_chunks(self, chunks) -> list:
+        return [
+            c for c in chunks
+            if isinstance(c, dict) and c.get("type") == "consent_request"
+        ]
+
+    # --- policy ask + metered: the consent card -------------------------
+
+    def test_ask_metered_emits_card_and_ends_turn(self):
+        big = "x" * (self.CEILING + 1)
+        chunks = self._run(big)
+
+        cards = self._card_chunks(chunks)
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertIn("decision_id", card)
+        self.assertIn("token", card)
+        self.assertEqual(card["ttl"], 600)
+        # Numbers on the card are ledger-computed, never model-stated.
+        self.assertEqual(card["estimate"]["provider"],
+                         "gemini/gemini-flash")
+        self.assertEqual(card["estimate"]["payload_bytes"], len(big))
+        self.assertEqual(card["estimate"]["max_calls"],
+                         self.middleware.offload_max_turns)
+
+        # The turn ends with the card: no digestion ran, and the
+        # narration (voice-to-button handoff) is the only text.
+        self.assertEqual(self.offload_calls, [])
+        text = "".join(c for c in chunks if isinstance(c, str))
+        self.assertIn("Tap the confirmation button", text)
+        self.assertNotIn("DIGESTED FINDINGS", text)
+
+    def test_ask_metered_registers_a_resolvable_decision(self):
+        big = "x" * (self.CEILING + 1)
+        card = self._card_chunks(self._run(big))[0]
+        entry = self.middleware._consent_registry.resolve(
+            card["decision_id"], card["token"])
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["raw_result"], big)
+
+    # --- policy allow / local provider: zero-friction today's path ------
+
+    def test_allow_metered_offloads_without_card(self):
+        self.config_values["orakle.offload.spend_policy"] = "allow"
+        chunks = self._run("x" * (self.CEILING + 1))
+        self.assertEqual(self.offload_calls, ["x" * (self.CEILING + 1)])
+        self.assertEqual(self._card_chunks(chunks), [])
+        self.assertIn("DIGESTED FINDINGS",
+                      "".join(c for c in chunks if isinstance(c, str)))
+
+    def test_local_provider_never_asks_under_any_policy(self):
+        """No spend axis on local digestion: even 'ask' runs without a
+        card, and 'deny' does not block it (the policy is a spend
+        policy, not an offload kill switch)."""
+        self.config_values["llm"] = {
+            "selected_provider": "ollama/llama3",
+            "providers": [{"model": "ollama/llama3"}],
+        }
+        for policy in ("ask", "allow", "deny"):
+            with self.subTest(policy=policy):
+                self.config_values["orakle.offload.spend_policy"] = policy
+                self.middleware._consent_registry = ConsentRegistry(600)
+                # Fresh cache: a byte-identical payload across subtests
+                # would otherwise hit the P1.5 digest cache and never
+                # reach the spawn path.
+                self.middleware._digest_cache = OffloadDigestCache(8)
+                chunks = self._run("x" * (self.CEILING + 1))
+                self.assertEqual(
+                    self.offload_calls, ["x" * (self.CEILING + 1)])
+                self.assertEqual(self._card_chunks(chunks), [])
+                self.offload_calls.clear()
+
+    # --- policy deny + metered: reject with guidance --------------------
+
+    def test_deny_metered_rejects_with_guidance(self):
+        self.config_values["orakle.offload.spend_policy"] = "deny"
+        big = "x" * (self.CEILING + 1)
+        chunks = self._run(big)
+        self.assertEqual(self.offload_calls, [])
+        text = "".join(c for c in chunks if isinstance(c, str))
+        self.assertIn("spend_policy", text)
+        self.assertNotIn(big, text)
+
+    def test_unresolvable_provider_counts_as_metered(self):
+        """Fail-closed: without a resolvable provider selection the
+        consent gate still applies."""
+        self.config_values["llm"] = {}
+        self.assertTrue(self.middleware._is_digestion_model_metered())
+
+
+class TestOffloadConsentResume(unittest.TestCase):
+    """The out-of-band resume path (issue #26 P2): approved cards run the
+    deferred digestion; every other resolution is a no-op."""
+
+    def setUp(self):
+        config_values = {
+            "orakle.match_providers": [],
+            "llm": {"selected_provider": "gemini/gemini-flash",
+                    "providers": []},
+            "orakle.offload.spend_policy": "ask",
+        }
+
+        def config_get(key, default=None):
+            return config_values.get(key, default)
+
+        self.mock_config = MagicMock()
+        self.mock_config.get.side_effect = config_get
+
+        with patch(
+            'ainara.framework.orakle_middleware.OrakleMatcherTransformers'
+        ):
+            self.middleware = OrakleMiddleware(
+                llm=MagicMock(),
+                orakle_servers=[],
+                system_message="SYSTEM",
+                config_manager=self.mock_config,
+                capabilities=[],
+            )
+
+        self.offload_calls = []
+
+        def fake_offload(**kwargs):
+            self.offload_calls.append(kwargs.get("raw_result"))
+            return "DIGESTED FINDINGS"
+            yield  # unreachable
+
+        self.middleware._spawn_offload_digest = fake_offload
+
+    def _card(self):
+        return self.middleware._consent_registry.create(
+            raw_result="PAYLOAD", query="q", estimate={})
+
+    def test_approve_runs_deferred_digestion(self):
+        card = self._card()
+        gen = self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve")
+        self.assertIsNotNone(gen)
+        chunks = list(gen)
+        self.assertEqual(self.offload_calls, ["PAYLOAD"])
+        self.assertIn("DIGESTED FINDINGS", "".join(chunks))
+        # The digest is cached for follow-ups, like the inline path.
+        self.assertEqual(
+            self.middleware._digest_cache.get("PAYLOAD"),
+            "DIGESTED FINDINGS")
+
+    def test_always_allow_flips_standing_policy(self):
+        card = self._card()
+        gen = self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "always_allow")
+        self.assertIsNotNone(gen)
+        list(gen)
+        self.mock_config.set_exact.assert_called_once_with(
+            "orakle.offload.spend_policy", "allow")
+
+    def test_approve_does_not_flip_standing_policy(self):
+        card = self._card()
+        list(self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve"))
+        self.mock_config.set_exact.assert_not_called()
+
+    def test_replay_and_bad_token_are_no_ops(self):
+        card = self._card()
+        first = self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve")
+        self.assertIsNotNone(first)
+        list(first)
+        # One-shot: the replayed approval cannot re-run the digestion.
+        self.assertIsNone(self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve"))
+        self.assertEqual(self.offload_calls, ["PAYLOAD"])
+
+        card2 = self._card()
+        self.assertIsNone(self.middleware.resume_offload_consent(
+            card2["decision_id"], "wrong", "approve"))
+        # The wrong token did not burn the pending decision.
+        self.assertIsNotNone(self.middleware.resume_offload_consent(
+            card2["decision_id"], card2["token"], "approve"))
+
+    def test_denial_never_executes(self):
+        card = self._card()
+        self.assertIsNone(self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "deny"))
+        self.assertEqual(self.offload_calls, [])
+
+    def test_discard_consumes_without_executing(self):
+        card = self._card()
+        self.assertTrue(self.middleware.discard_offload_consent(
+            card["decision_id"], card["token"]))
+        self.assertEqual(self.offload_calls, [])
+        self.assertFalse(self.middleware.discard_offload_consent(
+            card["decision_id"], card["token"]))
+
+    def test_failed_digestion_rejects_without_retry(self):
+        """Burned spend is never doubled: a failed resumed run yields
+        honest guidance, not a silent retry."""
+        card = self._card()
+
+        def failing_offload(**kwargs):
+            self.offload_calls.append(kwargs.get("raw_result"))
+            return None
+            yield  # unreachable
+
+        self.middleware._spawn_offload_digest = failing_offload
+        gen = self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve")
+        chunks = list(gen)
+        self.assertEqual(self.offload_calls, ["PAYLOAD"])
+        self.assertNotIn("DIGESTED FINDINGS", "".join(chunks))
+        self.assertIn("could not be completed", "".join(chunks))
 
 
 if __name__ == "__main__":
