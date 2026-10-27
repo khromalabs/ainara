@@ -1464,6 +1464,13 @@ def create_app():
                     400,
                 )
 
+            # Mask round-trip guard (issue #34): a client that reads the
+            # masked GET /config, changes an unrelated field and PUTs the
+            # result back must not store mask strings over real secrets.
+            # Values that are exactly the mask of the stored secret are
+            # substituted with the secret itself before the merge.
+            data = config.restore_masked_values(data)
+
             # Fetch and cache skill property schemas from Orakle
             skill_properties = _get_skill_config_properties()
             if skill_properties is None:
