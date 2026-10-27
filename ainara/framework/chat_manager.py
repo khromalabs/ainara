@@ -1908,6 +1908,23 @@ class ChatManager:
 
                 if (
                     isinstance(chunk, dict)
+                    and chunk.get("type") == "consent_request"
+                ):
+                    # Consent card (#26 P2; #18 confirmation primitive
+                    # pilot): the framework-rendered decision surface for
+                    # the offload spend axis. The decision token rides
+                    # only the signal channel to Polaris — history keeps
+                    # a redacted decision-id marker so the model can
+                    # never see, replay or fabricate the token.
+                    yield ndjson("signal", "consent_request", chunk)
+                    processed_answer += (
+                        "\n_orakle_consent_card_|"
+                        f"{chunk.get('decision_id', '')}\n"
+                    )
+                    continue
+
+                if (
+                    isinstance(chunk, dict)
                     and chunk.get("type") == "nexus_skill_result"
                 ):
                     vendor = chunk.get("vendor")
@@ -2140,6 +2157,173 @@ class ChatManager:
             # For non-streaming mode, return the processed answer
             if not stream:
                 return processed_answer
+
+    def consent_resume(
+        self, decision_id: str, token: str, decision: str
+    ) -> Generator[str, None, None]:
+        """Stream the out-of-band digestion segment for an approved
+        consent-card decision (issue #26 P2).
+
+        Runs entirely outside the user-turn flow: the original turn
+        already ended with the card. The middleware validates the one-shot
+        decision token (an unknown, replayed or expired decision yields an
+        'expired' consent_result signal — never an execution) and returns
+        the digest stream, which is emitted here as a system-initiated
+        segment: the answer lands in history and chat memory as its own
+        assistant entry.
+        """
+        digest_stream = self.orakle_middleware.resume_offload_consent(
+            decision_id, token, decision
+        )
+        if digest_stream is None:
+            yield ndjson(
+                "signal",
+                "consent_result",
+                {"status": "expired", "decision_id": decision_id},
+            )
+            return
+        logger.info(
+            "CHAT: streaming approved offload digestion segment for"
+            " decision %s.",
+            decision_id,
+        )
+        yield ndjson(
+            "signal",
+            "consent_result",
+            {"status": "approved", "decision_id": decision_id},
+        )
+        yield from self._stream_system_segment(digest_stream)
+
+    def _stream_system_segment(
+        self, chunks: Generator, stream: Literal["cli", "json"] = "json"
+    ) -> Generator[str, None, None]:
+        """Stream a system-initiated answer segment (issue #26 P2).
+
+        A focused version of chat_completion's output machinery for
+        segments that start outside a user turn: same sentence/TTS
+        batching and doc-fence state machine, but no user-turn handling
+        and no guardrail loop (the segment's source is the framework's
+        own digestion path, not a model channel). Run-journal progress
+        chunks become signal events and are kept out of the persisted
+        text. The accumulated text becomes the segment's assistant entry
+        in history and chat memory.
+        """
+        yield ndjson("signal", "loading", {"state": "start"})
+        processed_answer = ""
+        text_buffer = ""
+        doc_buffer = ""
+        parsing_mode = "text"
+        doc_format = "plaintext"
+
+        try:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                if "_orakle_agent_progress_" in chunk or (
+                    "_orakle_loading_signal_" in chunk
+                ):
+                    # Run-journal progress / loading signals: forwarded
+                    # as signal events, never persisted as answer text.
+                    yield from self._process_streaming_sentence(
+                        chunk.strip(), stream
+                    )
+                    continue
+                processed_answer += chunk
+
+                # Route chunk to the correct buffer based on current
+                # parsing mode (same state machine as chat_completion).
+                if parsing_mode == "doc":
+                    doc_buffer += chunk
+                else:
+                    text_buffer += chunk
+
+                while True:
+                    state_changed = False
+                    if parsing_mode == "text":
+                        doc_start_match = re.search(
+                            r"```([\w\d_.-]*)\n", text_buffer
+                        )
+                        if doc_start_match:
+                            pre_doc_text = text_buffer[
+                                : doc_start_match.start()
+                            ]
+                            if pre_doc_text.strip():
+                                yield from self._process_regular_text(
+                                    pre_doc_text, stream
+                                )
+                            doc_format = (
+                                doc_start_match.group(1) or "plaintext"
+                            )
+                            if stream == "json":
+                                yield ndjson(
+                                    "ui",
+                                    "setView",
+                                    {
+                                        "view": "document",
+                                        "format": doc_format,
+                                    },
+                                )
+                            parsing_mode = "doc"
+                            doc_buffer = text_buffer[doc_start_match.end():]
+                            text_buffer = ""
+                            state_changed = True
+                    elif parsing_mode == "doc":
+                        doc_end_match = re.search(r"```", doc_buffer)
+                        if doc_end_match:
+                            doc_content = doc_buffer[
+                                : doc_end_match.start()
+                            ]
+                            if stream == "json":
+                                yield ndjson(
+                                    "content",
+                                    "full",
+                                    {"content": doc_content},
+                                )
+                            parsing_mode = "text"
+                            text_buffer = doc_buffer[doc_end_match.end():]
+                            doc_buffer = ""
+                            state_changed = True
+                    if not state_changed:
+                        break
+
+                if parsing_mode == "text" and text_buffer:
+                    sentences = self._extract_complete_sentences(text_buffer)
+                    if sentences:
+                        if stream == "json":
+                            yield ndjson(
+                                "signal", "loading", {"state": "stop"}
+                            )
+                        for sentence in sentences:
+                            yield from self._process_streaming_sentence(
+                                sentence, stream
+                            )
+                        last_sentence = sentences[-1]
+                        last_pos = (
+                            text_buffer.rfind(last_sentence)
+                            + len(last_sentence)
+                        )
+                        text_buffer = text_buffer[last_pos:].strip()
+
+            if text_buffer.strip():
+                yield from self._process_regular_text(text_buffer, stream)
+        except Exception as e:
+            logger.error(f"Error streaming system segment: {e}")
+            if stream == "json":
+                yield ndjson("signal", "error", {"message": str(e)})
+            processed_answer = f"Error: {str(e)}"
+        finally:
+            if processed_answer.strip():
+                self.llm.add_msg(
+                    processed_answer, self.chat_history, "assistant"
+                )
+                if self.memory_enabled and self.chat_memory:
+                    self.chat_memory.add_entry(processed_answer, "assistant")
+            else:
+                logger.warning("System segment produced no answer")
+                self.llm.add_msg("-", self.chat_history, "assistant")
+            if stream == "json":
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
 
     def add_chat_history_to_params(
         self, params: dict, skill_info: dict

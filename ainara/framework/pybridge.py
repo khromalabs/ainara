@@ -1576,6 +1576,41 @@ def create_app():
 
         return Response(generate(), mimetype="text/event-stream")
 
+    @app.route("/consent/<decision_id>", methods=["POST"])
+    def consent_decision(decision_id):
+        """Consent-card decision endpoint (issue #26 P2; the pilot client
+        of #18's confirmation primitive).
+
+        Consent authority is the mechanical button click: the body must
+        carry the one-shot, TTL'd decision token issued with the card —
+        no stale, replayed or conversational "yes" can satisfy this
+        route. Approval resumes the deferred digestion out-of-band and
+        streams the digest back as a system-initiated segment (NDJSON,
+        same event shapes as /framework/chat). Denial and expiry are
+        no-ops that only retire the card.
+        """
+        data = request.get_json(silent=True) or {}
+        token = data.get("token", "")
+        decision = data.get("decision", "")
+        if decision not in ("approve", "always_allow", "deny"):
+            return jsonify({"error": "invalid decision"}), 400
+
+        middleware = app.chat_manager.orakle_middleware
+        if decision == "deny":
+            consumed = middleware.discard_offload_consent(
+                decision_id, token
+            )
+            return jsonify(
+                {"status": "denied" if consumed else "expired"}
+            )
+
+        def generate():
+            yield from app.chat_manager.consent_resume(
+                decision_id, token, decision
+            )
+
+        return Response(generate(), mimetype="text/event-stream")
+
     @app.route("/framework/chat/search", methods=["GET"])
     def search_chat_history():
         """
