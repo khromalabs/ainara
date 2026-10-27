@@ -129,6 +129,10 @@ class ComRing extends BaseComponent {
             // Long-recording transcription hint (#19)
             this.recordingStartedAt = null;
             this.transcriptionHintActive = false;
+            // Offload agent progress (#26): a journal label from a spawned
+            // digestion agent is on the status line; the first answer
+            // chunk or 'completed' clears it.
+            this.agentProgressActive = false;
 
             this.state = {
                 keyPressed: false,
@@ -2461,6 +2465,18 @@ Visit our project site at: https://ainara.app
                     const content = event.content.content;
                     const messageId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+                    // The digest answer supersedes the agent progress
+                    // label (#26): the digestion agent is done once its
+                    // findings start streaming.
+                    if (this.agentProgressActive) {
+                        this.agentProgressActive = false;
+                        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                        if (sttStatus) {
+                            sttStatus.classList.remove('active');
+                            sttStatus.textContent = '';
+                        }
+                    }
+
                     if (event.content && event.content.content) {
                         event.content.content.messageId = messageId;
                     }
@@ -2650,11 +2666,32 @@ Visit our project site at: https://ainara.app
                 }
                 break;
 
+            case 'agent_progress':
+                // Run-journal progress relay (#26): stage labels from a
+                // spawned digestion agent, relayed live while Orakle
+                // polls Bureau. Same in-flight surface as the skill
+                // loading status; successive labels overwrite as the
+                // agent advances. The label derives from the agent's
+                // response snippet and the agent reads UNTRUSTED payload
+                // content — textContent only, never innerHTML.
+                if (event.type === 'signal') {
+                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                    if (sttStatus) {
+                        const label = ((event.content && event.content.label) || 'Analyzing…').slice(0, 120);
+                        sttStatus.textContent = 'Agent: ' + label;
+                        sttStatus.classList.add('active');
+                        this.agentProgressActive = true;
+                    }
+                }
+                break;
+
             case 'completed':
                 if (event.type === 'signal') {
                     console.log(`[DocTrace] completed signal: view=${this.currentView}/${this.docFormat} muted=${this.playbackMuted}`);
                     this.circle.classList.remove('skill-active');
                     this.isLLMStreaming = false;
+                    // #26: end any agent progress label with the turn.
+                    this.agentProgressActive = false;
                     // #19 item 3: reopen the silence gate
                     this.exchangeSilenced = false;
 
