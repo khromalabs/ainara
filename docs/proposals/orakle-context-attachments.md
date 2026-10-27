@@ -811,6 +811,44 @@ agentic digestion on metered providers:
   stays `false` until the wizard step + progress UI land; the ledger
   rejection doubles as the discoverability path.
 
+### 2026-10-28 (later) — Card interaction revisions: session-scoped Always, generic surface, conversational close
+
+Live-design iteration on the P2 card (recorded on #26; supersedes the
+ratified text where noted):
+
+- **"Always allow" is session-scoped (revision of the spend/consent
+  ratification)**: the card's *Always* upgrades the posture to `allow`
+  in memory only — dies on reboot, never overrides an explicit standing
+  `deny`, never writes the config. The card click is low deliberation
+  (voice, mid-conversation); persistent standing consent is the
+  wizard's decision, where the metered-provider warning is read before
+  committing. The wizard step is now the ONLY path to persistent
+  `allow`.
+- **The card is the generic #18 confirmation-primitive shape, made
+  literal**: the payload carries everything the renderer shows — title,
+  quote, button labels, note — composed and localized by the backend to
+  the session language. Polaris is strictly presentational; any future
+  #18 client reuses the renderer unchanged.
+- **Minimal card**: framework title ("Accept Ainara's suggestion?"),
+  the narration as a subordinate quote (already spoken and in the
+  record — no ad-hoc card prose), horizontal touch-sized
+  Yes / No / Always buttons, one session/expiry line. The invariant is
+  visible in the layout: the model explains, the framework decides.
+- **Conversational close**: while a card is pending, chat_manager
+  injects a hint with the authorization rules (only the tap
+  authorizes; voice yes must be politely refused; decline/defer/close
+  via `<consent_close>id</consent_close>`). The model emits the tag;
+  chat_manager strips it before TTS; the middleware invalidates the
+  token server-side (a closed card is a dead offer); Polaris dissolves
+  the card. The card is never silently auto-closed: TTL expiry leaves
+  it visibly dead on screen.
+- **Narration localization (interim)**: short hand-written variants for
+  the 8 Kokoro languages keyed by the session language — the fixed
+  English string would have been read through a foreign G2P. The
+  model-interpreted narration (query-adapted, `skill_intention`-style)
+  remains the long-term fix (TODO + open design question at the
+  emission site: the trigger fires post-selection).
+
 ### 2026-10-28 — P2 opens: consent card + spend policy implemented
 
 Branch `dev012-agentloop`. The spend/consent ratification above is now
