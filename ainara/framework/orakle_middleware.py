@@ -45,54 +45,132 @@ from ainara.framework.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
 
-# Interim localized narration for the offload consent card (#26 P2),
-# keyed by the chat_manager-resolved language name (pycountry), English
-# fallback. Kept as short as possible: this is spoken through TTS
-# configured for the user's language, and it is the moment that asks
-# for their attention and trust. Deliberately NOT the long-term design —
-# the TODO at the emission site covers the model-interpreted narration.
-OFFLOAD_CONSENT_NARRATIONS = {
-    "english": (
-        "That's a lot of data to read in one go. I can work through it"
-        " step by step — under a minute, and a bit of your paid plan."
-        " Tap the confirmation button on the screen to go ahead."
-    ),
-    "spanish": (
-        "Son muchos datos para leer de una vez. Puedo revisarlos paso a"
-        " paso: menos de un minuto, y un poco de tu plan de pago. Toca"
-        " el botón de confirmación en la pantalla para continuar."
-    ),
-    "french": (
-        "C'est beaucoup de données à lire d'un coup. Je peux les"
-        " parcourir étape par étape — moins d'une minute, et un peu de"
-        " forfait payant. Appuie sur le bouton de confirmation à"
-        " l'écran pour continuer."
-    ),
-    "italian": (
-        "Sono tanti dati da leggere in una volta. Posso esaminarli"
-        " passo per passo: meno di un minuto, e un po' di piano a"
-        " pagamento. Tocca il pulsante di conferma sullo schermo per"
-        " continuare."
-    ),
-    "portuguese": (
-        "São muitos dados para ler de uma vez. Posso analisá-los passo"
-        " a passo: menos de um minuto, e um pouco do plano pago. Toque"
-        " no botão de confirmação na tela para continuar."
-    ),
-    "hindi": (
-        "एक बार में पढ़ने के लिए बहुत सारा डेटा है। मैं इसे चरण दर चरण"
-        " देख सकता हूँ — एक मिनट से कम, और सशुल्क प्लान का थोड़ा"
-        " उपयोग। आगे बढ़ने के लिए स्क्रीन पर पुष्टि बटन दबाएँ।"
-    ),
-    "japanese": (
-        "一度に読むには大量のデータです。段階的に確認できます —"
-        " 1分以内、有料プランを少し使います。続けるには、画面の"
-        " 確認ボタンをタップしてください。"
-    ),
-    "chinese": (
-        "数据量很大，我会分步骤处理——通常不到一分钟，会用到一点"
-        "付费额度。想继续的话，请点按屏幕上的确认按钮。"
-    ),
+# Localized strings for the offload consent card (#26 P2), keyed by the
+# chat_manager-resolved language name (pycountry), English fallback.
+# The card is minimal by design (ui-philosophy.md): the narration is the
+# model-channel explanation (spoken AND quoted on the card), the title
+# and button labels are the framework's decision surface. Kept as short
+# as possible: spoken through TTS configured for the user's language.
+# Deliberately NOT the long-term design — the TODO at the emission site
+# covers the model-interpreted narration.
+OFFLOAD_CONSENT_STRINGS = {
+    "english": {
+        "narration": (
+            "That's a lot of data to read in one go. I can work through"
+            " it step by step — under a minute, and a bit of your paid"
+            " plan. Tap the confirmation button on the screen to go"
+            " ahead."
+        ),
+        "title": "Accept Ainara's suggestion?",
+        "yes": "Yes",
+        "no": "No",
+        "always": "Always",
+        "note": (
+            "“Always” applies to this session only · expires in {m} min"
+        ),
+    },
+    "spanish": {
+        "narration": (
+            "Son muchos datos para leer de una vez. Puedo revisarlos"
+            " paso a paso: menos de un minuto, y un poco de tu plan de"
+            " pago. Toca el botón de confirmación en la pantalla para"
+            " continuar."
+        ),
+        "title": "¿Aceptas la sugerencia de Ainara?",
+        "yes": "Sí",
+        "no": "No",
+        "always": "Siempre",
+        "note": (
+            "«Siempre» solo esta sesión · caduca en {m} min"
+        ),
+    },
+    "french": {
+        "narration": (
+            "C'est beaucoup de données à lire d'un coup. Je peux les"
+            " parcourir étape par étape — moins d'une minute, et un peu"
+            " de forfait payant. Appuie sur le bouton de confirmation à"
+            " l'écran pour continuer."
+        ),
+        "title": "Accepter la suggestion d'Ainara ?",
+        "yes": "Oui",
+        "no": "Non",
+        "always": "Toujours",
+        "note": (
+            "« Toujours » vaut pour cette session · expire dans {m} min"
+        ),
+    },
+    "italian": {
+        "narration": (
+            "Sono tanti dati da leggere in una volta. Posso esaminarli"
+            " passo per passo: meno di un minuto, e un po' di piano a"
+            " pagamento. Tocca il pulsante di conferma sullo schermo"
+            " per continuare."
+        ),
+        "title": "Accetti il suggerimento di Ainara?",
+        "yes": "Sì",
+        "no": "No",
+        "always": "Sempre",
+        "note": (
+            "«Sempre» vale solo per questa sessione · scade in {m} min"
+        ),
+    },
+    "portuguese": {
+        "narration": (
+            "São muitos dados para ler de uma vez. Posso analisá-los"
+            " passo a passo: menos de um minuto, e um pouco do plano"
+            " pago. Toque no botão de confirmação na tela para"
+            " continuar."
+        ),
+        "title": "Aceitar a sugestão da Ainara?",
+        "yes": "Sim",
+        "no": "Não",
+        "always": "Sempre",
+        "note": (
+            "«Sempre» vale só nesta sessão · expira em {m} min"
+        ),
+    },
+    "hindi": {
+        "narration": (
+            "एक बार में पढ़ने के लिए बहुत सारा डेटा है। मैं इसे चरण दर"
+            " चरण देख सकता हूँ — एक मिनट से कम, और सशुल्क प्लान का"
+            " थोड़ा उपयोग। आगे बढ़ने के लिए स्क्रीन पर पुष्टि बटन"
+            " दबाएँ।"
+        ),
+        "title": "Ainara के सुझाव स्वीकार करें?",
+        "yes": "हाँ",
+        "no": "नहीं",
+        "always": "हमेशा",
+        "note": (
+            "“हमेशा” केवल इस सत्र के लिए · {m} मिनट में समाप्त"
+        ),
+    },
+    "japanese": {
+        "narration": (
+            "一度に読むには大量のデータです。段階的に確認できます —"
+            " 1分以内、有料プランを少し使います。続けるには、画面の"
+            " 確認ボタンをタップしてください。"
+        ),
+        "title": "Ainaraの提案を受けますか？",
+        "yes": "はい",
+        "no": "いいえ",
+        "always": "いつも",
+        "note": (
+            "「いつも」はこのセッションのみ · {m}分で期限切れ"
+        ),
+    },
+    "chinese": {
+        "narration": (
+            "数据量很大，我会分步骤处理——通常不到一分钟，会用到一点"
+            "付费额度。想继续的话，请点按屏幕上的确认按钮。"
+        ),
+        "title": "接受 Ainara 的建议？",
+        "yes": "是",
+        "no": "否",
+        "always": "总是",
+        "note": (
+            "“总是”仅本会话有效 · {m}分钟后过期"
+        ),
+    },
 }
 
 
@@ -199,6 +277,23 @@ class ConsentRegistry:
             "ttl": self.ttl_seconds,
             "estimate": estimate or {},
         }
+
+    def is_pending(self, decision_id: str) -> bool:
+        """True when the decision exists and has not expired. Non-
+        consuming: used by the conversational-close hint to decide
+        whether a pending card should still be in the model's context.
+        """
+        with self._lock:
+            entry = self._entries.get(decision_id)
+            return entry is not None and entry["expires_at"] > time.time()
+
+    def invalidate(self, decision_id: str) -> bool:
+        """Kill a pending decision without executing it (conversational
+        close: the model proposed dismissing the card and the framework
+        agrees). Server-side op — no token needed, same process. A closed
+        card is a dead offer: its token can never be honored."""
+        with self._lock:
+            return self._entries.pop(decision_id, None) is not None
 
     def resolve(self, decision_id: str, token: str) -> Optional[dict]:
         """Consume a decision one-shot; None when unknown, replayed,
@@ -510,6 +605,12 @@ class OrakleMiddleware:
             "orakle.offload.consent_ttl", 600
         )
         self._consent_registry = ConsentRegistry(self.offload_consent_ttl)
+        # Session-scoped "Always" (#26 P2): the card can upgrade the
+        # in-session posture from 'ask' to 'allow', but NEVER writes the
+        # config — persistent standing consent is the wizard's decision
+        # (high deliberation, metered-provider warning). Dies on reboot,
+        # and never overrides an explicit 'deny'.
+        self._session_spend_allow = False
 
         # Rate resilience (issue #26 P1.5): concurrency 1 for digestion
         # agents — concurrent oversized results reject with guidance
@@ -1516,9 +1617,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 # a system-initiated segment. Local (non-metered)
                 # digestion keeps today's zero-friction behavior under
                 # every policy.
-                spend_policy = self.config_manager.get(
-                    "orakle.offload.spend_policy", "ask"
-                )
+                spend_policy = self._offload_spend_policy()
                 if self._is_digestion_model_metered():
                     if spend_policy == "deny":
                         logger.info(
@@ -1557,7 +1656,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         # only).
                         #
                         # TODO(#26, P2+): this narration is a fixed,
-                        # localized string (OFFLOAD_CONSENT_NARRATIONS).
+                        # localized string (OFFLOAD_CONSENT_STRINGS).
                         # It should be model-interpreted like
                         # skill_intention (see
                         # framework.chat_manager.orakle_select_and_params.mu:
@@ -1574,16 +1673,35 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         # generation here (query + skill + payload size
                         # in context) or an intent preview carried over
                         # from selection time.
-                        yield (
-                            "\n"
-                            + self._offload_consent_narration()
-                            + "\n\n"
-                        )
+                        strings = self._offload_consent_strings()
+                        yield ("\n" + strings["narration"] + "\n\n")
                         yield {
                             "type": "consent_request",
                             "decision_id": card["decision_id"],
                             "token": card["token"],
                             "ttl": card["ttl"],
+                            # Generic decision surface (#18 primitive
+                            # shape): the framework composes everything
+                            # the renderer shows — title, quote (the
+                            # narration above), buttons, note. Polaris is
+                            # strictly presentational and renders any
+                            # future consent client unchanged.
+                            "title": strings["title"],
+                            "quote": strings["narration"],
+                            "buttons": [
+                                {"id": "approve",
+                                 "label": strings["yes"],
+                                 "style": "primary"},
+                                {"id": "deny",
+                                 "label": strings["no"],
+                                 "style": "secondary"},
+                                {"id": "always_allow",
+                                 "label": strings["always"],
+                                 "style": "ghost"},
+                            ],
+                            "note": strings["note"].format(
+                                m=max(1, round(card["ttl"] / 60))
+                            ),
                             "estimate": estimate,
                         }
                         return
@@ -1714,19 +1832,56 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         )
         return not (selected.startswith("ollama/") or backend == "ollama")
 
-    def _offload_consent_narration(self) -> str:
-        """Localized consent narration for the TTS handoff (#26 P2).
+    def _offload_spend_policy(self) -> str:
+        """Effective spend policy for the offload trigger (#26 P2).
 
-        Interim measure: a fixed string per language so the voice never
+        The session "Always" button upgrades 'ask' to 'allow' in memory
+        only; an explicit standing 'deny' is never overridden (the card
+        must not be able to talk the user's own configuration out of
+        power). Persistent changes belong to the wizard.
+        """
+        policy = self.config_manager.get(
+            "orakle.offload.spend_policy", "ask"
+        )
+        if policy == "deny":
+            return "deny"
+        if self._session_spend_allow:
+            return "allow"
+        return policy
+
+    def _offload_consent_strings(self) -> dict:
+        """Localized consent-card strings for the session language
+        (#26 P2).
+
+        Interim measure: fixed strings per language so the voice never
         reads text in a language the TTS is not configured for. The
         model-interpreted replacement is tracked in the TODO at the
         emission site. English is the fallback when the session language
         has no variant.
         """
         language = (self.current_language or "english").strip().lower()
-        return OFFLOAD_CONSENT_NARRATIONS.get(
-            language, OFFLOAD_CONSENT_NARRATIONS["english"]
+        return OFFLOAD_CONSENT_STRINGS.get(
+            language, OFFLOAD_CONSENT_STRINGS["english"]
         )
+
+    def has_pending_consent(self, decision_id: str) -> bool:
+        """True when a consent decision is still pending (#26 P2). Used
+        by chat_manager to decide whether the pending-card hint should
+        reach the model this turn."""
+        return self._consent_registry.is_pending(decision_id)
+
+    def invalidate_offload_consent(self, decision_id: str) -> bool:
+        """Conversational close (#26 P2): the model proposed dismissing
+        the pending card; the framework kills the token server-side. A
+        closed card is a dead offer."""
+        invalidated = self._consent_registry.invalidate(decision_id)
+        if invalidated:
+            logger.info(
+                "ORAKLE: consent card %s closed conversationally; token"
+                " invalidated.",
+                decision_id,
+            )
+        return invalidated
 
     def _estimate_digest_spend(self, raw_result: str) -> dict:
         """
@@ -2405,10 +2560,11 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         or fabricated decision resolves to None and the caller surfaces
         an expired status — nothing auto-executes, ever.
 
-        'always_allow' flips the standing spend policy to 'allow' — the
-        same deliberate decision as the wizard path, taken in context
-        (ratified). It takes effect before the resumed run so even a
-        crash between the two leaves the standing consent recorded.
+        'always_allow' upgrades the posture to 'allow' FOR THIS SESSION
+        ONLY — an in-memory flag, never written to config. Persistent
+        standing consent is the wizard's decision (high deliberation,
+        metered-provider warning); the card click is low deliberation.
+        The upgrade dies on reboot and never overrides an explicit 'deny'.
 
         Returns the digest stream generator (progress relay chunks, then
         the digest text itself), or None when the decision cannot be
@@ -2427,12 +2583,10 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
         if decision == "always_allow":
             logger.info(
-                "ORAKLE: standing spend policy flipped to 'allow' via"
-                " consent card (always-allow button)."
+                "ORAKLE: spend policy upgraded to 'allow' for this session"
+                " via consent card (Always button)."
             )
-            self.config_manager.set_exact(
-                "orakle.offload.spend_policy", "allow"
-            )
+            self._session_spend_allow = True
 
         def _run() -> Generator[str, None, None]:
             raw_result = entry["raw_result"]

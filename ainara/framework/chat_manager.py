@@ -1324,14 +1324,26 @@ class ChatManager:
             return
 
         yield ndjson("signal", "loading", {"state": "start"})
+        strings = self.orakle_middleware._offload_consent_strings()
         card = {
             "type": "consent_request",
             "decision_id": f"test_{uuid.uuid4().hex}",
             # Fabricated token: never registered, never resolvable.
             "token": "test-token-not-registered",
             "ttl": 600,
+            # Generic decision surface, localized to the session language.
+            "title": strings["title"],
+            "quote": strings["narration"],
+            "buttons": [
+                {"id": "approve", "label": strings["yes"],
+                 "style": "primary"},
+                {"id": "deny", "label": strings["no"],
+                 "style": "secondary"},
+                {"id": "always_allow", "label": strings["always"],
+                 "style": "ghost"},
+            ],
+            "note": strings["note"].format(m=10),
             "estimate": {
-                # Same derivation as the middleware's spend estimate.
                 "provider": config.get(
                     "llm.selected_provider", "test-provider"
                 ),
@@ -1355,6 +1367,29 @@ class ChatManager:
     ):
         """Handles the /testconsent command for all stream types."""
         return self._handle_test_consent_stream(command, stream)
+
+    def _find_pending_consent_id(self) -> Optional[str]:
+        """Latest consent-card marker in history whose decision is still
+        pending in the middleware registry (#26 P2). Markers persist in
+        history after resolution, so the registry — not the marker — is
+        the source of truth; the scan just finds candidates newest-first.
+        """
+        if not self.chat_history:
+            return None
+        for msg in reversed(self.chat_history):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content", "")
+            if "_orakle_consent_card_|" not in content:
+                continue
+            match = re.search(
+                r"_orakle_consent_card_\|([A-Za-z0-9_]+)", content
+            )
+            if match and self.orakle_middleware.has_pending_consent(
+                match.group(1)
+            ):
+                return match.group(1)
+        return None
 
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
@@ -1879,6 +1914,34 @@ class ChatManager:
                     " your Orakle commands."
                 )
 
+            # --- Pending consent card (#26 P2 conversational close) ---
+            # The last unanswered consent marker in history + a live
+            # registry entry mean the card is still on screen. The model
+            # must know the authorization rules: only the tap authorizes,
+            # voice agreement is refused politely, and decline/defer/
+            # change-of-subject closes the card via the mechanical tag
+            # (the model proposes the close; the framework executes it
+            # and kills the token server-side).
+            pending_consent_id = self._find_pending_consent_id()
+            if pending_consent_id:
+                system_hint_content += (
+                    "\n\nPENDING CONFIRMATION CARD: A confirmation card is"
+                    " on screen (offer id: "
+                    f"{pending_consent_id}) asking the user to authorize a"
+                    " paid multi-step analysis. Authorization rules: ONLY"
+                    " a tap on the card's button authorizes it — a spoken"
+                    " or typed yes/agreement carries NO authority and must"
+                    " never be treated as approval. If the user agrees or"
+                    " tells you to go ahead, warmly insist that they tap"
+                    " the confirmation button on the screen (you cannot"
+                    " accept it by voice). If the user declines, defers it"
+                    " (\"later\", \"not now\"), or clearly moves on to"
+                    " something else, respond naturally and then close the"
+                    " card by outputting exactly <consent_close>"
+                    f"{pending_consent_id}</consent_close> as the very last"
+                    " thing in your response."
+                )
+
             # Wrap in <system_hint> tags if there's any content
             if system_hint_content.strip():
                 system_hint_content = (
@@ -2065,6 +2128,43 @@ class ChatManager:
                     doc_buffer += chunk
                 else:
                     text_buffer += chunk
+
+                # --- Conversational consent close (#26 P2) ---
+                # The model proposed dismissing the pending card via
+                # <consent_close>id</consent_close> (instructed by the
+                # pending-card hint). Strip the tag before it can reach
+                # TTS or the doc/sentence machinery, invalidate the token
+                # server-side (a closed card is a dead offer), and signal
+                # Polaris to dissolve the card. The tag can straddle
+                # chunks, hence the scan on the accumulated buffer.
+                if parsing_mode == "text" and "<consent_close>" in (
+                    text_buffer
+                ):
+                    close_match = re.search(
+                        r"<consent_close>([A-Za-z0-9_]+)"
+                        r"</consent_close>",
+                        text_buffer,
+                    )
+                    if close_match:
+                        decision_id = close_match.group(1)
+                        text_buffer = (
+                            text_buffer[: close_match.start()]
+                            + text_buffer[close_match.end():]
+                        )
+                        processed_answer = re.sub(
+                            r"\s*<consent_close>[A-Za-z0-9_]+"
+                            r"</consent_close>",
+                            "",
+                            processed_answer,
+                        )
+                        self.orakle_middleware.invalidate_offload_consent(
+                            decision_id
+                        )
+                        yield ndjson(
+                            "signal",
+                            "consent_closed",
+                            {"decision_id": decision_id},
+                        )
 
                 # --- State Machine for Parsing ---
                 # Loop to handle multiple state transitions within a single chunk (e.g., <doc>...</doc>)
