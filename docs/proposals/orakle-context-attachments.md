@@ -1,6 +1,7 @@
 # Proposal: Orakle Context Attachment System
 
 **Status:** Draft — discussion and decision tracking in [Issue #26](https://github.com/khromalabs/ainara/issues/26); this document is the versioned record, with major decisions from the thread backported here.
+**Updated:** 2026-10-27 — the agent-offload re-scope, the spend/consent ratification and the implementation state (P1 + P1.5) are backported in §12. Where an update supersedes original sections (§5–§6.6, §8, §10), those retain the original design record.
 **Author:** Rubén Gómez
 **Date:** 2026-10-17
 **Related:** [Issue #26](https://github.com/khromalabs/ainara/issues/26) (discussion), Issue #18 (framework policy doctrine — skills request, framework bounds), Issue #17 (tiered skills model — shared skill-metadata surface). Implementation files: Orakle middleware (`ainara/framework/orakle_middleware.py`), two-stage matcher (`ainara/framework/matcher/transformers.py` — stage-1 embeddings; outdated module name), chat manager persistence flow (`ainara/framework/chat_manager.py`), GREEN memories (`ainara/framework/green_memories.py`), ChatMemory (`ainara/framework/chat_memory.py`). Adjacent but out of scope: Polaris context-window status feedback.
@@ -657,6 +658,8 @@ This fits the user-is-authoritative philosophy.
 | `orakle.context.digest_chunk_bytes` | e.g. 24576 | Chunk size for map-reduce digestion of oversized results (§6.9) |
 | `orakle.context.digest_max_map_calls` | e.g. 12 | Sanity cap → beyond it, reject tier with guidance (§6.9) |
 
+**Update (re-scope, §12):** the `orakle.attachments.*` keys were dropped — never implemented; the store shrank to the future snapshot store. The live surface after P1/P1.5 is: `orakle.offload.raw_max_bytes` (24000), `orakle.offload.max_turns` (4), `orakle.offload.timeout` (300), `orakle.context.reserve_pct` (25, live), `orakle.context.chars_per_token` (3, live) and the standing `orakle.enable_agent_spawn` gate (false). The `orakle.nexus.*` render ceilings remain P2. The `digest_chunk_bytes` / `digest_max_map_calls` keys are mooted by the re-scope (chunked digestion collapsed into the agent loop).
+
 ## 9. Relationship to modern practice
 
 The design aligns with the converging industry consensus on context
@@ -688,6 +691,7 @@ as "just re-run the tool".
 
 ## 10. Phasing
 
+**Update (§12):** superseded by the re-scope phasing — P1 and P1.5 are implemented; P2 is the consent card, Polaris progress rendering, snapshot store and Nexus render ceiling; P3 is slice access for above-window payloads, `requires_analysis`, ledger-driven interpretation window (§6.10). Agent offload is no longer deferred: it is the primary mechanism. The table below retains the original pre-re-scope phasing record.
 | Phase | Contents | Risk |
 |---|---|---|
 | **1** | `context_policy` / `rehydrate` / `replayable` / `snapshot_validator` declarations · stub format · `attachment_created` chunk in `chat_manager` · AttachmentStore with **recipe records only** (`reexecute`) · capture metadata in every record from day one · registration-time consistency checks · **budget ledger** (turn gate + digestion gate, §6.9 — guards the existing interpretation path too) | Minimal; inert until a skill opts in (ledger excepted: it guards from day one) |
@@ -711,6 +715,7 @@ resolved by §6.8: the paradigm difference is expressible as
 
 ## 11. Open points
 
+**Update (§12):** points 1 (chunk-embedding parameters) and 4 (rehydration budget) are mooted by the re-scope — the rehydration and embeddings passes are out of scope. Point 2 (digest authoring) is partially resolved: the skill-side `analysis` field is implemented; the interpretation prompt remains the fallback. Points 3, 5–9 stay open where still relevant to the shrunken scope.
 1. **Embedding target for retrieval**: stub summaries (atomic,
    matcher-style) for the normal tier — resolved; **chunked payloads**
    for the oversized-attachment tier (§6.9 ladder tier 3), where slices
@@ -746,6 +751,111 @@ resolved by §6.8: the paradigm difference is expressible as
    GREEN. The latter would also force the overdue rename of the
    outdated `matcher/transformers.py` module name (Fastembed, not
    Transformers, for a while now).
+
+---
+
+## 12. Update log
+
+### 2026-10-19 — Re-scope ratified: agent-offload digestion becomes the primary mechanism
+
+Recorded in the issue thread. The inversion: for analysis-class
+workloads, ephemeral Bureau agent offload (formerly ladder tier 4,
+§6.9) is promoted to the primary mechanism for keeping raw data out of
+the conversational context.
+
+- Ladder tiers 2–3 collapse into the agent loop: chunked map-reduce
+  digestion and chunk-stub slice retrieval are a fixed,
+  framework-scripted way to read a payload piecewise and decide what
+  matters; a bounded Bureau comprehension agent does the same
+  *adaptively* — the model decides what to re-read. One mechanism
+  replaces two.
+- The rehydration pass (§6.3) and embeddings retrieval drop out of
+  scope. Follow-ups are served by *re-offload* (kill-on-complete,
+  fresh agent primed with prior conclusions), not by injecting stored
+  data into chat context.
+- The AttachmentStore shrinks to a snapshot store for the
+  non-replayable class only: no validators, no retrieval index, no
+  rehydration budget. §5–§6.6 remain the design record for a future
+  revival.
+- The budget ledger simplifies: raw data never enters the
+  conversational context under any policy, so it guards only history,
+  GREEN and digests.
+- What survives unchanged: §6.8's two delivery channels; §6.9 tier 1
+  (skill-side `analysis` digest — preferred free tier, implemented);
+  §5's policy declarations (now governing the render channel and the
+  future snapshot work).
+
+### 2026-10-27 — Spend axis and consent ratified (with #18)
+
+Follow-up thread on cost, provider rate limits and the reliability of
+agentic digestion on metered providers:
+
+- `orakle.offload.spend_policy` (`ask` | `allow` | `deny`), default
+  `ask` when the digestion model is metered. `allow` is always a
+  deliberate user decision (wizard), never a default. Maps 1:1 onto
+  #18's `prompt` / `allow_all` / restricted postures.
+- The **consent invariant**: *the model proposes and explains; the
+  framework decides; the user authorizes with their hand.* Consent is
+  a mechanical input event — a framework-rendered card with
+  framework-computed numbers and a one-shot, TTL'd decision token —
+  never LLM-adjudicated conversation text (hallucination,
+  historical contamination and prompt-injection proofs; the payload
+  about to be digested is untrusted content). Voice narration hands
+  off to the button; a spoken "yes" carries no authority in v1.
+- The consent card is the v1 of #18's confirmation primitive; offload
+  is its pilot client (framework-internal, single mechanical trigger).
+  **Economic impact (metered spend)** becomes #18's second sensitivity
+  axis, alongside destructive risk.
+- Sequencing: P1.5 (no UI required) → consent card ships with P2 →
+  wizard standing-consent is the `allow` path. `enable_agent_spawn`
+  stays `false` until the wizard step + progress UI land; the ledger
+  rejection doubles as the discoverability path.
+
+### 2026-10-27 — P1 + P1.5 implemented and live-tested
+
+Branch `dev012-agentloop`. Defaults preserve today's behavior except
+where noted.
+
+- **P1** (`d9e57286`, `3b0cd9e5`, `299fb538`, `e9e0e6a6`): run journal
+  in the agent loop (single artifact for progress, cancellation
+  reports and later resume); Bureau journal stream over the status
+  endpoint; size-ceiling router at the interpretation site
+  (`orakle.offload.raw_max_bytes`) routing oversized results to a
+  bounded, skill-less comprehension agent — the sanitization boundary,
+  only the digest returns to the conversation; reserved skill-side
+  `analysis` field (tier 1) preempting offload;
+  `_orakle_agent_progress_` signal chunks (Polaris rendering is P2).
+- **P1.5** (`1ba60428`, `2afb3fe8`, `a76661d6`):
+  - **Budget ledger, minimal v1 of §6.9**: the interpretation prompt
+    is gated at its single choke point (`stream_command_interpretation`)
+    against `window × (100 − reserve_pct)% × chars_per_token`. An
+    unresolvable window disables the guard — never reject blind. The
+    agentic path is exempt (own payload handling).
+  - **Behavior change vs §7**: a result too large for the ledger
+    budget with no consent for offload now **rejects with guidance
+    naming the setting** instead of silently inlining an overflow;
+    the rejection is also the discoverability path. Sub-budget
+    behavior is byte-identical.
+  - **Rate resilience**: concurrency 1 for digestion agents
+    (concurrent offload rejects with guidance); 429 backoff + one
+    retry on agent creation (shared helper, both spawn paths); failed
+    runs are never auto-retried — burned spend is not doubled without
+    consent.
+  - **Live integration test** (scenarios A–G against a real stack,
+    16384-token test window): all passing — inline regression, offload
+    happy path, digest boundary in history, Bureau-down guidance,
+    budget-fit inlining, ledger rejection, concurrency rejection.
+    Two bugs found and fixed: the no-skills failure rule made
+    skill-less digestion agents structurally unable to succeed
+    (`agent/core.py`), and the digest was written as prose without
+    the `<goal_complete>`/`<final_answer>` completion protocol
+    (blueprint now states it).
+- **Deferred**: digest cache (payload-hash keyed; the last P1.5
+  item) → next; consent card, Polaris `agent_progress` rendering,
+  snapshot store + re-offload, Nexus render inline ceiling +
+  `data_ref` hydration → P2; slice access for above-window payloads,
+  `requires_analysis` semantic flag, ledger-driven interpretation
+  window (§6.10) → P3.
 
 ---
 
