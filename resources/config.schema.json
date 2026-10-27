@@ -206,6 +206,31 @@
                 "match_providers": {
                     "type": "array",
                     "items": { "type": "string" }
+                },
+                "enable_agent_spawn": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Master switch for ephemeral Bureau agent spawning (requires_agent queries and issue #26 offload-digest routing). Off by default; standing consent is granted via the wizard."
+                },
+                "offload": {
+                    "type": "object",
+                    "properties": {
+                        "raw_max_bytes": {
+                            "type": "integer",
+                            "default": 24000,
+                            "description": "Skill result size above which conversational routing goes to offload digestion (issue #26)."
+                        },
+                        "max_turns": {
+                            "type": "integer",
+                            "default": 4,
+                            "description": "Turn bound for the bounded, skill-less digestion agent."
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "default": 300,
+                            "description": "Execution timeout (seconds) for the digestion agent."
+                        }
+                    }
                 }
             },
             "required": ["servers"]
