@@ -27,6 +27,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Generator, List, Literal, Optional, Union
 
@@ -1302,6 +1303,59 @@ class ChatManager:
             doc_format, doc_content = command_body.split(",", 1)
             return f"```{doc_format}\n{doc_content}```"
 
+    def _handle_test_consent_stream(self, command: str, stream: str):
+        """Handles streaming for the /testconsent command (issue #26 P2).
+
+        Emits the exact consent_request signal the middleware emits at
+        the mechanical trigger — but with a decision that is NOT
+        registered in the ConsentRegistry. The card renders and the
+        buttons work, yet any click resolves against the real
+        /consent/<decision_id> endpoint and comes back 'expired': the
+        one-shot token validation is exercised fail-closed, and nothing
+        can ever run off a fabricated card (the consent invariant,
+        demonstrated live).
+        """
+        usage_msg = (
+            "Usage: /testconsent — renders an inert consent card (any"
+            " button resolves as expired against the real endpoint)."
+        )
+        if stream != "json":
+            print(usage_msg)
+            return
+
+        yield ndjson("signal", "loading", {"state": "start"})
+        card = {
+            "type": "consent_request",
+            "decision_id": f"test_{uuid.uuid4().hex}",
+            # Fabricated token: never registered, never resolvable.
+            "token": "test-token-not-registered",
+            "ttl": 600,
+            "estimate": {
+                # Same derivation as the middleware's spend estimate.
+                "provider": config.get(
+                    "llm.selected_provider", "test-provider"
+                ),
+                "payload_bytes": 48211,
+                "est_input_tokens": 32074,
+                "max_calls": 4,
+            },
+        }
+        # Mirror the real turn's history marker (token never in history).
+        self.llm.add_msg(
+            f"\n_orakle_consent_card_|{card['decision_id']}\n",
+            self.chat_history,
+            "assistant",
+        )
+        yield ndjson("signal", "consent_request", card)
+        yield ndjson("signal", "loading", {"state": "stop"})
+        yield ndjson("signal", "completed", None)
+
+    def _handle_test_consent_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testconsent command for all stream types."""
+        return self._handle_test_consent_stream(command, stream)
+
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -1321,6 +1375,9 @@ class ChatManager:
 
         if command.lower().startswith("/testuserui"):
             return self._handle_test_user_ui_command(command, stream)
+
+        if command.lower().startswith("/testconsent"):
+            return self._handle_test_consent_command(command, stream)
 
         if command.lower().startswith("/tts"):
             return self._handle_test_tts_command(command, stream)
