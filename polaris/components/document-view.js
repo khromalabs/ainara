@@ -230,17 +230,16 @@ class DocumentView extends BaseComponent {
     /**
      * Build the consent card DOM (issue #26 P2).
      *
-     * Framed for the basic user per docs/guidelines/ui-philosophy.md:
-     * no tokens, no calls, no bytes — the only facts that feed the
-     * decision are time and rough cost, in plain language and big type.
-     * The ledger-computed numbers still arrive on the mechanical channel
-     * and are the source of this framing; the card just refuses to make
-     * the user interpret them.
+     * Generic decision surface (#18 primitive shape): the backend
+     * composes EVERYTHING the card shows — title, quote (the narration
+     * already spoken/persisted in the conversation), button labels and
+     * the session/expiry note, all localized to the session language.
+     * This component is strictly presentational and renders any future
+     * consent client unchanged.
      *
-     * Three decisions: approve once, always allow (flips the standing
-     * spend policy — the same deliberate decision as the wizard path),
-     * or deny. Buttons disable on first click; the card's status line is
-     * updated later by updateConsentCard() as the resumed run advances.
+     * The quote is the model explaining (subordinate); the title and
+     * buttons are the framework deciding (dominant) — the consent
+     * invariant made visible. TextContent only throughout.
      */
     renderConsentCard(documentElement, content) {
         documentElement.dataset.decisionId = content.decision_id;
@@ -249,50 +248,54 @@ class DocumentView extends BaseComponent {
 
         const headline = document.createElement('div');
         headline.className = 'consent-headline';
-        headline.textContent = 'Want me to work through this?';
+        headline.textContent = content.title || 'Accept?';
         card.appendChild(headline);
 
-        const desc = document.createElement('div');
-        desc.className = 'consent-description';
-        desc.textContent =
-            'There is a lot of data to read, so I would do it in '
-            + 'several steps. It usually takes under a minute and '
-            + 'uses a little extra of your '
-            + this.friendlyProviderName(content.estimate) + ' plan.';
-        card.appendChild(desc);
+        if (content.quote) {
+            const quote = document.createElement('div');
+            quote.className = 'consent-quote';
+            quote.textContent = content.quote;
+            card.appendChild(quote);
+        }
 
         const buttons = document.createElement('div');
         buttons.className = 'consent-buttons';
-        const mkButton = (decision, label, style) => {
-            const b = document.createElement('button');
-            b.className = 'consent-button ' + style;
-            b.textContent = label;
-            b.addEventListener('click', () => {
+        const decisions = content.buttons || [
+            { id: 'approve', label: 'Yes', style: 'primary' },
+            { id: 'deny', label: 'No', style: 'secondary' },
+            { id: 'always_allow', label: 'Always', style: 'ghost' },
+        ];
+        for (const b of decisions) {
+            const el = document.createElement('button');
+            el.className = 'consent-button ' + (b.style || 'secondary');
+            el.textContent = b.label;
+            el.addEventListener('click', () => {
                 // One click, one decision: freeze the card immediately
-                // (set-state-before-click lands synchronously).
+                // (set-state-before-click lands synchronously) and stop
+                // the expiry timer.
                 this.setConsentButtonsEnabled(documentElement, false);
+                if (documentElement.dataset.expiryTimer) {
+                    clearTimeout(
+                        Number(documentElement.dataset.expiryTimer)
+                    );
+                    delete documentElement.dataset.expiryTimer;
+                }
                 this.emitEvent('consent-decision', {
                     decisionId: content.decision_id,
                     token: content.token,
-                    decision: decision,
+                    decision: b.id,
                 });
             });
-            return b;
-        };
-        buttons.appendChild(mkButton('approve', 'Go ahead', 'primary'));
-        buttons.appendChild(mkButton('deny', 'Not now', 'secondary'));
-        buttons.appendChild(
-            mkButton('always_allow', 'Always allow, don\'t ask again',
-                'ghost'));
+            buttons.appendChild(el);
+        }
         card.appendChild(buttons);
 
-        const ttl = content.ttl || 600;
-        const ttlNote = document.createElement('div');
-        ttlNote.className = 'consent-ttl';
-        ttlNote.textContent =
-            'If I don\'t hear from you, this offer simply expires in '
-            + Math.round(ttl / 60) + ' minutes.';
-        card.appendChild(ttlNote);
+        if (content.note) {
+            const note = document.createElement('div');
+            note.className = 'consent-note';
+            note.textContent = content.note;
+            card.appendChild(note);
+        }
 
         const status = document.createElement('div');
         status.className = 'consent-status';
@@ -302,29 +305,37 @@ class DocumentView extends BaseComponent {
         contentArea.className = 'document-content consent-content';
         contentArea.appendChild(card);
         documentElement.appendChild(contentArea);
+
+        // The offer is never silently auto-closed (#26 P2): on expiry it
+        // stays visible but visibly dead. The assistant can still close
+        // it conversationally (consent_closed) after this.
+        const ttlMs = (content.ttl || 600) * 1000;
+        documentElement.dataset.expiryTimer = String(setTimeout(() => {
+            this.updateConsentCard(content.decision_id, 'expired');
+        }, ttlMs));
     }
 
     /**
-     * Plain-language plan name from the mechanical-channel estimate
-     * ("gemini/gemini-3.8-flash" -> "Gemini"). Unknown providers fall
-     * back to a capitalized prefix; local ones read as no plan at all.
+     * Dissolve a consent card (#26 P2 conversational close): the model
+     * proposed closing it and the framework agreed. Soft fade, then
+     * gone — no residue; the conversation's record is the exchange.
      */
-    friendlyProviderName(estimate) {
-        const raw = (estimate && estimate.provider) || '';
-        const prefix = raw.split('/')[0].trim().toLowerCase();
-        const known = {
-            gemini: 'Gemini',
-            openai: 'OpenAI',
-            anthropic: 'Claude',
-            mistral: 'Mistral',
-            deepseek: 'DeepSeek',
-            groq: 'Groq',
-        };
-        if (known[prefix]) return known[prefix];
-        if (!prefix || prefix === 'local' || prefix === 'ollama') {
-            return 'local';
+    removeConsentCard(decisionId) {
+        const el = this.container.querySelector(
+            `.document-item[data-decision-id="${decisionId}"]`
+        );
+        if (!el) return;
+        if (el.dataset.expiryTimer) {
+            clearTimeout(Number(el.dataset.expiryTimer));
+            delete el.dataset.expiryTimer;
         }
-        return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+        el.classList.add('consent-closing');
+        setTimeout(() => {
+            el.remove();
+            if (!this.container.firstElementChild) {
+                this.emitEvent('empty');
+            }
+        }, 400);
     }
 
     setConsentButtonsEnabled(documentElement, enabled) {

@@ -2859,6 +2859,19 @@ Visit our project site at: https://ainara.app
                 }
                 break;
 
+            case 'consent_closed':
+                // Conversational close (#26 P2): the model proposed
+                // dismissing the pending card (user declined, deferred or
+                // moved on) and the framework killed the token
+                // server-side. The card dissolves quietly — no residue;
+                // the conversation's record is the exchange.
+                if (event.type === 'signal') {
+                    this.documentView.removeConsentCard(
+                        event.content?.decision_id
+                    );
+                }
+                break;
+
             case 'renderNexus':
                 if (event.type === 'ui') {
                     const orakleUrl = this.config.get('orakle.api_url');
