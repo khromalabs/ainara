@@ -444,70 +444,50 @@ th[data-sort]:hover .tablesort__icon {
 
 /* Consent card (#26 P2) — framework-rendered decision surface for the
    offload spend axis (pilot client of #18's confirmation primitive).
-   Numbers on the card are framework-computed; textContent-only rendering. */
+   Framed per docs/guidelines/ui-philosophy.md: plain language (no
+   tokens/calls/bytes — time and rough cost only), big type, stacked
+   touch-sized targets. Numbers on the card are framework-computed. */
 .consent-card {
-    max-width: 560px;
-    margin: 12px auto;
-    padding: 16px 20px;
+    max-width: 620px;
+    margin: 24px auto;
+    padding: 28px 32px;
     border: 1px solid rgba(80, 214, 219, 0.35);
-    border-radius: 10px;
+    border-radius: 16px;
     background: rgba(20, 30, 34, 0.85);
 }
 
 .consent-headline {
-    font-size: 14px;
+    font-size: 22px;
     font-weight: bold;
     color: rgb(80, 214, 219);
-    margin-bottom: 8px;
-}
-
-.consent-description {
-    font-size: 12px;
-    line-height: 1.5;
     margin-bottom: 12px;
 }
 
-.consent-estimate {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 8px 0;
-    margin-bottom: 8px;
-}
-
-.consent-estimate-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    padding: 2px 0;
-}
-
-.consent-estimate-label {
-    opacity: 0.65;
-}
-
-.consent-ttl {
-    font-size: 11px;
-    font-style: italic;
-    opacity: 0.6;
-    margin-bottom: 14px;
+.consent-description {
+    font-size: 17px;
+    line-height: 1.55;
+    margin-bottom: 22px;
 }
 
 .consent-buttons {
     display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 14px;
 }
 
 .consent-button {
-    flex: 1;
-    padding: 8px 12px;
-    border-radius: 6px;
+    width: 100%;
+    min-height: 52px; /* touch-friendly target */
+    padding: 12px 20px;
+    border-radius: 12px;
     border: 1px solid rgba(80, 214, 219, 0.5);
     background: transparent;
-    color: #d4d4d4;
+    color: #e8e8e8;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 17px;
     cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .consent-button:hover:not(:disabled) {
@@ -524,9 +504,31 @@ th[data-sort]:hover .tablesort__icon {
     font-weight: bold;
 }
 
+.consent-button.primary:hover:not(:disabled) {
+    border-color: rgba(80, 214, 219, 0.9);
+}
+
+/* The standing-policy decision stays deliberately quieter than the
+   per-run one, but remains a full touch-sized target. */
+.consent-button.ghost {
+    border-color: transparent;
+    opacity: 0.75;
+    font-size: 15px;
+}
+
+.consent-button.ghost:hover:not(:disabled) {
+    opacity: 1;
+}
+
+.consent-ttl {
+    font-size: 14px;
+    opacity: 0.6;
+    margin-bottom: 12px;
+}
+
 .consent-status {
     display: none;
-    font-size: 12px;
+    font-size: 16px;
     color: rgb(80, 214, 219);
 }
 

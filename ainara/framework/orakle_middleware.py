@@ -1500,15 +1500,18 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                             card["decision_id"],
                         )
                         # Voice narration hands off to the button; the
-                        # card opens on screen with the framework-computed
-                        # numbers. A spoken "yes" carries no consent
-                        # authority (ratified: mechanical input only).
+                        # card opens on screen with the decision framed in
+                        # plain language (time + rough cost, no jargon —
+                        # ui-philosophy.md). A spoken "yes" carries no
+                        # consent authority (ratified: mechanical input
+                        # only).
                         yield (
-                            "\nThe result of that request is too large to"
-                            " read in one pass, and analyzing it needs a"
-                            " multi-step agent run that may incur costs on"
-                            " your provider. Tap the confirmation button on"
-                            " the screen if you'd like me to go ahead.\n\n"
+                            "\nThat's a lot of data for me to read in one"
+                            " go. I can work through it step by step — it"
+                            " usually takes under a minute and uses a"
+                            " little extra of your paid plan. Tap the"
+                            " confirmation button on the screen if you'd"
+                            " like me to go ahead.\n\n"
                         )
                         yield {
                             "type": "consent_request",

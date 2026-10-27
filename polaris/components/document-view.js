@@ -230,6 +230,13 @@ class DocumentView extends BaseComponent {
     /**
      * Build the consent card DOM (issue #26 P2).
      *
+     * Framed for the basic user per docs/guidelines/ui-philosophy.md:
+     * no tokens, no calls, no bytes — the only facts that feed the
+     * decision are time and rough cost, in plain language and big type.
+     * The ledger-computed numbers still arrive on the mechanical channel
+     * and are the source of this framing; the card just refuses to make
+     * the user interpret them.
+     *
      * Three decisions: approve once, always allow (flips the standing
      * spend policy — the same deliberate decision as the wizard path),
      * or deny. Buttons disable on first click; the card's status line is
@@ -242,65 +249,21 @@ class DocumentView extends BaseComponent {
 
         const headline = document.createElement('div');
         headline.className = 'consent-headline';
-        headline.textContent = 'Approval needed: multi-step analysis';
+        headline.textContent = 'Want me to work through this?';
         card.appendChild(headline);
 
         const desc = document.createElement('div');
         desc.className = 'consent-description';
         desc.textContent =
-            'Analyzing this result needs a bounded agent run that may ' +
-            'incur costs on your LLM provider. Nothing runs until you ' +
-            'approve.';
+            'There is a lot of data to read, so I would do it in '
+            + 'several steps. It usually takes under a minute and '
+            + 'uses a little extra of your '
+            + this.friendlyProviderName(content.estimate) + ' plan.';
         card.appendChild(desc);
-
-        const est = content.estimate || {};
-        const rows = [
-            ['Provider', est.provider || 'unknown'],
-            ['Estimated input',
-                (est.est_input_tokens != null
-                    ? '~' + est.est_input_tokens.toLocaleString() + ' tokens'
-                    : 'unknown')],
-            ['Most', (est.max_calls != null ? est.max_calls : '?')
-                + ' LLM calls'],
-            ['Data size',
-                (est.payload_bytes != null
-                    ? Math.round(est.payload_bytes / 1024 * 10) / 10
-                        + ' KB'
-                    : 'unknown')],
-        ];
-        const table = document.createElement('div');
-        table.className = 'consent-estimate';
-        for (const [label, value] of rows) {
-            const row = document.createElement('div');
-            row.className = 'consent-estimate-row';
-            const l = document.createElement('span');
-            l.className = 'consent-estimate-label';
-            l.textContent = label;
-            const v = document.createElement('span');
-            v.className = 'consent-estimate-value';
-            v.textContent = value;
-            row.appendChild(l);
-            row.appendChild(v);
-            table.appendChild(row);
-        }
-        card.appendChild(table);
-
-        const ttl = content.ttl || 600;
-        const ttlNote = document.createElement('div');
-        ttlNote.className = 'consent-ttl';
-        ttlNote.textContent =
-            'This offer expires in ' + Math.round(ttl / 60) + ' minutes. ' +
-            'Voice confirmation is not accepted for this decision.';
-        card.appendChild(ttlNote);
 
         const buttons = document.createElement('div');
         buttons.className = 'consent-buttons';
-        const decisions = [
-            ['approve', 'Analyze once', 'primary'],
-            ['always_allow', 'Always allow', 'secondary'],
-            ['deny', 'Not now', 'secondary'],
-        ];
-        for (const [decision, label, style] of decisions) {
+        const mkButton = (decision, label, style) => {
             const b = document.createElement('button');
             b.className = 'consent-button ' + style;
             b.textContent = label;
@@ -314,9 +277,22 @@ class DocumentView extends BaseComponent {
                     decision: decision,
                 });
             });
-            buttons.appendChild(b);
-        }
+            return b;
+        };
+        buttons.appendChild(mkButton('approve', 'Go ahead', 'primary'));
+        buttons.appendChild(mkButton('deny', 'Not now', 'secondary'));
+        buttons.appendChild(
+            mkButton('always_allow', 'Always allow, don\'t ask again',
+                'ghost'));
         card.appendChild(buttons);
+
+        const ttl = content.ttl || 600;
+        const ttlNote = document.createElement('div');
+        ttlNote.className = 'consent-ttl';
+        ttlNote.textContent =
+            'If I don\'t hear from you, this offer simply expires in '
+            + Math.round(ttl / 60) + ' minutes.';
+        card.appendChild(ttlNote);
 
         const status = document.createElement('div');
         status.className = 'consent-status';
@@ -326,6 +302,29 @@ class DocumentView extends BaseComponent {
         contentArea.className = 'document-content consent-content';
         contentArea.appendChild(card);
         documentElement.appendChild(contentArea);
+    }
+
+    /**
+     * Plain-language plan name from the mechanical-channel estimate
+     * ("gemini/gemini-3.8-flash" -> "Gemini"). Unknown providers fall
+     * back to a capitalized prefix; local ones read as no plan at all.
+     */
+    friendlyProviderName(estimate) {
+        const raw = (estimate && estimate.provider) || '';
+        const prefix = raw.split('/')[0].trim().toLowerCase();
+        const known = {
+            gemini: 'Gemini',
+            openai: 'OpenAI',
+            anthropic: 'Claude',
+            mistral: 'Mistral',
+            deepseek: 'DeepSeek',
+            groq: 'Groq',
+        };
+        if (known[prefix]) return known[prefix];
+        if (!prefix || prefix === 'local' || prefix === 'ollama') {
+            return 'local';
+        }
+        return prefix.charAt(0).toUpperCase() + prefix.slice(1);
     }
 
     setConsentButtonsEnabled(documentElement, enabled) {
@@ -347,12 +346,10 @@ class DocumentView extends BaseComponent {
         const statusEl = el.querySelector('.consent-status');
         if (!statusEl) return;
         const messages = {
-            started: 'Approved — analyzing; the result will stream into ' +
-                'the conversation when ready…',
-            done: 'Analysis completed.',
-            denied: 'Declined. Nothing was run or charged.',
-            expired: 'This offer expired — ask again to re-run the ' +
-                'analysis.',
+            started: 'Working on it — I\'ll report back here when it\'s done.',
+            done: 'Done.',
+            denied: 'Skipped — nothing ran.',
+            expired: 'This offer expired — just ask me again.',
         };
         if (!messages[status]) {
             // Unknown/pending status: leave the status line untouched but
