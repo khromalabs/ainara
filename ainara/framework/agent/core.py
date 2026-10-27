@@ -366,7 +366,14 @@ Is the goal achieved now? Please follow the instructions provided and continue u
             self.llm.add_msg(evaluation_prompt, self.context, "user")
             logger.info(f"\nUSER:\n{evaluation_prompt}\n\n")
 
-            if not skill_executed:
+            # "No skills used" is a failure criterion only for agents
+            # that HAVE skills to use — it detects an agent chatting
+            # instead of acting. Skill-less agents (#26 offload-digest
+            # comprehension agents, allowed_skills: [] by design: they
+            # are the sanitization boundary and can never call skills)
+            # are judged solely by their final answer, so this heuristic
+            # must never fire for them.
+            if not skill_executed and self.allowed_skills:
                 turn_without_skills = turn_without_skills + 1
                 if turn_without_skills > max_turns_without_skills:
 
