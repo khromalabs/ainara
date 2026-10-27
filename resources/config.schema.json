@@ -231,6 +231,21 @@
                             "description": "Execution timeout (seconds) for the digestion agent."
                         }
                     }
+                },
+                "context": {
+                    "type": "object",
+                    "properties": {
+                        "reserve_pct": {
+                            "type": "integer",
+                            "default": 25,
+                            "description": "Percentage of the context window kept free (answer + follow-up headroom) when the budget ledger gates the interpretation prompt (issue #26 §6.9)."
+                        },
+                        "chars_per_token": {
+                            "type": "integer",
+                            "default": 3,
+                            "description": "Conservative bytes-per-token conversion for the budget ledger, multilingual-safe."
+                        }
+                    }
                 }
             },
             "required": ["servers"]

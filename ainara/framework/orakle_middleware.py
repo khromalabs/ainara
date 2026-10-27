@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from typing import Any, Dict, Generator, List, Optional, Union
 
@@ -306,6 +307,23 @@ class OrakleMiddleware:
         self.offload_timeout = self.config_manager.get(
             "orakle.offload.timeout", 300
         )
+        # Budget ledger (issue #26 §6.9, minimal v1): guards the
+        # interpretation path — the choke point where raw skill data
+        # enters a prompt wholesale. The ceiling derives from the LLM
+        # backend's resolved context window minus a reserve percentage
+        # kept free for the answer and follow-up headroom; bytes↔tokens
+        # uses a conservative multilingual conversion. History/GREEN
+        # accounting and digestion gating arrive with the full ledger.
+        self.context_reserve_pct = self.config_manager.get(
+            "orakle.context.reserve_pct", 25
+        )
+        self.context_chars_per_token = self.config_manager.get(
+            "orakle.context.chars_per_token", 3
+        )
+        # Rate resilience (issue #26 P1.5): concurrency 1 for digestion
+        # agents — concurrent oversized results reject with guidance
+        # instead of stampeding a metered provider.
+        self._offload_lock = threading.Lock()
 
         logger.info(
             "Initialized OrakleMiddleware with Transformer Matcher:"
@@ -1507,6 +1525,44 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         if buffer:
             yield buffer
 
+    def _interpretation_budget_bytes(self) -> int:
+        """
+        Budget ledger (issue #26 §6.9, minimal v1): byte ceiling for the
+        whole interpretation prompt.
+
+        Derived from the backend's resolved context window (explicit
+        config → backend resolution → per-backend default, floored at
+        MIN_VIABLE_CONTEXT_WINDOW) minus the reserve percentage, kept
+        free for the answer and follow-up headroom. Returns 0 when no
+        window can be resolved, disabling the guard — never reject
+        blind.
+        """
+        try:
+            window_tokens = int(self.llm.get_context_window())
+        except Exception:
+            # Any resolution failure disables the guard: never reject
+            # blind.
+            window_tokens = 0
+        if window_tokens <= 0:
+            return 0
+        reserve_pct = min(max(self.context_reserve_pct, 0), 90)
+        usable_tokens = window_tokens * (100 - reserve_pct) / 100
+        return int(usable_tokens * self.context_chars_per_token)
+
+    def _oversized_guidance(self, offer_setting: bool = False) -> str:
+        """Rejection message for results that cannot fit the prompt."""
+        setting_hint = (
+            " You can enable agentic analysis in the settings to let me"
+            " process it in steps, or try asking about a specific part"
+            " of it."
+            if offer_setting
+            else " Try asking about a specific part of it."
+        )
+        return (
+            "\nI retrieved the data but it is too large to analyze in one"
+            f" pass right now.{setting_hint}\n\n"
+        )
+
     def stream_command_interpretation(
         self,
         results: List[str],
@@ -1557,6 +1613,24 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             raise ValueError(
                 "system_message is not initialized in OrakleMiddleware"
             )
+
+        # Budget ledger gate (issue #26 §6.9, minimal v1). The
+        # interpretation prompt is the one place raw skill data enters
+        # a prompt wholesale; when it exceeds the ledger budget,
+        # reject with guidance instead of overflowing the context
+        # window at the provider (which surfaces as an opaque upstream
+        # error). The agentic path has its own payload handling.
+        if not agentic_mode:
+            budget = self._interpretation_budget_bytes()
+            if budget and len(interpretation_prompt) > budget:
+                logger.warning(
+                    "ORAKLE: interpretation prompt (%d bytes) exceeds the"
+                    " ledger budget (%d bytes); rejecting with guidance.",
+                    len(interpretation_prompt),
+                    budget,
+                )
+                yield self._oversized_guidance(offer_setting=True)
+                return
 
         # Get interpretation as a stream
         interpretation_stream = self.llm.chat(
@@ -1631,21 +1705,18 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 )
                 user_context["recent_conversation"] = context_summary
 
-            # Create agent via Bureau API
-            create_response = requests.post(
-                f"{bureau_url}/v1/agents",
-                json={
-                    "goal": query,
-                    "blueprint": blueprint,
-                    "user_context": user_context,
-                    "max_turns": 15,
-                    "execution_timeout": execution_timeout,
-                },
-                timeout=5,
+            # Create agent via Bureau API (shared helper: 429 backoff
+            # + one retry, issue #26 P1.5)
+            create_response = self._create_bureau_agent(
+                bureau_url,
+                goal=query,
+                blueprint=blueprint,
+                user_context=user_context,
+                max_turns=15,
+                execution_timeout=execution_timeout,
             )
 
-            if create_response.status_code != 202:
-                logger.error(f"Failed to create agent: {create_response.text}")
+            if create_response is None:
                 return None
 
             agent_data = create_response.json()
@@ -1777,6 +1848,16 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     )
                 )
 
+            elif status_response.status_code == 429:
+                # Rate limited: back off and keep polling — the run is
+                # already in flight and its cost is already committed
+                # (issue #26 P1.5). Still respects max_wait.
+                logger.warning(
+                    "Agent status poll rate-limited (429); backing off."
+                )
+                time.sleep(10)
+                elapsed += 10
+
             elif status_response.status_code == 500:
                 # Internal Server Error - execution error
                 status_data = status_response.json()
@@ -1820,6 +1901,18 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         bureau_host = bureau_config.get("host", "127.0.0.1")
         bureau_port = bureau_config.get("port", 8010)
         bureau_url = f"http://{bureau_host}:{bureau_port}"
+
+        # Concurrency 1 (issue #26 P1.5): a second oversized result while
+        # one digestion agent runs is rejected instead of queueing — two
+        # bounded agents back-to-back would stampede a metered provider
+        # and multiply the very spend the ceiling exists to bound. The
+        # caller turns the None return into reject-with-guidance.
+        if not self._offload_lock.acquire(blocking=False):
+            logger.warning(
+                "ORAKLE: a digestion agent is already running; rejecting"
+                " concurrent offload."
+            )
+            return None
 
         try:
             logger.info(
@@ -1868,23 +1961,16 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 f"<tool_result>\n{raw_result}\n</tool_result>"
             )
 
-            create_response = requests.post(
-                f"{bureau_url}/v1/agents",
-                json={
-                    "goal": goal,
-                    "blueprint": blueprint,
-                    "user_context": user_context,
-                    "max_turns": self.offload_max_turns,
-                    "execution_timeout": self.offload_timeout,
-                },
-                timeout=5,
+            create_response = self._create_bureau_agent(
+                bureau_url,
+                goal=goal,
+                blueprint=blueprint,
+                user_context=user_context,
+                max_turns=self.offload_max_turns,
+                execution_timeout=self.offload_timeout,
             )
 
-            if create_response.status_code != 202:
-                logger.error(
-                    "Failed to create digestion agent:"
-                    f" {create_response.text}"
-                )
+            if create_response is None:
                 return None
 
             agent_data = create_response.json()
@@ -1912,3 +1998,49 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 exc_info=True,
             )
             return None
+        finally:
+            self._offload_lock.release()
+
+    def _create_bureau_agent(
+        self,
+        bureau_url: str,
+        goal: str,
+        blueprint: dict,
+        user_context: dict,
+        max_turns: int,
+        execution_timeout: int,
+    ) -> Optional[requests.Response]:
+        """
+        POST the agent creation request to Bureau.
+
+        On 429 (rate limit — the P1.5 reliability failure mode), back
+        off once and retry; a repeated 429 gives up. No auto-retry of a
+        failed *run* exists by design: a run that already burned spend
+        is never silently re-run without consent.
+        """
+        payload = {
+            "goal": goal,
+            "blueprint": blueprint,
+            "user_context": user_context,
+            "max_turns": max_turns,
+            "execution_timeout": execution_timeout,
+        }
+        for attempt in (1, 2):
+            response = requests.post(
+                f"{bureau_url}/v1/agents", json=payload, timeout=5
+            )
+            if response.status_code != 429:
+                if response.status_code != 202:
+                    logger.error(
+                        "Failed to create agent:"
+                        f" {response.text}"
+                    )
+                    return None
+                return response
+            if attempt == 1:
+                logger.warning(
+                    "ORAKLE: agent creation rate-limited (429); backing"
+                    " off 15 s before one retry."
+                )
+                time.sleep(15)
+        return None
