@@ -16,6 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
+import json
 import logging
 import mimetypes
 import sys
@@ -27,6 +28,7 @@ from flask import send_from_directory
 from ainara.framework.config import config, register_nexus_root, nexus_prefix_from_module_name
 from ainara.framework.mcp.client_manager import MCPClientManager
 from ainara.framework.nexus_apps import (
+    BUNDLE_MANIFEST,
     register_bundle_namespace,
     resolve_app_payload,
 )
@@ -59,6 +61,16 @@ class NexusSkillProvider(BasePythonSkillProvider):
         self.nexus_path = config.get_nexus_base_path()
         self.capabilities: Dict[str, Dict[str, Any]] = {}
         self.bundle_config_params = {}
+        # Version-staleness tracking: what this process loaded per bundle
+        # ('vendor/bundle' -> {version, manifest_path, bundle_dir}) and the
+        # drift warnings already emitted (warn-once; see
+        # _check_bundle_version_drift). Long-running hosts (standalone
+        # Orakle spawned by scripts/scheduler.py) never re-import bundle
+        # modules, so a Polaris wizard update swaps the files on disk while
+        # the process keeps executing the code it loaded at startup —
+        # silently, without these diagnostics.
+        self._loaded_bundle_versions: Dict[str, Dict[str, Any]] = {}
+        self._bundle_drift_warnings: Dict[str, str] = {}
 
         # Namespace resolution: app-shaped roots (dev repo payload/,
         # installed bundles) have no physical ainara/nexus/<vendor>/<bundle>
@@ -242,6 +254,10 @@ class NexusSkillProvider(BasePythonSkillProvider):
         prefix_module = f"ainara.nexus.{vendor}.{bundle}"
         logger.info(f"Scanning for Nexus bundles for: {prefix_module}")
 
+        # Record what this process is loading so execute() can detect a
+        # later on-disk update (see _check_bundle_version_drift).
+        self._record_loaded_bundle_version(vendor, bundle, bundle_dir)
+
         # External Nexus roots must be registered BEFORE skill
         # instantiation so that `Skill._get_config_prefix()` can
         # derive the correct full config keys from `__module__`.
@@ -347,6 +363,162 @@ class NexusSkillProvider(BasePythonSkillProvider):
 
         self._collect_bundle_config_params(vendor, bundle, prefix_module)
         all_caps.update(bundle_caps)
+
+    # ------------------------------------------------------------------
+    # Bundle staleness diagnostics
+    #
+    # Installed bundles are swapped atomically on disk (install protocol
+    # v0), but Python never re-imports the modules a process already
+    # loaded, and the mid-session modification guard in
+    # BasePythonSkillProvider.execute() only covers user skills (nexus
+    # providers get no startup_time). A host that stays up across a
+    # Polaris wizard update — standalone Orakle spawned by
+    # scripts/scheduler.py, notably — therefore keeps executing the code
+    # it loaded at startup, silently. These helpers make that state
+    # observable: the loaded manifest version is logged at load time and
+    # re-checked on every execution, warning once when the on-disk bundle
+    # no longer matches it. Warn-only by design: a pending restart must
+    # not take scheduled runs down.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_manifest_path(bundle_dir: Path) -> Path:
+        """Locate nexus.json for a loaded bundle directory.
+
+        Installed apps: bundle root == payload dir (manifest inside).
+        Dev repos: manifest sits next to the payload/ directory.
+        """
+        manifest_path = bundle_dir / BUNDLE_MANIFEST
+        if not manifest_path.is_file():
+            manifest_path = bundle_dir.parent / BUNDLE_MANIFEST
+        return manifest_path
+
+    @staticmethod
+    def _read_manifest_version(manifest_path: Path) -> Optional[str]:
+        """Quiet manifest version read — no logging; callers decide.
+
+        Returns None when missing, unreadable, or lacking a version.
+        (read_manifest() in framework.nexus_apps already warns, but only
+        at load time; the drift check needs its own silent read.)
+        """
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            version = data.get("manifest", {}).get("version")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return str(version) if version else None
+
+    def _record_loaded_bundle_version(
+        self, vendor: str, bundle: str, bundle_dir: Path
+    ) -> None:
+        """Snapshot the manifest version this process is loading.
+
+        Called from _load_bundle, i.e. exactly when the bundle modules are
+        imported, so the recorded version is the code that will actually
+        execute. Also emits the one log line that makes "which build is
+        this process running?" answerable from orakle.log alone.
+        """
+        key = f"{vendor}/{bundle}"
+        manifest_path = self._find_manifest_path(bundle_dir)
+        version = self._read_manifest_version(manifest_path)
+        self._loaded_bundle_versions[key] = {
+            "version": version,
+            "manifest_path": manifest_path,
+            "bundle_dir": bundle_dir,
+        }
+        # Fresh load: clear any drift warning from a previous scan.
+        self._bundle_drift_warnings.pop(key, None)
+        logger.info(
+            f"Loaded bundle '{key}' v{version or 'unknown'}"
+            f" from {bundle_dir}"
+        )
+
+    def _check_bundle_version_drift(
+        self, capability_data: Dict[str, Any]
+    ) -> None:
+        """Warn once when the on-disk bundle differs from the loaded one.
+
+        Three warn-worthy states, each emitted once per occurrence (a
+        return to a healthy match re-arms the warning):
+
+        - version drift: on-disk manifest version != loaded version
+        - manifest missing while the bundle directory still exists
+          (update in flight or corrupted install)
+        - manifest present but unreadable
+
+        A vanished bundle *directory* is deliberately silent: that is an
+        uninstall/swap; execution will fail on its own and a manifest
+        warning would be noise.
+        """
+        vendor = capability_data.get("vendor")
+        bundle = capability_data.get("bundle")
+        if not vendor or not bundle:
+            return
+        key = f"{vendor}/{bundle}"
+        loaded = self._loaded_bundle_versions.get(key)
+        if not loaded:
+            return
+        loaded_version = loaded["version"] or "unknown"
+        manifest_path: Path = loaded["manifest_path"]
+        bundle_dir: Path = loaded["bundle_dir"]
+
+        signature: Optional[str] = None
+        message: Optional[str] = None
+        if not bundle_dir.exists():
+            # Uninstall/swap in progress — stay silent (see docstring).
+            self._bundle_drift_warnings.pop(key, None)
+            return
+        if not manifest_path.is_file():
+            signature = "missing"
+            message = (
+                f"Bundle '{key}' manifest missing at {manifest_path}"
+                f" although the bundle directory still exists — update in"
+                f" flight or corrupted install; this process keeps"
+                f" executing loaded v{loaded_version}."
+            )
+        else:
+            disk_version = self._read_manifest_version(manifest_path)
+            if disk_version is None:
+                signature = "unreadable"
+                message = (
+                    f"Bundle '{key}' manifest unreadable at"
+                    f" {manifest_path}; this process keeps executing"
+                    f" loaded v{loaded_version}."
+                )
+            elif disk_version != loaded["version"]:
+                signature = f"drift:{disk_version}"
+                message = (
+                    f"Bundle '{key}' updated on disk (loaded"
+                    f" v{loaded_version}, on-disk v{disk_version}) but this"
+                    f" process has not reloaded it — the previously loaded"
+                    f" code keeps executing until restart. Restart the"
+                    f" application (or the scheduler.py services) to apply"
+                    f" the update."
+                )
+
+        if signature is None:
+            # Healthy match — re-arm warn-once for a future drift.
+            self._bundle_drift_warnings.pop(key, None)
+            return
+        if self._bundle_drift_warnings.get(key) == signature:
+            return
+        self._bundle_drift_warnings[key] = signature
+        logger.warning(message)
+
+    def execute(self, name: str, arguments: Dict[str, Any]) -> Any:
+        """Execute a nexus skill, after bundle-staleness diagnostics."""
+        capability_data = self.capabilities.get(name)
+        if capability_data:
+            try:
+                self._check_bundle_version_drift(capability_data)
+            except Exception:
+                # Diagnostics must never break skill execution.
+                logger.warning(
+                    f"Bundle version drift check failed for '{name}'",
+                    exc_info=True,
+                )
+        return super().execute(name, arguments)
 
     def serve_component(self, component_path: str) -> Any:
         """Serve a UI component file from a Nexus bundle."""
