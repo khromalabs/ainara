@@ -1799,7 +1799,11 @@ class ComRing extends BaseComponent {
             const contentType = response.headers.get('content-type') || '';
             if (!response.ok || contentType.includes('application/json')) {
                 const body = await response.json().catch(() => ({}));
-                const expired = body.status === 'expired' || response.status === 410;
+                // A denial never reads "expired": the user's act is
+                // the answer, whatever state the token was in.
+                const expired =
+                    (body.status === 'expired' || response.status === 410) &&
+                    decision !== 'deny';
                 this.documentView.updateConsentCard(
                     decisionId,
                     expired ? 'expired' : 'denied'
