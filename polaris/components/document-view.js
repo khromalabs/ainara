@@ -270,6 +270,7 @@ class DocumentView extends BaseComponent {
             { id: 'always_allow', label: 'Always', style: 'ghost' },
         ];
         const keyBindings = {};
+        const decisionEls = {};
         for (const b of decisions) {
             const el = document.createElement('button');
             el.className = 'consent-button ' + (b.style || 'secondary');
@@ -297,9 +298,10 @@ class DocumentView extends BaseComponent {
             }
 
             el.addEventListener('click', () => {
-                this.resolveConsent(documentElement, content, b.id);
+                this.resolveConsent(documentElement, content, b.id, el);
             });
             buttons.appendChild(el);
+            decisionEls[b.id] = el;
         }
         card.appendChild(buttons);
 
@@ -321,7 +323,9 @@ class DocumentView extends BaseComponent {
             if (!decision) return;
             event.preventDefault();
             event.stopPropagation();
-            this.resolveConsent(documentElement, content, decision);
+            this.resolveConsent(
+                documentElement, content, decision, decisionEls[decision]
+            );
         };
         document.addEventListener('keydown', onKeyDown, true);
         documentElement.consentKeyHandler = onKeyDown;
@@ -359,8 +363,19 @@ class DocumentView extends BaseComponent {
      * by the button click and the Alt+<letter> accelerator; the keyboard
      * listener stays registered but self-guards on the frozen buttons.
      */
-    resolveConsent(documentElement, content, decision) {
+    resolveConsent(documentElement, content, decision, buttonEl) {
         this.setConsentButtonsEnabled(documentElement, false);
+        // The chosen answer stays legible under the freeze: a yellow ring
+        // marks what the user's hand decided (tap or Alt-key) while the
+        // unchosen options fade further. The buttons row keeps no other
+        // record — the conversation's record is the exchange.
+        const buttonsRow = documentElement.querySelector('.consent-buttons');
+        if (buttonsRow) {
+            buttonsRow.classList.add('resolved');
+        }
+        if (buttonEl) {
+            buttonEl.classList.add('consent-chosen');
+        }
         if (documentElement.dataset.expiryTimer) {
             clearTimeout(Number(documentElement.dataset.expiryTimer));
             delete documentElement.dataset.expiryTimer;
@@ -455,7 +470,15 @@ class DocumentView extends BaseComponent {
         };
         if (!messages[status]) {
             // Unknown/pending status: leave the status line untouched but
-            // re-arm the buttons so the decision can be re-taken.
+            // re-arm the buttons so the decision can be re-taken — which
+            // also means unmarking the previous choice, if any.
+            const buttonsRow = el.querySelector('.consent-buttons');
+            if (buttonsRow) {
+                buttonsRow.classList.remove('resolved');
+                buttonsRow.querySelectorAll('.consent-chosen').forEach(
+                    (b) => b.classList.remove('consent-chosen')
+                );
+            }
             this.setConsentButtonsEnabled(el, true);
             return;
         }

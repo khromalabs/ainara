@@ -569,6 +569,20 @@ th[data-sort]:hover .tablesort__icon {
     cursor: default;
 }
 
+/* The chosen answer stays legible under the disabled freeze: a yellow
+   ring marks what the user's hand decided (tap or Alt-key); the
+   unchosen options fade further. The ring follows the palette's single
+   highlight colour — the user's decision joins the framework's
+   question and the affirmative answer as the only yellow on screen. */
+.consent-button.consent-chosen {
+    box-shadow: 0 0 0 2px #f0f000;
+    opacity: 1;
+}
+
+.consent-buttons.resolved .consent-button:not(.consent-chosen) {
+    opacity: 0.3;
+}
+
 /* The affirmative answer shares the highlight colour with the
    framework's question above it. */
 .consent-button.primary {
