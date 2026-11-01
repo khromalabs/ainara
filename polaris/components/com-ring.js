@@ -586,6 +586,21 @@ class ComRing extends BaseComponent {
             this.handleConsentDecision(e.detail);
         });
 
+        // Escape-dismissal (#26): the offer is already dissolved client-
+        // side; com-ring only consumes it server-side (same one-shot
+        // endpoint as the buttons' "No" — nothing runs, token burned).
+        // Fire-and-forget: if the POST fails, the TTL retires the offer.
+        this.documentView.addEventListener('documentview-consent-dismissed', (e) => {
+            const { decisionId, token } = e.detail;
+            fetch(`${this.pybridgeEndpoint}/consent/${decisionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token, decision: 'deny' }),
+            }).catch((err) =>
+                console.warn('Consent dismissal consume failed', err)
+            );
+        });
+
         // Listen for search events
         this.documentView.addEventListener('documentview-search-requested', async (e) => {
             const query = e.detail.query;
@@ -673,6 +688,13 @@ class ComRing extends BaseComponent {
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
                     this.onEscapeDuringExchange(event);
                 } else if (!event.repeat) {
+                    // A pending consent offer (#26) dies first: the
+                    // user's hand dismissing it outranks the view switch.
+                    if (this.documentView.dismissPendingConsent()) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                    }
                     console.log('Escape in document view: switching back to ring view.');
                     this.switchToRingView();
                 }

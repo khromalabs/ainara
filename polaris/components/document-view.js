@@ -243,6 +243,10 @@ class DocumentView extends BaseComponent {
      */
     renderConsentCard(documentElement, content) {
         documentElement.dataset.decisionId = content.decision_id;
+        // The one-shot token lives in the render closure; keep it on the
+        // item so Escape-dismissal can hand it to com-ring for the
+        // server-side consume (#26).
+        documentElement.consentToken = content.token;
         const card = document.createElement('div');
         card.className = 'consent-card';
 
@@ -395,6 +399,34 @@ class DocumentView extends BaseComponent {
                 this.emitEvent('empty');
             }
         }, 400);
+    }
+
+    /**
+     * Escape-dismissal of a pending consent offer (#26): the user's
+     * hand, like the tap — the card dissolves and the offer is handed
+     * to com-ring for the server-side consume (a dismissed offer is a
+     * dead offer; it can never be honored afterwards). Only a still-
+     * pending card (live buttons) qualifies — resolved ones have
+     * nothing to dismiss. Returns true when a card was dismissed.
+     */
+    dismissPendingConsent() {
+        const items = this.container.querySelectorAll(
+            '.document-item[data-decision-id]'
+        );
+        // Newest was appended last and is drawn on top (the stacking
+        // grid) — dismiss that one.
+        for (let i = items.length - 1; i >= 0; i--) {
+            const el = items[i];
+            const first = el.querySelector('.consent-button');
+            if (!first || first.disabled) continue;
+            this.removeConsentCard(el.dataset.decisionId);
+            this.emitEvent('consent-dismissed', {
+                decisionId: el.dataset.decisionId,
+                token: el.consentToken,
+            });
+            return true;
+        }
+        return false;
     }
 
     setConsentButtonsEnabled(documentElement, enabled) {
