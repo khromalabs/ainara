@@ -849,6 +849,43 @@ ratified text where noted):
   remains the long-term fix (TODO + open design question at the
   emission site: the trigger fires post-selection).
 
+### 2026-11-01 — The card's mechanical interaction set: keyboard, Escape-dismissal, de-boxed surface
+
+Live-use iteration on the P2 card (recorded on #26). The consent surface
+now has its full decision vocabulary, all on the mechanical channel:
+
+- **Keyboard accelerators (`Alt+<letter>`)**: the renderer binds
+  Alt + the first letter of each (localized) button label — mechanical,
+  derived from the payload, generic for any future #18 client; labels
+  without a latin letter (CJK localizations) get no binding and the
+  buttons remain the authority. A muted per-button caption states the
+  combination honestly. com-ring reserves Alt as an accelerator
+  modifier (same rationale as its existing Ctrl guard): an Alt-combo
+  never enters typing mode, so the any-letter-summons-input invariant
+  is untouched.
+- **Escape dismisses a pending offer**: the card dissolves (same soft
+  fade as the conversational close) and the one-shot token is consumed
+  server-side via the existing deny path — a dismissed offer is a dead
+  offer. This is an explicit mechanical user act, not an auto-close: it
+  does not revise the never-silently-auto-closed rule. Esc keeps its
+  exchange semantics (mute/hold during a response in flight outranks).
+  **Tab deliberately stays a pure view switch** — it moves between
+  surfaces and never decides anything.
+- **TTL semantics unchanged** (deliberate, after discussion): expiry
+  remains the mechanical validity backstop, `consent_close` owns the
+  conversational side, and dismissal-vs-expiry stay distinct states
+  (dismissed is a user act; expiry is a no-op with an honest
+  "ask me again" message). Revisit only with actual usage evidence.
+- **Visual revision**: the card draws no surface of its own anymore —
+  the document view already is the floating window, so the decision
+  fills the whole content area with bigger type (the de-boxing also
+  resolves a window-in-window nesting). Palette re-aligned to the
+  surface's grey + its single highlight colour (`#f0f000`), reserved
+  for the two things the invariant makes dominant: the framework's
+  question (with a CSS-drawn circled question mark) and the affirmative
+  answer. The quote gains presentational quotation marks; the payload
+  text stays exactly what was spoken.
+
 ### 2026-10-28 — P2 opens: consent card + spend policy implemented
 
 Branch `dev012-agentloop`. The spend/consent ratification above is now
