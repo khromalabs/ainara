@@ -573,13 +573,9 @@ th[data-sort]:hover .tablesort__icon {
    framework's question above it. */
 .consent-button.primary {
     background: #666;
-    /* background: #f0f000; */
-    /* color: #1e1e1e; */
-    /* font-weight: bold; */
 }
 
 .consent-button.primary:hover:not(:disabled) {
-    /* background: #ffff33; */
     background: #888;
 }
 
@@ -604,7 +600,7 @@ th[data-sort]:hover .tablesort__icon {
 .consent-status {
     display: none;
     font-size: 20px;
-    color: #f0f000;
+    color: white;
 }
 
 .consent-status.visible {
