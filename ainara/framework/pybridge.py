@@ -1597,12 +1597,14 @@ def create_app():
 
         middleware = app.chat_manager.orakle_middleware
         if decision == "deny":
-            consumed = middleware.discard_offload_consent(
-                decision_id, token
-            )
-            return jsonify(
-                {"status": "denied" if consumed else "expired"}
-            )
+            # A denial is the user's act and fails closed by
+            # construction: nothing runs whether the offer was live,
+            # already consumed or unknown — the answer is always
+            # "denied". (It is the approval path that distinguishes a
+            # live offer from an unknown/expired token.) The consume
+            # still runs, so a live offer dies with the denial.
+            middleware.discard_offload_consent(decision_id, token)
+            return jsonify({"status": "denied"})
 
         def generate():
             yield from app.chat_manager.consent_resume(

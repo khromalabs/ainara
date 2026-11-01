@@ -1309,15 +1309,18 @@ class ChatManager:
         Emits the exact consent_request signal the middleware emits at
         the mechanical trigger — but with a decision that is NOT
         registered in the ConsentRegistry. The card renders and the
-        buttons work, yet any click resolves against the real
+        buttons work, yet any approval resolves against the real
         /consent/<decision_id> endpoint and comes back 'expired': the
         one-shot token validation is exercised fail-closed, and nothing
         can ever run off a fabricated card (the consent invariant,
-        demonstrated live).
+        demonstrated live). A denial is answered 'denied' regardless —
+        the user's act is the answer, and it fails closed by
+        construction.
         """
         usage_msg = (
             "Usage: /testconsent — renders an inert consent card (any"
-            " button resolves as expired against the real endpoint)."
+            " approval resolves as expired against the real endpoint;"
+            " denials are always answered as denied)."
         )
         if stream != "json":
             print(usage_msg)
