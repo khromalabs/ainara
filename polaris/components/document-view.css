@@ -529,9 +529,15 @@ th[data-sort]:hover .tablesort__icon {
 }
 
 /* Borderless, filled targets: on the grey surface a border reads as
-   chrome; the button shape itself is the affordance. */
+   chrome; the button shape itself is the affordance. Column layout so
+   the mechanical accelerator caption sits under the label. */
 .consent-button {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
     min-height: 64px; /* touch-friendly target */
     border: none;
     border-radius: 10px;
@@ -541,6 +547,17 @@ th[data-sort]:hover .tablesort__icon {
     font-size: 22px;
     cursor: pointer;
     transition: background 0.2s ease;
+}
+
+/* Accelerator caption (#26): Alt + first letter of the (localized)
+   label, computed by the renderer — an honest hint that the card
+   answers from the keyboard too. Language-free; the payload stays
+   untouched. */
+.consent-button-hint {
+    font-size: 12px;
+    font-weight: normal;
+    opacity: 0.55;
+    letter-spacing: 0.5px;
 }
 
 .consent-button:hover:not(:disabled) {

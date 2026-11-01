@@ -265,30 +265,62 @@ class DocumentView extends BaseComponent {
             { id: 'deny', label: 'No', style: 'secondary' },
             { id: 'always_allow', label: 'Always', style: 'ghost' },
         ];
+        const keyBindings = {};
         for (const b of decisions) {
             const el = document.createElement('button');
             el.className = 'consent-button ' + (b.style || 'secondary');
-            el.textContent = b.label;
+
+            // Keyboard accelerator (#26), mechanically derived so this
+            // stays a generic renderer: Alt + first letter of the
+            // (localized) label. Labels without a latin letter (e.g. CJK
+            // localizations) simply get no binding — the buttons remain
+            // the authority. First button wins a letter collision.
+            const match =
+                typeof b.label === 'string' ? b.label.match(/[a-zA-Z]/) : null;
+            if (match && !(match[0].toLowerCase() in keyBindings)) {
+                const letter = match[0].toLowerCase();
+                keyBindings[letter] = b.id;
+                const label = document.createElement('span');
+                label.className = 'consent-button-label';
+                label.textContent = b.label;
+                el.appendChild(label);
+                const hint = document.createElement('span');
+                hint.className = 'consent-button-hint';
+                hint.textContent = 'Alt+' + match[0].toUpperCase();
+                el.appendChild(hint);
+            } else {
+                el.textContent = b.label;
+            }
+
             el.addEventListener('click', () => {
-                // One click, one decision: freeze the card immediately
-                // (set-state-before-click lands synchronously) and stop
-                // the expiry timer.
-                this.setConsentButtonsEnabled(documentElement, false);
-                if (documentElement.dataset.expiryTimer) {
-                    clearTimeout(
-                        Number(documentElement.dataset.expiryTimer)
-                    );
-                    delete documentElement.dataset.expiryTimer;
-                }
-                this.emitEvent('consent-decision', {
-                    decisionId: content.decision_id,
-                    token: content.token,
-                    decision: b.id,
-                });
+                this.resolveConsent(documentElement, content, b.id);
             });
             buttons.appendChild(el);
         }
         card.appendChild(buttons);
+
+        // The keyboard's twin of the tap (capture phase, so it precedes
+        // com-ring's document-level handlers; com-ring itself ignores
+        // Alt-combos — accelerators, never typing prefixes). The handler
+        // self-guards: disabled buttons mean the card is resolved or
+        // expired; a detached card unregisters itself. One decision per
+        // press — auto-repeat must never re-post.
+        const onKeyDown = (event) => {
+            if (!documentElement.isConnected) {
+                document.removeEventListener('keydown', onKeyDown, true);
+                return;
+            }
+            const first = documentElement.querySelector('.consent-button');
+            if (!event.altKey || event.ctrlKey || event.metaKey) return;
+            if (event.repeat || !first || first.disabled) return;
+            const decision = keyBindings[event.key.toLowerCase()];
+            if (!decision) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.resolveConsent(documentElement, content, decision);
+        };
+        document.addEventListener('keydown', onKeyDown, true);
+        documentElement.consentKeyHandler = onKeyDown;
 
         if (content.note) {
             const note = document.createElement('div');
@@ -316,6 +348,27 @@ class DocumentView extends BaseComponent {
     }
 
     /**
+     * Resolve a pending consent card (#26 P2). One decision, one
+     * emission: freeze the card synchronously (set-state-before-click —
+     * a fast complementary event must never land in the gap), stop the
+     * expiry timer, and emit to com-ring, which owns the POST. Shared
+     * by the button click and the Alt+<letter> accelerator; the keyboard
+     * listener stays registered but self-guards on the frozen buttons.
+     */
+    resolveConsent(documentElement, content, decision) {
+        this.setConsentButtonsEnabled(documentElement, false);
+        if (documentElement.dataset.expiryTimer) {
+            clearTimeout(Number(documentElement.dataset.expiryTimer));
+            delete documentElement.dataset.expiryTimer;
+        }
+        this.emitEvent('consent-decision', {
+            decisionId: content.decision_id,
+            token: content.token,
+            decision,
+        });
+    }
+
+    /**
      * Dissolve a consent card (#26 P2 conversational close): the model
      * proposed closing it and the framework agreed. Soft fade, then
      * gone — no residue; the conversation's record is the exchange.
@@ -328,6 +381,12 @@ class DocumentView extends BaseComponent {
         if (el.dataset.expiryTimer) {
             clearTimeout(Number(el.dataset.expiryTimer));
             delete el.dataset.expiryTimer;
+        }
+        if (el.consentKeyHandler) {
+            document.removeEventListener(
+                'keydown', el.consentKeyHandler, true
+            );
+            delete el.consentKeyHandler;
         }
         el.classList.add('consent-closing');
         setTimeout(() => {

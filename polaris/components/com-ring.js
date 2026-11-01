@@ -729,6 +729,9 @@ class ComRing extends BaseComponent {
                     !isTypingMode &&
                     !this.state.isRecording &&
                     !event.ctrlKey &&
+                    // Alt is reserved for in-surface accelerators (e.g. the
+                    // consent card's Alt+<letter>, #26) — never a typing prefix
+                    !event.altKey &&
                     // don't process control+v
                     ( !(event.key.toLowerCase() === 'v' && event.ctrlKey) ) &&
                     (
