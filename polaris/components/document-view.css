@@ -445,15 +445,24 @@ th[data-sort]:hover .tablesort__icon {
 /* Consent card (#26 P2) — framework-rendered decision surface for the
    offload spend axis (pilot client of #18's confirmation primitive).
    Generic shape: title + quote + buttons arrive composed and localized
-   in the payload; this file only styles the surface. Big type, soft
-   shapes, horizontal touch-sized targets. */
+   in the payload; this file only styles the surface.
+
+   The card deliberately draws NO surface of its own: the document view
+   already IS the floating window — a boxed card inside it would be a
+   window within the window. The consent content fills the whole
+   document area instead: big type on the same grey surface, with the
+   palette's single highlight colour (#f0f000) reserved for the
+   framework's question and the affirmative answer (the two things the
+   consent invariant makes dominant). */
+.consent-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin: 0;
+    padding: 0 40px;
+}
+
 .consent-card {
-    max-width: 620px;
-    margin: 24px auto;
-    padding: 28px 32px;
-    border: 1px solid rgba(80, 214, 219, 0.35);
-    border-radius: 16px;
-    background: rgba(20, 30, 34, 0.85);
     transition: opacity 0.4s ease, transform 0.4s ease;
 }
 
@@ -463,46 +472,79 @@ th[data-sort]:hover .tablesort__icon {
 }
 
 .consent-headline {
-    font-size: 21px;
+    font-size: 30px;
     font-weight: bold;
-    color: rgb(80, 214, 219);
-    margin-bottom: 14px;
+    color: #f0f000;
+    margin-bottom: 22px;
+}
+
+/* The circled question mark — the universal "this is a question that
+   needs answering" sign. Drawn in CSS rather than an emoji so it stays
+   in the palette (grey ring, yellow mark): it belongs to the
+   framework's question, which is the loudest element on screen. */
+.consent-headline::before {
+    content: '?';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 14px;
+    border: 3px solid #f0f000;
+    border-radius: 50%;
+    color: #f0f000;
+    font-size: 24px;
+    vertical-align: 2px; /* optically center against the headline text */
 }
 
 /* The model's explanation — visually subordinate to the framework's
-   question above it (the consent invariant made visible). */
+   question above it (the consent invariant made visible). The
+   quotation marks are presentational: the payload text stays exactly
+   what was spoken and persisted in the conversation. */
 .consent-quote {
-    font-size: 16px;
-    line-height: 1.55;
-    padding: 12px 16px;
-    margin-bottom: 20px;
-    border-left: 3px solid rgba(80, 214, 219, 0.4);
-    opacity: 0.85;
+    font-size: 22px;
+    line-height: 1.6;
+    margin-bottom: 34px;
+    opacity: 0.75;
+    font-style: italic;
+}
+
+.consent-quote::before {
+    content: '“';
+    font-size: 30px;
+    color: white;
+}
+
+.consent-quote::after {
+    content: '”';
+    font-size: 30px;
+    color: white;
 }
 
 .consent-buttons {
     display: flex;
     flex-direction: row;
-    gap: 12px;
-    margin-bottom: 14px;
+    gap: 16px;
+    margin-bottom: 20px;
 }
 
+/* Borderless, filled targets: on the grey surface a border reads as
+   chrome; the button shape itself is the affordance. */
 .consent-button {
     flex: 1;
-    min-height: 52px; /* touch-friendly target */
-    padding: 12px 16px;
-    border-radius: 12px;
-    border: 1px solid rgba(80, 214, 219, 0.5);
-    background: transparent;
+    min-height: 64px; /* touch-friendly target */
+    border: none;
+    border-radius: 10px;
+    background: #333;
     color: #e8e8e8;
     font-family: inherit;
-    font-size: 17px;
+    font-size: 22px;
     cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease;
+    transition: background 0.2s ease;
 }
 
 .consent-button:hover:not(:disabled) {
-    background: rgba(80, 214, 219, 0.12);
+    background: #444;
 }
 
 .consent-button:disabled {
@@ -510,36 +552,42 @@ th[data-sort]:hover .tablesort__icon {
     cursor: default;
 }
 
+/* The affirmative answer shares the highlight colour with the
+   framework's question above it. */
 .consent-button.primary {
-    background: rgba(80, 214, 219, 0.18);
-    font-weight: bold;
+    background: #666;
+    /* background: #f0f000; */
+    /* color: #1e1e1e; */
+    /* font-weight: bold; */
 }
 
 .consent-button.primary:hover:not(:disabled) {
-    border-color: rgba(80, 214, 219, 0.9);
+    /* background: #ffff33; */
+    background: #888;
 }
 
 /* The standing-policy decision stays deliberately quieter than the
    per-run one, but remains a full touch-sized target. */
 .consent-button.ghost {
-    border-color: transparent;
-    opacity: 0.75;
+    background: transparent;
+    color: #aaa;
+    border: 3px solid #333;
 }
 
 .consent-button.ghost:hover:not(:disabled) {
-    opacity: 1;
+    background: #333;
 }
 
 .consent-note {
-    font-size: 13px;
-    opacity: 0.6;
-    margin-bottom: 12px;
+    font-size: 16px;
+    opacity: 0.55;
+    margin-bottom: 14px;
 }
 
 .consent-status {
     display: none;
-    font-size: 16px;
-    color: rgb(80, 214, 219);
+    font-size: 20px;
+    color: #f0f000;
 }
 
 .consent-status.visible {
