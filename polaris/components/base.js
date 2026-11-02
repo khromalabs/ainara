@@ -265,6 +265,31 @@ class BaseComponent extends HTMLElement {
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
 
+        // Consent-card mechanical records (#26 P2): rendered as
+        // receipts, never raw — the history view is for final users.
+        // The markers are framework-written (model output is killed by
+        // the guardrail), so what is rendered here is trustworthy.
+        text = text.replace(/_orakle_consent_card_\|([A-Za-z0-9_]+)/gm, () => {
+            codeBlocks.push(
+                `<span class="consent-record consent-card-record">Authorization requested</span>`
+            );
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+        text = text.replace(
+            /_orakle_consent_decision_\|([A-Za-z0-9_]+)\|(approved|denied|dismissed)/gm,
+            (text, id, outcome) => {
+                const labels = {
+                    approved: 'Analysis authorized',
+                    denied: 'Analysis declined',
+                    dismissed: 'Offer dismissed',
+                };
+                codeBlocks.push(
+                    `<span class="consent-record consent-decision-${outcome}">${labels[outcome]}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
         // Extract ORAKLE data blocks
         text = text.replace(/_orakle_nexus_data_\|([^\n]+)/gm, (text, skill) => {
             try {

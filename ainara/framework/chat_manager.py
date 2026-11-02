@@ -2361,7 +2361,40 @@ class ChatManager:
             "consent_result",
             {"status": "approved", "decision_id": decision_id},
         )
-        yield from self._stream_system_segment(digest_stream)
+
+        # Mechanical decision record (#26 P2) rides the segment: it
+        # lands in the same history/memory entry as the digest it
+        # authorized — one permanent trail: offer → decision → digest.
+        # _stream_system_segment persists it but never speaks it.
+        record = f"\n_orakle_consent_decision_|{decision_id}|approved\n\n"
+
+        def _with_record():
+            yield record
+            yield from digest_stream
+
+        yield from self._stream_system_segment(_with_record())
+
+    def record_consent_decision(self, decision_id: str, outcome: str) -> None:
+        """Persist a consent-card decision as a mechanical record (issue
+        #26 P2). Called by the PyBridge consent endpoint after a one-shot
+        decision was actually consumed — never for unknown/expired tokens
+        (a card that quietly died leaves no record: walked away).
+
+        The marker entry gives the conversation a permanent account of
+        the user's mechanical act and its outcome — the model channel
+        can read it (the static prompt carries the key) but can never
+        fabricate it (guardrail: the marker is a forbidden signal).
+        Never TTS'd: it is a record, not an utterance.
+        """
+        marker = f"\n_orakle_consent_decision_|{decision_id}|{outcome}\n"
+        self.llm.add_msg(marker, self.chat_history, "assistant")
+        if self.memory_enabled and self.chat_memory:
+            self.chat_memory.add_entry(marker, "assistant")
+        logger.info(
+            "CHAT: consent decision %s recorded as '%s'.",
+            decision_id,
+            outcome,
+        )
 
     def _stream_system_segment(
         self, chunks: Generator, stream: Literal["cli", "json"] = "json"
@@ -2387,6 +2420,12 @@ class ChatManager:
         try:
             for chunk in chunks:
                 if not chunk:
+                    continue
+                if "_orakle_consent_decision_" in chunk:
+                    # Mechanical decision record (#26 P2): persisted as
+                    # part of the segment's transcript but never spoken
+                    # — it is a record, not an utterance.
+                    processed_answer += chunk
                     continue
                 if "_orakle_agent_progress_" in chunk or (
                     "_orakle_loading_signal_" in chunk

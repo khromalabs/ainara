@@ -1592,18 +1592,30 @@ def create_app():
         data = request.get_json(silent=True) or {}
         token = data.get("token", "")
         decision = data.get("decision", "")
-        if decision not in ("approve", "always_allow", "deny"):
+        if decision not in ("approve", "always_allow", "deny", "dismiss"):
             return jsonify({"error": "invalid decision"}), 400
 
         middleware = app.chat_manager.orakle_middleware
-        if decision == "deny":
-            # A denial is the user's act and fails closed by
+        if decision in ("deny", "dismiss"):
+            # A denial/dismissal is the user's act and fails closed by
             # construction: nothing runs whether the offer was live,
             # already consumed or unknown — the answer is always
             # "denied". (It is the approval path that distinguishes a
             # live offer from an unknown/expired token.) The consume
-            # still runs, so a live offer dies with the denial.
-            middleware.discard_offload_consent(decision_id, token)
+            # still runs, so a live offer dies with the act; the record
+            # is written only when a live offer was actually consumed —
+            # an offer that quietly expired leaves no record (#26 P2:
+            # the trail says walked-away, not decided). dismiss
+            # (Escape / put-it-away) is recorded distinctly from deny
+            # (rejected the analysis) so the history is honest about
+            # what the user did.
+            consumed = middleware.discard_offload_consent(
+                decision_id, token
+            )
+            if consumed:
+                app.chat_manager.record_consent_decision(
+                    decision_id, decision
+                )
             return jsonify({"status": "denied"})
 
         def generate():

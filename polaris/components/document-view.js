@@ -424,6 +424,28 @@ class DocumentView extends BaseComponent {
      * pending card (live buttons) qualifies — resolved ones have
      * nothing to dismiss. Returns true when a card was dismissed.
      */
+    /**
+     * Sweep resolved consent-card remnants (#26 P2): after the user
+     * sends a follow-up message, any card that is no longer a live
+     * offer (answered, Esc-dismissed or TTL-dead — buttons disabled)
+     * dissolves with the same soft fade as the conversational close.
+     * A pending card is NEVER swept: the never-silently-auto-closed
+     * rule protects live offers, not receipts.
+     */
+    sweepResolvedConsentCards() {
+        if (!this.container) return;
+        const items = this.container.querySelectorAll(
+            '.document-item[data-decision-id]'
+        );
+        items.forEach((el) => {
+            const first = el.querySelector('.consent-button');
+            // Disabled buttons = the card is resolved or visibly dead.
+            // A missing buttons row (never rendered) also sweeps.
+            if (first && !first.disabled) return;
+            this.removeConsentCard(el.dataset.decisionId);
+        });
+    }
+
     dismissPendingConsent() {
         const items = this.container.querySelectorAll(
             '.document-item[data-decision-id]'

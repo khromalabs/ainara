@@ -1169,5 +1169,71 @@ class TestInterpretationWindow(unittest.TestCase):
         self.assertFalse(any(r.startswith("sys") for r in roles))
 
 
+class TestConsentDecisionRecord(unittest.TestCase):
+    """The mechanical decision record (#26 P2): a permanent account of
+    the user's consent acts in history/memory — framework-written only,
+    never spoken."""
+
+    @staticmethod
+    def _stub_chat_manager():
+        from ainara.framework.chat_manager import ChatManager
+
+        cm = object.__new__(ChatManager)  # no __init__: LLM-free stub
+        cm.llm = MagicMock()
+        # Faithful add_msg (litellm contract): appends to the history.
+        cm.llm.add_msg.side_effect = (
+            lambda msg, history, role: history.append(
+                {"role": role, "content": msg, "tokens": 0}
+            )
+        )
+        cm.chat_history = []
+        cm.memory_enabled = True
+        cm.chat_memory = MagicMock()
+        return cm
+
+    def test_record_lands_in_history_and_memory(self):
+        cm = self._stub_chat_manager()
+        cm.record_consent_decision("abc123", "denied")
+        entry = cm.chat_history[-1]
+        self.assertEqual(entry["role"], "assistant")
+        self.assertIn("_orakle_consent_decision_|abc123|denied",
+                      entry["content"])
+        cm.chat_memory.add_entry.assert_called_once()
+
+    def test_record_outcomes_reach_memory_verbatim(self):
+        cm = self._stub_chat_manager()
+        for outcome in ("approved", "denied", "dismissed"):
+            cm.record_consent_decision(f"id-{outcome}", outcome)
+        written = cm.chat_memory.add_entry.call_args_list[-2:]
+        self.assertIn("dismissed", written[1].args[0])
+
+    def test_segment_persists_record_without_speaking_it(self):
+        """Inside a system segment the record is part of the persisted
+        transcript but never routed to the sentence/TTS machinery."""
+        cm = self._stub_chat_manager()
+        cm._process_streaming_sentence = MagicMock()
+        cm._process_regular_text = MagicMock()
+        cm._extract_complete_sentences = (
+            lambda t: [t.strip()] if t.strip() else []
+        )
+        record = "\n_orakle_consent_decision_|abc123|approved\n\n"
+        chunks = cm._stream_system_segment(
+            iter([record, "Here is the analysis. "])
+        )
+        list(chunks)
+
+        # Persisted with the segment's answer...
+        persisted = cm.chat_history[-1]["content"]
+        self.assertIn("_orakle_consent_decision_|abc123|approved", persisted)
+        self.assertIn("Here is the analysis.", persisted)
+        # ...but never spoken (the record never reaches the sentence
+        # machinery; only the real digest text does).
+        spoken = "".join(
+            c.args[0] for c in cm._process_streaming_sentence.call_args_list
+        )
+        self.assertNotIn("_orakle_consent_decision_", spoken)
+        self.assertIn("Here is the analysis.", spoken)
+
+
 if __name__ == "__main__":
     unittest.main()

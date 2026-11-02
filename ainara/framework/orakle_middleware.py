@@ -1022,7 +1022,20 @@ class OrakleMiddleware:
 
         # Guardrail buffer for forbidden signals
         signal_check_buffer = ""
-        forbidden_signal = "_orakle_loading_signal_"
+        # Mechanical-channel markers (#26): only the framework may emit
+        # these — a model that emits one is simulating a system event
+        # (skill execution, a consent offer, or worse, the USER's own
+        # decision record). Same kill-with-instruction behavior as the
+        # original skill-simulation guardrail. <consent_close> is
+        # deliberately NOT forbidden: the model proposing a close and
+        # the framework executing it is the ratified interaction.
+        forbidden_signals = (
+            "_orakle_loading_signal_",
+            "_orakle_agent_progress_",
+            "_orakle_consent_card_",
+            "_orakle_consent_decision_",
+        )
+        max_signal_len = max(len(s) for s in forbidden_signals)
 
         self.current_language = (
             current_language if current_language is not None else "English"
@@ -1033,22 +1046,29 @@ class OrakleMiddleware:
             if token is None:
                 continue
 
-            # --- Guardrail: Check for forbidden internal signal ---
+            # --- Guardrail: Check for forbidden internal signals ---
             signal_check_buffer += token
-            if len(signal_check_buffer) > len(forbidden_signal) + 20:
+            if len(signal_check_buffer) > max_signal_len + 20:
                 signal_check_buffer = signal_check_buffer[
-                    -(len(forbidden_signal) + 20):
+                    -(max_signal_len + 20):
                 ]
 
-            if forbidden_signal in signal_check_buffer:
+            detected_signal = next(
+                (s for s in forbidden_signals if s in signal_check_buffer),
+                None,
+            )
+            if detected_signal:
                 logger.warning(
-                    "GUARDRAIL: LLM generated forbidden internal signal."
+                    "GUARDRAIL: LLM generated forbidden internal signal"
+                    f" '{detected_signal}'."
                 )
                 yield (
                     "\n\n[__AINARA_GUARDRAIL__] Error: You generated a system"
-                    f" signal ('{forbidden_signal}') which is forbidden."
-                    " DO NOT SIMULATE THE EXECUTION OF SKILLS. Use"
-                    " <orakle>your query</orakle> to run commands.\n\n"
+                    f" signal ('{detected_signal}') which is forbidden."
+                    " System signals are emitted only by the framework,"
+                    " never by you. DO NOT SIMULATE SKILL EXECUTIONS OR"
+                    " CONSENT EVENTS. Use <orakle>your query</orakle> to"
+                    " run commands.\n\n"
                 )
                 return
 

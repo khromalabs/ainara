@@ -593,15 +593,17 @@ class ComRing extends BaseComponent {
         });
 
         // Escape-dismissal (#26): the offer is already dissolved client-
-        // side; com-ring only consumes it server-side (same one-shot
-        // endpoint as the buttons' "No" — nothing runs, token burned).
-        // Fire-and-forget: if the POST fails, the TTL retires the offer.
+        // side; com-ring only consumes it server-side. Recorded as
+        // 'dismiss' — distinct from the No button's 'deny' so the
+        // history is honest about what the user did (put it away vs
+        // rejected the analysis). Fire-and-forget: if the POST fails,
+        // the TTL retires the offer.
         this.documentView.addEventListener('documentview-consent-dismissed', (e) => {
             const { decisionId, token } = e.detail;
             fetch(`${this.pybridgeEndpoint}/consent/${decisionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token, decision: 'deny' }),
+                body: JSON.stringify({ token, decision: 'dismiss' }),
             }).catch((err) =>
                 console.warn('Consent dismissal consume failed', err)
             );
@@ -1708,6 +1710,10 @@ class ComRing extends BaseComponent {
         // Drop any muted-stream backlog from a previous exchange (#19 item 3)
         this.mutedStreamQueue = [];
         this.exchangeSilenced = false;
+        // Consent-card remnants (#26 P2): a follow-up user message is
+        // the moment resolved/dead cards (answered, Esc'd, expired)
+        // dissolve — pending offers are never touched here.
+        this.documentView.sweepResolvedConsentCards();
         // The user turn of the exchange — echoed into an open chat-history
         // view immediately, since the persisted pair only lands on
         // 'completed' (#19 item 3).
