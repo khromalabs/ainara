@@ -33,6 +33,7 @@ const stepModules = {
     skills: require('./setup/steps/skills'),
     mcp: require('./setup/steps/mcp'),
     shortcuts: require('./setup/steps/shortcuts'),
+    agents: require('./setup/steps/agents'),
     finish: require('./setup/steps/finish')
 };
 
@@ -40,7 +41,7 @@ const stepModules = {
 const config = new ConfigManager();
 
 // Step navigation
-const steps = ['welcome', 'ollama', 'llm', 'stt', 'api', 'skills', 'mcp', 'shortcuts', 'finish'];
+const steps = ['welcome', 'ollama', 'llm', 'stt', 'api', 'skills', 'mcp', 'shortcuts', 'agents', 'finish'];
 let currentStepIndex = 0;
 
 // Track modified fields
