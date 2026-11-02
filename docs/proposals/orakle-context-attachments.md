@@ -756,6 +756,31 @@ resolved by §6.8: the paradigm difference is expressible as
 
 ## 12. Update log
 
+### 2026-11-02 — Wizard standing-consent step: the persistent `allow` path
+
+The setup wizard gains an **Agent Analysis** step (after Shortcuts) —
+the high-deliberation surface the card's session-scoped Always was
+designed to defer to:
+
+- Three postures, radio-selected: **Always analyze** (`allow`), **Ask
+  before analyzing** (`ask`, default preselection), **Never analyze**
+  (`deny`). One line makes the session/persistent split explicit: the
+  card's "Always" lasts for the current session only; this page is the
+  only place to allow it permanently.
+- **`orakle.enable_agent_spawn` rides the same decision**: any posture
+  other than "Never" grants the standing spawn gate (P1 router +
+  `requires_agent`); "Never" revokes it. This retires the interim
+  "stays `false`" arrangement — standing consent is now granted via the
+  wizard, as the spend-axis ratification intended.
+- **Metered-provider cost warning** mirrors
+  `_is_digestion_model_metered` (Ollama = local/free; fail-closed →
+  warning shows when the selection cannot be resolved), displayed as an
+  amber note above the options.
+- Read-modify-write of the real backend config via
+  `loadBackendConfig`/`saveBackendConfig` (the #34 contract); saves to
+  both PyBridge and Orakle. Schema description of `spend_policy`
+  corrected: persistent `allow` is wizard-only.
+
 ### 2026-10-19 — Re-scope ratified: agent-offload digestion becomes the primary mechanism
 
 Recorded in the issue thread. The inversion: for analysis-class

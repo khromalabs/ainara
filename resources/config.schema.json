@@ -234,7 +234,7 @@
                             "type": "string",
                             "enum": ["ask", "allow", "deny"],
                             "default": "ask",
-                            "description": "Consent posture for offload digestion when the digestion model is a metered (cloud, paid) provider (#26 P2, ratified with #18): 'ask' shows a framework-rendered consent card per oversized result, 'allow' is a deliberate standing consent (wizard or the card's always-allow button), 'deny' rejects with guidance. Local (non-metered) digestion runs under every policy."
+                            "description": "Consent posture for offload digestion when the digestion model is a metered (cloud, paid) provider (#26 P2, ratified with #18): 'ask' shows a framework-rendered consent card per oversized result, 'allow' is a deliberate standing consent granted via the wizard's standing-consent step (the card's always-allow button upgrades the posture for the current session only), 'deny' rejects with guidance. Local (non-metered) digestion runs under every policy."
                         },
                         "consent_ttl": {
                             "type": "integer",

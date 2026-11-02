@@ -51,6 +51,7 @@ const modifiedFields = {
     mcp: new Set(),
     skills: new Set(),
     shortcuts: new Set(),
+    agents: new Set(),
     finish: new Set()
 };
 

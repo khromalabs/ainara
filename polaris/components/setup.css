@@ -259,6 +259,17 @@ button {
     content: '🗎 NOTE';
 }
 
+/* Agent analysis standing-consent step (#26): metered-provider cost
+ * warning — amber note box, same visual family as .note-signal. */
+.agents-metered-warning {
+    padding: 10px 12px;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    background-color: #fff8e1;
+    color: #7a5c00;
+    margin-bottom: 15px;
+}
+
 .form-group {
     margin-bottom: 15px;
 }
