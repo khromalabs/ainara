@@ -613,6 +613,29 @@ whole. Ladder: skill-side digest (preferred, free) → chunked digestion
 user-visible "analyzing a large file" feedback) → chunk stubs so
 follow-ups pull single slices.
 
+### 6.10 The interpreter becomes a ledger client
+
+The interpreter's conversation context was a hard-coded constant (last
+4 messages via `_get_chat_context`) — too little for reference
+resolution across turns. The window is now ledger-driven: the
+interpreter walks the history newest→oldest and keeps everything that
+fits its **share of the ledger budget** (§6.9's usable bytes ×
+`orakle.context.interpretation_history_share`, default 40%), with a
+**4-message floor** — tiny windows keep today's behavior by
+construction, since today's slice IS the floor. System messages are
+skipped as before; order is chronological.
+
+Config-gated for a one-key rollback:
+`orakle.context.interpretation_history` (default `true`); `false`
+restores the fixed last-4 slice byte-identically. An unresolvable
+context window also falls back to the floor.
+
+Deliberately NOT in this phase: surfacing the idle-time shrink/summary
+artifact to the interpreter as constant-cost long-range context — it
+depends on where the compaction output lives (GREEN 2.0, #33) and is
+tracked as a follow-up. The share cap exists so the history window can
+never squeeze the payload/answer space.
+
 ## 7. What deliberately does not change
 
 - **The Orakle frontend** — natural-language tags, no schemas in context.
@@ -755,6 +778,22 @@ resolved by §6.8: the paradigm difference is expressible as
 ---
 
 ## 12. Update log
+
+### 2026-11-02 (later) — §6.10 implemented: the interpreter is a ledger client
+
+- `_get_chat_context` now derives the interpreter's history window
+  from the ledger: newest→oldest walk under
+  `orakle.context.interpretation_history_share` (40% of usable bytes),
+  4-message floor, chronological order. Gate
+  `orakle.context.interpretation_history` (default on) rolls back to
+  the fixed 4-message slice; unresolvable windows fall back to the
+  floor. §6.10 written into the document (it was referenced but never
+  recorded).
+- The idle-time shrink/summary artifact is explicitly out of this
+  phase (depends on GREEN 2.0 compaction output location).
+- 6 new unit tests (order preservation, budget exclusion, floor,
+  rollback gate, unresolvable window, system-skip in both paths); 88
+  total green.
 
 ### 2026-11-02 — Wizard standing-consent step: the persistent `allow` path
 

@@ -280,6 +280,16 @@
                             "type": "integer",
                             "default": 3,
                             "description": "Conservative bytes-per-token conversion for the budget ledger, multilingual-safe."
+                        },
+                        "interpretation_history": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Ledger-driven interpretation history window (issue #26 §6.10): the interpreter sees as much recent conversation as fits its share of the ledger budget (floored at 4 messages). false restores the fixed last-4-messages slice — the one-key rollback for small-model regressions."
+                        },
+                        "interpretation_history_share": {
+                            "type": "integer",
+                            "default": 40,
+                            "description": "Maximum share (percent) of the ledger budget the interpreter's history window may occupy, so history never squeezes the payload/answer space (issue #26 §6.10)."
                         }
                     }
                 }

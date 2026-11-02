@@ -647,6 +647,20 @@ class OrakleMiddleware:
         self.context_chars_per_token = self.config_manager.get(
             "orakle.context.chars_per_token", 3
         )
+        # Ledger-driven interpretation window (issue #26 §6.10): the
+        # interpreter's conversation context scales with the resolved
+        # window instead of the hard-coded last-4-messages slice — too
+        # little for reference resolution across turns. Config-gated:
+        # a small-model regression is a one-key rollback to today's
+        # behavior. The share cap keeps the history window from
+        # squeezing the payload/answer space; the 4-message floor means
+        # tiny windows keep current behavior by construction.
+        self.interpretation_history_ledger = self.config_manager.get(
+            "orakle.context.interpretation_history", True
+        )
+        self.interpretation_history_share_pct = self.config_manager.get(
+            "orakle.context.interpretation_history_share", 40
+        )
         # Consent for offload on metered providers (issue #26 P2,
         # ratified with #18). orakle.offload.spend_policy (ask | allow |
         # deny) gates the mechanical size-ceiling trigger when the
@@ -2087,26 +2101,59 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
     ) -> dict:
         """Extracts relevant context from the chat history and memories.
 
-        Note: This method provides basic context extraction. For richer context
-        (user profile, conversation summary), the caller should pass
-        a chat_history that already includes this information in the system message
-        or provide it through other means.
+        The history window is ledger-driven (issue #26 §6.10): it scales
+        with the resolved context window under a share cap, floored at
+        the legacy 4-message slice (which remains the exact behavior
+        when the gate is off or no window can be resolved). For richer
+        context (user profile, conversation summary), the caller should
+        pass a chat_history that already includes this information in
+        the system message or provide it through other means.
         """
         chat_context = {}
         if not chat_history:
             return chat_context
 
-        # Recent chat history (e.g., last 4 messages / 2 rounds)
-        history_text = ""
-        # Take last 4 messages
-        recent_messages = chat_history[-4:]
-        for msg in recent_messages:
-            # Skip system messages to avoid redundant context
-            if msg.get("role") == "system":
-                continue
-            role = msg.get("role", "unknown").capitalize()
-            content = msg.get("content", "")
-            history_text += f"{role}: {content}\n"
+        # Recent chat history. Ledger-driven window (issue #26 §6.10):
+        # when the gate is on and a budget can be resolved, walk the
+        # history newest→oldest and keep everything that fits the
+        # interpreter's share of the ledger budget — with a 4-message
+        # floor, so tiny windows keep today's behavior by construction
+        # (today's slice IS the floor). Gate off, or no resolvable
+        # window: the hard-coded last-4 slice, byte-identical.
+        floor = 4
+        budget = (
+            self._interpretation_budget_bytes()
+            if self.interpretation_history_ledger
+            else 0
+        )
+        selected = []
+        if budget > 0:
+            history_budget = max(0, int(
+                budget * min(max(self.interpretation_history_share_pct, 0), 100)
+                / 100
+            ))
+            used = 0
+            for msg in reversed(chat_history):
+                if msg.get("role") == "system":
+                    continue
+                role = msg.get("role", "unknown").capitalize()
+                entry = f"{role}: {msg.get('content', '')}\n"
+                if len(selected) >= floor and used + len(entry) > history_budget:
+                    break
+                selected.append(entry)
+                used += len(entry)
+            selected.reverse()
+        else:
+            # Legacy slice (also the tiny-window behavior): last 4
+            # messages, system ones skipped.
+            for msg in chat_history[-floor:]:
+                if msg.get("role") == "system":
+                    continue
+                selected.append(
+                    f"{msg.get('role', 'unknown').capitalize()}"
+                    f": {msg.get('content', '')}\n"
+                )
+        history_text = "".join(selected)
         if history_text:
             chat_context["recent_history"] = history_text.strip()
 

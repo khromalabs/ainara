@@ -1069,5 +1069,105 @@ class TestRenderInlineCeiling(TestOffloadRouter):
             factory.assert_not_called()
 
 
+class TestInterpretationWindow(unittest.TestCase):
+    """Ledger-driven interpretation history window (issue #26 §6.10):
+    the interpreter's conversation context scales with the resolved
+    window under a share cap, floored at the legacy 4-message slice."""
+
+    def setUp(self):
+        config_values = {
+            "orakle.match_providers": [],
+            "llm": {},
+        }
+
+        def config_get(key, default=None):
+            return config_values.get(key, default)
+
+        self.mock_config = MagicMock()
+        self.mock_config.get.side_effect = config_get
+
+        with patch(
+            'ainara.framework.orakle_middleware.OrakleMatcherTransformers'
+        ):
+            self.middleware = OrakleMiddleware(
+                llm=MagicMock(),
+                orakle_servers=[],
+                system_message="SYSTEM",
+                config_manager=self.mock_config,
+                capabilities=[],
+            )
+
+    def _history(self, n, content="message", system_every=None):
+        msgs = []
+        for i in range(n):
+            if system_every and i % system_every == 0:
+                msgs.append({"role": "system", "content": f"sys{i}"})
+                continue
+            msgs.append({"role": "user", "content": f"{content}{i}"})
+        return msgs
+
+    def _window_roles(self, history):
+        ctx = self.middleware._get_chat_context(history)
+        text = ctx.get("recent_history", "")
+        return [line.split(":", 1)[1].strip()
+                for line in text.splitlines() if line]
+
+    def test_large_window_includes_more_history(self):
+        self.middleware.llm.get_context_window.return_value = 131072
+        roles = self._window_roles(self._history(20))
+        self.assertEqual(len(roles), 20)
+        # Chronological order preserved, oldest first.
+        self.assertEqual(roles[0], "message0")
+        self.assertEqual(roles[-1], "message19")
+
+    def test_budget_excludes_oldest_messages(self):
+        # budget = window × 0.75 × 3; share 40%. A small window keeps
+        # only the newest messages that fit — the floor applies.
+        self.middleware.llm.get_context_window.return_value = 500
+        roles = self._window_roles(self._history(20, content="m" * 20))
+        # Each entry 'User: mmm…\n' ≈ 27 bytes; budget ≈ 500×0.75×3
+        # × 0.4 ≈ 450 bytes → not all 20 fit, but well over the floor.
+        self.assertGreater(len(roles), 4)
+        self.assertLess(len(roles), 20)
+        # The newest message is always the last one kept.
+        self.assertEqual(roles[-1], "m" * 20 + "19")
+
+    def test_tiny_window_keeps_floor(self):
+        # Budget smaller than one message: the floor still guarantees
+        # the legacy slice — tiny windows keep current behavior by
+        # construction.
+        self.middleware.llm.get_context_window.return_value = 2
+        roles = self._window_roles(self._history(10))
+        self.assertEqual(len(roles), 4)
+        self.assertEqual(roles[-1], "message9")
+
+    def test_gate_off_is_legacy_slice(self):
+        self.middleware.interpretation_history_ledger = False
+        self.middleware.llm.get_context_window.return_value = 131072
+        roles = self._window_roles(self._history(20))
+        self.assertEqual(
+            roles, ["message16", "message17", "message18", "message19"]
+        )
+
+    def test_unresolvable_window_falls_back_to_floor(self):
+        self.middleware.llm.get_context_window.side_effect = RuntimeError
+        roles = self._window_roles(self._history(20))
+        self.assertEqual(
+            roles, ["message16", "message17", "message18", "message19"]
+        )
+
+    def test_system_messages_skipped_in_both_paths(self):
+        self.middleware.llm.get_context_window.return_value = 131072
+        roles = self._window_roles(self._history(8, system_every=2))
+        self.assertEqual(len(roles), 4)
+        self.assertFalse(any(r.startswith("sys") for r in roles))
+        self.middleware.interpretation_history_ledger = False
+        roles = self._window_roles(self._history(8, system_every=2))
+        # Legacy quirk: the fixed slice cuts first and skips system
+        # after, so interleaved system messages shrink it below 4.
+        self.assertEqual(len(roles), 2)
+        self.assertFalse(any(r.startswith("sys") for r in roles))
+
+
 if __name__ == "__main__":
     unittest.main()
