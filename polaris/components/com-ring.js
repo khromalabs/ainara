@@ -1795,7 +1795,12 @@ class ComRing extends BaseComponent {
         }
         this.state.isProcessingLLM = true;
         if (decision === 'deny') {
-            this.documentView.updateConsentCard(decisionId, 'denied');
+            // The decision is made: the card's job is done. The
+            // receipt lives in the conversation now — the decision-
+            // record pill — not on the card (#26 P2). The POST still
+            // consumes the offer server-side; if it fails, the TTL
+            // retires it.
+            this.documentView.removeConsentCard(decisionId);
         } else {
             this.documentView.updateConsentCard(decisionId, 'started');
         }
@@ -1825,6 +1830,10 @@ class ComRing extends BaseComponent {
                 }
                 return;
             }
+            // Approved: the offer was honored — the card has no further
+            // role and dissolves now; agent progress (com-ring status)
+            // and the digest answer are the feedback from here (#26 P2).
+            this.documentView.removeConsentCard(decisionId);
             // Streamed resumed segment — same event shapes as a chat turn.
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -1846,7 +1855,6 @@ class ComRing extends BaseComponent {
                     }
                 }
             }
-            this.documentView.updateConsentCard(decisionId, 'done');
         } catch (error) {
             console.error('[Consent] decision failed:', error);
             this.showInfo(error, true);
