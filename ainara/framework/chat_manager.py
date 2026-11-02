@@ -2106,11 +2106,20 @@ class ChatManager:
 
                     nexus_data = {
                         "component_path": component_path,
-                        "data": skill_data,
                         "query": query,
                         "mode": mode,
                         "panel_id": panel_id,
                     }
+                    if chunk.get("data_ref"):
+                        # Render inline ceiling (#26 P2, §6.8): payload
+                        # stored as a persistent render blob — the
+                        # transcript carries the reference plus a small
+                        # preview; Polaris hydrates by id at render
+                        # time. ChatMemory never holds payload bytes.
+                        nexus_data["data_ref"] = chunk["data_ref"]
+                        nexus_data["preview"] = chunk.get("preview", "")
+                    else:
+                        nexus_data["data"] = skill_data
 
                     # Create a descriptive message for the chat history
                     history_message = (

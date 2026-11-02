@@ -212,6 +212,16 @@
                     "default": false,
                     "description": "Master switch for ephemeral Bureau agent spawning (requires_agent queries and issue #26 offload-digest routing). Off by default; standing consent is granted via the wizard."
                 },
+                "nexus": {
+                    "type": "object",
+                    "properties": {
+                        "data_inline_max_bytes": {
+                            "type": "integer",
+                            "default": 24000,
+                            "description": "UI-skill payload size above which the render channel switches from inlining the data into the transcript to storing it as a persistent render blob referenced by data_ref (hydrated by Polaris via GET /attachments/<id>); issue #26 P2, §6.8. Small payloads render exactly as before."
+                        }
+                    }
+                },
                 "offload": {
                     "type": "object",
                     "properties": {

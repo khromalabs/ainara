@@ -1613,6 +1613,23 @@ def create_app():
 
         return Response(generate(), mimetype="text/event-stream")
 
+    @app.route("/attachments/<blob_id>", methods=["GET"])
+    def get_attachment(blob_id):
+        """Render-blob hydration endpoint (issue #26 P2, §6.8).
+
+        Polaris fetches a UI-skill payload stored above the render
+        inline ceiling by id (live render and history replay). Local-
+        first: ids are content hashes (sha256 hex) — not guessable, not
+        enumerable — and the store lives in this process's data
+        directory. Unknown or malformed ids return 404; the payload is
+        the exact bytes the skill returned (full render fidelity).
+        """
+        middleware = app.chat_manager.orakle_middleware
+        blob = middleware._render_blob_store().get(blob_id)
+        if blob is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(blob)
+
     @app.route("/framework/chat/search", methods=["GET"])
     def search_chat_history():
         """

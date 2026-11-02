@@ -11,7 +11,9 @@
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +27,7 @@ from ainara.framework.orakle_middleware import (  # noqa: 402
     ConsentRegistry,
     OffloadDigestCache,
     OrakleMiddleware,
+    RenderBlobStore,
 )
 
 SELECTION_JSON = json.dumps({
@@ -954,6 +957,116 @@ class TestOffloadConsentResume(unittest.TestCase):
         self.assertEqual(self.offload_calls, ["PAYLOAD"])
         self.assertNotIn("DIGESTED FINDINGS", "".join(chunks))
         self.assertIn("could not be completed", "".join(chunks))
+
+
+class TestRenderBlobStore(unittest.TestCase):
+    """Persistent render-blob store (#26 P2, §6.8): file-backed, content-
+    addressed, strict id validation."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="ainara_test_blobs_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.store = RenderBlobStore(self.tmp)
+
+    def test_round_trip(self):
+        payload = {"price": 42, "series": [1, 2, 3]}
+        blob_id = self.store.put(payload)
+        self.assertRegex(blob_id, r"^[0-9a-f]{64}$")
+        self.assertEqual(self.store.get(blob_id), payload)
+
+    def test_content_addressed_idempotent(self):
+        payload = {"a": 1}
+        id1 = self.store.put(payload)
+        id2 = self.store.put({"a": 1})
+        self.assertEqual(id1, id2)
+        # Distinct payloads get distinct ids — never collide.
+        self.assertNotEqual(id1, self.store.put({"a": 2}))
+
+    def test_malformed_ids_rejected(self):
+        for bad in ("", "../etc/passwd", "x" * 64, "A" * 64,
+                    "0" * 63, None, 12345):
+            self.assertIsNone(self.store.get(bad))
+
+    def test_unknown_id_is_none(self):
+        self.assertIsNone(self.store.get("0" * 64))
+
+    def test_files_live_under_base_dir(self):
+        blob_id = self.store.put({"k": "v"})
+        path = os.path.join(self.tmp, "render_blobs", blob_id + ".json")
+        self.assertTrue(os.path.exists(path))
+        # No torn tmp files survive a completed write.
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "render_blobs")),
+                         [blob_id + ".json"])
+
+
+class TestRenderInlineCeiling(TestOffloadRouter):
+    """The §6.8 render-channel rule: UI-skill payloads under the inline
+    ceiling carry full data exactly as before; payloads above it are
+    stored as persistent render blobs and the chunk carries data_ref +
+    preview instead."""
+
+    CEILING = 100  # inherited router ceiling; the render ceiling below
+
+    def setUp(self):
+        super().setUp()
+        self.tmp = tempfile.mkdtemp(prefix="ainara_test_render_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.middleware.nexus_data_inline_max_bytes = self.CEILING
+        self.middleware._render_blobs = RenderBlobStore(self.tmp)
+
+    def _set_ui_skill(self):
+        # Inherited router tests run non-UI results; only these render-
+        # channel tests declare the UI skill.
+        self.skill_info = {"type": "nexus", "ui": {"component": "chart"}}
+
+    def _rendered(self, chunks):
+        return [c for c in chunks if isinstance(c, dict)]
+
+    def test_small_payload_inlines_data(self):
+        self._set_ui_skill()
+        chunks = self._run(json.dumps({"price": 42}))
+        rendered = self._rendered(chunks)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["data"], {"price": 42})
+        self.assertNotIn("data_ref", rendered[0])
+
+    def test_large_payload_goes_by_reference(self):
+        self._set_ui_skill()
+        payload = {"blob": "x" * 500}
+        chunks = self._run(json.dumps(payload))
+        rendered = self._rendered(chunks)
+        self.assertEqual(len(rendered), 1)
+        self.assertNotIn("data", rendered[0])
+        self.assertRegex(rendered[0]["data_ref"], r"^[0-9a-f]{64}$")
+        self.assertTrue(rendered[0]["preview"].startswith('{"blob"'))
+
+    def test_blob_reference_resolves_to_payload(self):
+        self._set_ui_skill()
+        payload = {"blob": "y" * 500}
+        rendered = self._rendered(self._run(json.dumps(payload)))
+        stored = self.middleware._render_blobs.get(rendered[0]["data_ref"])
+        self.assertEqual(stored, payload)
+
+    def test_interpretation_still_runs_on_large_render(self):
+        """The render ceiling governs the render channel only — the
+        model channel keeps its own routing (interpretation/offload)."""
+        self._set_ui_skill()
+        payload = {"blob": "z" * 500, "analysis": "FINDINGS"}
+        chunks = self._run(json.dumps(payload))
+        self.assertEqual(self.interpretation_calls, [["FINDINGS"]])
+        # And the render still went by reference.
+        self.assertNotIn("data", self._rendered(chunks)[0])
+
+    def test_store_is_lazy(self):
+        """A middleware that never exceeds the ceiling never touches the
+        data directory."""
+        with patch.object(
+            self.middleware, "_render_blob_store"
+        ) as factory:
+            self.middleware.nexus_data_inline_max_bytes = 10 ** 12
+            self.skill_info = {"type": "nexus", "ui": {"component": "c"}}
+            self._run(json.dumps({"tiny": 1}))
+            factory.assert_not_called()
 
 
 if __name__ == "__main__":

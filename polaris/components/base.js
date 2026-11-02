@@ -270,7 +270,20 @@ class BaseComponent extends HTMLElement {
             try {
                 const orakleUrl = this.config.get('orakle.api_url');
                 const json = JSON.parse(skill);
-                
+
+                // Render inline ceiling (#26 P2, §6.8): payloads above
+                // the inline ceiling are stored as persistent render
+                // blobs; the transcript carries data_ref + preview and
+                // the frame hydrates by id at render time (via the
+                // document-view attachment resolver). ChatMemory never
+                // held the bytes, so replay cannot inline them either.
+                if (json.data_ref && !json.data) {
+                    const refSrc = `${orakleUrl}${json.component_path}`;
+                    const refOutput = `<iframe class='nexus-frame' src='${refSrc}' data-nexus-ref='${json.data_ref}' sandbox='allow-scripts allow-same-origin allow-forms'></iframe>`;
+                    codeBlocks.push(refOutput);
+                    return `%%CODEBLOCK${blockIndex++}%%`;
+                }
+
                 // Encode data to be safe in HTML attribute
                 const encodedData = encodeURIComponent(JSON.stringify(json.data));
                 const src = `${orakleUrl}${json.component_path}`;

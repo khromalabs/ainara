@@ -218,6 +218,12 @@ class ComRing extends BaseComponent {
                 'ring-container element not found'
             );
             this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
+            // Render-blob hydration (#26 P2, §6.8): document-view is
+            // strictly presentational — it consumes this injected
+            // resolver for history-replay frames carrying data-nexus-ref
+            // (the live path hydrates here, in the transport owner).
+            this.documentView.attachmentFetcher = (blobId) =>
+                this.hydrateAttachment(blobId);
             this.llmProviderDisplay = this.assert(
                 this.shadowRoot.querySelector('.llm-provider-display'),
                 'llm-provider-display element not found'
@@ -2908,25 +2914,32 @@ Visit our project site at: https://ainara.app
                         this.showInfo('Orakle API URL not configured.', true);
                         return;
                     }
-                    const fullUrl = orakleUrl + event.content.component_path;
-                    const pathParts = event.content.component_path.split('/');
-                    const componentName = pathParts[pathParts.length - 2];
-                    this.switchToDocumentView('nexus');
-                    // Open-or-update keyed by the backend-computed panel_id
-                    // (#30): an existing panel for the same identity is
-                    // updated in place and brought to front, never cloned.
-                    this.documentView.upsertNexusDocument(
-                        {
-                            url: fullUrl,
-                            data: event.content.data,
-                            panelId: event.content.panel_id
-                        },
-                        componentName + "—" + event.content.query
-                    );
+                    // Render inline ceiling (#26 P2, §6.8): payloads
+                    // above the ceiling arrive by reference — hydrate
+                    // by id from the PyBridge store, then render with
+                    // full fidelity exactly as an inline payload.
+                    if (event.content.data_ref && !event.content.data) {
+                        this.hydrateAttachment(event.content.data_ref)
+                            .then((data) => {
+                                this.renderNexusContent(
+                                    orakleUrl, { ...event.content, data }
+                                );
+                            })
+                            .catch((err) => {
+                                console.error(
+                                    'ComRing: attachment hydration failed:', err
+                                );
+                                this.showInfo(
+                                    'Could not load the component data.', true
+                                );
+                            });
+                        return;
+                    }
+                    this.renderNexusContent(orakleUrl, event.content);
                 }
                 break;
 
-            case 'closeNexus':
+                    case 'closeNexus':
                 // Skill-initiated close (#30): the framework asked for a
                 // panel to be dismissed by panel_id. Nothing was rendered
                 // for this exchange; the interpretation text is the record.
@@ -2951,6 +2964,38 @@ Visit our project site at: https://ainara.app
                 }
                 break;
         }
+    }
+
+    renderNexusContent(orakleUrl, content) {
+        const fullUrl = orakleUrl + content.component_path;
+        const pathParts = content.component_path.split('/');
+        const componentName = pathParts[pathParts.length - 2];
+        this.switchToDocumentView('nexus');
+        // Open-or-update keyed by the backend-computed panel_id
+        // (#30): an existing panel for the same identity is
+        // updated in place and brought to front, never cloned.
+        this.documentView.upsertNexusDocument(
+            {
+                url: fullUrl,
+                data: content.data,
+                panelId: content.panel_id
+            },
+            componentName + "—" + content.query
+        );
+    }
+
+    // Render-blob hydration (#26 P2, §6.8): com-ring owns the transport;
+    // document-view only consumes the injected resolver (presentational
+    // component doctrine). Used by the live path above and by history
+    // replay (data-nexus-ref frames in document-view).
+    async hydrateAttachment(blobId) {
+        const response = await fetch(
+            `${this.pybridgeEndpoint}/attachments/${encodeURIComponent(blobId)}`
+        );
+        if (!response.ok) {
+            throw new Error(`attachment ${blobId}: HTTP ${response.status}`);
+        }
+        return response.json();
     }
 }
 

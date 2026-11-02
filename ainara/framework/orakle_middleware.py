@@ -315,6 +315,59 @@ class ConsentRegistry:
             return self._entries.pop(decision_id)
 
 
+class RenderBlobStore:
+    """Persistent render blobs for UI-skill payloads above the inline
+    ceiling (#26 P2, §6.8 render channel).
+
+    The two-channel discipline: the render channel keeps full fidelity,
+    but a payload over ``orakle.nexus.data_inline_max_bytes`` is stored
+    file-backed and the transcript carries a ``data_ref`` plus a small
+    preview instead of the payload itself — the conversation and
+    ChatMemory never hold the bytes (core invariant), Polaris hydrates
+    by id at render time via GET /attachments/<id>.
+
+    Persistence class (crude v1 of the render-blob lifecycle, §11.7):
+    blobs outlive the conversations that reference them; no validators,
+    no retrieval index, no sweep. Storage is content-addressed by the
+    payload's SHA-256, so re-renders of identical data reuse the blob
+    instead of duplicating it.
+    """
+
+    _ID_RE = re.compile(r"^[0-9a-f]{64}$")
+
+    def __init__(self, base_dir: str):
+        self.base_dir = os.path.join(base_dir, "render_blobs")
+        os.makedirs(self.base_dir, exist_ok=True)
+
+    def put(self, data: Any) -> str:
+        """Store a payload; returns its blob id (sha256 hex). Idempotent
+        for identical payloads."""
+        raw = json.dumps(data, ensure_ascii=False, sort_keys=True).encode(
+            "utf-8"
+        )
+        blob_id = hashlib.sha256(raw).hexdigest()
+        path = os.path.join(self.base_dir, blob_id + ".json")
+        if not os.path.exists(path):
+            # Atomic write: a crash mid-write can never leave a torn
+            # blob that a data_ref points at.
+            tmp = path + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(raw)
+            os.replace(tmp, path)
+        return blob_id
+
+    def get(self, blob_id: str) -> Optional[Any]:
+        """Load a payload by id; None when unknown or malformed."""
+        if not isinstance(blob_id, str) or not self._ID_RE.match(blob_id):
+            return None
+        path = os.path.join(self.base_dir, blob_id + ".json")
+        try:
+            with open(path, "rb") as f:
+                return json.loads(f.read().decode("utf-8"))
+        except (OSError, ValueError):
+            return None
+
+
 class OrakleCapabilityFetcher:
     """Utility class to fetch and process capabilities from Orakle servers."""
 
@@ -611,6 +664,17 @@ class OrakleMiddleware:
         # (high deliberation, metered-provider warning). Dies on reboot,
         # and never overrides an explicit 'deny'.
         self._session_spend_allow = False
+
+        # Render inline ceiling (issue #26 P2, §6.8): UI-skill payloads
+        # above it are stored as persistent render blobs; the transcript
+        # carries data_ref + preview and Polaris hydrates by id. Small
+        # payloads (the candles case) inline exactly as today. The store
+        # is built lazily — construction touches the data directory, so
+        # sessions that never exceed the ceiling never pay for it.
+        self.nexus_data_inline_max_bytes = self.config_manager.get(
+            "orakle.nexus.data_inline_max_bytes", 24000
+        )
+        self._render_blobs = None
 
         # Rate resilience (issue #26 P1.5): concurrency 1 for digestion
         # agents — concurrent oversized results reject with guidance
@@ -1557,8 +1621,29 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         close_requested = bool(
                             result_data.pop("close_panel", False)
                         )
+                    # Render inline ceiling (#26 P2, §6.8): a payload
+                    # above the ceiling is stored as a persistent render
+                    # blob and the transcript carries data_ref + preview
+                    # — ChatMemory never holds payload bytes; Polaris
+                    # hydrates by id at render time. Full fidelity is
+                    # preserved on the render channel, only the
+                    # transport changes.
+                    render_ref = None
+                    render_preview = None
+                    if len(result) > self.nexus_data_inline_max_bytes:
+                        render_ref = self._render_blob_store().put(
+                            result_data
+                        )
+                        render_preview = result[:512]
+                        logger.info(
+                            "ORAKLE: nexus payload above inline ceiling"
+                            " (%s > %s bytes); stored render blob %s.",
+                            len(result),
+                            self.nexus_data_inline_max_bytes,
+                            render_ref[:12],
+                        )
                     # Yield the special dictionary for ChatManager with a flat structure
-                    yield {
+                    payload = {
                         "type": "nexus_skill_result",
                         "vendor": skill_info.get("vendor"),
                         "bundle": skill_info.get("bundle"),
@@ -1568,8 +1653,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         "mode": ui_info.get("mode", "view"),
                         "close": close_requested,
                         "query": query,
-                        "data": result_data,
                     }
+                    if render_ref is not None:
+                        payload["data_ref"] = render_ref
+                        payload["preview"] = render_preview
+                    else:
+                        payload["data"] = result_data
+                    yield payload
                 except json.JSONDecodeError:
                     error_msg = (
                         f"Nexus/user skill '{selected_skill_id}' did not return"
@@ -1831,6 +1921,16 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             "selected_backend", "litellm"
         )
         return not (selected.startswith("ollama/") or backend == "ollama")
+
+    def _render_blob_store(self) -> RenderBlobStore:
+        """Lazily-built render blob store (persistent, file-backed
+        under the data directory)."""
+        if self._render_blobs is None:
+            data_dir = self.config_manager.get("data.directory")
+            if not isinstance(data_dir, str) or not data_dir:
+                data_dir = self.config_manager.get_default_data_dir()
+            self._render_blobs = RenderBlobStore(str(data_dir))
+        return self._render_blobs
 
     def _offload_spend_policy(self) -> str:
         """Effective spend policy for the offload trigger (#26 P2).

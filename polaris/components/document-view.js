@@ -1106,6 +1106,45 @@ class DocumentView extends BaseComponent {
     hydrateNexusFrames(container) {
         const frames = container.querySelectorAll('iframe.nexus-frame');
         frames.forEach(iframe => {
+            // Render-blob frames (#26 P2, §6.8): hydrate by id through
+            // the injected attachment resolver (transport lives in
+            // com-ring; this component stays presentational). The frame
+            // renders once the payload arrives.
+            if (iframe.dataset.nexusRef && !iframe.dataset.hydrated) {
+                if (typeof this.attachmentFetcher !== 'function') {
+                    console.warn(
+                        'No attachment resolver; cannot hydrate render blob',
+                        iframe.dataset.nexusRef
+                    );
+                    return;
+                }
+                iframe.dataset.hydrated = 'true';
+                // Race-free handoff: postMessage fires once BOTH the
+                // frame has loaded and the payload has arrived, in
+                // either order. Listeners register synchronously so a
+                // frame that loads during the fetch is never missed.
+                let loaded = false;
+                let payload = null;
+                const flush = () => {
+                    if (loaded && payload !== null && iframe.contentWindow) {
+                        iframe.contentWindow.postMessage(payload, '*');
+                    }
+                };
+                iframe.addEventListener('load', () => {
+                    loaded = true;
+                    flush();
+                });
+                this.attachmentFetcher(iframe.dataset.nexusRef)
+                    .then((data) => {
+                        payload = data?.result || data;
+                        flush();
+                    })
+                    .catch((e) => {
+                        console.error('Failed to hydrate render blob:', e);
+                        iframe.dataset.hydrated = '';
+                    });
+                return;
+            }
             // Only process frames that have data and haven't been hydrated yet
             if (iframe.dataset.nexusData && !iframe.dataset.hydrated) {
                 try {
