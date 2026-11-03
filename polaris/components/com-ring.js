@@ -955,13 +955,14 @@ class ComRing extends BaseComponent {
     // #19 item 3: karaoke continues (fast) while playback is muted — the
     // text stream is the clue that the answer is still being produced.
     // Pacing: never slower than the chunk's TTS duration, floored at a
-    // brisk-but-comfortable reading speed (~18 chars/s, a step above the
-    // ~13 chars/s of natural speech), bounded to keep tiny chunks from
+    // brisk reading speed (~30 chars/s, roughly double the ~13 chars/s of
+    // natural speech — muted playback should feel faster than listening),
+    // bounded to keep tiny chunks from
     // strobing and huge ones from outstaying their welcome.
     fastStreamDuration(content) {
         const text = (content && content.content) || '';
         const original = content && content.flags && content.flags.duration;
-        const byReading = Math.min(5, Math.max(0.6, text.length / 18));
+        const byReading = Math.min(5, Math.max(0.25, text.length / 30));
         return Math.min(typeof original === 'number' ? original : Infinity, byReading);
     }
 
