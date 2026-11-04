@@ -484,6 +484,11 @@ def run_agent_in_process(
         blacklisted_providers = []
 
     last_error = None
+    # Forensics: record every provider attempt, including the failures that
+    # triggered a fallback. Child-process logs do not reach bureau.log, so
+    # this list is stamped onto the result and surfaced by the conductor
+    # (log line + forensic report) instead.
+    provider_attempts = []
 
     # Filter capabilities based on blueprint
     allowed_skills = blueprint.get("allowed_skills", ["*"])
@@ -551,13 +556,24 @@ def run_agent_in_process(
                 reason_msg = failure_reason if failure_reason else "Empty response from agent"
                 logger.warning(f"Agent execution failed with provider '{provider}': {reason_msg}. Retrying next...")
                 last_error = f"[{provider}] {reason_msg}"
+                provider_attempts.append(
+                    {"provider": provider, "error": str(reason_msg)}
+                )
                 # Do not return, let the loop continue to the next provider
             else:
+                # Stamp which provider actually served this step so the
+                # conductor can surface it in logs and forensic reports.
+                result["llm_provider"] = provider
+                if provider_attempts:
+                    result["llm_provider_attempts"] = provider_attempts
                 result_queue.put(result, timeout=5)
                 return  # Success! Exit the process.
 
         except Exception as e:
             last_error = e
+            provider_attempts.append(
+                {"provider": provider, "error": str(e)}
+            )
             logger.warning(
                 f"Agent execution failed with provider '{provider}': {e}."
                 " Retrying next..."
@@ -581,6 +597,7 @@ def run_agent_in_process(
                     "All configured LLM providers failed. Last error:"
                     f" {last_error}"
                 ),
+                "llm_provider_attempts": provider_attempts,
             },
             timeout=5,
         )

@@ -548,12 +548,24 @@ class Conductor:
 
                     scratchpad.store(step_name, result)
                     completed.add(step_name)
+                    provider = result.get("llm_provider")
+                    provider_note = ""
+                    if provider:
+                        provider_note = f" [model: {provider}]"
+                        attempts = result.get("llm_provider_attempts") or []
+                        if attempts:
+                            fallbacks = ", ".join(
+                                str(a.get("provider", "?"))
+                                for a in attempts
+                            )
+                            provider_note += f" [fallback after: {fallbacks}]"
                     logger.info(
-                        "%s Step '%s' completed (%d/%d)",
+                        "%s Step '%s' completed (%d/%d)%s",
                         log_prefix,
                         step_name,
                         len(completed),
                         len(plan.steps),
+                        provider_note,
                     )
 
                 if failed:
@@ -990,8 +1002,10 @@ class Conductor:
                 lines.append(f"**Failure Reason:** {failure_reason}\n")
 
             lines.append("## Execution Summary\n")
-            lines.append("| Step | Type | Status | Turns | Skills Executed |")
-            lines.append("|---|---|---|---|---|")
+            lines.append(
+                "| Step | Type | Status | Turns | Skills Executed | Model |"
+            )
+            lines.append("|---|---|---|---|---|---|")
 
             # Report steps in plan declaration (YAML) order, regardless of
             # outcome (completed / skipped / failed / aborted).
@@ -1019,9 +1033,20 @@ class Conductor:
 
                 turns = result.get("turns_used", 0)
                 skills = ", ".join(result.get("skills_executed", [])) or "None"
+                provider = result.get("llm_provider")
+                if provider:
+                    attempts = result.get("llm_provider_attempts") or []
+                    model_cell = str(provider)
+                    if attempts:
+                        fallbacks = ", ".join(
+                            str(a.get("provider", "?")) for a in attempts
+                        )
+                        model_cell += f" (fallback after: {fallbacks})"
+                else:
+                    model_cell = "—"
                 lines.append(
                     f"| `{step_name}` | {step_node.type} | {status} | {turns}"
-                    f" | {skills} |"
+                    f" | {skills} | {model_cell} |"
                 )
 
             # --- Resolved static bindings (audit trail) ---
@@ -1357,6 +1382,13 @@ class Conductor:
                         "turns_used": response.get("turns_used", 0),
                         "skills_executed": response.get("skills_executed", []),
                         "failure_reason": response.get("failure_reason"),
+                        # Provider forensics: which llm_providers entry
+                        # actually served this agent step (and any
+                        # fallback attempts before it).
+                        "llm_provider": response.get("llm_provider"),
+                        "llm_provider_attempts": response.get(
+                            "llm_provider_attempts"
+                        ),
                     }
                 else:
                     # Skill steps put the full result dict directly
