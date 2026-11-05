@@ -146,7 +146,12 @@
                             "context_window": {"type": "integer"},
                             "api_key": {"type": "string"},
                             "api_base": {"type": "string", "format": "uri"},
-                            "enable_thinking": {"type": "boolean"}
+                            "enable_thinking": {"type": "boolean"},
+                            "reasoning_effort": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "minimal"],
+                                "description": "Default reasoning effort requested for this model on every call (main chat, Orakle selection, agent plan steps, GREEN memories). Undeclared means the parameter is not sent (provider default applies). Ignored with a warning for models whose provider rejects the parameter; an explicit per-call effort still takes precedence."
+                            }
                         },
                         "required": ["model"]
                     }
