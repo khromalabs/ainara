@@ -289,6 +289,7 @@ async function loadExistingProviders(ctx) {
                         <strong>${providerModel}</strong><br>
                         ${provider.api_base ? `API: ${provider.api_base}` : ''}
                         ${provider.context_window ? `Context: ${(provider.context_window / 1024).toFixed(2)}K` : ''}
+                        ${provider.reasoning_effort ? `Effort: ${escapeHtml(provider.reasoning_effort)}` : ''}
                     </label>
                     <button class="delete-provider-btn" data-index="${originalIndex}" title="Delete this provider">
                         &times;
@@ -467,6 +468,25 @@ function updateProviderDetailsUI(ctx) {
             <p class="field-description">Override the default context window size for this model. Leave blank to use the model's default or LiteLLM's detected value.</p>
         </div>
     `;
+
+    // Reasoning effort default (llm.providers[].reasoning_effort). Not
+    // shown for Ollama: the local backend has no reasoning_effort
+    // parameter (interface parity only).
+    if (selectedProviderId !== 'ollama') {
+        html += `
+        <div class="form-group">
+            <label for="${selectedProviderId}-reasoning_effort">Reasoning Effort (Optional):</label>
+            <select id="${selectedProviderId}-reasoning_effort">
+                <option value="">Provider default</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="minimal">minimal</option>
+            </select>
+            <p class="field-description">Request a fixed reasoning effort on every call to this model. 'low' is recommended for reasoning models (e.g. gpt-oss) used for background tasks: their default reasoning can exhaust the response budget and return empty answers. Leave unset to use the provider's default.</p>
+        </div>
+        `;
+    }
     detailsContainer.innerHTML = html;
 
     testButton.disabled = false;
@@ -614,6 +634,11 @@ function getLLMConfig(ctx) {
             config.context_window = contextWindowValue;
         }
     }
+
+    const reasoningEffortSelect = document.getElementById(`${selectedProviderId}-reasoning_effort`);
+    if (reasoningEffortSelect && reasoningEffortSelect.value) {
+        config.reasoning_effort = reasoningEffortSelect.value;
+    }
     return config;
 }
 
@@ -665,6 +690,10 @@ async function saveLLMConfig(ctx) {
 
         if (llmConfig.context_window) {
             provider.context_window = llmConfig.context_window;
+        }
+
+        if (llmConfig.reasoning_effort) {
+            provider.reasoning_effort = llmConfig.reasoning_effort;
         }
 
         if (Array.isArray(backendConfig.llm.providers)) {
