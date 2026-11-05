@@ -1033,6 +1033,8 @@ class Conductor:
 
                 turns = result.get("turns_used", 0)
                 skills = ", ".join(result.get("skills_executed", [])) or "None"
+                if result.get("skill_less"):
+                    skills += " ⚠️ NO TOOLS EXECUTED"
                 provider = result.get("llm_provider")
                 if provider:
                     attempts = result.get("llm_provider_attempts") or []
@@ -1390,6 +1392,24 @@ class Conductor:
                             "llm_provider_attempts"
                         ),
                     }
+                    # Fabrication watch: an agent step that completed
+                    # without executing any skill produced claims that
+                    # were never grounded in a tool result (Nov-2026
+                    # Sentinel failure class: news steps reporting
+                    # "findings" and entry steps "validating" writes
+                    # with zero executions). Flag it — the forensic
+                    # report marks the row so the run can be audited.
+                    if (
+                        not completed[step_name]["skills_executed"]
+                        and completed[step_name]["turns_used"] > 0
+                    ):
+                        completed[step_name]["skill_less"] = True
+                        logger.warning(
+                            "[conductor] Agent step '%s' completed with "
+                            "ZERO skill executions — its claims are "
+                            "ungrounded (fabrication watch).",
+                            step_name,
+                        )
                 else:
                     # Skill steps put the full result dict directly
                     completed[step_name] = {

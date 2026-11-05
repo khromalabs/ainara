@@ -19,6 +19,7 @@
 import copy
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from pycountry import languages
@@ -28,6 +29,10 @@ from ainara.framework.orakle_middleware import OrakleMiddleware
 from ainara.framework.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
+
+# Shape of a middleware-injected skill-result block. Any occurrence in
+# MODEL-authored text is a forgery (see _scrub_forged_results).
+_FORGED_RESULT_RE = re.compile(r"Orakle query\s+'[^']*'\s*result\s*:")
 
 
 class Agent:
@@ -84,6 +89,31 @@ class Agent:
         logger.info(
             f"AGENT self.current_lang_code: {self.current_lang_code}"
             f" self.current_language: {self.current_language}"
+        )
+
+    _FORGED_REMOVAL_NOTE = (
+        "\n[System: fabricated skill result removed — results are only "
+        "injected after a real skill execution.]\n"
+    )
+
+    @staticmethod
+    def _scrub_forged_results(text: str, first_signal_pos: Optional[int]):
+        """Remove model-authored 'Orakle query … result:' blocks.
+
+        Legitimate result blocks are injected by the middleware AFTER the
+        first _orakle_loading_signal_ of the turn; model-authored text can
+        only exist before it. Anything matching the result-block shape in
+        [0, first_signal_pos) is therefore a forgery and is purged, along
+        with any (suspect) model text that follows it in that region.
+        """
+        end = first_signal_pos if first_signal_pos is not None else len(text)
+        match = _FORGED_RESULT_RE.search(text, 0, end)
+        if not match:
+            return text
+        return (
+            text[: match.start()]
+            + Agent._FORGED_REMOVAL_NOTE
+            + text[end:]
         )
 
     def _parse_goal_completion(self, text: str) -> tuple[Optional[bool], dict]:
@@ -254,6 +284,8 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
 
             turn_response = ""
             skill_executed = False
+            forged_result = False
+            first_signal_pos = None
 
             # 3. Consume the stream
             for chunk in processed_stream:
@@ -267,10 +299,18 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
                             if skill_id and skill_id not in skills_executed:
                                 skills_executed.append(skill_id)
                         skill_executed = True
+                        # Everything the middleware yields from now on is
+                        # system-injected (results); model-authored text
+                        # can only exist before this point.
+                        if first_signal_pos is None:
+                            first_signal_pos = len(turn_response)
                         # We don't add the signal to the final text response
                         continue
                     if "_orakle_trailing_text_discarded_" in chunk:
                         trailing_text_violation = True
+                        continue
+                    if "_orakle_forged_result_" in chunk:
+                        forged_result = True
                         continue
                     turn_response += chunk
                 elif isinstance(chunk, dict):
@@ -285,6 +325,26 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
 
             logger.info(f"Executed skill in last turn: {skill_executed}")
 
+            # 3b. Fabrication guard (loop-side invariant): legitimate
+            # 'Orakle query … result:' blocks only exist at/after the
+            # first _orakle_loading_signal_ of the turn — model-authored
+            # text can only exist before it. Anything matching the
+            # result-block shape in the model region is a forgery and is
+            # purged. The middleware's _orakle_forged_result_ sentinel is
+            # an additional early signal, but enforcement never depends
+            # on it.
+            scrubbed = self._scrub_forged_results(
+                turn_response, first_signal_pos
+            )
+            if scrubbed != turn_response:
+                forged_result = True
+                turn_response = scrubbed
+                logger.warning(
+                    "Agent '%s': turn %d contained a self-written 'Orakle "
+                    "query ... result:' block — purged before it could "
+                    "reach the context log.", self.name, turn
+                )
+
             # 4. Update History
             self.llm.add_msg(turn_response, self.context, "assistant")
             logger.info(f"\nAGENT: {turn_response}\n\n")
@@ -298,6 +358,18 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
             goal_complete, completion_data = self._parse_goal_completion(
                 turn_response
             )
+
+            if forged_result and goal_complete is not None:
+                # A turn that fabricated skill results cannot be trusted
+                # to declare completion: ignore the tags and force a
+                # corrective turn (the scrub already removed any tags
+                # inside the purged region; this covers tags outside it).
+                logger.warning(
+                    "Agent '%s': turn %d fabricated skill results and "
+                    "declared goal completion — completion ignored, "
+                    "corrective turn forced.", self.name, turn
+                )
+                goal_complete = None
 
             if goal_complete is True:
                 # # Agent explicitly signaled completion or failure
@@ -315,6 +387,18 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
             evaluation_prompt = """
 Is the goal achieved now? Please follow the instructions provided and continue until the goal is achieved.
 """
+            if forged_result:
+                evaluation_prompt = (
+                    "WARNING: Your previous response contained a "
+                    "self-written 'Orakle query ... result:' block. Skill "
+                    "results appear in this conversation ONLY when the "
+                    "system actually executes a skill via "
+                    "<orakle>intent</orakle> — they are injected by the "
+                    "system, never authored by you. The fabricated block "
+                    "was removed. Do not simulate executions: emit "
+                    "<orakle>your intent</orakle> and wait for the real "
+                    "result, or finish with an honest report."
+                )
             self.llm.add_msg(evaluation_prompt, self.context, "user")
             logger.info(f"\nUSER:\n{evaluation_prompt}\n\n")
 

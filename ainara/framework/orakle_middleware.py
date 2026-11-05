@@ -39,6 +39,15 @@ from ainara.framework.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
 
+# Skill-result forgery guard: the middleware is the ONLY legitimate
+# emitter of "Orakle query '…' result:" blocks (injected after a real
+# skill execution). If the MODEL emits that shape, it is simulating a
+# tool result — the Nov-2026 Sentinel failure class. Detected in the
+# model-authored stream and flagged to the agent loop via the
+# _orakle_forged_result_ sentinel.
+_FORGED_RESULT_RE = re.compile(r"Orakle query\s+'[^']*'\s*result\s*:")
+_FORGERY_SCAN_WINDOW = 1200
+
 
 class OrakleCapabilityFetcher:
     """Utility class to fetch and process capabilities from Orakle servers."""
@@ -605,6 +614,10 @@ class OrakleMiddleware:
         signal_check_buffer = ""
         forbidden_signal = "_orakle_loading_signal_"
 
+        # Skill-result forgery detection (see _FORGED_RESULT_RE)
+        forged_flag = False
+        forgery_scan = ""
+
         self.current_language = (
             current_language if current_language is not None else "English"
         )
@@ -634,6 +647,19 @@ class OrakleMiddleware:
                 return
 
             buffer += token
+
+            # --- Guardrail: detect skill-result forgery in model text ---
+            forgery_scan += token
+            if len(forgery_scan) > _FORGERY_SCAN_WINDOW:
+                forgery_scan = forgery_scan[-_FORGERY_SCAN_WINDOW:]
+            if not forged_flag and _FORGED_RESULT_RE.search(forgery_scan):
+                forged_flag = True
+                logger.warning(
+                    "ORAKLE GUARD: model emitted a self-written 'Orakle"
+                    " query ... result:' block (skill-result forgery);"
+                    " flagging for the agent loop."
+                )
+                yield "\n_orakle_forged_result_\n"
 
             # Check for typo tags in the current buffer
             typo = self._check_for_typo_tags(buffer)
