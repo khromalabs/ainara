@@ -91,9 +91,33 @@ def _fetch_capabilities() -> list:
     return caps
 
 
-def _llm_config() -> dict:
+def _llm_config(provider: str | None = None) -> dict:
+    import os
     from ainara.framework.config import config
-    return config.get("llm", {})
+    llm_config = config.get("llm", {})
+    if provider:
+        providers = llm_config.setdefault("providers", [])
+        if not any(p.get("model") == provider for p in providers):
+            # Synthesize the provider entry from the environment, mirroring
+            # what the macmini config carries explicitly.
+            env_keys = {
+                "zai": "ZAI_API_KEY",
+                "groq": "GROQ_API_KEY",
+                "cerebras": "CEREBRAS_API_KEY",
+                "deepseek": "DEEPSEEK_API_KEY",
+                "xiaomi_mimo": "XIAOMI_MIMO_API_KEY",
+                "gemini": "GEMINI_API_KEY",
+            }
+            prefix = provider.split("/")[0]
+            api_key = os.environ.get(env_keys.get(prefix, ""), "")
+            if not api_key:
+                raise RuntimeError(
+                    f"No api_key for '{provider}' (set "
+                    f"{env_keys.get(prefix, '?')} in the environment or "
+                    "add it to ainara.yaml)"
+                )
+            providers.append({"model": provider, "api_key": api_key})
+    return llm_config
 
 
 # Deployed sentinel_trading.yaml blueprints (macmini, verbatim system
@@ -294,31 +318,88 @@ def suite_fabrication() -> None:
 # ─────────────────────────── suite: news ──────────────────────────────
 
 
-def suite_news(provider_filter: list[str] | None) -> None:
+ENTRY_ALLOWED_SAFE = [
+    "khromalabs_ataria_crypto_tradingaccount",
+    "khromalabs_ataria_crypto_tradingworkbook",
+    "khromalabs_ataria_crypto_analysis",
+    "khromalabs_ataria_charts_candles",
+    "html_webpage",
+    "tools_calculator",
+]
+
+ENTRY_BLUEPRINT = {
+    "name": "Sentinel Entry Analyst",
+    "allowed_skills": ENTRY_ALLOWED_SAFE,
+    "system_message": (
+        "You are the Sentinel Entry Analyst. Follow the trading workflow "
+        "protocol: read market psychology, evaluate ONLY the actionable "
+        "setup provided in the goal, apply the catalyst gate and geometry "
+        "checks, decide, and validate any real state via ORAKLE skills "
+        "(workbook, account exposure). Report reality, never intentions: "
+        "a trade that no skill result confirmed in this conversation did "
+        "NOT happen. IMPORTANT SESSION CONSTRAINT: the tradingorders "
+        "skill is NOT available in this session — never attempt to place, "
+        "edit or close orders. If a trade would be warranted, output the "
+        "intended order ticket explicitly marked 'NOT EXECUTED (orders "
+        "disabled in this session)'."
+    ),
+}
+
+ENTRY_GOAL = (
+    "Find and execute new good and outstanding conviction trading setups "
+    "(4h timeframe). === MARKET & PORTFOLIO DATA === USDC Balance: 100.44. "
+    "Active Exposure: no active positions or open orders. === "
+    "Actionable Setup === HBAR/USDC - $0.0678 (-7.3% 24h) - MCap: $3.0B. "
+    "Setup Direction: SHORT. RSI(14): 43.73 (neutral) | MACD: neutral on "
+    "4h | Last Closed Vol: 3.7x avg. 4H Market Bias: BEARISH (68% conf) | "
+    "Last BOS: bearish_bos @ $0.0675 (Age: 0), EMA bearish cross. Entry "
+    "Level (awaiting retest): $0.0675 | SL: $0.0708 (1.76 ATR). Regime: "
+    "TRENDING (ADX 29.1, ATR 74th pct, fresh BOS). Stop Hostility: "
+    "Efficiency Ratio 0.23 | Est. Adverse Excursion (AEx): 1.93 ATR "
+    "(~5.4%). === ASSET-SPECIFIC CATALYSTS === catalyst_strength: high; "
+    "catalyst_direction: bullish; catalyst_durability: sustained; "
+    "timeline: 2026-11-04 enterprise partnership, 2026-11-03 stablecoin "
+    "mainnet launch, 2026-11-02 $50M government grant. === WORKBOOK === "
+    "7 WATCH entries at capacity; one entry (hbar) was added this "
+    "session with a placeholder invalidation. Evaluate the setup and "
+    "act according to protocol (workbook hygiene and exposure "
+    "verification as usual; orders are disabled in this session)."
+)
+
+
+def _run_blueprint_suite(
+    blueprint: dict,
+    goal: str,
+    max_turns: int,
+    provider_filter: list[str] | None,
+    label: str,
+) -> None:
     from ainara.bureau.server import run_agent_in_process
 
     proc = _ensure_orakle()
     try:
         caps = _fetch_capabilities()
-        blueprint = dict(NEWS_BLUEPRINT)
+        blueprint = dict(blueprint)
         if provider_filter:
             blueprint["llm_providers"] = provider_filter
         q = Queue()
-        logger.info("Running news blueprint with providers: %s",
-                    blueprint["llm_providers"])
+        logger.info("Running %s blueprint with providers: %s",
+                    label, blueprint.get("llm_providers", "(default)"))
         run_agent_in_process(
-            llm_config=_llm_config(),
+            llm_config=_llm_config(
+                (blueprint.get("llm_providers") or [None])[0]
+            ),
             orakle_servers=[ORAKLE_URL],
             blueprint=blueprint,
             user_context={"language": "en"},
-            goal=NEWS_GOAL,
-            max_turns=10,
+            goal=goal,
+            max_turns=max_turns,
             result_queue=q,
             global_capabilities=caps,
         )
         result = q.get(timeout=10)
         print("\n" + "=" * 70)
-        print("LIVE NEWS-STEP REPRO (deployed blueprint, read-only skills)")
+        print(f"LIVE {label.upper()} REPRO (read-only skills)")
         print("=" * 70)
         print(f"  serving provider : {result.get('llm_provider')}")
         print(f"  provider attempts: {result.get('llm_provider_attempts')}")
@@ -333,16 +414,25 @@ def suite_news(provider_filter: list[str] | None) -> None:
                   "memory — check whether the response contains "
                   "invented figures.")
         else:
-            print("\n  >> Agent DID use skills this time — regression "
-                  "not reproduced with this provider/model.")
+            print("\n  >> Agent DID use skills this time.")
     finally:
         if proc:
             proc.terminate()
 
 
+def suite_news(provider_filter: list[str] | None) -> None:
+    _run_blueprint_suite(
+        NEWS_BLUEPRINT, NEWS_GOAL, 10, provider_filter, "news-step")
+
+
+def suite_entry(provider_filter: list[str] | None) -> None:
+    _run_blueprint_suite(
+        ENTRY_BLUEPRINT, ENTRY_GOAL, 12, provider_filter, "entry-step")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("suite", choices=["menu", "fabrication", "news", "all"])
+    ap.add_argument("suite", choices=["menu", "fabrication", "news", "entry", "all"])
     ap.add_argument("--provider", action="append",
                     help="Override llm_providers for the news suite "
                          "(repeatable)")
@@ -354,6 +444,8 @@ def main() -> None:
         suite_menu()
     if args.suite in ("news", "all"):
         suite_news(args.provider)
+    if args.suite in ("entry", "all"):
+        suite_entry(args.provider)
 
 
 if __name__ == "__main__":
