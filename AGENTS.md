@@ -75,12 +75,19 @@ before proposing changes that cut against them.
   annotation description rebuilt at `__init__` time.
 - The Orakle selection LLM (per invocation) sees a block derived via
   `format_skill_block()`: semantic docstring as `Description:`, first
-  `matcher_info` paragraph, and the parameters from the annotations.
-- Bureau agents see the same blocks, scoped to the blueprint's
-  `allowed_skills`, rendered into their system prompt by
-  `format_capabilities_menu()` — the agent plans multi-step goals from
-  that menu, so the annotations must fully describe each action's
-  requirements.
+  `matcher_info` paragraph, and the parameters from the annotations
+  (full depth).
+- Bureau agents see a LEAN projection of the same payload, scoped to
+  the blueprint's `allowed_skills` and rendered into their system
+  prompt by `format_capabilities_menu()` (depth="lean"): semantic
+  docstring + required parameters with their descriptions (the action
+  contract for multi-action skills lives there) + optional parameter
+  names only — no matcher_info (embedding-routing text) and no
+  optional/defaults detail, which belong to the selection layer. The
+  agent states intents in natural language; it must be able to decide
+  WHAT a capability is for and WHEN to use it, not simulate parameter
+  filling. Keep the annotations complete anyway: the selection LLM
+  depends on them.
 - The class docstring is the SEMANTIC contract: what the skill is for,
   plus behavioral rules the LLM must respect — not just in code:
   parameter semantics the LLM can't guess (e.g. "quantity 0 removes"),

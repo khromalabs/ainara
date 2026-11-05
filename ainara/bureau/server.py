@@ -576,7 +576,8 @@ def run_agent_in_process(
             )
             logger.warning(
                 f"Agent execution failed with provider '{provider}': {e}."
-                " Retrying next..."
+                " Retrying next...",
+                exc_info=True,
             )
 
             # TODO: Refine blacklist logic. Currently we blacklist on ANY exception.
