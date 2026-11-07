@@ -293,8 +293,8 @@ class ComRingWindow extends BaseWindow {
         if (args.view === 'document' && !this.isDocumentView) {
             const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().size;
 
-            const docHeight = screenHeight * .90
-            const docWidth = screenWidth * .90
+            const docHeight = screenHeight * .95
+            const docWidth = screenWidth * .95
 
             // Store current position before resizing
             if (!this.isDocumentView) {
