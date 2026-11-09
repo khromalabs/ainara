@@ -151,6 +151,7 @@ body {
 #welcome-panel {
     max-width: 80%;
     line-height: 1.5;
+    overflow-y: hidden;
 }
 
 #welcome-panel p {
@@ -1862,7 +1863,7 @@ div#tos-modal .close-modal-btn {
 
 /* Welcome step: bundled CHANGES.md release notes (newest release first) */
 .welcome-changelog {
-    max-width: 500px;
+    max-width: 700px;
     margin: 15px auto 0 auto;
     padding: 14px 18px;
     background: rgba(0,0,0,0.05);
@@ -1885,11 +1886,13 @@ div#tos-modal .close-modal-btn {
 .welcome-changelog-body h2 {
     font-size: 1.05em;
     margin: 12px 0 6px 0;
+    text-align: left;
 }
 
 .welcome-changelog-body h3 {
     font-size: 0.95em;
     margin: 10px 0 4px 0;
+    text-align: left;
 }
 
 .welcome-changelog-body ul {
