@@ -1859,3 +1859,50 @@ div#tos-modal .modal-header {
 div#tos-modal .close-modal-btn {
     margin-left: auto;
 }
+
+/* Welcome step: bundled CHANGES.md release notes (newest release first) */
+.welcome-changelog {
+    max-width: 500px;
+    margin: 15px auto 0 auto;
+    padding: 14px 18px;
+    background: rgba(0,0,0,0.05);
+    border-radius: 8px;
+    text-align: left;
+}
+
+.welcome-changelog h3 {
+    margin: 0 0 8px 0;
+    text-align: center;
+}
+
+.welcome-changelog-body {
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 0.88em;
+    line-height: 1.45;
+}
+
+.welcome-changelog-body h2 {
+    font-size: 1.05em;
+    margin: 12px 0 6px 0;
+}
+
+.welcome-changelog-body h3 {
+    font-size: 0.95em;
+    margin: 10px 0 4px 0;
+}
+
+.welcome-changelog-body ul {
+    margin: 4px 0 8px 0;
+    padding-left: 20px;
+}
+
+.welcome-changelog-body p {
+    margin: 6px 0;
+}
+
+.welcome-changelog-body code {
+    background: rgba(0,0,0,0.08);
+    padding: 1px 4px;
+    border-radius: 3px;
+}

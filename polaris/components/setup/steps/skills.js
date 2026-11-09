@@ -1337,29 +1337,6 @@ function countChangeBullets(text) {
     return String(text || '').split('\n').filter(l => /^\s*[-*]\s+/.test(l)).length;
 }
 
-// Defense-in-depth sanitizer for rendered markdown: CHANGES.md is
-// creator-signed content, but the wizard window must never become an
-// XSS surface — strip script-ish elements, on* handlers and
-// javascript: URLs from the parsed HTML before it enters the DOM.
-function sanitizeMarkdownHtml(html) {
-    const tpl = document.createElement('template');
-    tpl.innerHTML = html;
-    tpl.content.querySelectorAll(
-        'script, style, iframe, object, embed, link, meta, base, form'
-    ).forEach(el => el.remove());
-    tpl.content.querySelectorAll('*').forEach(el => {
-        for (const attr of [...el.attributes]) {
-            const name = attr.name.toLowerCase();
-            if (name.startsWith('on')) el.removeAttribute(attr.name);
-            else if ((name === 'href' || name === 'src') &&
-                     /^\s*javascript:/i.test(attr.value)) {
-                el.removeAttribute(attr.name);
-            }
-        }
-    });
-    return tpl.content;
-}
-
 // Full-history modal for an installed bundle: renders the CHANGES.md
 // served from disk by Pybridge (GET /nexus/app/<vendor>/<app>/changes)
 // as GitHub-style markdown (marked, already a dependency), sanitized
@@ -1424,7 +1401,7 @@ function openNexusChangelogModal(vendor, app, data, openExternal) {
     `;
     const bodyEl = overlay.querySelector('.modal-body');
     bodyEl.appendChild(
-        sanitizeMarkdownHtml(marked.parse(String(data.content || ''))));
+        utils.sanitizeMarkdownHtml(marked.parse(String(data.content || ''))));
     bodyEl.addEventListener('click', (e) => {
         const link = e.target.closest('a[href]');
         if (link) {

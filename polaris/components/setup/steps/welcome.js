@@ -16,6 +16,9 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 // Lesser General Public License for more details.
 
+const fs = require('fs');
+const { marked } = require('marked');
+
 let initialized = false;
 
 function setupTosListeners(config, updateButtonVisibility, tosVersion) {
@@ -67,6 +70,42 @@ function setupTosListeners(config, updateButtonVisibility, tosVersion) {
     });
 }
 
+// Render the bundled CHANGES.md release notes into the welcome panel.
+// Newest release first (file is newest-first), full history scrollable.
+// Contributor-facing preamble before the first release heading is skipped.
+// Fail-open: a missing or malformed file renders nothing.
+function setupChangelog(ctx) {
+    const container = document.getElementById('welcome-changelog');
+    const body = document.getElementById('welcome-changelog-body');
+    if (!container || !body) return;
+
+    try {
+        const docPath = ctx.config.getBundledChangesDocPath();
+        if (!docPath) return;
+        const raw = fs.readFileSync(docPath, 'utf8');
+        const firstRelease = raw.indexOf('\n## ');
+        if (firstRelease === -1) return;
+        const releases = raw.slice(firstRelease + 1);
+
+        body.appendChild(
+            ctx.utils.sanitizeMarkdownHtml(marked.parse(releases))
+        );
+        container.classList.remove('hidden');
+
+        // Markdown links must never navigate the wizard window; open
+        // them in the user's browser instead (main rejects non-http(s)).
+        body.addEventListener('click', (e) => {
+            const link = e.target.closest('a[href]');
+            if (link) {
+                e.preventDefault();
+                ctx.ipcRenderer.send('open-external', link.href);
+            }
+        });
+    } catch (error) {
+        console.error('Error loading changelog:', error);
+    }
+}
+
 module.exports = {
     id: 'welcome',
 
@@ -75,9 +114,10 @@ module.exports = {
         initialized = true;
 
         setupTosListeners(ctx.config, ctx.updateButtonVisibility, ctx.TOS_VERSION);
+        setupChangelog(ctx);
     },
 
-    validate(ctx) {
+    validate() {
         const tosCheckbox = document.getElementById('terms-accept-btn');
         return !!tosCheckbox?.checked;
     }

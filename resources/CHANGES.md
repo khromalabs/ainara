@@ -26,6 +26,7 @@ Releases before 0.11.0 predate this file — the git history and the
 ### Polaris (frontend)
 
 - Karaoke-first streaming turn UX with mute-only TTS abort (#19).
+- Release notes (bundled CHANGES.md) shown in the wizard welcome step.
 - In-flight turn queue so fast PTT events are no longer dropped (#19).
 - PTT release now detected via OS key-state polling, fixing stuck recordings (#19).
 - ChatDisplay input fixes: focus recovery, draft preservation, shadow-DOM event handling (#19).
