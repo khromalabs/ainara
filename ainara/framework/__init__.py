@@ -17,8 +17,8 @@
 # Lesser General Public License for more details.
 
 
-__version__ = "0.11.1"
-__version_info__ = (0,11,1)
+__version__ = "0.12.0"
+__version_info__ = (0,12,0)
 
 
 def _use_system_dns_for_aiohttp():
