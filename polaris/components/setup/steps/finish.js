@@ -391,7 +391,11 @@ async function finishSetup(ctx) {
     await saveFinishStepConfig(ctx);
 
     ctx.config.set('setup.completed', true);
-    ctx.config.set('setup.version', '0.10.2');
+    // NOTE: this records which app version last completed the setup wizard
+    // (diagnostic only). It is NOT the running app version and must not be
+    // used for display — use the 'app:get-version' IPC (app.getVersion())
+    // for that, so it can never go stale between releases.
+    ctx.config.set('setup.version', await ctx.ipcRenderer.invoke('app:get-version'));
     ctx.config.set('setup.timestamp', new Date().toISOString());
     ctx.config.saveConfig();
 

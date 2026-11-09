@@ -1860,8 +1860,12 @@ class ComRing extends BaseComponent {
 
     async showAbout() {
         const helpTitle = 'About Ainara Polaris';
+        // Live app version from the main process (package.json) — do NOT read
+        // setup.version from the config, which only records the app version at
+        // wizard completion and goes stale between releases.
+        const appVersion = await ipcRenderer.invoke('app:get-version');
         const helpContent = `
-### About Ainara Polaris v${this.config.get("setup.version")} (beta)
+### About Ainara Polaris v${appVersion} (beta)
 Copyright 2025-2026 &copy; Rubén Gómez - https://khromalabs.org
 Visit our project site at: https://ainara.app
         `.trim().replace(/^\s+/gm, '');

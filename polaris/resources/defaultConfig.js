@@ -77,6 +77,9 @@ module.exports = {
     },
     setup: {
         completed: false,
+        // App version at the time the setup wizard last completed
+        // (diagnostic only — NOT the running app version; for that use
+        // the 'app:get-version' IPC / app.getVersion()).
         version: "",
         timestamp: "",
         firstLaunch: true,
