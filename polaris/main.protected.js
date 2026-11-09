@@ -957,6 +957,18 @@ async function updateProviderSubmenu() {
 
         providerItems.sort((a,b) => a.label.localeCompare(b.label));
 
+        // Surface the configured Show/Hide shortcuts next to their menu items
+        // (same keys the wizard's shortcut step configures) so users can
+        // discover them. Accelerators here are display-only: they are NOT
+        // registered by Electron in tray menus. Linux tray implementations
+        // (AppIndicator/StatusNotifier) don't render the accelerator column at
+        // all, so on Linux the key is embedded in the label instead.
+        const showShortcut = config.get('shortcuts.show', 'F1');
+        const hideShortcut = config.get('shortcuts.hide', 'Escape');
+        const withKeyHint = (label, key, click) => (process.platform === 'linux'
+            ? { label: `${label} (${key})`, click }
+            : { label, accelerator: key, click });
+
         // Create a new menu template
         const menuTemplate = [
             {
@@ -976,14 +988,8 @@ async function updateProviderSubmenu() {
                 ]
             },
             { type: 'separator' },
-            {
-                label: 'Show',
-                click: () => windowManager.showAll()
-            },
-            {
-                label: 'Hide',
-                click: () => windowManager.hideAll(true)
-            },
+            withKeyHint('Show', showShortcut, () => windowManager.showAll()),
+            withKeyHint('Hide', hideShortcut, () => windowManager.hideAll(true)),
             // TODO This should not appear on Appx
             ...updateItems,
             { type: 'separator' },
