@@ -266,6 +266,26 @@ def _validate_skill_key(service: str, keys: dict):
             response.raise_for_status()
             return True, "Key and CSE ID are valid."
 
+        elif service == "coinmarketcal":
+            api_key = keys.get("api_key")
+            if not api_key:
+                return False, "API key is missing"
+            # CoinMarketCal API v2 (docs: coinmarketcal.com/developer/docs):
+            # x-api-key header, base https://api.coinmarketcal.com,
+            # events use `limit` (v1's `max` is gone).
+            headers = {
+                "x-api-key": api_key,
+                "Accept": "application/json",
+            }
+            response = requests.get(
+                "https://api.coinmarketcal.com/v2/events",
+                headers=headers,
+                params={"limit": 1},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True, "Key is valid."
+
         elif service == "coinmarketcap":
             api_key = keys.get("api_key")
             if not api_key:

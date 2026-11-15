@@ -73,9 +73,9 @@ function getKeyDescription(pathArray) {
     const parentPart = pathArray.length > 1 ? pathArray[pathArray.length - 2] : '';
 
     const descriptions = {
-        'coinmarketcap': {
-            url: 'https://coinmarketcap.com/api/',
-            description: 'Used for extended quotes in cryptocurrency market data, not present in main markets'
+        'coinmarketcal': {
+            url: 'https://coinmarketcal.com/developer',
+            description: 'Used for the cryptocurrency events calendar (upcoming coins, listings, partnerships). Sign up at coinmarketcal.com/developer and paste your API key.'
         },
         'weather': {
             url: 'https://openweathermap.org/api',
@@ -123,7 +123,7 @@ function getKeyDescription(pathArray) {
         },
         'coinmarketcap': {
             url: 'https://coinmarketcap.com/api/',
-            description: 'Used for cryptocurrency market data'
+            description: 'Used for extended quotes in cryptocurrency market data, not present in main markets'
         },
         'helius': {
             url: 'https://helius.xyz/',

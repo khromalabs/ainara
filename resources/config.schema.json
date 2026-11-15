@@ -35,6 +35,12 @@
             "type": "object",
             "description": "Container for various external API keys and settings.",
             "properties": {
+                "coinmarketcal": {
+                    "type": "object",
+                    "properties": {
+                        "api_key": {"type": "string"}
+                    }
+                },
                 "coinmarketcap": {
                     "type": "object",
                     "properties": {
