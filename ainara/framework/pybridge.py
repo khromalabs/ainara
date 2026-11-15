@@ -2020,6 +2020,21 @@ def create_app():
                 # Return 200 OK on validation failure so frontend can parse it
                 return jsonify({"success": False, "message": message})
 
+        except requests.exceptions.HTTPError as e:
+            # Surface the API's own error message so failures are
+            # self-diagnosing in the wizard (e.g. RapidAPI's
+            # "You are not subscribed to this API").
+            status = e.response.status_code if e.response is not None else "?"
+            detail = ""
+            if e.response is not None:
+                try:
+                    detail = e.response.json().get("message", "")
+                except Exception:
+                    detail = (e.response.text or "").strip()[:200]
+            msg = f"API returned {status}" + (f": {detail}" if detail else "")
+            logger.warning(f"Key validation failed: {msg}")
+            return jsonify({"success": False, "message": msg})
+
         except Exception as e:
             logger.error(f"Error in /test-skill-key: {e}")
             import traceback
