@@ -1,0 +1,1047 @@
+{
+ "capabilities": {
+  "finance_stocks": {
+   "description": "Get stock market information",
+   "id": "finance_stocks",
+   "parameters": [
+    {
+     "default": "quote",
+     "description": "Type of information to retrieve (quote, overview, or search)",
+     "name": "action",
+     "required": false,
+     "type": "one of: 'quote', 'overview', 'search'"
+    },
+    {
+     "default": null,
+     "description": "Search terms (required for search action)",
+     "name": "keywords",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Stock symbol (required for quote and overview actions)",
+     "name": "symbol",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "html_webpage": {
+   "description": "Download the content of a web page from its URL.",
+   "id": "html_webpage",
+   "parameters": [
+    {
+     "default": "html",
+     "description": "The format of the returned output: html or text",
+     "name": "format",
+     "required": false,
+     "type": "one of: 'text', 'html'"
+    },
+    {
+     "default": false,
+     "description": "Whether to use a headless browser to render JavaScript. Set to True for Single Page Applications (SPAs), sites with dynamically loaded content, or when the default extraction returns insufficient content. Default False uses fast static HTML extraction. True is slower but handles JS-heavy sites.",
+     "name": "render_js",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": null,
+     "description": "URL of the webpage to download and process",
+     "name": "url",
+     "required": true,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_charts_candles": {
+   "description": "Retrieve historical candlestick (OHLCV) data for cryptocurrency pairs from available data providers and display it as a graph.",
+   "id": "khromalabs_ataria_charts_candles",
+   "parameters": [
+    {
+     "default": null,
+     "description": "A single crypto coin identifier, as an abbreviature (e.g., 'btc' or 'eth'). Only accepts a single parameter, not a list.",
+     "name": "coin_id",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "An optional Unix timestamp for the end of the historical data period.",
+     "name": "end_timestamp",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": "4h",
+     "description": "The candle interval (e.g., '1m', '1h', '1d').",
+     "name": "interval",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": 100,
+     "description": "The number of candles to retrieve (max 1000).",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": "usdt",
+     "description": "A single crypto currency to compare against (e.g., 'usdt', 'usdc'). Only accepts a single parameter, not a list. Only accepts cryptocurrencies, not real fiat coin abbreviatures like 'usd'. Eg. Correct: 'usdt', incorrect: 'usd'.",
+     "name": "vs_currency",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_analysis": {
+   "description": "Performs multi-timeframe technical analysis on cryptocurrencies to identify trading signals.",
+   "id": "khromalabs_ataria_crypto_analysis",
+   "parameters": [
+    {
+     "default": null,
+     "description": "A list of crypto coin identifiers (e.g., ['btc', 'eth']).",
+     "name": "coin_ids",
+     "required": true,
+     "type": "list of strings"
+    },
+    {
+     "default": false,
+     "description": "Set to True to inspect Open Interest and Funding Rates when hunting for whale manipulation or high-leverage liquidation risks.",
+     "name": "include_derivatives",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": true,
+     "description": "Whether to perform detailed technical analysis (SMA, RSI, etc.). Set to False for simpler or quicker price/market data checks.",
+     "name": "include_technicals",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": "4h",
+     "description": "The signal candle interval (e.g., '15m', '1h', '4h', '1d'). A higher bias timeframe is automatically derived.",
+     "name": "interval",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": "usdc",
+     "description": "A single crypto currency to compare against (e.g., 'usdt', 'usdc'). Only accepts a single parameter, not a list. Only accepts cryptocurrencies, not real fiat coin abbreviatures like 'usd'. Eg. Correct: 'usdt', incorrect: 'usd'.",
+     "name": "vs_currency",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_screener": {
+   "description": "Screens top cryptocurrencies based on technical indicators and market data.\n    Fetches top coins by market cap, runs technical analysis on each,\n    applies user-defined filters, and returns a ranked list of candidates or\n    alternatively an explicit list of coins can be requested.",
+   "id": "khromalabs_ataria_crypto_screener",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Optional explicit list of lowercase coin ids (e.g. ['btc','eth']). When supplied, top-N discovery, market filters, interest ranking, result sorting and max_results truncation are bypassed. Every requested coin is returned, including those with no actionable signal.",
+     "name": "coin_ids",
+     "required": false,
+     "type": "list of strings"
+    },
+    {
+     "default": false,
+     "description": "Force full report generation even when circuit breakers trigger (max positions reached, macro filter). Does not affect nothing_to_do evaluation.",
+     "name": "force",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": true,
+     "description": "Set to False to disable inspect Open Interest and Funding Rates when hunting for whale manipulation or high-leverage liquidation risks.",
+     "name": "include_derivatives",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": true,
+     "description": "Include bearish/sell signals in results. Useful for short/futures trading. When False (default), only bullish and watch signals are reported.",
+     "name": "include_sell_signals",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": true,
+     "description": "Whether to perform detailed technical analysis (default True).",
+     "name": "include_technicals",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": "4h",
+     "description": "The candle interval for technical analysis: '15m','1h','4h' or '1d' (default '4h').",
+     "name": "interval",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "List of coins to use for macro trend analysis (e.g., ['btc', 'eth']). Defaults to BTC and ETH.",
+     "name": "macro_coins",
+     "required": false,
+     "type": "list of strings"
+    },
+    {
+     "default": null,
+     "description": "Maximum 24h price change percentage.",
+     "name": "max_change_24h",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "Maximum market cap (in vs_currency) to include.",
+     "name": "max_market_cap",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "Maximum price (in vs_currency) to include.",
+     "name": "max_price",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": 10,
+     "description": "Maximum number of results to return (after filtering).",
+     "name": "max_results",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Maximum 24h volume (in vs_currency) to include.",
+     "name": "max_volume_24h",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": 2.5,
+     "description": "Minimum absolute 24h price change percentage to include (filters out sideways coins, keeps both pumps and dumps).",
+     "name": "min_abs_change_24h",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "Minimum 24h price change percentage.",
+     "name": "min_change_24h",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": 50000000,
+     "description": "Minimum market cap (in vs_currency) to include.",
+     "name": "min_market_cap",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "Minimum price (in vs_currency) to include.",
+     "name": "min_price",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": 1000000,
+     "description": "Minimum 24h volume (in vs_currency) to include.",
+     "name": "min_volume_24h",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": "markdown",
+     "description": "Deprecated: the screener always returns the full payload (report, signals, curated_view).",
+     "name": "output_format",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": "volume_24h",
+     "description": "Field to sort results by: 'market_cap', 'volume_24h', 'change_24h', 'rsi', 'price'.",
+     "name": "sort_by",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": true,
+     "description": "Sort descending (True) or ascending (False).",
+     "name": "sort_desc",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": 60,
+     "description": "Number of top coins by market cap to screen (default 60).",
+     "name": "top_n",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": "usdc",
+     "description": "The currency to compare against (default 'usdc').",
+     "name": "vs_currency",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_solanasecurity": {
+   "description": "Analyze a Solana token CA mint address security metrics using Helius and Jupiter APIs.",
+   "id": "khromalabs_ataria_crypto_solanasecurity",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Solana token contract address to be examined",
+     "name": "token_address",
+     "required": true,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_tradingaccount": {
+   "description": "Retrieves read-only account state from the crypto exchange: balances, open positions/orders and trade history.",
+   "id": "khromalabs_ataria_crypto_tradingaccount",
+   "parameters": [
+    {
+     "default": "exposure",
+     "description": "The action to execute. 'portfolio': view account balances (no extra parameters). 'exposure': view open positions/orders ('coin_id' optional). 'history': view trade history ('coin_id' optional).",
+     "name": "action",
+     "required": false,
+     "type": "one of: 'portfolio', 'exposure', 'history'"
+    },
+    {
+     "default": null,
+     "description": "The coin identifier (e.g., 'btc', 'sol'). Optional for exposure and history.",
+     "name": "coin_id",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_tradinglog": {
+   "description": "Read-only access to the persistent trading log: query past operations (executions, guardrail rejections, edits, closes) or aggregate statistics over them. The log records every outcome of the tradingorders skill.",
+   "id": "khromalabs_ataria_crypto_tradinglog",
+   "parameters": [
+    {
+     "default": null,
+     "description": "The action to execute. 'query': return filtered log entries, newest first. 'stats': return aggregate statistics over an optional time window (totals, breakdown by operation type, executed notional).",
+     "name": "action",
+     "required": true,
+     "type": "one of: 'query', 'stats'"
+    },
+    {
+     "default": null,
+     "description": "Filter by coin identifier (e.g., 'btc', 'sol'). Optional.",
+     "name": "coin_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Maximum number of entries to return for 'query' (1-100, default 20).",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Number of entries to skip, for paging through 'query' results. Optional.",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Include entries from this UTC timestamp onwards (ISO-8601, e.g. '2025-10-01' or '2025-10-01T12:00:00Z'). Optional.",
+     "name": "since",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Filter by outcome: true = executed successfully, false = rejected or failed. Omit for both. Optional.",
+     "name": "success",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": null,
+     "description": "Filter by operation type: 'buy', 'sell', 'edit' or 'close'. Optional. Only valid for 'query'.",
+     "name": "trade_action",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Include entries up to this UTC timestamp (ISO-8601). Optional.",
+     "name": "until",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_tradingorders": {
+   "description": "Places and manages crypto trades as bracketed stop-loss/take-profit order triplets. Positions are NEVER closed with buy/sell \u2014 the dedicated close action cancels pending orders and market-closes the position. Every outcome is recorded to the persistent trading log.",
+   "id": "khromalabs_ataria_crypto_tradingorders",
+   "parameters": [
+    {
+     "default": null,
+     "description": "The action to execute. Requires coin_id. 'buy'/'sell': open a NEW position (long/short); requires 'position_size_percentage', 'price', 'stop_loss_price' and 'take_profit_price'. 'edit': modify an open position's TP/SL; requires 'take_profit_price' and/or 'stop_loss_price'; DO NOT pass 'price'. 'close': cancels all pending orders and market-closes any open position.",
+     "name": "action",
+     "required": true,
+     "type": "one of: 'buy', 'sell', 'edit', 'close'"
+    },
+    {
+     "default": null,
+     "description": "The coin identifier (e.g., 'btc', 'sol'). Required for all actions.",
+     "name": "coin_id",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": "",
+     "description": "Optional notes for the trade.",
+     "name": "notes",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "The percentage of total portfolio equity defining the TOTAL position size (e.g. 40.0). Required for buy/sell.",
+     "name": "position_size_percentage",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "The limit price for the trade. Required for buy/sell.",
+     "name": "price",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "The stop loss price.",
+     "name": "stop_loss_price",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "The take profit price.",
+     "name": "take_profit_price",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "The quote currency (e.g., 'usdt', 'usdc'). If omitted, uses the exchange default.",
+     "name": "vs_currency",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "khromalabs_ataria_crypto_tradingworkbook": {
+   "description": "Manages a trading workbook: the persistent watchlist where every tracked coin carries its thesis through a lifecycle (WATCH -> PENDING_LIMIT -> HOLD -> removed). Writes are validated and fail closed: one entry per coin, 'add' requires a complete thesis (entry_type, direction and an invalidation rationale), and the workbook enforces a hard capacity cap.",
+   "id": "khromalabs_ataria_crypto_tradingworkbook",
+   "parameters": [
+    {
+     "default": null,
+     "description": "The action to execute. Requires coin_id (except 'list'). 'add': add a new entry; requires 'coin_id', 'entry_type', 'direction' and 'invalidation' \u2014 the call fails without them. 'update': modify an existing entry; requires 'coin_id', accepts partial fields (only what's changing). 'delete': remove an entry; requires 'coin_id'. 'list': view the current workbook; no params required. Prefer entry_trigger_kind/level and expiry_hours over prose triggers: the deterministic Guardian only enforces the structured fields.",
+     "name": "action",
+     "required": true,
+     "type": "one of: 'add', 'update', 'delete', 'list'"
+    },
+    {
+     "default": null,
+     "description": "The plain coin symbol (e.g., 'btc', 'sol') or a list of symbols. Use the coin symbol ONLY \u2014 never trading pairs (not 'BTC/USDC') or market modifiers (not 'BTC/USDC:USDC'). Required for add, update, and delete.",
+     "name": "coin_id",
+     "required": false,
+     "type": "string or list of strings"
+    },
+    {
+     "default": null,
+     "description": "Trade direction: 'LONG' or 'SHORT'. Required for 'add'.",
+     "name": "direction",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Optional. Machine-readable entry (upgrade) trigger for this setup, evaluated FORWARD from creation: 'cross_below' or 'cross_above'. Use instead of prose like 'place the limit only once price trades below X first' \u2014 the deterministic Guardian enforces this field.",
+     "name": "entry_trigger_kind",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Price level for entry_trigger_kind. Required together with entry_trigger_kind. The entry agent must place the resting limit only after this cross has occurred after evaluated_from_ts (forward semantics, not latched).",
+     "name": "entry_trigger_level",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "REQUIRED for 'add'. Entry lifecycle type, must be one of: 'WATCH' (monitoring), 'PENDING_LIMIT' (limit order placed), or 'HOLD' (position open). This parameter is mandatory \u2014 the call will fail if omitted.",
+     "name": "entry_type",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Optional. Cancel the pending limit order if unfilled after this many hours from now (e.g. 24). Guardian enforces this deterministically.",
+     "name": "expiry_hours",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "Conditions that invalidate the thesis (min 10 chars). Required for 'add'. Example: 'Bullish BOS above $48.50 on 4H close'.",
+     "name": "invalidation",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Free-text notes: a single CURRENT thesis summary (rationale, targets, context). Replace this field wholesale on updates \u2014 never append history. Hard cap 500 chars; trade history and long narratives belong in the trading log, not here. Do NOT embed order ids or machine-actionable levels in notes: order links and triggers have dedicated structured fields.",
+     "name": "notes",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Optional. Exchange order id of the resting entry limit order. Stamp it when flipping an entry to PENDING_LIMIT so the deterministic Guardian can reconcile the workbook against the exchange (order gone -> entry reverts to WATCH). Never put the order id in notes.",
+     "name": "order_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Limit price of the linked order. Required together with order_id.",
+     "name": "order_price",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "Side of the linked order ('buy' or 'sell'). Required together with order_id.",
+     "name": "order_side",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "The quote currency as a plain symbol (e.g., 'usdt', 'usdc'). Do not use pair format. Defaults to 'usdc'.",
+     "name": "vs_currency",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "search_web": {
+   "description": "Search the internet for information about any topic, product, news, current events, or factual questions using multiple search providers.",
+   "id": "search_web",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Which search engine(s) to use, a single name or a list of names. Omit or use 'meta' to search with all suitable engines. General engines: newsapi, perplexity, searxng, tavily. Engine 'jobs' only works for search_type 'jobs'.",
+     "name": "engine",
+     "required": false,
+     "type": "string or list of strings"
+    },
+    {
+     "default": 20,
+     "description": "Number of results to return",
+     "name": "num_results",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Search web query string",
+     "name": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Filter results by recency (e.g., '24h', '7d', '1w', '1m', '1y'). h=hours, d=days, w=weeks, m=months, y=years",
+     "name": "recency",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": "comprehensive",
+     "description": "Type of search to perform or best fitting topic",
+     "name": "search_type",
+     "required": false,
+     "type": "one of: 'comprehensive', 'academic', 'recent', 'exploratory', 'news', 'crypto', 'jobs'"
+    }
+   ]
+  },
+  "system_applauncher": {
+   "description": "Launch installed applications or open files using natural language queries",
+   "id": "system_applauncher",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Natural language request to launch app or open file",
+     "name": "query",
+     "required": true,
+     "type": "string"
+    }
+   ]
+  },
+  "system_clipboard": {
+   "description": "Read and write the system clipboard",
+   "id": "system_clipboard",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Operation to perform (read, write, or clear)",
+     "name": "action",
+     "required": true,
+     "type": "one of: 'read', 'write', 'clear'"
+    },
+    {
+     "default": null,
+     "description": "Text to write (required for 'write' action)",
+     "name": "text",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "system_fileop": {
+   "description": "Perform file operations in the local system as file read, list or exists",
+   "id": "system_fileop",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Whether pattern matching is case sensitive (for find operation)",
+     "name": "case_sensitive",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": null,
+     "description": "Content to write to file (for write operation)",
+     "name": "content",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "The operation to perform (read, list, exists)",
+     "name": "operation",
+     "required": true,
+     "type": "one of: 'read', 'list', 'exists'"
+    },
+    {
+     "default": null,
+     "description": "Path to the file or directory",
+     "name": "path",
+     "required": true,
+     "type": "string or Path"
+    },
+    {
+     "default": null,
+     "description": "File pattern to match (for find operation)",
+     "name": "pattern",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Whether to operate recursively (for delete/list operations)",
+     "name": "recursive",
+     "required": false,
+     "type": "boolean"
+    }
+   ]
+  },
+  "system_finder": {
+   "description": "Intelligent file search with LLM-assisted disambiguation and location reveal",
+   "id": "system_finder",
+   "parameters": [
+    {
+     "default": 10,
+     "description": "Maximum number of results to return",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Natural language description of files to find",
+     "name": "query",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": false,
+     "description": "Whether to show file location in file explorer",
+     "name": "show_location",
+     "required": false,
+     "type": "boolean"
+    }
+   ]
+  },
+  "system_properties": {
+   "description": "Lists configuration properties of Nexus Skills, Nexus Apps, and modules. Updates properties to change values.",
+   "id": "system_properties",
+   "parameters": [
+    {
+     "default": null,
+     "description": "'list' to inspect properties, 'update' to change values",
+     "name": "action",
+     "required": true,
+     "type": "one of: 'list', 'update'"
+    },
+    {
+     "default": null,
+     "description": "Skill name, Nexus App name, or configuration prefix (e.g. 'sampleapp', 'skills.nexus.acme.sampleapp', 'my_skill')",
+     "name": "app",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": false,
+     "description": "If True, validate without writing. Only used with 'update'",
+     "name": "dry_run",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": null,
+     "description": "Space-separated keywords to filter property names, titles, and descriptions",
+     "name": "keywords",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": 25,
+     "description": "Maximum number of properties to return. If more than this many match, returns a too_many response with group counts.",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "For 'update': a JSON object mapping each property's full key to its new value. All keys must already exist in the property catalog and be compliant with the property's JSON schema. Example: {'skills.nexus.acme.sampleapp.crypto.tradingaccount.breakeven_buffer_pct': 0.15}. Use dry_run=true to validate without saving.",
+     "name": "updates",
+     "required": false,
+     "type": "object mapping string to any"
+    }
+   ]
+  },
+  "system_urlopener": {
+   "description": "Open or launch one URL or several URLs addresses in the system browser",
+   "id": "system_urlopener",
+   "parameters": [
+    {
+     "default": false,
+     "description": "Skip URL validation if set to True",
+     "name": "force",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": null,
+     "description": "A single URL or multiple URLs separated by spaces, commas, or pipes",
+     "name": "url",
+     "required": true,
+     "type": "string"
+    }
+   ]
+  },
+  "time_weather": {
+   "description": "Get weather info determining location with geolocation, optionally allowing a location parameter",
+   "id": "time_weather",
+   "parameters": [
+    {
+     "default": null,
+     "description": "OpenWeatherMap API key (optional, will use configured key if not provided)",
+     "name": "api_key",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "City or town name. If not provided, IP-based geolocation will be used.",
+     "name": "city",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Country name. Used to make the city search more specific.",
+     "name": "country",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "tools_calculator": {
+   "description": "Evaluation of non-trivial mathematical expressions",
+   "id": "tools_calculator",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Whether to evaluate the expression numerically",
+     "name": "evaluate",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": null,
+     "description": "A string containing the mathematical expression or equation",
+     "name": "expression",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Number of decimal places for the result",
+     "name": "precision",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Dictionary of variables and their values",
+     "name": "variables",
+     "required": false,
+     "type": "object mapping string to any"
+    }
+   ]
+  },
+  "user_crypto_eventscanner": {
+   "description": "Deterministic news/event collector for the Sentinel event-driven\n    strategy. Collects, normalizes and dedups event candidates from a\n    declarative source registry into the persistent event ledger;\n    applies validator verdicts through a write-guard; ranks actionable\n    events for the act phase. Never trades.",
+   "id": "user_crypto_eventscanner",
+   "parameters": [
+    {
+     "default": "collect",
+     "description": "The action to execute. Allowed values:\n- 'collect': fetch all enabled sources, dedup and write candidate events to the ledger. Returns the validator work queue ('pending_validation'), open-event reference ('open_events') and per-source health. Never trades.\n- 'apply_validation': apply validator verdicts deterministically. Each verdict: {event_id, decision: confirm|reject|merge|postpone, resolved: {coin, event_class, event_date, direction, durability}, evidence_snippet (verbatim from the attestations \u2014 fabricated snippets fail), target_event_id (merge only), reason (reject only)}.\n- 'select': rank confirmed events inside their class action window (deterministic; same-coin veto vs the workbook). Output feeds the regime probe/gate and the entry analyst. Never scans the web.\n- 'regime_gate': deterministic stop-hostility gate (\u00a77.7, strict removal). Takes the select result ('selected') plus the analysis skill's per-coin regime probe assessments ('assessments', keyed by coin). Hard-severity coins are removed into 'deferred_stop_hostile' and disclosed; warning passes annotated; unavailable metrics pass ungated + disclosed. Run-local decision \u2014 demoted events are re-selected and re-probed on the next run while their action window stays open. Never trades.\n Consuming agents must never act on 'deferred_stop_hostile' coins (deterministically gated; re-probed on the next run).\n- 'mark_acted_on': mark an event acted_on after an entry was placed. Requires event_id and workbook_entry_ref (the key of the workbook entry just written). Write-guarded: only confirmed/watch events, only with a real workbook",
+     "name": "action",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "ISO date (YYYY-MM-DD) override for 'collect' expiry sweep and 'select' window evaluation. Defaults to today (UTC).",
+     "name": "as_of",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Per-coin stop-hostility assessments from the analysis skill's regime probe (keyed by coin id). Required for action='regime_gate'.",
+     "name": "assessments",
+     "required": false,
+     "type": "object mapping string to object mapping string to any"
+    },
+    {
+     "default": true,
+     "description": "Entry gate for action='select', echoed into the result as entries_disabled for the plan's avoid_step_if guard (the framework then skips the entry-analyst step entirely). Accepts the plan's micro_notional_usd dial verbatim: negative \u2192 entries disabled (scan-only), otherwise enabled. Booleans are also accepted.",
+     "name": "entries_enabled",
+     "required": false,
+     "type": "any"
+    },
+    {
+     "default": null,
+     "description": "One-line decision summary stored with the acted_on stamp (optional).",
+     "name": "event_decision",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Ledger event id. Required for action='mark_acted_on'.",
+     "name": "event_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Ranked selected events (the 'select' result's 'selected' list). Required for action='regime_gate'.",
+     "name": "selected",
+     "required": false,
+     "type": "list of object mapping string to any"
+    },
+    {
+     "default": null,
+     "description": "Validator verdicts. Required for action='apply_validation'.",
+     "name": "verdicts",
+     "required": false,
+     "type": "list of object mapping string to any"
+    },
+    {
+     "default": null,
+     "description": "Key of the workbook entry just written (e.g. 'sol/usdc'). Required for action='mark_acted_on'.",
+     "name": "workbook_entry_ref",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "user_crypto_mytradingaccount": {
+   "description": "Trading account deterministic protection doctrine executor.",
+   "id": "user_crypto_mytradingaccount",
+   "parameters": [
+    {
+     "default": "exposure",
+     "description": "The action to execute. Allowed values:\n- 'sentinel': Fully deterministic doctrine executor. Evaluates all positions and orders against the Sentinel Protection Doctrine rules and executes closes/cancellations without LLM involvement.\n- 'curate': Deterministic workbook curation. Consumes the screener's structured 'curated_view' and applies removal, update (thesis flips, invalidation refresh) and addition rules without LLM involvement.",
+     "name": "action",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "The coin identifier (e.g., 'btc', 'sol'). Optional for exposure and history.",
+     "name": "coin_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Structured curation payload from the screener result ('curated_view' key). Required for action='curate'.",
+     "name": "curated_view",
+     "required": false,
+     "type": "object mapping string to any"
+    },
+    {
+     "default": 30.0,
+     "description": "Deep-hostility gate for curator ADDITIONS, in PERCENT of depth beyond the stop-hostility thresholds (screener hostility margin; the report prints it as a percentage, margin -38% = 38 depth). Candidates deeper than this are never added; existing WATCH entries are never deleted on hostility alone and deep ones are evicted first when trimming for capacity. Default 30 (i.e. margin deeper than -30%). Sentinel plans normally bind this from the shared screener property stop_hostility.deep_gate_margin_pct (market_analysis config alias) so the whole doctrine shares one value.",
+     "name": "curator_hostile_deep_margin_pct",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": 2,
+     "description": "Max moderate-tier coins the curator may add per run. Default 2.",
+     "name": "curator_max_adds",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Coins to include in the macro context block (e.g., ['btc', 'eth']). Only used with action='sentinel'.",
+     "name": "macro_coins",
+     "required": false,
+     "type": "list of strings"
+    },
+    {
+     "default": 2,
+     "description": "Range-wall touches required for RANGING add priority. Default 2.",
+     "name": "min_boundary_touches",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": 7,
+     "description": "Days after which an untouched WATCH entry is deleted. Default 7.",
+     "name": "watch_stale_days",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": 8,
+     "description": "Max total workbook entries, all statuses combined. Default 8.",
+     "name": "workbook_capacity",
+     "required": false,
+     "type": "integer"
+    }
+   ]
+  },
+  "user_shopping_mercadona": {
+   "description": "Searches Mercadona (Spanish supermarket) and builds the shopping cart;\n    the cart is left saved for MANUAL checkout in Mercadona's official\n    app/web \u2014 payment is never automated. Actions: search=text search\n    (query, limit), batch_search=ONE call for a whole shopping list, e.g.\n    when the user names several products (queries=[...], limit; returns\n    groups aligned to queries), product=full detail (product_id),\n    alternatives=cheaper products per reference unit, same category and\n    format (product_id, limit), cart_get/cart_summary=current priced cart\n    with budget state, cart_add=increment quantities in one batch\n    (items=[{product_id, quantity}], max_eur optional), cart_set=set\n    absolute quantities, 0 removes (items, max_eur), cart_clear=empty the\n    cart (max_eur), set_limit=set the standing spending cap in EUR\n    (max_eur; per-call max_eur can only be stricter than it),\n    whoami=account and session info, history=local record of groceries\n    bought (delivered orders, aggregates, most-bought products),\n    history_sync=pull delivered orders from Mercadona into the local\n    purchase record (idempotent). Every cart write enforces a hard\n    spending cap (standing [limits] max_eur, per-call max_eur only\n    tightens it) and fails closed if the total can't be verified.",
+   "id": "user_shopping_mercadona",
+   "parameters": [
+    {
+     "default": "search",
+     "description": "One of: search | batch_search | alternatives | product | cart_get | cart_add | cart_set | cart_clear | cart_summary | set_limit | whoami | history | history_sync",
+     "name": "action",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "batch of cart lines for cart_add/cart_set: [{\"product_id\": \"4740\", \"quantity\": 2}, ...]",
+     "name": "items",
+     "required": false,
+     "type": "list of object mapping string to any"
+    },
+    {
+     "default": 8,
+     "description": "max results for search/alternatives; purchases shown for history",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "per-call spending cap in EUR for cart writes; defaults to the [limits] max_eur in ~/.mercadona/config.toml",
+     "name": "max_eur",
+     "required": false,
+     "type": "number"
+    },
+    {
+     "default": null,
+     "description": "product id for alternatives/product",
+     "name": "product_id",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "list of product searches for batch_search, e.g. ['zumo de pi\u00f1a', 'manzanas', 'leche']",
+     "name": "queries",
+     "required": false,
+     "type": "list of strings"
+    },
+    {
+     "default": null,
+     "description": "search text, e.g. 'aceite de oliva'",
+     "name": "query",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  },
+  "user_tools_obs": {
+   "description": "Start/stop/pause/resume a full-screen recording in OBS Studio, and\n    check its recording status. Talks to OBS over its built-in\n    obs-websocket API and launches the app if it isn't already running.",
+   "id": "user_tools_obs",
+   "parameters": [
+    {
+     "default": null,
+     "description": "Action: start_recording / stop_recording / pause_recording / resume_recording / recording_status / open_app",
+     "name": "action",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Only for 'start_recording' -- OBS scene to switch to first. Optional; overrides skills.tools_obs.scene_name for this call only. Leave unset to just record whatever scene is currently active in OBS.",
+     "name": "scene_name",
+     "required": false,
+     "type": "string"
+    }
+   ]
+  }
+ },
+ "fingerprint": "93ff4d59cc014349",
+ "source_url": "http://localhost:8100"
+}
