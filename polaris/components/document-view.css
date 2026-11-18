@@ -287,6 +287,13 @@ code {
     content: "🤚";
 }
 
+/* Offload digest trail record (#37): receipt pill for the digest
+ * marker; the digest body itself renders right below as a fenced
+ * monospace note. Same pill family as the consent records. */
+.offload-digest-record:before {
+    content: "🔬";
+}
+
 ::-webkit-scrollbar {
     width: 10px;
 }

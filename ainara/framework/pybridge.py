@@ -1602,19 +1602,41 @@ def create_app():
             # already consumed or unknown — the answer is always
             # "denied". (It is the approval path that distinguishes a
             # live offer from an unknown/expired token.) The consume
-            # still runs, so a live offer dies with the act; the record
-            # is written only when a live offer was actually consumed —
-            # an offer that quietly expired leaves no record (#26 P2:
-            # the trail says walked-away, not decided). dismiss
+            # happens inside deny_offload_consent, so a live offer dies
+            # with the act; when one was consumed the mechanical
+            # decision record is written, and an explicit deny
+            # additionally streams the conversational outcome segment
+            # (#37): the free bounded feedback comment — the model
+            # reacting to the outcome, never to the decision surface.
+            # A quietly expired offer leaves no record and no segment
+            # (the trail says walked-away, not decided); dismiss
             # (Escape / put-it-away) is recorded distinctly from deny
             # (rejected the analysis) so the history is honest about
             # what the user did.
-            consumed = middleware.discard_offload_consent(
-                decision_id, token
+            entry = middleware.deny_offload_consent(
+                decision_id, token, decision
             )
-            if consumed:
+            if entry is not None:
+                # Mechanical decision record: persisted standalone (as
+                # its own history/memory entry) so the trail survives
+                # even a client that never reads the denial stream.
                 app.chat_manager.record_consent_decision(
                     decision_id, decision
+                )
+            if entry is not None and decision == "deny":
+                # Explicit deny gets the conversational outcome segment
+                # (#37): a free, bounded feedback comment — the model
+                # reacting to the outcome, never to the decision
+                # surface. dismiss (Escape / put-it-away) stays a
+                # silent no-op: the user did not answer, and the
+                # fire-and-forget client fetch never reads a stream.
+                def generate_denial():
+                    yield from app.chat_manager.consent_denial_segment(
+                        decision_id, decision, entry
+                    )
+
+                return Response(
+                    generate_denial(), mimetype="text/event-stream"
                 )
             return jsonify({"status": "denied"})
 

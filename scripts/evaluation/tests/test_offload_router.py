@@ -705,11 +705,12 @@ class TestOffloadSpendPolicy(unittest.TestCase):
         self.assertEqual(card["estimate"]["max_calls"],
                          self.middleware.offload_max_turns)
 
-        # The turn ends with the card: no digestion ran, and the
-        # narration (voice-to-button handoff) is the only text.
+        # The turn ends with the card: no digestion ran, and the card
+        # is fully mechanical (#37) — the only text before it is the
+        # selection-time skill_intention sentence, not trigger
+        # narration.
         self.assertEqual(self.offload_calls, [])
         text = "".join(c for c in chunks if isinstance(c, str))
-        self.assertIn("Tap the confirmation button", text)
         self.assertNotIn("DIGESTED FINDINGS", text)
 
     def test_ask_metered_registers_a_resolvable_decision(self):
@@ -770,16 +771,20 @@ class TestOffloadSpendPolicy(unittest.TestCase):
         self.assertTrue(self.middleware._is_digestion_model_metered())
 
     def test_card_payload_is_generic_and_localized(self):
-        """The card carries everything the renderer shows — title, quote,
-        localized buttons, note — so Polaris stays strictly
-        presentational and any future #18 client reuses the shape."""
+        """The card carries everything the renderer shows — title,
+        mechanical estimate quote, localized buttons, note — so Polaris
+        stays strictly presentational and any future #18 client reuses
+        the shape."""
         self.middleware.current_language = "Spanish"
         chunks = self._run("x" * (self.CEILING + 1))
         card = self._card_chunks(chunks)[0]
         self.assertEqual(card["title"], "¿Aceptas la sugerencia de Ainara?")
         self.assertEqual(
             card["quote"],
-            self.middleware._offload_consent_strings()["narration"])
+            self.middleware._offload_consent_strings()["estimate"].format(
+                t=card["estimate"]["est_input_tokens"],
+                c=card["estimate"]["max_calls"],
+            ))
         labels = [b["label"] for b in card["buttons"]]
         self.assertEqual(labels, ["Sí", "No", "Siempre"])
         self.assertEqual(
@@ -851,6 +856,26 @@ class TestOffloadConsentResume(unittest.TestCase):
 
         self.middleware._spawn_offload_digest = fake_offload
 
+        # The interpretation seam (#37): the resumed digest routes
+        # through stream_command_interpretation (digest-as-result), so
+        # the mock records the seam's inputs and stands in for its
+        # output.
+        self.interpret_calls = []
+
+        def fake_interpret(results, query, chat_context=None,
+                           reasoning_level=0.0, agentic_mode=False):
+            self.interpret_calls.append(
+                {
+                    "results": results,
+                    "query": query,
+                    "chat_context": chat_context,
+                    "reasoning_level": reasoning_level,
+                }
+            )
+            yield "INTERPRETED ANSWER"
+
+        self.middleware.stream_command_interpretation = fake_interpret
+
     def _card(self):
         return self.middleware._consent_registry.create(
             raw_result="PAYLOAD", query="q", estimate={})
@@ -862,11 +887,79 @@ class TestOffloadConsentResume(unittest.TestCase):
         self.assertIsNotNone(gen)
         chunks = list(gen)
         self.assertEqual(self.offload_calls, ["PAYLOAD"])
-        self.assertIn("DIGESTED FINDINGS", "".join(chunks))
+        text = "".join(chunks)
+        # The digest persists as the never-spoken trail marker (#37).
+        self.assertIn("_orakle_offload_digest_|", text)
+        self.assertIn("DIGESTED FINDINGS", text)
+        # The spoken answer is the interpretation of the digest, not
+        # the digest itself (#37: in-conversation delivery).
+        self.assertIn("INTERPRETED ANSWER", text)
+        # The interpretation seam received the digest-as-result with
+        # the original query — never the raw payload.
+        self.assertEqual(len(self.interpret_calls), 1)
+        self.assertEqual(self.interpret_calls[0]["results"],
+                         ["DIGESTED FINDINGS"])
+        self.assertEqual(self.interpret_calls[0]["query"], "q")
+        self.assertNotIn("PAYLOAD",
+                         json.dumps(self.interpret_calls[0]))
         # The digest is cached for follow-ups, like the inline path.
         self.assertEqual(
             self.middleware._digest_cache.get("PAYLOAD"),
             "DIGESTED FINDINGS")
+
+    def test_trail_chunk_hoists_title_and_fences_body(self):
+        """The trail chunk (#37, ratified shape B): the agent's
+        '# Digest:' heading is hoisted into the marker as the pill
+        title, stripped from the body, and the body rides fenced so
+        the history view renders it as a note — with any fences the
+        digest itself contains neutralized first."""
+        digest = (
+            "# Digest: Quarterly Report\n"
+            "## Figures\n"
+            "Revenue up 12%.\n"
+            "```python\nprint(1)\n```\n"
+            "End."
+        )
+        chunk = self.middleware._offload_trail_chunk("PAYLOAD", digest)
+        marker, _, fenced = chunk.strip().partition("\n")
+        self.assertTrue(marker.startswith("_orakle_offload_digest_|"))
+        self.assertIn("|Quarterly Report", marker)
+        self.assertEqual(
+            OffloadDigestCache.key("PAYLOAD"),
+            marker.split("|")[1],
+        )
+        self.assertNotIn("# Digest:", chunk)
+        # Exactly the outer fences: the digest's own fence is gone.
+        self.assertEqual(fenced.count("```"), 2)
+        self.assertIn("'''python", fenced)
+        self.assertIn("Revenue up 12%.", fenced)
+
+    def test_trail_chunk_without_heading_omits_title(self):
+        """Best-effort hoisting: a digest with no '# Digest:' heading
+        yields an untitled pill and a verbatim fenced body."""
+        digest = "Bare findings, no heading."
+        chunk = self.middleware._offload_trail_chunk("PAYLOAD", digest)
+        marker, _, fenced = chunk.strip().partition("\n")
+        # Exactly prefix|hash — no title segment.
+        self.assertEqual(len(marker.split("|")), 2)
+        self.assertIn("Bare findings, no heading.", fenced)
+        self.assertEqual(fenced.count("```"), 2)
+
+    def test_cache_hit_skips_digestion_not_interpretation(self):
+        """A cached digest (byte-identical payload digested earlier)
+        saves the digestion run; the bounded interpretation pass runs
+        either way (#37, ratified)."""
+        self.middleware._digest_cache.put("PAYLOAD", "CACHED DIGEST")
+        card = self._card()
+        gen = self.middleware.resume_offload_consent(
+            card["decision_id"], card["token"], "approve")
+        chunks = list(gen)
+        self.assertEqual(self.offload_calls, [])
+        text = "".join(chunks)
+        self.assertIn("CACHED DIGEST", text)
+        self.assertIn("INTERPRETED ANSWER", text)
+        self.assertEqual(
+            self.interpret_calls[0]["results"], ["CACHED DIGEST"])
 
     def test_always_allow_upgrades_session_only(self):
         """The card's Always is deliberately LOW deliberation: it upgrades
@@ -931,14 +1024,23 @@ class TestOffloadConsentResume(unittest.TestCase):
         self.assertIsNone(self.middleware.resume_offload_consent(
             card["decision_id"], card["token"], "deny"))
         self.assertEqual(self.offload_calls, [])
+        # A denial also never reaches the interpretation seam.
+        self.assertEqual(self.interpret_calls, [])
 
-    def test_discard_consumes_without_executing(self):
+    # --- deny outcome snapshot (#37) -------------------------------------
+
+    def test_deny_snapshot_consumes_one_shot(self):
+        """deny_offload_consent consumes the live offer and returns the
+        conversational context snapshot for the outcome segment."""
         card = self._card()
-        self.assertTrue(self.middleware.discard_offload_consent(
+        entry = self.middleware.deny_offload_consent(
+            card["decision_id"], card["token"], "deny")
+        self.assertEqual(entry["query"], "q")
+        self.assertEqual(entry["payload_bytes"], len("PAYLOAD"))
+        # One-shot: consumed, never resolvable again.
+        self.assertIsNone(self.middleware._consent_registry.resolve(
             card["decision_id"], card["token"]))
         self.assertEqual(self.offload_calls, [])
-        self.assertFalse(self.middleware.discard_offload_consent(
-            card["decision_id"], card["token"]))
 
     def test_failed_digestion_rejects_without_retry(self):
         """Burned spend is never doubled: a failed resumed run yields
@@ -957,6 +1059,89 @@ class TestOffloadConsentResume(unittest.TestCase):
         self.assertEqual(self.offload_calls, ["PAYLOAD"])
         self.assertNotIn("DIGESTED FINDINGS", "".join(chunks))
         self.assertIn("could not be completed", "".join(chunks))
+        # No digest, nothing to interpret or persist.
+        self.assertEqual(self.interpret_calls, [])
+        self.assertNotIn("_orakle_offload_digest_|", "".join(chunks))
+
+
+class TestDenialFeedback(unittest.TestCase):
+    """The free, bounded feedback comment after a deny (#37): the model
+    reacting to the decision OUTCOME — never to the decision surface —
+    hard-capped, one attempt, fail-to-silence."""
+
+    def setUp(self):
+        config_values = {
+            "orakle.match_providers": [],
+            "llm": {"selected_provider": "gemini/gemini-flash",
+                    "providers": []},
+            "orakle.offload.spend_policy": "ask",
+        }
+
+        def config_get(key, default=None):
+            return config_values.get(key, default)
+
+        self.mock_config = MagicMock()
+        self.mock_config.get.side_effect = config_get
+
+        with patch(
+            'ainara.framework.orakle_middleware.OrakleMatcherTransformers'
+        ):
+            self.middleware = OrakleMiddleware(
+                llm=MagicMock(),
+                orakle_servers=[],
+                system_message="SYSTEM",
+                config_manager=self.mock_config,
+                capabilities=[],
+            )
+
+        self.chat_calls = []
+        self.chat_chunks = ["No ", "problem — it's a big one."]
+
+        def fake_chat(chat_history=None, stream=False, **kwargs):
+            self.chat_calls.append(chat_history)
+            return iter(self.chat_chunks)
+
+        self.middleware.llm.prepare_chat.side_effect = (
+            lambda system_message=None, new_message=None, **kw: [
+                {"role": "system", "content": system_message or ""},
+                {"role": "user", "content": new_message or ""},
+            ]
+        )
+        self.middleware.llm.chat.side_effect = fake_chat
+
+    def test_feedback_generated_from_context(self):
+        text = self.middleware.denial_feedback_text(
+            query="analyze the uploaded report",
+            payload_bytes=48211,
+        )
+        self.assertEqual(text, "No problem — it's a big one.")
+        prompt = self.chat_calls[0][-1]["content"]
+        # The query and the size fact shape the comment...
+        self.assertIn("analyze the uploaded report", prompt)
+        self.assertIn("47", prompt)
+        # ...but only as a fact: the payload itself is never an input.
+        self.assertNotIn("PAYLOAD", prompt)
+
+    def test_char_cap_hard_stops_generation(self):
+        """The character cap is the real hard-stop: the stream is
+        abandoned mid-generation once the cap is reached."""
+        self.chat_chunks = ["x" * 100] * 50
+        text = self.middleware.denial_feedback_text("q", 1024)
+        self.assertEqual(len(text), self.middleware.DENIAL_FEEDBACK_MAX_CHARS)
+
+    def test_failure_is_silent_and_never_retries(self):
+        """Any generation failure closes silently: the user just
+        declined spend — burning retries on a nicety would be
+        tone-deaf."""
+        self.middleware.llm.chat.side_effect = RuntimeError("429")
+        self.assertIsNone(
+            self.middleware.denial_feedback_text("q", 1024))
+        self.assertEqual(self.middleware.llm.chat.call_count, 1)
+
+    def test_empty_generation_is_silent(self):
+        self.chat_chunks = ["", "  "]
+        self.assertIsNone(
+            self.middleware.denial_feedback_text("q", 1024))
 
 
 class TestRenderBlobStore(unittest.TestCase):
@@ -1233,6 +1418,105 @@ class TestConsentDecisionRecord(unittest.TestCase):
         )
         self.assertNotIn("_orakle_consent_decision_", spoken)
         self.assertIn("Here is the analysis.", spoken)
+
+    def test_offload_digest_marker_persisted_not_spoken(self):
+        """The offload digest trail marker (#37) rides the approval
+        segment like the decision record: part of the persisted
+        transcript, never routed to the sentence/TTS machinery."""
+        cm = self._stub_chat_manager()
+        cm._process_streaming_sentence = MagicMock()
+        cm._process_regular_text = MagicMock()
+        cm._extract_complete_sentences = (
+            lambda t: [t.strip()] if t.strip() else []
+        )
+        marker = (
+            "\n_orakle_offload_digest_|"
+            "aabbcc\nDIGESTED FINDINGS\n\n"
+        )
+        chunks = cm._stream_system_segment(
+            iter([marker, "Here is the analysis. "])
+        )
+        list(chunks)
+
+        persisted = cm.chat_history[-1]["content"]
+        self.assertIn("_orakle_offload_digest_|aabbcc", persisted)
+        self.assertIn("DIGESTED FINDINGS", persisted)
+        self.assertIn("Here is the analysis.", persisted)
+        spoken = "".join(
+            c.args[0] for c in cm._process_streaming_sentence.call_args_list
+        )
+        self.assertNotIn("_orakle_offload_digest_", spoken)
+        self.assertNotIn("DIGESTED FINDINGS", spoken)
+        self.assertIn("Here is the analysis.", spoken)
+
+
+class TestDenialSegment(unittest.TestCase):
+    """The conversational outcome segment for a consumed deny (#37):
+    free feedback when generation succeeds, silence when it fails."""
+
+    def _stub_chat_manager(self):
+        from ainara.framework.chat_manager import ChatManager
+
+        cm = object.__new__(ChatManager)  # no __init__: LLM-free stub
+        cm.llm = MagicMock()
+        cm.llm.add_msg.side_effect = (
+            lambda msg, history, role: history.append(
+                {"role": role, "content": msg, "tokens": 0}
+            )
+        )
+        cm.chat_history = []
+        cm.memory_enabled = True
+        cm.chat_memory = MagicMock()
+        cm.green_memories = None
+        cm.orakle_middleware = MagicMock()
+        return cm
+
+    def _ready(self, cm):
+        cm._process_streaming_sentence = MagicMock()
+        cm._process_regular_text = MagicMock()
+        cm._extract_complete_sentences = (
+            lambda t: [t.strip()] if t.strip() else []
+        )
+
+    def test_deny_streams_feedback_as_speakable(self):
+        cm = self._stub_chat_manager()
+        self._ready(cm)
+        cm.orakle_middleware.denial_feedback_text.return_value = (
+            "No problem — ask me about a specific part instead."
+        )
+        entry = {"query": "q", "payload_bytes": 10, "chat_history": []}
+        list(cm.consent_denial_segment("abc123", "deny", entry))
+
+        persisted = cm.chat_history[-1]["content"]
+        self.assertIn("No problem — ask me about a specific part", persisted)
+        spoken = "".join(
+            c.args[0] for c in cm._process_streaming_sentence.call_args_list
+        )
+        self.assertIn("No problem", spoken)
+        # The comment prompt gets query + size; never the payload.
+        kwargs = (
+            cm.orakle_middleware.denial_feedback_text.call_args.kwargs
+        )
+        self.assertEqual(kwargs["query"], "q")
+        self.assertEqual(kwargs["payload_bytes"], 10)
+
+    def test_failed_feedback_closes_silently(self):
+        """Ratified failure posture: no comment, no error surface — the
+        segment closes and the record (persisted separately by the
+        endpoint) is the whole trail."""
+        cm = self._stub_chat_manager()
+        self._ready(cm)
+        cm.orakle_middleware.denial_feedback_text.return_value = None
+        entry = {"query": "q", "payload_bytes": 10, "chat_history": []}
+        chunks = list(
+            cm.consent_denial_segment("abc123", "deny", entry)
+        )
+        spoken = "".join(
+            c.args[0] for c in cm._process_streaming_sentence.call_args_list
+        )
+        self.assertEqual(spoken.strip(), "")
+        # The segment still closes cleanly for the client.
+        self.assertTrue(any('"completed"' in c for c in chunks))
 
 
 if __name__ == "__main__":

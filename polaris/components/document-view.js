@@ -231,7 +231,8 @@ class DocumentView extends BaseComponent {
      * Build the consent card DOM (issue #26 P2).
      *
      * Generic decision surface (#18 primitive shape): the backend
-     * composes EVERYTHING the card shows — title, quote (the narration
+     * composes EVERYTHING the card shows — title, quote (the mechanical
+     * estimate line, #37)
      * already spoken/persisted in the conversation), button labels and
      * the session/expiry note, all localized to the session language.
      * This component is strictly presentational and renders any future

@@ -1334,9 +1334,10 @@ class ChatManager:
             # Fabricated token: never registered, never resolvable.
             "token": "test-token-not-registered",
             "ttl": 600,
-            # Generic decision surface, localized to the session language.
+            # Generic decision surface, localized to the session
+            # language. Quote is the mechanical estimate line (#37).
             "title": strings["title"],
-            "quote": strings["narration"],
+            "quote": strings["estimate"].format(t=32074, c=4),
             "buttons": [
                 {"id": "approve", "label": strings["yes"],
                  "style": "primary"},
@@ -2327,6 +2328,34 @@ class ChatManager:
             if not stream:
                 return processed_answer
 
+    def _fetch_interpretation_memories(self, query: str):
+        """Relevant GREEN memories for an out-of-band interpretation
+        pass (#37) — the same dynamic retrieval the user-turn path
+        performs, seeded with the offloaded query plus the recent
+        history for reference resolution."""
+        if not (self.memory_enabled and self.green_memories):
+            return None
+        history_tail = self.chat_history[-10:] if self.chat_history else []
+        parts = [
+            f"{m.get('role')}: {m.get('content', '')}"
+            for m in history_tail
+            if m.get("role") in ("user", "assistant")
+        ]
+        parts.append(query)
+        relevant = self.green_memories.get_relevant_memories(
+            "\n\n".join(parts)
+        )
+        if not relevant:
+            return None
+        processed = []
+        for mem in relevant:
+            mem_copy = mem.copy()
+            mem_copy["relevance_score"] = (
+                f"{mem_copy.get('relevance', 0.0):.2f}"
+            )
+            processed.append(mem_copy)
+        return processed
+
     def consent_resume(
         self, decision_id: str, token: str, decision: str
     ) -> Generator[str, None, None]:
@@ -2337,12 +2366,16 @@ class ChatManager:
         already ended with the card. The middleware validates the one-shot
         decision token (an unknown, replayed or expired decision yields an
         'expired' consent_result signal — never an execution) and returns
-        the digest stream, which is emitted here as a system-initiated
-        segment: the answer lands in history and chat memory as its own
-        assistant entry.
+        the segment stream: the digestion runs out-of-band, and the
+        digest routes through the interpretation machinery (#37) so the
+        spoken answer is an in-conversation delivery derived from the
+        analysis — never the raw digest.
         """
         digest_stream = self.orakle_middleware.resume_offload_consent(
-            decision_id, token, decision
+            decision_id,
+            token,
+            decision,
+            memories_provider=self._fetch_interpretation_memories,
         )
         if digest_stream is None:
             yield ndjson(
@@ -2373,6 +2406,47 @@ class ChatManager:
             yield from digest_stream
 
         yield from self._stream_system_segment(_with_record())
+
+    def consent_denial_segment(
+        self, decision_id: str, decision: str, entry: dict
+    ) -> Generator[str, None, None]:
+        """Stream the conversational outcome segment for a consumed
+        deny decision (issue #37).
+
+        The conversational layer of the offload path lives at the
+        decision OUTCOME: the mechanical decision record is persisted
+        separately (by the endpoint, before this segment starts — it
+        must survive a client that never reads the stream), and the
+        spoken layer is a free, bounded feedback comment — the model
+        reacting to the outcome, never participating in the decision
+        surface. Called only for 'deny'; 'dismiss' (Escape,
+        put-it-away) stays silent: the user did not answer, commenting
+        would be chatter.
+
+        Failure posture (ratified): any feedback-generation failure —
+        429, timeout, empty output — closes the segment silently. The
+        record is already persisted, the card is already resolved in
+        the UI, and silence after a decline is a normal conversational
+        outcome. One attempt, no retries: the user just declined
+        spend; burning retries on a nicety would be tone-deaf.
+
+        `entry` is the snapshot returned by the middleware's
+        deny_offload_consent (query, payload size, chat history) — the
+        untrusted payload itself never enters the comment prompt.
+        """
+        def _segment():
+            feedback = self.orakle_middleware.denial_feedback_text(
+                query=entry.get("query", ""),
+                payload_bytes=entry.get("payload_bytes", 0),
+                chat_history=entry.get("chat_history"),
+                memories=self._fetch_interpretation_memories(
+                    entry.get("query", "")
+                ),
+            )
+            if feedback:
+                yield feedback
+
+        yield from self._stream_system_segment(_segment())
 
     def record_consent_decision(self, decision_id: str, outcome: str) -> None:
         """Persist a consent-card decision as a mechanical record (issue
@@ -2421,10 +2495,14 @@ class ChatManager:
             for chunk in chunks:
                 if not chunk:
                     continue
-                if "_orakle_consent_decision_" in chunk:
-                    # Mechanical decision record (#26 P2): persisted as
-                    # part of the segment's transcript but never spoken
-                    # — it is a record, not an utterance.
+                if (
+                    "_orakle_consent_decision_" in chunk
+                    or "_orakle_offload_digest_" in chunk
+                ):
+                    # Mechanical records (#26 P2 / #37): the consent
+                    # decision and the offload digest ride the
+                    # segment's transcript but are never spoken — they
+                    # are records, not utterances.
                     processed_answer += chunk
                     continue
                 if "_orakle_agent_progress_" in chunk or (

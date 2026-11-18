@@ -1800,7 +1800,11 @@ class ComRing extends BaseComponent {
             // receipt lives in the conversation now — the decision-
             // record pill — not on the card (#26 P2). The POST still
             // consumes the offer server-side; if it fails, the TTL
-            // retires it.
+            // retires it. When the offer was live, the denial streams
+            // back as a system-initiated segment (#37): the free
+            // bounded feedback comment (or just silence on generation
+            // failure — the record is persisted server-side either
+            // way).
             this.documentView.removeConsentCard(decisionId);
         } else {
             this.documentView.updateConsentCard(decisionId, 'started');
@@ -1831,9 +1835,12 @@ class ComRing extends BaseComponent {
                 }
                 return;
             }
-            // Approved: the offer was honored — the card has no further
-            // role and dissolves now; agent progress (com-ring status)
-            // and the digest answer are the feedback from here (#26 P2).
+            // The offer was honored or explicitly denied: the card has
+            // no further role and dissolves now; agent progress (com-
+            // ring status) and the streamed segment are the feedback
+            // from here (#26 P2; denial feedback #37). A second
+            // removeConsentCard for deny is a no-op — the card went
+            // away before the POST.
             this.documentView.removeConsentCard(decisionId);
             // Streamed resumed segment — same event shapes as a chat turn.
             const reader = response.body.getReader();
@@ -2880,10 +2887,11 @@ Visit our project site at: https://ainara.app
                 // Consent card (#26 P2): framework-rendered decision
                 // surface for the offload spend axis. The payload carries
                 // the one-shot decision token — signal channel only, it
-                // must never enter visible conversation text. Opening the
-                // document view is the narration-to-button handoff: the
-                // user heard why; the card shows the framework-computed
-                // numbers and the mechanical decision buttons.
+                // must never enter visible conversation text. Opening
+                // the document view hands off to the card (#37): the
+                // action was already explained conversationally by the
+                // selection preview; the card shows the framework-
+                // computed numbers and the mechanical decision buttons.
                 if (event.type === 'signal') {
                     this.switchToDocumentView('consent');
                     this.documentView.addDocument(

@@ -290,6 +290,25 @@ class BaseComponent extends HTMLElement {
             }
         );
 
+        // Offload digest trail records (#37): the digest body follows
+        // the marker as a fenced note; the marker line renders as a
+        // receipt pill naming what was recorded. Framework-written
+        // (model output is killed by the guardrail), so the hoisted
+        // title is trustworthy — and already HTML-escaped with the
+        // rest of the text before this pass.
+        text = text.replace(
+            /_orakle_offload_digest_\|([a-f0-9]+)(?:\|([^\n|]*))?/gm,
+            (text, key, title) => {
+                const label = title
+                    ? `Analysis recorded: ${title}`
+                    : 'Analysis recorded';
+                codeBlocks.push(
+                    `<span class="consent-record offload-digest-record">${label}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
         // Extract ORAKLE data blocks
         text = text.replace(/_orakle_nexus_data_\|([^\n]+)/gm, (text, skill) => {
             try {
