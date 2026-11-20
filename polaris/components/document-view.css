@@ -301,6 +301,48 @@ code {
     content: "⚙️";
 }
 
+/* Run-journal step record (#26/#35): transcript trail of an agent
+ * run's progress labels. Same pill family as the other mechanical
+ * records; the live channel is the com-ring signal. */
+.agent-progress-record:before {
+    content: "🤖";
+}
+
+/* Agent report trail (#35): the skill-agent's dossier persisted as
+ * evidence; collapsed by default, expandable. Same pill family. */
+.agent-dossier-record:before {
+    content: "📋";
+}
+
+/* Collapsed report trails (#37/#35): digest and dossier bodies live
+ * inside a <details> so history keeps the evidence without wall-of-
+ * text dumps. */
+.trail-details {
+    display: block;
+    max-width: 98%;
+    margin: 4px;
+    border-radius: 5px;
+    background-color: #242424;
+}
+
+.trail-details summary {
+    cursor: pointer;
+    padding: 6px 10px;
+    color: #ccc;
+    font-size: 0.9em;
+}
+
+.trail-details .trail-body {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 40vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85em;
+    color: #bbb;
+}
+
 ::-webkit-scrollbar {
     width: 10px;
 }

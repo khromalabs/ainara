@@ -296,11 +296,48 @@ class BaseComponent extends HTMLElement {
         // (model output is killed by the guardrail), so the hoisted
         // title is trustworthy — and already HTML-escaped with the
         // rest of the text before this pass.
+        // Agent + digest report trails (#37/#35): marker + fenced body
+        // rendered as a record pill and a COLLAPSED report — the trail
+        // keeps the evidence in history without wall-of-text dumps; the
+        // conversation carries only the interpretation. Bodies are
+        // untrusted content: entity-escaped, never raw HTML.
+        const escapeTrail = (s) =>
+            String(s || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        const trailRecord = (pillHtml, body) => {
+            const safeBody = escapeTrail(body);
+            codeBlocks.push(
+                pillHtml +
+                    '<details class="trail-details"><summary>View report</summary>' +
+                    `<pre class="trail-body">${safeBody}</pre></details>`
+            );
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        };
+
         text = text.replace(
-            /_orakle_offload_digest_\|([a-f0-9]+)(?:\|([^\n|]*))?/gm,
-            (text, key, title) => {
-                const label = title
-                    ? `Analysis recorded: ${title}`
+            /_orakle_offload_digest_\|([a-f0-9]+)(?:\|([^\n|]*))?\n```\n([\s\S]*?)\n```/g,
+            (text, key, title, body) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Analysis recorded: ${safeTitle}`
+                    : 'Analysis recorded';
+                return trailRecord(
+                    `<span class="consent-record offload-digest-record">${label}</span>`,
+                    body
+                );
+            }
+        );
+
+        // Fallback for digest markers whose body is missing/malformed:
+        // the pill alone, body dropped (nothing unrendered leaks).
+        text = text.replace(
+            /_orakle_offload_digest_\|[a-f0-9]+(?:\|([^\n|]*))?/gm,
+            (text, title) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Analysis recorded: ${safeTitle}`
                     : 'Analysis recorded';
                 codeBlocks.push(
                     `<span class="consent-record offload-digest-record">${label}</span>`
@@ -314,6 +351,10 @@ class BaseComponent extends HTMLElement {
         // a framework-composed status pill, never speech. Framework-
         // written markers only (model output is killed by the
         // guardrail), same trust basis as the consent records.
+        // Run-journal progress markers (#26/#35) are transformed too:
+        // they are framework-written records that must never appear as
+        // raw text in a transcript (live ones ride the signal channel
+        // and never persist; older transcripts may carry the leak).
         text = text.replace(
             /_orakle_status_\|([a-z_]+)/gm,
             (text, kind) => {
@@ -323,10 +364,53 @@ class BaseComponent extends HTMLElement {
                     request_failed: 'Could not handle that request',
                     app_data_invalid: 'App returned unreadable data',
                     consent_denied: 'Analysis declined',
+                    agent_cancelled: 'Agent run stopped',
                 };
                 const label = labels[kind] || 'Notice';
                 codeBlocks.push(
                     `<span class="consent-record orakle-status-record">${label}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
+        // Run-journal progress records (#26/#35): framework-written step
+        // markers (run_id|label, or label-only in the pre-#35 format).
+        // Rendered as pills, never raw text — the live channel is the
+        // com-ring signal; these are the transcript's honest trail.
+        text = text.replace(
+            /_orakle_agent_progress_\|([^\n|]+)(?:\|([^\n]*))?/gm,
+            (text, runId, label) => {
+                const step = (label || '').trim();
+                codeBlocks.push(
+                    `<span class="consent-record agent-progress-record">${
+                        step ? `Agent: ${escapeTrail(step)}` : 'Agent step'
+                    }</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
+        // Agent report trail (#35): the skill-agent's dossier persists
+        // as evidence; collapsed like the digest trail.
+        text = text.replace(
+            /_orakle_agent_dossier_\|([^\n]*)\n```\n([\s\S]*?)\n```/g,
+            (text, title, body) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Report recorded: ${safeTitle}`
+                    : 'Report recorded';
+                return trailRecord(
+                    `<span class="consent-record agent-dossier-record">${label}</span>`,
+                    body
+                );
+            }
+        );
+        text = text.replace(
+            /_orakle_agent_dossier_\|[^\n]*/gm,
+            () => {
+                codeBlocks.push(
+                    `<span class="consent-record agent-dossier-record">Report recorded</span>`
                 );
                 return `%%CODEBLOCK${blockIndex++}%%`;
             }

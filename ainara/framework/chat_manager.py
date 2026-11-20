@@ -486,16 +486,45 @@ class ChatManager:
             return
 
         if "_orakle_agent_progress_" in sentence:
-            # Run-journal progress relay (issue #26): a stage label from
-            # a spawned agent's journal. Forwarded as a signal event so
-            # it never reaches TTS/text output; the com-ring renders it
-            # once Polaris handles the tag (P2).
+            # Run-journal progress relay (issues #26/#35): a stage label
+            # from a spawned agent's journal, carrying the run id (#35)
+            # — the address the com-ring's Ctrl+C cancel command posts
+            # against. Forwarded as a signal event so it never reaches
+            # TTS/text output. Old format (label only) stays parseable.
+            parts = sentence.strip().split("|", 2)
+            run_id = parts[1].strip() if len(parts) > 2 else ""
             label = (
-                sentence.split("|", 1)[1].strip()
-                if "|" in sentence
-                else ""
+                parts[2].strip()
+                if len(parts) > 2
+                else (parts[1].strip() if len(parts) > 1 else "")
             )
-            yield ndjson("signal", "agent_progress", {"label": label})
+            yield ndjson(
+                "signal",
+                "agent_progress",
+                {"label": label, "run_id": run_id},
+            )
+            return
+
+        if "_orakle_status_" in sentence:
+            # Mechanical status pill (#37, #35): a framework-written
+            # record — surface, never speech. Streamed as a display-only
+            # event (audio: False, same shape as the no-TTS path) so
+            # base.js renders the pill while TTS never speaks the
+            # marker.
+            cleaned_sentence = re.sub(
+                r"^\[\d{1,2}:\d{2}\]\s*", "", sentence
+            )
+            if stream_type == "json":
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {
+                        "content": cleaned_sentence,
+                        "flags": {"command": False, "audio": False},
+                    },
+                )
+            else:
+                print(cleaned_sentence)
             return
 
         try:
@@ -2134,6 +2163,34 @@ class ChatManager:
                 if not chunk:
                     continue
 
+                # Run-journal progress relay (#26/#35): forward as a
+                # signal event BEFORE the buffer machinery — the sentence
+                # batching would delay, merge or swallow it, and the
+                # marker must never reach the persisted answer or TTS.
+                # The segment path (_stream_system_segment) has the same
+                # interception; this is the main-flow counterpart.
+                if (
+                    isinstance(chunk, str)
+                    and "_orakle_agent_progress_" in chunk
+                ):
+                    yield from self._process_streaming_sentence(
+                        chunk.strip(), stream
+                    )
+                    continue
+
+                # Agent report trail (#35): mechanical record — persisted
+                # in the transcript, never streamed live, never spoken,
+                # never routed through the doc-fence machinery (the body
+                # is fenced and would otherwise flip the parse mode and
+                # render the report as a document). Polaris renders it
+                # from history after the turn, like the digest trail.
+                if (
+                    isinstance(chunk, str)
+                    and "_orakle_agent_dossier_" in chunk
+                ):
+                    processed_answer += chunk
+                    continue
+
                 processed_answer += chunk
 
                 # Route chunk to the correct buffer based on current parsing mode
@@ -2498,11 +2555,14 @@ class ChatManager:
                 if (
                     "_orakle_consent_decision_" in chunk
                     or "_orakle_offload_digest_" in chunk
+                    or "_orakle_status_" in chunk
+                    or "_orakle_agent_dossier_" in chunk
                 ):
-                    # Mechanical records (#26 P2 / #37): the consent
-                    # decision and the offload digest ride the
-                    # segment's transcript but are never spoken — they
-                    # are records, not utterances.
+                    # Mechanical records (#26 P2 / #37 / #35): the consent
+                    # decision, the offload digest, the status pills and
+                    # the agent report trail ride the segment's transcript
+                    # but are never spoken — they are records, not
+                    # utterances.
                     processed_answer += chunk
                     continue
                 if "_orakle_agent_progress_" in chunk or (

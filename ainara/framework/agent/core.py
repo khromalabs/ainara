@@ -289,6 +289,16 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
                                 skills_executed.append(skill_id)
                             if skill_id not in turn_skills:
                                 turn_skills.append(skill_id)
+                                # Live step labels (#35): journal the skill
+                                # start the moment it passes through, so the
+                                # com-ring shows what the agent is doing
+                                # WHILE a long skill executes — not only
+                                # after the turn ends. Once per turn per
+                                # skill: repeated relays of the same label
+                                # add nothing.
+                                self._journal(
+                                    "skill_start", skill=skill_id
+                                )
                         skill_executed = True
                         # We don't add the signal to the final text response
                         continue

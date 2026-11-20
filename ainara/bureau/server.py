@@ -97,6 +97,23 @@ def _terminate_step(step_id: str, task: Dict[str, Any], reason: str) -> None:
     # once the grace period (GRACE_PERIOD) expires.
 
 
+def _store_agent_result(task: Dict[str, Any], result: Any) -> None:
+    """Flatten an agent run's result into its task record.
+
+    The child puts the full result dict on the queue; storing it verbatim
+    as ``response`` left the record's scalar fields at their initialized
+    zeros (a completed run reported ``Turns: 0, Skills: []``). The
+    response text is stored plain; run metadata is copied alongside.
+    """
+    if isinstance(result, dict):
+        task["response"] = result.get("response", "")
+        task["turns_used"] = result.get("turns_used", 0)
+        task["skills_executed"] = result.get("skills_executed", [])
+        task["failure_reason"] = result.get("failure_reason")
+    else:
+        task["response"] = result
+
+
 def _graceful_shutdown() -> None:
     """
     Terminate all running step processes, stop the conductor, and exit.
@@ -258,7 +275,7 @@ def timeout_monitor():
                         )
                     if result is not None:
                         task["status"] = "COMPLETED"
-                        task["response"] = result
+                        _store_agent_result(task, result)
                         # The child can now finish its exit flush; reap it.
                         try:
                             proc.join(timeout=2)
@@ -290,7 +307,7 @@ def timeout_monitor():
 
                     if got_result:
                         task["status"] = "COMPLETED"
-                        task["response"] = result
+                        _store_agent_result(task, result)
                     else:
                         # Only mark as failed if it wasn't already marked by timeout/abort
                         if task.get("status") == "RUNNING":
@@ -669,7 +686,13 @@ def create_agent():
         # Queue mirroring the agent's run journal (issue #26)
         journal_queue = multiprocessing.Queue()
 
-        # Launch a separate process for the agent
+        # Launch a separate process for the agent.
+        # journal_queue rides as a KEYWORD: it sits after conductor_agent
+        # in run_agent_in_process's signature, and a positional pass put
+        # it in conductor_agent instead — the agent never journaled (the
+        # queue is truthy, so the conductor-variant hint applied too) and
+        # every run-journal relay since #26 has been polling an empty
+        # journal (issue #35).
         process = multiprocessing.Process(
             target=run_agent_in_process,
             args=(
@@ -680,10 +703,12 @@ def create_agent():
                 goal,
                 max_turns,
                 result_queue,
-                None,  # blacklisted_providers
-                global_capabilities,
-                journal_queue,
             ),
+            kwargs={
+                "blacklisted_providers": None,
+                "global_capabilities": global_capabilities,
+                "journal_queue": journal_queue,
+            },
         )
         process.start()
 
@@ -756,6 +781,51 @@ def get_agent_status(agent_id):
     else:
         # Unknown status
         return jsonify(response_task), 200
+
+
+@app.route("/v1/agents/<agent_id>/cancel", methods=["POST"])
+def cancel_agent(agent_id):
+    """
+    Cancel a single agent run (issue #35: the user-facing stop for an
+    in-flight ephemeral agent, wired to Polaris via PyBridge/Orakle).
+
+    Reuses the same two-step termination as abort-all (graceful → hard
+    kill after the grace period). The cancellation is journaled HERE —
+    the killed process can no longer journal its own end — so pollers
+    see a ``cancelled`` report and can end the conversational surface
+    honestly. Idempotent: a run already in a terminal state is a no-op
+    that reports so.
+    """
+    task = step_registry.get(agent_id)
+    if not task:
+        return jsonify({"error": "Agent ID not found"}), 404
+
+    if task.get("status") in ("COMPLETED", "FAILED"):
+        return jsonify(
+            {
+                "cancelled": False,
+                "status": task.get("status"),
+                "message": "Agent already reached a terminal state",
+            }
+        ),
+        200,
+
+    # Cancellation report, visible to journal pollers before the kill
+    # lands (the poll interval is the delivery latency, not the kill).
+    task.setdefault("journal", []).append(
+        {"type": "cancelled", "reason": "Cancelled by user"}
+    )
+
+    if task.get("status") == "RUNNING":
+        _terminate_step(agent_id, task, reason="cancelled by user")
+    # Same retirement as abort-all: the timeout monitor finishes the
+    # process cleanup after the grace period.
+    task["status"] = "FAILED"
+    task["failure_reason"] = "Cancelled by user"
+    task["error"] = "UserAbort"
+
+    logger.warning(f"Agent {agent_id} cancelled by user")
+    return jsonify({"cancelled": True, "status": "FAILED"}), 200
 
 
 @app.route("/v1/agents/abort-all", methods=["POST"])

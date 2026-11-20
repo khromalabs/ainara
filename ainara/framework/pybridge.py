@@ -1647,6 +1647,23 @@ def create_app():
 
         return Response(generate(), mimetype="text/event-stream")
 
+    @app.route("/agent/run/<run_id>/cancel", methods=["POST"])
+    def agent_run_cancel(run_id):
+        """Stop an in-flight agent run (issue #35).
+
+        The cancel command is user-authoritative — unlike the consent
+        decision it needs no one-shot token: stopping work is not a
+        grant. The middleware's active-run registry is the validation
+        (unknown or already-finished run ids simply report nothing to
+        stop); a delivered request forwards the kill to Bureau. The
+        run's poll picks up the cancellation report and the
+        conversation ends the segment with the mechanical
+        agent_cancelled status pill.
+        """
+        middleware = app.chat_manager.orakle_middleware
+        cancelled = middleware.cancel_agent_run(run_id)
+        return jsonify({"cancelled": cancelled})
+
     @app.route("/attachments/<blob_id>", methods=["GET"])
     def get_attachment(blob_id):
         """Render-blob hydration endpoint (issue #26 P2, §6.8).

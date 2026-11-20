@@ -133,6 +133,12 @@ class ComRing extends BaseComponent {
             // digestion agent is on the status line; the first answer
             // chunk or 'completed' clears it.
             this.agentProgressActive = false;
+            // Agent run cancel (#35): the com-ring captures the run id
+            // from the progress signals — the address the Ctrl+C stop
+            // command posts against. agentCancelling freezes the label
+            // at 'Cancelling…' until the run actually ends.
+            this.agentRunId = null;
+            this.agentCancelling = false;
 
             this.state = {
                 keyPressed: false,
@@ -692,6 +698,42 @@ class ComRing extends BaseComponent {
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
             // console.log(event);
+
+            // Ctrl+C stops a live agent run (#35): the work-stopper,
+            // cleanly split from Escape's playback-axis controls (mute
+            // / skip karaoke — the stream continues underneath). The
+            // persistent 'Ctrl+C to stop' hint on the agent status line
+            // is the discovery surface. Guards keep legitimate copy
+            // working: a text selection or an editable focus passes
+            // through untouched.
+            if (
+                (event.ctrlKey || event.metaKey) &&
+                !event.altKey &&
+                !event.shiftKey &&
+                event.key.toLowerCase() === 'c' &&
+                this.agentProgressActive &&
+                this.agentRunId &&
+                !this.agentCancelling
+            ) {
+                const inner = event.composedPath
+                    ? event.composedPath()[0]
+                    : event.target;
+                const editable =
+                    (inner &&
+                        (inner.isContentEditable ||
+                            (inner.tagName &&
+                                ['INPUT', 'TEXTAREA'].includes(
+                                    inner.tagName.toUpperCase()
+                                )))) ||
+                    (window.getSelection && String(window.getSelection()));
+                if (!editable) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.cancelAgentRun();
+                    return;
+                }
+            }
+
             if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
                     this.onEscapeDuringExchange(event);
@@ -2251,6 +2293,44 @@ Visit our project site at: https://ainara.app
         }, 3000);
     }
 
+    cancelAgentRun() {
+        // Ctrl+C stop for a live agent run (#35). Optimistic surface:
+        // the status line freezes at 'Cancelling…' (further progress
+        // signals don't overwrite it) until the run actually ends —
+        // the kill is graceful→hard in Bureau and the poll interval is
+        // the delivery latency. Fire-and-forget POST: a failed relay
+        // leaves the run untouched, the next signal un-freezes the
+        // label, and the run still ends on its own.
+        if (!this.agentRunId || this.agentCancelling) return;
+        console.log('[Agent] Ctrl+C cancel requested for run', this.agentRunId);
+        this.agentCancelling = true;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (sttStatus) {
+            sttStatus.innerHTML = 'Processing:<br><i>Cancelling…</i>';
+        }
+        fetch(
+            `${this.pybridgeEndpoint}/agent/run/${encodeURIComponent(this.agentRunId)}/cancel`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            }
+        )
+            .then((res) => res.json())
+            .then((data) => {
+                if (!data || data.cancelled !== true) {
+                    // Nothing was stopped (unknown run, already finished,
+                    // relay failure): the surface goes back to tracking
+                    // the live run — the next progress signal repaints
+                    // the label.
+                    this.agentCancelling = false;
+                }
+            })
+            .catch((err) => {
+                console.warn('[Agent] cancel POST failed', err);
+                this.agentCancelling = false;
+            });
+    }
+
     abortLLMResponse() {
         console.log('Aborting speech playback (stream continues in background, #19 item 3)');
 
@@ -2609,6 +2689,8 @@ Visit our project site at: https://ainara.app
                     // findings start streaming.
                     if (this.agentProgressActive) {
                         this.agentProgressActive = false;
+                        this.agentRunId = null;
+                        this.agentCancelling = false;
                         const sttStatus = this.shadowRoot.querySelector('.stt-status');
                         if (sttStatus) {
                             sttStatus.classList.remove('active');
@@ -2782,7 +2864,15 @@ Visit our project site at: https://ainara.app
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
                         ringContainer.classList.add('loading');
                         if (event.content?.type == "skill") {
-                            sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
+                            if (event.content.skill_id === 'spawn_agent') {
+                                // Agent spawn (#35): not a skill — an
+                                // autonomous process is starting. Same
+                                // two-line shape as the step labels that
+                                // follow it.
+                                sttStatus.innerHTML = 'Processing:<br><i>Preparing…</i>';
+                            } else {
+                                sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
+                            }
                         } else {
                             if ( event.content.reasoning ) {
                                 sttStatus.textContent = 'Reasoning...';
@@ -2806,19 +2896,33 @@ Visit our project site at: https://ainara.app
                 break;
 
             case 'agent_progress':
-                // Run-journal progress relay (#26): stage labels from a
-                // spawned digestion agent, relayed live while Orakle
-                // polls Bureau. Same in-flight surface as the skill
-                // loading status; successive labels overwrite as the
-                // agent advances. The label derives from the agent's
-                // response snippet and the agent reads UNTRUSTED payload
-                // content — textContent only, never innerHTML.
+                // Run-journal progress relay (#26/#35): stage labels from
+                // a spawned agent, relayed live while Orakle polls Bureau.
+                // Successive labels overwrite as the agent advances; the
+                // payload carries the run id (#35) — the address the
+                // Ctrl+C cancel command posts against — and the status
+                // line advertises it persistently (gentle discovery, no
+                // thinking required). The label derives from the agent's
+                // journal and the agent reads UNTRUSTED payload content
+                // — textContent only, never innerHTML.
                 if (event.type === 'signal') {
                     const sttStatus = this.shadowRoot.querySelector('.stt-status');
                     if (sttStatus) {
-                        const label = ((event.content && event.content.label) || 'Analyzing…').slice(0, 120);
-                        sttStatus.textContent = 'Agent: ' + label;
-                        sttStatus.classList.add('active');
+                        this.agentRunId = (event.content && event.content.run_id) || null;
+                        if (!this.agentCancelling) {
+                            const label = ((event.content && event.content.label) || 'Working…').slice(0, 120);
+                            // Two-line shape, same rhythm as the skill
+                            // status: header + step. The step derives from
+                            // the agent's journal and the agent reads
+                            // UNTRUSTED content — DOM text node, never
+                            // innerHTML.
+                            sttStatus.innerHTML =
+                                'Processing... (Control+C to abort)<br>';
+                            const step = document.createElement('i');
+                            step.textContent = label;
+                            sttStatus.appendChild(step);
+                            sttStatus.classList.add('active');
+                        }
                         this.agentProgressActive = true;
                     }
                 }
@@ -2831,6 +2935,10 @@ Visit our project site at: https://ainara.app
                     this.isLLMStreaming = false;
                     // #26: end any agent progress label with the turn.
                     this.agentProgressActive = false;
+                    // #35: the run is over — the cancel address dies
+                    // with it.
+                    this.agentRunId = null;
+                    this.agentCancelling = false;
                     // #19 item 3: reopen the silence gate
                     this.exchangeSilenced = false;
 

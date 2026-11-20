@@ -700,6 +700,14 @@ class OrakleMiddleware:
         # and never overrides an explicit 'deny'.
         self._session_spend_allow = False
 
+        # Active agent-run registry (#35): run_id (Bureau's agent_id, an
+        # unguessable UUID — same trust basis as the consent decision
+        # ids) → Bureau coordinates for the user-facing cancel command.
+        # The skill-agent path and the offload digest path both register
+        # here; entries die with the poll (finally), mirroring the
+        # consent registry's session scope.
+        self._agent_runs: Dict[str, Dict[str, str]] = {}
+
         # Render inline ceiling (issue #26 P2, §6.8): UI-skill payloads
         # above it are stored as persistent render blobs; the transcript
         # carries data_ref + preview and Polaris hydrates by id. Small
@@ -1055,6 +1063,8 @@ class OrakleMiddleware:
             "_orakle_agent_progress_",
             "_orakle_consent_card_",
             "_orakle_consent_decision_",
+            "_orakle_agent_dossier_",
+            "_orakle_offload_digest_",
         )
         max_signal_len = max(len(s) for s in forbidden_signals)
 
@@ -1565,7 +1575,27 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             )
 
             if agent_result:
-                yield agent_result
+                # Agent report trail (#35): the raw dossier persists as a
+                # mechanical, never-spoken record (same family as the
+                # digest trail — the history keeps the evidence), and the
+                # conversational channel gets an interpretation pass: the
+                # assistant voices the findings in its own words, aware of
+                # the conversation — the agent's report is DATA, exactly
+                # like a skill result, never speech by itself.
+                yield self._agent_trail_chunk(agent_result)
+                chat_context = self._get_chat_context(chat_history, memories)
+                yield from self.stream_command_interpretation(
+                    [agent_result],
+                    query,
+                    chat_context=chat_context,
+                    reasoning_level=final_reasoning_level,
+                )
+                return
+            elif agent_result == self.AGENT_CANCELLED:
+                # User cancel (#35): the mechanical pill carries the
+                # fact; nothing is spoken (silence beats a recording).
+                yield "\n_orakle_status_|agent_cancelled\n"
+                return
             else:
                 yield self._guidance_or_status(
                     "request_failed",
@@ -1943,6 +1973,11 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         chat_history=chat_history,
                         reasoning_level=final_reasoning_level,
                     )
+                    if digest == self.AGENT_CANCELLED:
+                        # User cancel (#35): the mechanical pill carries
+                        # the fact; nothing is spoken, nothing cached.
+                        yield "\n_orakle_status_|agent_cancelled\n"
+                        return
                     if digest:
                         if self._digest_output_oversized(digest):
                             # C4 (issue #37): a returned digest above
@@ -2625,6 +2660,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             if chunk:
                 yield chunk
 
+    # Sentinel returned by _poll_agent_result when the run was stopped
+    # by a user cancel (#35): distinct from a None failure so the
+    # conversational surface ends with the mechanical agent_cancelled
+    # pill instead of a failure guidance (silence beats a recording —
+    # the pill carries the fact, the model never narrates a script).
+    AGENT_CANCELLED = "__orakle_agent_cancelled__"
+
     def _spawn_ephemeral_agent(
         self,
         query: str,
@@ -2653,6 +2695,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         try:
             # Create agent
             logger.info(f"Spawning ephemeral agent for query: '{query}'")
+            agent_id = None
 
             # Build blueprint for the agent
             blueprint = {
@@ -2701,6 +2744,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
             logger.info(f"Agent created with ID: {agent_id}")
 
+            # Register for the user-facing cancel command (#35); the
+            # entry dies with the poll in the finally below.
+            self._agent_runs[agent_id] = {
+                "agent_id": agent_id,
+                "bureau_url": bureau_url,
+            }
+
             # Poll for completion (see execution_timeout above)
             max_wait = execution_timeout + 30  # grace for Bureau to finalize
             poll_interval = 2  # seconds
@@ -2718,6 +2768,9 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 f"Unexpected error spawning agent: {e}", exc_info=True
             )
             return None
+        finally:
+            if agent_id:
+                self._agent_runs.pop(agent_id, None)
 
     def _poll_agent_result(
         self,
@@ -2729,14 +2782,22 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         """
         Poll Bureau for an agent run until it reaches a terminal state.
 
-        Relays new run-journal "turn" entries as progress chunks
-        (`_orakle_agent_progress_|<label>`, issue #26) while polling.
+        Relays new run-journal entries as progress chunks
+        (``_orakle_agent_progress_|<run_id>|<label>``, issues #26/#35)
+        while polling — for every readable state, not only RUNNING: the
+        terminal states carry the same journal, and a cancellation
+        report must reach the com-ring even when it lands together with
+        the kill. ``skill_start`` entries (#35) give live per-step
+        labels while a long skill executes.
 
-        Returns the agent's response text, or None on execution errors or
-        when max_wait elapses (the agent may still be running in Bureau).
+        Returns the agent's response text, the AGENT_CANCELLED sentinel
+        when the run was stopped by a user cancel (#35), or None on
+        execution errors or when max_wait elapses (the agent may still
+        be running in Bureau).
         """
         seen_journal = 0
         elapsed = 0
+        cancelled = False
 
         while elapsed < max_wait:
             time.sleep(poll_interval)
@@ -2747,19 +2808,41 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             )
 
             # Handle different status codes
-            if status_response.status_code == 200:
+            if status_response.status_code in (200, 424, 500):
                 status_data = status_response.json()
                 status = status_data.get("status")
 
-                # Relay new journal entries as progress chunks (#26)
+                # Relay new journal entries as progress chunks
+                # (#26/#35) — see the docstring for why terminal
+                # states relay too.
                 journal = status_data.get("journal") or []
                 for entry in journal[seen_journal:]:
-                    if entry.get("type") == "turn":
+                    entry_type = entry.get("type")
+                    if entry_type == "turn":
                         label = entry.get("label") or (
                             f"Step {entry.get('index', '?')}"
                         )
-                        yield f"\n_orakle_agent_progress_|{label}\n"
+                        yield (
+                            f"\n_orakle_agent_progress_|{agent_id}|{label}\n"
+                        )
+                    elif entry_type == "skill_start":
+                        skill = entry.get("skill")
+                        if skill:
+                            yield (
+                                f"\n_orakle_agent_progress_|{agent_id}|"
+                                f"Using {skill}\n"
+                            )
+                    elif entry_type == "cancelled":
+                        cancelled = True
                 seen_journal = len(journal)
+
+                # A user cancel (#35) is not a failure: the kill is
+                # graceful→hard in Bureau and the run record is
+                # retired as UserAbort (any terminal status below).
+                # The conversational surface ends with the mechanical
+                # agent_cancelled pill — the caller maps the sentinel.
+                if cancelled or status_data.get("error") == "UserAbort":
+                    return self.AGENT_CANCELLED
 
                 logger.info(
                     f"Agent {agent_id} status: {status} (elapsed:"
@@ -2777,8 +2860,17 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         f"Skills: {status_data.get('skills_executed')}"
                     )
                     return response
-                elif status == "FAILED":
-                    # Agent executed but didn't achieve goal
+
+                if status == "FAILED":
+                    if status_data.get("error"):
+                        # Execution error (500): no goal-failure text to
+                        # relay; the guidance seam handles it upstream.
+                        error = status_data.get("error", "Unknown error")
+                        logger.error(
+                            f"Agent execution error: {error}"
+                        )
+                        return None
+                    # Agent executed but didn't achieve goal (424)
                     failure_reason = status_data.get(
                         "failure_reason", "Unknown reason"
                     )
@@ -2801,26 +2893,6 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         )
                     )
 
-            elif status_response.status_code == 424:
-                # Failed Dependency - goal not achieved
-                status_data = status_response.json()
-                failure_reason = status_data.get(
-                    "failure_reason", "Goal not achieved"
-                )
-                response = status_data.get("response", "")
-                # Extract the actual response text if it's a dictionary
-                if isinstance(response, dict):
-                    response = response.get("response", "")
-                logger.warning(f"Agent failed (424): {failure_reason}")
-                return (
-                    response
-                    if response
-                    else (
-                        "I couldn't complete that request."
-                        f" {failure_reason}"
-                    )
-                )
-
             elif status_response.status_code == 429:
                 # Rate limited: back off and keep polling — the run is
                 # already in flight and its cost is already committed
@@ -2830,13 +2902,6 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 )
                 time.sleep(10)
                 elapsed += 10
-
-            elif status_response.status_code == 500:
-                # Internal Server Error - execution error
-                status_data = status_response.json()
-                error = status_data.get("error", "Unknown error")
-                logger.error(f"Agent execution error (500): {error}")
-                return None
 
             else:
                 logger.error(
@@ -2848,6 +2913,40 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
         logger.warning(f"Agent {agent_id} timed out after {max_wait}s")
         return None
+
+    def cancel_agent_run(self, run_id: str) -> bool:
+        """
+        User-facing cancel (#35): stop an in-flight agent run.
+
+        run_id is the Bureau agent_id captured when the run spawned —
+        the same unguessable-UUID trust basis as the consent decision
+        ids. Unknown or already-finished ids return False (nothing to
+        stop); a delivered request returns True. The kill itself is
+        graceful→hard in Bureau (two-step termination, cancellation
+        journaled there); the run's poll picks up the cancellation
+        report and the conversational surface ends with the mechanical
+        agent_cancelled pill — never canned speech.
+        """
+        run = self._agent_runs.get(run_id)
+        if run is None:
+            logger.info(f"Agent cancel: no active run {run_id!r}")
+            return False
+        try:
+            response = requests.post(
+                f"{run['bureau_url']}/v1/agents/{run['agent_id']}/cancel",
+                timeout=5,
+            )
+            if response.status_code != 200:
+                logger.error(
+                    f"Agent cancel failed for {run_id}:"
+                    f" {response.status_code} {response.text}"
+                )
+                return False
+            logger.info(f"Agent cancel delivered for run {run_id}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Agent cancel request failed for {run_id}: {e}")
+            return False
 
     def _spawn_offload_digest(
         self,
@@ -2898,6 +2997,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 "ORAKLE: offloading digestion of oversized result"
                 f" ({len(raw_result)} bytes) for query: '{query}'"
             )
+            agent_id = None
 
             # Comprehension blueprint: no skills, ever. This is the
             # injection-safety boundary (#26 §3.6; plugs into the #18
@@ -2981,6 +3081,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
             logger.info(f"Digestion agent created with ID: {agent_id}")
 
+            # Register for the user-facing cancel command (#35): the
+            # digest run is oversight-stoppable like any agent run.
+            self._agent_runs[agent_id] = {
+                "agent_id": agent_id,
+                "bureau_url": bureau_url,
+            }
+
             # Poll must bracket the requested execution_timeout
             max_wait = self.offload_timeout + 30
             result = yield from self._poll_agent_result(
@@ -2999,6 +3106,8 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             return None
         finally:
             self._offload_lock.release()
+            if agent_id:
+                self._agent_runs.pop(agent_id, None)
 
     # Hard caps for every generated-guidance call (#37 doctrine): a
     # bounded interpretation of a mechanical event. One attempt, no
@@ -3376,6 +3485,11 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     chat_history=entry["chat_history"],
                     reasoning_level=entry["reasoning_level"],
                 )
+            if digest == self.AGENT_CANCELLED:
+                # User cancel (#35): the mechanical pill carries the
+                # fact; nothing is spoken, nothing cached.
+                yield "\n_orakle_status_|agent_cancelled\n"
+                return
             # C4 (issue #37): a missing OR oversized digest is a failed
             # digestion — existing guidance path, no retry, never
             # forwarded to interpretation, never cached. The user
@@ -3422,6 +3536,37 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             )
 
         return _run()
+
+    @staticmethod
+    def _agent_trail_chunk(agent_result: str) -> str:
+        """The never-spoken trail chunk for a skill-agent run (#35).
+
+        Shape: ``_orakle_agent_dossier_|<title>`` followed by the report
+        body in a fenced block — same family as the digest trail (#37):
+        the history keeps the agent's full findings as evidence, the
+        conversation gets only the interpretation pass. The title is
+        hoisted best-effort from the report's first markdown heading.
+        Fences inside the body are neutralized so they can never
+        terminate the outer trail fence.
+        """
+        body = agent_result.strip()
+        title = None
+        heading = re.match(r"#{1,3}\s*(.+?)\s*($|\n)", body)
+        if heading:
+            title = heading.group(1).strip()
+            body = body[heading.end():].lstrip()
+        if title:
+            # Marker-safe: single line, no pipes, no backticks.
+            title = re.sub(r"[|`\r\n]+", " ", title).strip()
+            if not title:
+                title = None
+        # Neutralize any fenced blocks the report carries so they can
+        # never terminate the outer trail fence.
+        body = body.replace("```", "'''")
+        marker = "_orakle_agent_dossier_"
+        if title:
+            marker += f"|{title}"
+        return f"\n{marker}\n```\n{body}\n```\n\n"
 
     @staticmethod
     def _offload_trail_chunk(raw_result: str, digest: str) -> str:
