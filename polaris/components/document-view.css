@@ -294,6 +294,13 @@ code {
     content: "🔬";
 }
 
+/* Mechanical status signal (#37 generated-guidance seam): the
+ * fail-to-signal fallback when guidance generation fails — a surface,
+ * never speech. Same pill family. */
+.orakle-status-record:before {
+    content: "⚙️";
+}
+
 ::-webkit-scrollbar {
     width: 10px;
 }

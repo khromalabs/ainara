@@ -1289,7 +1289,21 @@ class OrakleMiddleware:
         if not matches:
             error_msg = f"Request '{query}' didn't match any available skill."
             logger.warning(f"ORAKLE: {error_msg}")
-            yield f"\nError: {error_msg}\n\n"
+            yield self._guidance_or_status(
+                "request_failed",
+                query,
+                facts={
+                    "Cause": (
+                        "no available capability matched the request"
+                    ),
+                    "Rephrasing": (
+                        "asking differently or more specifically may"
+                        " match one"
+                    ),
+                },
+                chat_history=chat_history,
+                memories=memories,
+            )
             return
 
         # Format candidate skills for the LLM
@@ -1535,9 +1549,18 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             if agent_result:
                 yield agent_result
             else:
-                yield (
-                    "\nI encountered an issue processing that request."
-                    " Please try again.\n\n"
+                yield self._guidance_or_status(
+                    "request_failed",
+                    query,
+                    facts={
+                        "Cause": (
+                            "an internal error interrupted the handling of"
+                            " the request"
+                        ),
+                        "Retrying": "asking again may succeed",
+                    },
+                    chat_history=chat_history,
+                    memories=memories,
                 )
             return
 
@@ -1565,9 +1588,25 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 f"ORAKLE: {error_msg} LLM response: {selection_response}"
             )
             if agentic_mode:
+                # Model-directed surface (the agent loop consumes this
+                # stream): mechanical facts, not speech.
                 yield f"\nOrakle error: {error_msg}\n\n"
             else:
-                yield f"\nI'm sorry, {error_msg}\n\n"
+                yield self._guidance_or_status(
+                    "request_failed",
+                    query,
+                    facts={
+                        "Cause": (
+                            "the routing step failed while deciding how to"
+                            " handle the request"
+                        ),
+                        "Rephrasing": (
+                            "asking again, possibly rephrased, may succeed"
+                        ),
+                    },
+                    chat_history=chat_history,
+                    memories=memories,
+                )
             return
 
         logger.info(
@@ -1703,7 +1742,18 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         " valid JSON data."
                     )
                     logger.error(f"ORAKLE: {error_msg} Data: {result}")
-                    yield f"\nError: {error_msg}\n\n"
+                    yield self._guidance_or_status(
+                        "app_data_invalid",
+                        query,
+                        facts={
+                            "App": selected_skill_id,
+                            "Cause": (
+                                "the app returned data in an unreadable form"
+                            ),
+                        },
+                        chat_history=chat_history,
+                        memories=memories,
+                    )
                     return
 
             # Size-ceiling router (issue #26 §3.6): a result above the
@@ -1741,7 +1791,15 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                                 len(cached_digest),
                                 self._digest_output_bound_chars(),
                             )
-                            yield self._oversized_guidance()
+                            yield self._guidance_or_status(
+                                "oversized_result",
+                                query,
+                                facts=self._oversized_event_facts(
+                                    result, "failed"
+                                ),
+                                chat_history=chat_history,
+                                memories=memories,
+                            )
                             return
                         logger.info(
                             "ORAKLE: digest cache hit for oversized result"
@@ -1763,7 +1821,15 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                             " window; rejecting pre-card with guidance.",
                             estimate_tokens(result),
                         )
-                        yield self._oversized_guidance()
+                        yield self._guidance_or_status(
+                            "oversized_result",
+                            query,
+                            facts=self._oversized_event_facts(
+                                result, "infeasible"
+                            ),
+                            chat_history=chat_history,
+                            memories=memories,
+                        )
                         return
                     # Spend axis (issue #26 P2, ratified with #18): on a
                     # metered digestion provider the mechanical size trigger
@@ -1783,14 +1849,14 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                                 "ORAKLE: offload rejected by spend policy"
                                 " (deny)."
                             )
-                            yield (
-                                "\nI retrieved the data but it is too large to"
-                                " analyze in one pass, and agentic analysis is"
-                                " disabled by your spending policy"
-                                " (orakle.offload.spend_policy). Try asking"
-                                " about a specific part of it, or change the"
-                                " setting if you want to allow agentic"
-                                " analysis.\n\n"
+                            yield self._guidance_or_status(
+                                "oversized_result",
+                                query,
+                                facts=self._oversized_event_facts(
+                                    result, "disabled_by_policy"
+                                ),
+                                chat_history=chat_history,
+                                memories=memories,
                             )
                             return
                         if spend_policy == "ask":
@@ -1872,7 +1938,15 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                                 len(digest),
                                 self._digest_output_bound_chars(),
                             )
-                            yield self._oversized_guidance()
+                            yield self._guidance_or_status(
+                                "oversized_result",
+                                query,
+                                facts=self._oversized_event_facts(
+                                    result, "failed"
+                                ),
+                                chat_history=chat_history,
+                                memories=memories,
+                            )
                             return
                         if self._digest_cache:
                             self._digest_cache.put(result, digest)
@@ -1886,10 +1960,12 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                         "ORAKLE: offload digestion failed for oversized result"
                         f" ({len(result)} bytes); rejecting with guidance."
                     )
-                    yield (
-                        "\nI retrieved the data but it is too large to analyze"
-                        " in one pass right now. Try asking about a specific"
-                        " part of it.\n\n"
+                    yield self._guidance_or_status(
+                        "oversized_result",
+                        query,
+                        facts=self._oversized_event_facts(result, "failed"),
+                        chat_history=chat_history,
+                        memories=memories,
                     )
                     return
 
@@ -2400,26 +2476,6 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         retry, never forwarded to interpretation, never cached."""
         return not digest or len(digest) > self._digest_output_bound_chars()
 
-    def _oversized_guidance(self, offer_setting: bool = False) -> str:
-        """Rejection message for results that cannot fit the prompt.
-
-        Deliberately does NOT promise step-by-step processing: nothing
-        implements it yet (issue #37 — the honest offer arrives with
-        the snapshot store + slice access, items 1+2). Migrates to the
-        generated-guidance seam (issue #37 doctrine: no pre-recorded
-        assistant speech).
-        """
-        setting_hint = (
-            " You can enable agentic analysis in the settings, or try"
-            " asking about a specific part of it."
-            if offer_setting
-            else " Try asking about a specific part of it."
-        )
-        return (
-            "\nI retrieved the data but it is too large to analyze in one"
-            f" pass right now.{setting_hint}\n\n"
-        )
-
     def stream_command_interpretation(
         self,
         results: List[str],
@@ -2495,7 +2551,14 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     prompt_tokens,
                     usable_tokens,
                 )
-                yield self._oversized_guidance(offer_setting=True)
+                yield self._guidance_or_status(
+                    "oversized_result",
+                    query,
+                    facts=self._oversized_event_facts(
+                        "\n".join(formatted_results), "unavailable"
+                    ),
+                    chat_context=effective_context,
+                )
                 return
 
         # Get interpretation as a stream
@@ -2893,15 +2956,247 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         finally:
             self._offload_lock.release()
 
-    # Hard caps for the denial feedback generation (#37): a free,
-    # bounded comment on the user's deny decision. One attempt, no
-    # retries: any failure closes the segment silently — silence after
-    # a decline is a normal conversational outcome, and the decision
-    # record is already persisted. The character cap is the real
-    # hard-stop on generation (llm.chat streams unbounded); the daemon
-    # worker thread bounds wall-clock latency without blocking shutdown.
-    DENIAL_FEEDBACK_MAX_CHARS = 600
-    DENIAL_FEEDBACK_TIMEOUT_S = 12.0
+    # Hard caps for every generated-guidance call (#37 doctrine): a
+    # bounded interpretation of a mechanical event. One attempt, no
+    # retries: any failure closes the segment silently — the mechanical
+    # _orakle_status_ signal carries the fact instead (fail-to-silence
+    # for speech, fail-to-signal for facts). The character cap is the
+    # real hard-stop on generation (llm.chat streams unbounded); the
+    # daemon worker thread bounds wall-clock latency without blocking
+    # shutdown.
+    GUIDANCE_MAX_CHARS = 600
+    GUIDANCE_TIMEOUT_S = 12.0
+
+    # Mechanical event descriptions for the generated-guidance seam
+    # (#37): one narrator mechanism — the framework composes WHAT
+    # happened (these canonical descriptions + per-call facts), the
+    # model explains it in conversation context (event_guidance.mu).
+    # Facts are injected as data; the model words the truth, it never
+    # computes or states numbers itself.
+    _GUIDANCE_EVENT_DESCRIPTIONS = {
+        "oversized_result": (
+            "The data retrieved for the user's request is too large to"
+            " be read in one conversational pass, so it cannot be shown"
+            " or analyzed as a whole right now."
+        ),
+        "approved_analysis_failed": (
+            "The user approved a deep analysis of some retrieved data;"
+            " the analysis ran but did not produce a usable result. It"
+            " was not retried and nothing was charged twice."
+        ),
+        "request_failed": (
+            "Handling of the user's request failed mechanically before"
+            " any result could be produced."
+        ),
+        "app_data_invalid": (
+            "An installed app was invoked but returned data in a form"
+            " that could not be read."
+        ),
+        "consent_denied": (
+            "The user was offered a deep analysis of retrieved data"
+            " (too large to read in one pass) and declined it through"
+            " the decision card."
+        ),
+    }
+
+    def _compose_event_block(self, kind: str, facts: dict) -> str:
+        """Framework-worded mechanical event block for the guidance
+        seam (#37). The canonical situation description plus per-call
+        facts, composed HERE — the model never states a number it was
+        not given."""
+        lines = [
+            f"Situation: {self._GUIDANCE_EVENT_DESCRIPTIONS[kind]}"
+        ]
+        fact_lines = [
+            f"- {key}: {value}"
+            for key, value in facts.items()
+            if value is not None
+        ]
+        if fact_lines:
+            lines.append("Facts:")
+            lines.extend(fact_lines)
+        return "\n".join(lines)
+
+    def _guidance_for_event(
+        self,
+        kind: str,
+        query: str,
+        facts: Optional[dict] = None,
+        chat_history: Optional[List[Dict]] = None,
+        memories: Optional[List[Dict]] = None,
+        chat_context: Optional[dict] = None,
+    ) -> Optional[str]:
+        """Compose a mechanical event and interpret it in conversation
+        context — the generated-guidance seam (#37 doctrine: nothing
+        the assistant says is pre-recorded).
+
+        Returns one or two natural sentences (session language,
+        conversation tone) or None on any failure — fail-to-silence;
+        the caller yields the mechanical ``_orakle_status_`` signal so
+        the fact is never lost (fail-to-signal for facts).
+
+        The prompt carries the event block (mechanical facts), the
+        query and conversation context ONLY: untrusted payloads never
+        reach a model here (sanitization boundary).
+        """
+        event_block = self._compose_event_block(
+            kind, facts or {}
+        )
+        return self._bounded_guidance_text(
+            event_block=event_block,
+            query=query,
+            chat_history=chat_history,
+            memories=memories,
+            chat_context=chat_context,
+        )
+
+    def _bounded_guidance_text(
+        self,
+        event_block: str,
+        query: str,
+        chat_history: Optional[List[Dict]] = None,
+        memories: Optional[List[Dict]] = None,
+        chat_context: Optional[dict] = None,
+        max_chars: int = GUIDANCE_MAX_CHARS,
+        timeout_s: float = GUIDANCE_TIMEOUT_S,
+    ) -> Optional[str]:
+        """One bounded generation interpreting a mechanical event
+        (#37): single attempt, no retries, wall-clock timeout on a
+        daemon worker, character cap enforced while consuming the
+        stream. Any failure or empty generation returns None — the
+        caller closes the segment with the mechanical status signal
+        (fail-to-silence)."""
+        if chat_context is None:
+            chat_context = self._get_chat_context(chat_history, memories)
+
+        def _collect() -> Optional[str]:
+            prompt = self.template_manager.render(
+                "framework.orakle_middleware.event_guidance",
+                {
+                    "event_block": event_block,
+                    "query": query,
+                    "chat_context": chat_context,
+                    "language": self.current_language or "English",
+                },
+            )
+            stream = self.llm.chat(
+                chat_history=self.llm.prepare_chat(
+                    system_message=self.system_message,
+                    new_message=prompt,
+                ),
+                stream=True,
+            )
+            chunks = []
+            total = 0
+            for chunk in self._strip_think_blocks_from_stream(stream):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= max_chars:
+                    break
+            return "".join(chunks).strip() or None
+
+        result: Dict[str, Optional[str]] = {}
+
+        def _worker() -> None:
+            try:
+                result["text"] = _collect()
+            except Exception:
+                logger.exception(
+                    "ORAKLE: guidance generation failed; closing the"
+                    " segment with the mechanical status signal."
+                )
+                result["text"] = None
+
+        worker = threading.Thread(
+            target=_worker, name="event-guidance", daemon=True
+        )
+        worker.start()
+        worker.join(timeout_s)
+        if worker.is_alive():
+            logger.warning(
+                "ORAKLE: guidance generation timed out after %.0fs;"
+                " closing the segment with the mechanical status signal.",
+                timeout_s,
+            )
+            return None
+        text = result.get("text")
+        if text:
+            logger.info("ORAKLE: event guidance generated.")
+        else:
+            logger.info(
+                "ORAKLE: guidance empty or failed; segment closes with"
+                " the mechanical status signal."
+            )
+        return text
+
+    @staticmethod
+    def _status_signal(kind: str) -> str:
+        """Mechanical status-signal chunk (#37): the fail-to-signal
+        fallback when guidance generation fails. Rendered by Polaris
+        as a status pill — a surface, never speech."""
+        return f"\n_orakle_status_|{kind}\n"
+
+    def _guidance_or_status(
+        self,
+        kind: str,
+        query: str,
+        facts: Optional[dict] = None,
+        chat_history: Optional[List[Dict]] = None,
+        memories: Optional[List[Dict]] = None,
+        chat_context: Optional[dict] = None,
+    ) -> str:
+        """Generated guidance for a mechanical event, falling back to
+        the mechanical status signal on generation failure (#37):
+        fail-to-silence for speech, fail-to-signal for facts the user
+        must not miss."""
+        text = self._guidance_for_event(
+            kind,
+            query,
+            facts=facts,
+            chat_history=chat_history,
+            memories=memories,
+            chat_context=chat_context,
+        )
+        if text:
+            return f"\n{text}\n\n"
+        return self._status_signal(kind)
+
+    _ANALYSIS_OUTCOME_FACTS = {
+        "infeasible": (
+            "available, but its input window cannot hold a payload this"
+            " large — a sectioned analysis is not possible yet"
+        ),
+        "failed": "was attempted but did not produce a usable result",
+        "disabled_by_policy": (
+            "disabled by the user's own standing policy"
+        ),
+        "unavailable": "not available for this request",
+    }
+
+    def _oversized_event_facts(
+        self, raw_result: str, analysis_outcome: str
+    ) -> dict:
+        """Plain-units mechanical facts for an oversized-result event
+        (#37 didactic layer): size in KB and the reading load as a
+        ratio over the usable window — numbers computed HERE, worded
+        by the model."""
+        facts: dict = {
+            "Data size": f"about {max(1, len(raw_result) // 1024)} KB of text"
+        }
+        usable_tokens = self._usable_context_tokens()
+        if usable_tokens > 0:
+            ratio = max(
+                2, round(estimate_tokens(raw_result) / usable_tokens)
+            )
+            facts["Reading load"] = (
+                f"about {ratio}x what fits one conversational reading"
+            )
+        facts["Agentic analysis"] = self._ANALYSIS_OUTCOME_FACTS.get(
+            analysis_outcome, analysis_outcome
+        )
+        return facts
 
     def deny_offload_consent(
         self, decision_id: str, token: str, decision: str
@@ -2939,84 +3234,26 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         The conversational layer of the offload path lives at the
         decision OUTCOME: the model never participates in the decision
         surface (mechanical card + one-shot token), it only reacts to
-        the outcome. This generates one or two natural sentences
-        acknowledging the refusal — session language, conversation
-        tone — optionally offering a concrete alternative that fits
-        the query.
-
-        Hard bounds: single attempt, no retries, wall-clock timeout on
-        a daemon worker, character cap enforced while consuming the
-        stream. Any failure or empty generation returns None and the
-        caller closes the segment with just the mechanical record —
-        fail to silence.
+        the outcome. Now a thin wrapper over the generated-guidance
+        seam: the consent_denied event interpreted in conversation
+        context — session language, conversation tone. The situation
+        tuning that used to live in a dedicated template (accept
+        gracefully, never nag, one alternative max) is carried by the
+        event facts and the universal rules.
 
         The prompt carries query, payload size and conversation context
         ONLY: the untrusted payload itself never reaches a model here
         (sanitization boundary).
         """
-        chat_context = self._get_chat_context(chat_history, memories)
-
-        def _collect() -> Optional[str]:
-            prompt = self.template_manager.render(
-                "framework.orakle_middleware.denial_feedback",
-                {
-                    "query": query,
-                    "payload_kb": max(1, payload_bytes // 1024),
-                    "chat_context": chat_context,
-                    "language": self.current_language or "English",
-                },
-            )
-            stream = self.llm.chat(
-                chat_history=self.llm.prepare_chat(
-                    system_message=self.system_message,
-                    new_message=prompt,
-                ),
-                stream=True,
-            )
-            chunks = []
-            total = 0
-            for chunk in self._strip_think_blocks_from_stream(stream):
-                if not chunk:
-                    continue
-                chunks.append(chunk)
-                total += len(chunk)
-                if total >= self.DENIAL_FEEDBACK_MAX_CHARS:
-                    break
-            return "".join(chunks).strip() or None
-
-        result: Dict[str, Optional[str]] = {}
-
-        def _worker() -> None:
-            try:
-                result["text"] = _collect()
-            except Exception:
-                logger.exception(
-                    "ORAKLE: denial feedback generation failed; closing"
-                    " the segment silently."
-                )
-                result["text"] = None
-
-        worker = threading.Thread(
-            target=_worker, name="denial-feedback", daemon=True
+        return self._guidance_for_event(
+            "consent_denied",
+            query=query,
+            facts={
+                "Data size": f"about {max(1, payload_bytes // 1024)} KB",
+            },
+            chat_history=chat_history,
+            memories=memories,
         )
-        worker.start()
-        worker.join(self.DENIAL_FEEDBACK_TIMEOUT_S)
-        if worker.is_alive():
-            logger.warning(
-                "ORAKLE: denial feedback timed out after %.0fs; closing"
-                " the segment silently.",
-                self.DENIAL_FEEDBACK_TIMEOUT_S,
-            )
-            return None
-        text = result.get("text")
-        if text:
-            logger.info("ORAKLE: denial feedback generated for outcome.")
-        else:
-            logger.info(
-                "ORAKLE: denial feedback empty or failed; segment"
-                " closes with the record only."
-            )
-        return text
 
     def resume_offload_consent(
         self,
@@ -3107,12 +3344,10 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     " rejecting with guidance (no fallback, no auto-retry).",
                     self._digest_output_bound_chars(),
                 )
-                yield (
-                    "\nI started the analysis you approved, but it did not"
-                    " produce a usable result this time — nothing was"
-                    " charged twice and no retry was attempted. Try asking"
-                    " about a specific part of the data, or ask me again"
-                    " later.\n\n"
+                yield self._guidance_or_status(
+                    "approved_analysis_failed",
+                    entry["query"],
+                    chat_history=entry["chat_history"],
                 )
                 return
             if self._digest_cache:

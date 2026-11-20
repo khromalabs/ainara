@@ -309,6 +309,29 @@ class BaseComponent extends HTMLElement {
             }
         );
 
+        // Mechanical status signals (#37 generated-guidance seam): the
+        // fail-to-signal fallback when a guidance generation fails —
+        // a framework-composed status pill, never speech. Framework-
+        // written markers only (model output is killed by the
+        // guardrail), same trust basis as the consent records.
+        text = text.replace(
+            /_orakle_status_\|([a-z_]+)/gm,
+            (text, kind) => {
+                const labels = {
+                    oversized_result: 'Data too large to read in one pass',
+                    approved_analysis_failed: 'Analysis did not complete',
+                    request_failed: 'Could not handle that request',
+                    app_data_invalid: 'App returned unreadable data',
+                    consent_denied: 'Analysis declined',
+                };
+                const label = labels[kind] || 'Notice';
+                codeBlocks.push(
+                    `<span class="consent-record orakle-status-record">${label}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
         // Extract ORAKLE data blocks
         text = text.replace(/_orakle_nexus_data_\|([^\n]+)/gm, (text, skill) => {
             try {
