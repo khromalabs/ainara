@@ -36,7 +36,12 @@ SELECTION_JSON = json.dumps({
     "skill_intention": "",
 })
 
-GUIDANCE_FRAGMENT = "too large to analyze"
+# Mechanical status pills (#37): the fail-to-signal fallback the
+# framework guarantees for a mechanical event when guidance generation
+# is unavailable. The generated speech itself is an LLM product, so
+# unit contracts assert the pill, never pre-recorded wording.
+OVERSIZED_PILL = "_orakle_status_|oversized_result"
+ANALYSIS_FAILED_PILL = "_orakle_status_|approved_analysis_failed"
 
 
 class TestExtractSkillAnalysis(unittest.TestCase):
@@ -175,6 +180,12 @@ class TestOffloadRouter(unittest.TestCase):
             recording_interpretation
         )
         self.middleware.llm.chat.side_effect = fake_chat
+
+        # Generated guidance (#37) is an LLM product; stubbed to None so
+        # every mechanical rejection deterministically closes with its
+        # _orakle_status_ pill. The seam itself has a dedicated test
+        # class (TestEventGuidanceSeam).
+        self.middleware._guidance_for_event = MagicMock(return_value=None)
         self.middleware._get_chat_context = MagicMock(return_value=[])
         self.middleware.execute_orakle_command = MagicMock(
             side_effect=lambda skill_id, params, history: self.skill_result)
@@ -222,20 +233,23 @@ class TestOffloadRouter(unittest.TestCase):
         self.assertEqual(self.interpretation_calls, [[big]])
 
     def test_above_ledger_budget_rejects_when_spawn_disabled(self):
-        """No consent for offload + no budget fit: reject with guidance
-        instead of inlining an overflow into the prompt."""
+        """No consent for offload + no budget fit: reject with the
+        mechanical oversized_result pill instead of inlining an
+        overflow into the prompt (#37: guidance is generated speech,
+        never canned text — the pill is the unit-testable contract)."""
         self.middleware.llm.get_context_window.return_value = 100
-        # budget = 100 * 0.75 * 3 = 225 bytes; the prompt wraps the
-        # payload in JSON, so a payload near the budget overflows it.
+        # Token domain (#37): usable window = 100 * 0.75 = 75 tokens;
+        # the prompt JSON-wraps the payload, so a 300-char payload
+        # (~100+ tokens estimated) overflows it.
         big = "x" * 300
         chunks = self._run(big)
         self.assertEqual(self.offload_calls, [])
         text = self._chunk_text(chunks)
-        self.assertIn(GUIDANCE_FRAGMENT, text)
-        self.assertIn("agentic analysis", text)
-        self.assertNotIn("INTERPRETED", text)
-        # Selection ran (stream=False); the interpretation LLM call did
-        # not happen.
+        self.assertIn(OVERSIZED_PILL, text)
+        self.assertNotIn(big, text)
+        # Selection ran (stream=False); neither the interpretation nor
+        # the guidance generation reached the LLM (guidance is
+        # stubbed), so no streaming call happened at all.
         self.assertEqual(self.llm_stream_calls, [])
 
     def test_oversized_result_offloads_when_spawn_enabled(self):
@@ -250,7 +264,8 @@ class TestOffloadRouter(unittest.TestCase):
         self.assertIn("DIGESTED FINDINGS", text)
 
     def test_offload_failure_rejects_with_guidance(self):
-        """No fallback to inlining: failure yields guidance, not the blob."""
+        """No fallback to inlining: failure yields the mechanical
+        oversized_result pill, not the blob."""
         big = "x" * (self.CEILING + 1)
         self.middleware.enable_agent_spawn = True
         self.offload_digest = None
@@ -258,7 +273,7 @@ class TestOffloadRouter(unittest.TestCase):
 
         self.assertEqual(self.offload_calls, [big])
         self.assertEqual(self.interpretation_calls, [])
-        self.assertIn(GUIDANCE_FRAGMENT, self._chunk_text(chunks))
+        self.assertIn(OVERSIZED_PILL, self._chunk_text(chunks))
         self.assertNotIn(big, self._chunk_text(chunks))
 
     # --- skill-side analysis (tier 1) preempts offload ------------------
@@ -365,12 +380,17 @@ class TestBudgetLedger(unittest.TestCase):
     def test_gate_rejects_oversized_prompt(self):
         self._configure_template()
         self.middleware.llm.get_context_window.return_value = 100
-        # budget = 225 bytes; the prompt JSON-wraps the payload.
+        # Token domain (#37): usable window = 75 tokens; the prompt
+        # JSON-wraps the 400-char payload (~134 tokens estimated), so
+        # it overflows the usable window.
         huge = "x" * 400
-        chunks = list(self.middleware.stream_command_interpretation(
-            [huge], "query"))
+        with patch.object(self.middleware, "_guidance_for_event",
+                          return_value=None):
+            chunks = list(self.middleware.stream_command_interpretation(
+                [huge], "query"))
         text = "".join(chunks)
-        self.assertIn("too large to analyze", text)
+        self.assertIn(OVERSIZED_PILL, text)
+        # The gate rejected before any LLM call.
         self.middleware.llm.chat.assert_not_called()
 
     def test_gate_passes_fitting_prompt_through(self):
@@ -667,6 +687,10 @@ class TestOffloadSpendPolicy(unittest.TestCase):
             side_effect=lambda skill_id, params, history: self.skill_result)
         self.middleware._get_skill_info = MagicMock(return_value=None)
 
+        # Generated guidance (#37) stubbed: mechanical rejections close
+        # with their status pill deterministically.
+        self.middleware._guidance_for_event = MagicMock(return_value=None)
+
         self.offload_calls = []
 
         def fake_offload(**kwargs):
@@ -761,7 +785,7 @@ class TestOffloadSpendPolicy(unittest.TestCase):
         chunks = self._run(big)
         self.assertEqual(self.offload_calls, [])
         text = "".join(c for c in chunks if isinstance(c, str))
-        self.assertIn("spend_policy", text)
+        self.assertIn(OVERSIZED_PILL, text)
         self.assertNotIn(big, text)
 
     def test_unresolvable_provider_counts_as_metered(self):
@@ -875,6 +899,10 @@ class TestOffloadConsentResume(unittest.TestCase):
             yield "INTERPRETED ANSWER"
 
         self.middleware.stream_command_interpretation = fake_interpret
+
+        # Generated guidance (#37) stubbed: mechanical rejections close
+        # with their status pill deterministically.
+        self.middleware._guidance_for_event = MagicMock(return_value=None)
 
     def _card(self):
         return self.middleware._consent_registry.create(
@@ -1058,10 +1086,61 @@ class TestOffloadConsentResume(unittest.TestCase):
         chunks = list(gen)
         self.assertEqual(self.offload_calls, ["PAYLOAD"])
         self.assertNotIn("DIGESTED FINDINGS", "".join(chunks))
-        self.assertIn("could not be completed", "".join(chunks))
+        self.assertIn(ANALYSIS_FAILED_PILL, "".join(chunks))
         # No digest, nothing to interpret or persist.
         self.assertEqual(self.interpret_calls, [])
         self.assertNotIn("_orakle_offload_digest_|", "".join(chunks))
+
+
+class TestEventGuidanceSeam(unittest.TestCase):
+    """The generated-guidance seam (#37): a mechanical event is
+    interpreted by one bounded generation; any failure closes with the
+    mechanical _orakle_status_ pill (fail-to-silence for speech,
+    fail-to-signal for facts)."""
+
+    def setUp(self):
+        config_values = {
+            "orakle.match_providers": [],
+            "llm": {},
+        }
+
+        def config_get(key, default=None):
+            return config_values.get(key, default)
+
+        mock_config = MagicMock()
+        mock_config.get.side_effect = config_get
+
+        with patch(
+            'ainara.framework.orakle_middleware.OrakleMatcherTransformers'
+        ):
+            self.middleware = OrakleMiddleware(
+                llm=MagicMock(),
+                orakle_servers=[],
+                system_message="SYSTEM",
+                config_manager=mock_config,
+                capabilities=[],
+            )
+
+        self.middleware.template_manager = MagicMock()
+        self.middleware.template_manager.render.side_effect = (
+            lambda template, variables: json.dumps(
+                variables, default=str
+            )
+        )
+        self.middleware.llm.prepare_chat.return_value = []
+        self.middleware._get_chat_context = MagicMock(return_value={})
+
+    def test_generated_text_is_delivered(self):
+        self.middleware.llm.chat.return_value = iter(["All ", "good."])
+        text = self.middleware._guidance_or_status(
+            "oversized_result", "query", facts={"Cause": "big"})
+        self.assertEqual(text, "\nAll good.\n\n")
+
+    def test_generation_failure_falls_back_to_status_pill(self):
+        self.middleware.llm.chat.side_effect = RuntimeError("429")
+        text = self.middleware._guidance_or_status(
+            "oversized_result", "query", facts={"Cause": "big"})
+        self.assertEqual(text, "\n_orakle_status_|oversized_result\n")
 
 
 class TestDenialFeedback(unittest.TestCase):
@@ -1127,7 +1206,9 @@ class TestDenialFeedback(unittest.TestCase):
         abandoned mid-generation once the cap is reached."""
         self.chat_chunks = ["x" * 100] * 50
         text = self.middleware.denial_feedback_text("q", 1024)
-        self.assertEqual(len(text), self.middleware.DENIAL_FEEDBACK_MAX_CHARS)
+        # The cap now lives in the generated-guidance seam (#37):
+        # generation hard-stops at GUIDANCE_MAX_CHARS.
+        self.assertEqual(len(text), self.middleware.GUIDANCE_MAX_CHARS)
 
     def test_failure_is_silent_and_never_retries(self):
         """Any generation failure closes silently: the user just
