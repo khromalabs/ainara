@@ -56,12 +56,15 @@ MIN_RELEVANCE_THRESHOLD = 0.2
 MEMORY_MAX_WORDS = 80
 MEMORY_SOFT_MAX_WORDS = 60
 
-# Reasoning effort for GREEN memory-generation LLM calls (profile summary,
-# recent memories summary). Reasoning models (e.g. gpt-oss on Groq) default to
-# 'medium', whose analysis channel alone can exhaust the provider's default
-# completion budget on large memory payloads -> empty `content` responses.
-# 'low' collapses reasoning tokens by ~10x while the compression prompts are
-# simple enough not to need more.
+# Legacy zero-config fallback effort for GREEN memory-generation LLM calls
+# (profile summary, recent memories summary), applied only when the resolved
+# provider entry has no `reasoning_effort` configured (see
+# _memory_reasoning_effort). Reasoning models (e.g. gpt-oss on Groq) default
+# to 'medium', whose analysis channel alone can exhaust the provider's
+# default completion budget on large memory payloads -> empty `content`
+# responses. 'low' collapses reasoning tokens by ~10x while the compression
+# prompts are simple enough not to need more. Canonical per-model control:
+# `reasoning_effort` on the llm.providers entry.
 MEMORY_REASONING_EFFORT = "low"
 
 # Define a set of stopwords for normalization.
@@ -310,6 +313,20 @@ class GREENMemories:
             )
 
         return self._memory_llm_cache[provider_name]
+
+    def _memory_reasoning_effort(self, llm) -> Optional[str]:
+        """Reasoning effort for a memory-generation call.
+
+        If the resolved provider entry declares `reasoning_effort`, the
+        per-model configuration wins and the backend applies it: return
+        None so this legacy fallback does not shadow it. Otherwise fall
+        back to MEMORY_REASONING_EFFORT so a zero-config setup keeps the
+        fail-safe behavior that predates the per-model parameter.
+        """
+        provider = getattr(llm, "provider", None) or {}
+        if provider.get("reasoning_effort"):
+            return None
+        return MEMORY_REASONING_EFFORT
 
     # TODO: This provider-fallback mechanism may prove useful outside
     # GREENMemories; consider extracting it into a generic utility later.
@@ -937,7 +954,7 @@ class GREENMemories:
             return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
-                reasoning_effort=MEMORY_REASONING_EFFORT,
+                reasoning_effort=self._memory_reasoning_effort(llm),
             )
 
         result, provider_used = self._run_with_memory_llm(_task)
@@ -1046,7 +1063,7 @@ class GREENMemories:
             return llm.chat(
                 chat_history=[{"role": "user", "content": user_prompt}],
                 stream=False,
-                reasoning_effort=MEMORY_REASONING_EFFORT,
+                reasoning_effort=self._memory_reasoning_effort(llm),
             )
 
         result, provider_used = self._run_with_memory_llm(_task)

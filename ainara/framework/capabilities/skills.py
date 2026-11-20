@@ -125,6 +125,190 @@ def _to_pascal(s: str) -> str:
     return "".join(w.capitalize() for w in s.split("_") if w)
 
 
+def _generate_json_schema(type_hint: Any) -> Dict[str, Any]:
+    """Generate a JSON Schema from a Python type hint."""
+    origin = get_origin(type_hint)
+    args = get_args(type_hint)
+
+    # Handle TypedDict
+    if is_typeddict(type_hint):
+        properties = {}
+        required_keys = getattr(type_hint, "__required_keys__", frozenset())
+
+        # If __required_keys__ is empty but total=True (default), all keys are required
+        if not required_keys and getattr(type_hint, "__total__", True):
+            required_keys = type_hint.__annotations__.keys()
+
+        for name, t_val in type_hint.__annotations__.items():
+            properties[name] = _generate_json_schema(t_val)
+
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": list(required_keys),
+            "title": type_hint.__name__,
+        }
+
+    # Handle List
+    if (
+        origin is list or origin is list
+    ):  # Handle both typing.List and built-in list
+        return {
+            "type": "array",
+            "items": _generate_json_schema(args[0]) if args else {},
+        }
+
+    # Handle Dict
+    if origin is dict or origin is dict:
+        # Dict[Key, Value] -> JSON object with additionalProperties
+        return {
+            "type": "object",
+            "additionalProperties": (
+                _generate_json_schema(args[1])
+                if len(args) > 1
+                else {}
+            ),
+        }
+
+    # Handle Optional / Union
+    if origin is Union:
+        # Filter out NoneType to find the actual type
+        non_none_types = [t for t in args if t is not type(None)]
+        if len(non_none_types) == 1:
+            return _generate_json_schema(non_none_types[0])
+        # Complex unions could be handled with "anyOf", but keeping it simple for now
+        return {}
+
+    # Handle Primitives
+    if type_hint is int:
+        return {"type": "integer"}
+    if type_hint is float:
+        return {"type": "number"}
+    if type_hint is bool:
+        return {"type": "boolean"}
+    if type_hint is str:
+        return {"type": "string"}
+
+    return {}
+
+
+def _get_method_details(
+    target: Any, method_name: str, capability_name: str
+) -> Dict[str, Any]:
+    """Inspect a method (like 'run') and return its details.
+
+    ``target`` may be a class or an instance.
+    """
+    method = getattr(target, method_name, None)
+    details = {
+        "description": f"Executes the '{capability_name}' capability.",
+        "parameters": {},
+        "return_type": "unknown",
+        "error": None,
+    }
+
+    if not (method and callable(method)):
+        details["error"] = f"No callable '{method_name}' method found."
+        return details
+
+    details["description"] = method.__doc__ or details["description"]
+
+    try:
+        sig = inspect.signature(method)
+        type_hints = get_type_hints(method, include_extras=True)
+
+        if "return" in type_hints:
+            details["return_type"] = _pretty_type(type_hints["return"])
+
+        for param_name, param in sig.parameters.items():
+            if param_name == "self":
+                continue
+            if param.kind in (
+                inspect.Parameter.VAR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                # Call plumbing, not a user-facing parameter:
+                # advertising it makes the selection LLM invent
+                # arguments it was never told about.
+                continue
+
+            param_type_hint = type_hints.get(param_name, Any)
+            param_desc = f"Parameter '{param_name}'"
+            origin = get_origin(param_type_hint)
+            args = get_args(param_type_hint)
+            actual_type = param_type_hint
+            is_hidden = False
+
+            if origin is Annotated and len(args) >= 2:
+                actual_type = args[0]
+                if isinstance(args[1], str):
+                    param_desc = args[1]
+                else:
+                    logger.warning(
+                        f"Annotated metadata for '{param_name}' in"
+                        f" capability '{capability_name}' is not a string."
+                    )
+
+                # Check for "hidden" flag in Annotated args
+                if "hidden" in args[1:]:
+                    is_hidden = True
+
+            # Generate JSON Schema for the type
+            json_schema = _generate_json_schema(actual_type)
+
+            if param.default is param.empty:
+                default_value = None
+            elif isinstance(
+                param.default, (str, int, float, bool, list, dict, type(None))
+            ):
+                # JSON-native: keep the real value; format_skill_block
+                # prints "Default: None" for null either way.
+                default_value = param.default
+            else:
+                # Exotic defaults (Path, enum, ...) stay JSON-safe
+                default_value = repr(param.default)
+
+            details["parameters"][param_name] = {
+                "type": _pretty_type(actual_type),
+                "default": default_value,
+                "required": param.default is param.empty,
+                "description": param_desc,
+                "hidden": is_hidden,
+                "schema": json_schema,
+            }
+    except Exception as e:
+        logger.error(
+            f"Error inspecting '{method_name}' method for capability"
+            f" '{capability_name}': {e}",
+            exc_info=True,
+        )
+        details["error"] = f"Failed to inspect method: {e}"
+
+    return details
+
+
+def introspect_run(target: Any, capability_name: str) -> Dict[str, Any]:
+    """Inspect a skill's ``run`` signature for LLM-facing advertisement.
+
+    Single source of truth for how a ``run()`` contract is derived from
+    its annotations: parameter names, pretty-printed types, defaults and
+    per-parameter descriptions. ``target`` may be a class or an
+    instance. Used by SkillsManager for live capability payloads and
+    available to external tooling (e.g. Nexus bundle registry
+    generators) so pre-computed metadata can never drift from what the
+    platform advertises at runtime.
+    """
+    return _get_method_details(target, "run", capability_name)
+
+
+def camel_to_snake(name: str) -> str:
+    """Convert a CamelCase class name to its snake_case capability id."""
+    # Improved camel_to_snake to handle sequences of capitals (like LLM)
+    name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+    name = re.sub("([a-z0-9])([A-Z])", r"\1_\2", name)
+    return name.lower()
+
+
 class BasePythonSkillProvider(CapabilityProvider):
     """Abstract base provider for discovering Python-based skills from the filesystem."""
 
@@ -246,168 +430,17 @@ class BasePythonSkillProvider(CapabilityProvider):
 
     def _generate_json_schema(self, type_hint: Any) -> Dict[str, Any]:
         """Generate a JSON Schema from a Python type hint."""
-        origin = get_origin(type_hint)
-        args = get_args(type_hint)
-
-        # Handle TypedDict
-        if is_typeddict(type_hint):
-            properties = {}
-            required_keys = getattr(
-                type_hint, "__required_keys__", frozenset()
-            )
-
-            # If __required_keys__ is empty but total=True (default), all keys are required
-            if not required_keys and getattr(type_hint, "__total__", True):
-                required_keys = type_hint.__annotations__.keys()
-
-            for name, t_val in type_hint.__annotations__.items():
-                properties[name] = self._generate_json_schema(t_val)
-
-            return {
-                "type": "object",
-                "properties": properties,
-                "required": list(required_keys),
-                "title": type_hint.__name__,
-            }
-
-        # Handle List
-        if (
-            origin is list or origin is list
-        ):  # Handle both typing.List and built-in list
-            return {
-                "type": "array",
-                "items": self._generate_json_schema(args[0]) if args else {},
-            }
-
-        # Handle Dict
-        if origin is dict or origin is dict:
-            # Dict[Key, Value] -> JSON object with additionalProperties
-            return {
-                "type": "object",
-                "additionalProperties": (
-                    self._generate_json_schema(args[1])
-                    if len(args) > 1
-                    else {}
-                ),
-            }
-
-        # Handle Optional / Union
-        if origin is Union:
-            # Filter out NoneType to find the actual type
-            non_none_types = [t for t in args if t is not type(None)]
-            if len(non_none_types) == 1:
-                return self._generate_json_schema(non_none_types[0])
-            # Complex unions could be handled with "anyOf", but keeping it simple for now
-            return {}
-
-        # Handle Primitives
-        if type_hint is int:
-            return {"type": "integer"}
-        if type_hint is float:
-            return {"type": "number"}
-        if type_hint is bool:
-            return {"type": "boolean"}
-        if type_hint is str:
-            return {"type": "string"}
-
-        return {}
+        return _generate_json_schema(type_hint)
 
     def _get_method_details(
         self, instance: Any, method_name: str, capability_name: str
     ) -> Dict[str, Any]:
         """Inspect a method (like 'run') and return its details."""
-        method = getattr(instance, method_name, None)
-        details = {
-            "description": f"Executes the '{capability_name}' capability.",
-            "parameters": {},
-            "return_type": "unknown",
-            "error": None,
-        }
-
-        if not (method and callable(method)):
-            details["error"] = f"No callable '{method_name}' method found."
-            return details
-
-        details["description"] = method.__doc__ or details["description"]
-
-        try:
-            sig = inspect.signature(method)
-            type_hints = get_type_hints(method, include_extras=True)
-
-            if "return" in type_hints:
-                details["return_type"] = _pretty_type(type_hints["return"])
-
-            for param_name, param in sig.parameters.items():
-                if param_name == "self":
-                    continue
-                if param.kind in (
-                    inspect.Parameter.VAR_KEYWORD,
-                    inspect.Parameter.VAR_POSITIONAL,
-                ):
-                    # Call plumbing, not a user-facing parameter:
-                    # advertising it makes the selection LLM invent
-                    # arguments it was never told about.
-                    continue
-
-                param_type_hint = type_hints.get(param_name, Any)
-                param_desc = f"Parameter '{param_name}'"
-                origin = get_origin(param_type_hint)
-                args = get_args(param_type_hint)
-                actual_type = param_type_hint
-                is_hidden = False
-
-                if origin is Annotated and len(args) >= 2:
-                    actual_type = args[0]
-                    if isinstance(args[1], str):
-                        param_desc = args[1]
-                    else:
-                        logger.warning(
-                            f"Annotated metadata for '{param_name}' in"
-                            f" capability '{capability_name}' is not a string."
-                        )
-
-                    # Check for "hidden" flag in Annotated args
-                    if "hidden" in args[1:]:
-                        is_hidden = True
-
-                # Generate JSON Schema for the type
-                json_schema = self._generate_json_schema(actual_type)
-
-                if param.default is param.empty:
-                    default_value = None
-                elif isinstance(
-                    param.default, (str, int, float, bool, list, dict, type(None))
-                ):
-                    # JSON-native: keep the real value; format_skill_block
-                    # prints "Default: None" for null either way.
-                    default_value = param.default
-                else:
-                    # Exotic defaults (Path, enum, ...) stay JSON-safe
-                    default_value = repr(param.default)
-
-                details["parameters"][param_name] = {
-                    "type": _pretty_type(actual_type),
-                    "default": default_value,
-                    "required": param.default is param.empty,
-                    "description": param_desc,
-                    "hidden": is_hidden,
-                    "schema": json_schema,
-                }
-        except Exception as e:
-            logger.error(
-                f"Error inspecting '{method_name}' method for capability"
-                f" '{capability_name}': {e}",
-                exc_info=True,
-            )
-            details["error"] = f"Failed to inspect method: {e}"
-
-        return details
+        return _get_method_details(instance, method_name, capability_name)
 
     def camel_to_snake(self, name):
-        # Improved camel_to_snake to handle sequences of capitals (like LLM)
-        name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
-        name = re.sub("([a-z0-9])([A-Z])", r"\1_\2", name)
-        return name.lower()
+        """Convert a CamelCase class name to snake_case."""
+        return camel_to_snake(name)
 
     def _load_metadata_registry(self, skills_dir: Path) -> Dict[str, Any]:
         """Load pre-computed skill metadata from JSON if it exists."""

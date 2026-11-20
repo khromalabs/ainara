@@ -22,3 +22,5 @@ node_modules/
 venv/
 .venv/
 results/
+scripts/evaluation/routing_benchmark/.warming_cache/
+scripts/evaluation/routing_benchmark/.test_warming_cache/

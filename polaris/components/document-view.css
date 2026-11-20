@@ -223,7 +223,10 @@ pre {
     flex-grow: 1;
     overflow: auto;
     padding: 16px;
-    white-space: pre;
+    /* Wrap long lines instead of forcing horizontal scroll; also break
+       long unbroken tokens (URLs, hashes, base64...) */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     max-width: 100%;
     background-color: #333;
 }

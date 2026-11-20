@@ -46,6 +46,15 @@ from ainara.framework.token_estimation import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
+# Skill-result forgery guard: the middleware is the ONLY legitimate
+# emitter of "Orakle query '…' result:" blocks (injected after a real
+# skill execution). If the MODEL emits that shape, it is simulating a
+# tool result — the Nov-2026 Sentinel failure class. Detected in the
+# model-authored stream and flagged to the agent loop via the
+# _orakle_forged_result_ sentinel.
+_FORGED_RESULT_RE = re.compile(r"Orakle query\s+'[^']*'\s*result\s*:")
+_FORGERY_SCAN_WINDOW = 1200
+
 # Localized strings for the offload consent card (#26 P2), keyed by the
 # chat_manager-resolved language name (pycountry), English fallback.
 # The consent moment is fully mechanical (#37): the action was already
@@ -480,16 +489,32 @@ class OrakleCapabilityFetcher:
         return skills
 
 
-def format_skill_block(skill_info: dict, score: Optional[float] = None) -> str:
+def format_skill_block(
+    skill_info: dict, score: Optional[float] = None, depth: str = "full"
+) -> str:
     """Render one skill's advertising block for LLM prompts.
 
     Single source of truth for how a capability is advertised to an LLM:
     the Orakle selection phase uses it per matched candidate (with the
-    match score) and Bureau uses it for the stable capability menu in
-    agent system prompts (without). Everything shown is derived from the
-    capability payload — description, matcher info and the parameters
-    declared in ``run()`` — so what the planning LLM sees can never
-    drift from what the selection LLM sees.
+    match score, full depth) and Bureau uses it for the stable capability
+    menu in agent system prompts (without the score, lean depth).
+    Everything shown is derived from the capability payload — description
+    and the parameters declared in ``run()`` — so what the planning LLM
+    sees can never drift from what the selection LLM sees.
+
+    depth="full": description + matcher info + every parameter with its
+        description and default. Used by the selection LLM, which is the
+        layer that actually fills parameters.
+    depth="lean": description (the semantic contract, including
+        behavioral rules) + required parameters with their descriptions
+        (multi-action skills carry their action contract there) + the
+        optional parameter NAMES only. The matcher_info paragraph is
+        embedding-routing text and is pure noise for a reasoning model;
+        optional-parameter descriptions and defaults belong to the
+        selection layer. Rationale (Nov-2026 Sentinel incidents): the
+        full spec-sheet menu tripled the agent prompt, blurred the
+        intent/result boundary for flash-class models and read as an
+        invitation to deliberate instead of act.
     """
     skill_id = skill_info.get("name", "unknown")
     source_tag = "[USER]" if skill_id.startswith("user_") else "[SYSTEM]"
@@ -505,16 +530,44 @@ def format_skill_block(skill_info: dict, score: Optional[float] = None) -> str:
         "Description:"
         f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n"
     )
+
+    parameters = list(
+        skill_info.get("run_info", {}).get("parameters", {}).items()
+    )
+
+    if depth == "lean":
+        required = []
+        optional_names = []
+        for param_name, param_info in parameters:
+            if param_info.get("required", False):
+                required.append((param_name, param_info))
+            else:
+                optional_names.append(param_name)
+
+        if required or optional_names:
+            block += "\nParameters:\n"
+            for param_name, param_info in required:
+                block += (
+                    f"- {param_name} ({param_info.get('type', 'any')},"
+                    f" Required): {param_info.get('description', 'No description')}\n"
+                )
+            if optional_names:
+                block += "- Optional: " + ", ".join(optional_names) + "\n"
+            block += (
+                "\nState your intent in natural language; the system "
+                "maps parameters and fills the rest.\n"
+            )
+        block += "\n"
+        return block
+
     block += (
         # Add only the first paragraph
         f" {skill_info.get('matcher_info', '').split('\n\n')[0]}\n\n"
     )
 
-    # Add parameters with descriptions
+    # Add parameters with descriptions (full depth)
     block += "Parameters:\n"
-    for param_name, param_info in (
-        skill_info.get("run_info", {}).get("parameters", {}).items()
-    ):
+    for param_name, param_info in parameters:
         param_type = param_info.get("type", "any")
         param_desc = param_info.get("description", "No description")
         param_required = (
@@ -534,15 +587,18 @@ def format_skill_block(skill_info: dict, score: Optional[float] = None) -> str:
     return block
 
 
-def format_capabilities_menu(capabilities: List[dict]) -> str:
+def format_capabilities_menu(capabilities: List[dict], depth: str = "lean") -> str:
     """Render a stable capability menu for planning prompts.
 
     Used by Bureau to advertise an agent's allowed skills in its system
-    prompt: the same blocks the selection LLM sees per invocation
-    (description, matcher info, parameters), without match scores.
+    prompt. Lean depth by default: the agent plans from an affordance-
+    shaped card (description + required parameters + optional names);
+    the full spec sheet remains in the selection prompts, which run per
+    intent and are the layer that fills parameters.
     """
     return "".join(
-        format_skill_block(skill) + "\n---\n\n" for skill in capabilities
+        format_skill_block(skill, depth=depth) + "\n---\n\n"
+        for skill in capabilities
     )
 
 
@@ -1068,6 +1124,10 @@ class OrakleMiddleware:
         )
         max_signal_len = max(len(s) for s in forbidden_signals)
 
+        # Skill-result forgery detection (see _FORGED_RESULT_RE)
+        forged_flag = False
+        forgery_scan = ""
+
         self.current_language = (
             current_language if current_language is not None else "English"
         )
@@ -1104,6 +1164,19 @@ class OrakleMiddleware:
                 return
 
             buffer += token
+
+            # --- Guardrail: detect skill-result forgery in model text ---
+            forgery_scan += token
+            if len(forgery_scan) > _FORGERY_SCAN_WINDOW:
+                forgery_scan = forgery_scan[-_FORGERY_SCAN_WINDOW:]
+            if not forged_flag and _FORGED_RESULT_RE.search(forgery_scan):
+                forged_flag = True
+                logger.warning(
+                    "ORAKLE GUARD: model emitted a self-written 'Orakle"
+                    " query ... result:' block (skill-result forgery);"
+                    " flagging for the agent loop."
+                )
+                yield "\n_orakle_forged_result_\n"
 
             # Check for typo tags in the current buffer
             typo = self._check_for_typo_tags(buffer)

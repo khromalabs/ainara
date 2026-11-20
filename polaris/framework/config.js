@@ -108,6 +108,28 @@ class ConfigManager {
         return null;
     }
 
+    /**
+     * Resolve the bundled CHANGES.md release notes shipped with the app.
+     * Packaged: <resources>/bin/servers/_internal/resources/CHANGES.md
+     * Dev:      <project_root>/resources/CHANGES.md
+     * Returns null when not found (broken install); callers must fail-open.
+     */
+    getBundledChangesDocPath() {
+        const candidates = [];
+        if (process.resourcesPath) {
+            candidates.push(
+                path.join(process.resourcesPath, 'bin', 'servers', '_internal', 'resources', 'CHANGES.md')
+            );
+        }
+        // config.js lives in polaris/framework/ → project root is two levels up
+        candidates.push(path.join(__dirname, '..', '..', 'resources', 'CHANGES.md'));
+
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) return candidate;
+        }
+        return null;
+    }
+
     _deepMerge(target, ...sources) {
         sources.forEach(source => {
             for (const key in source) {

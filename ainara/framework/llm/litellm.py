@@ -348,6 +348,83 @@ class LiteLLM(LLMBackend):
             return model.split("/", 1)[0].lower()
         return ""
 
+    # Canonical reasoning-effort levels accepted on provider entries and
+    # per-call kwargs. Unknown values are ignored with a warning rather
+    # than passed through, so a typo can never reach the provider API.
+    #
+    # TODO(llm): inline effort modifiers on the model string (e.g.
+    # "groq/openai/gpt-oss-120b:low") would let ANY call site tune effort
+    # per selection — plan llm_providers chains, memories_processors —
+    # without config edits, completing the precedence chain (modifier >
+    # provider-entry default > provider default). Parse at provider
+    # resolution (single point) and only treat the trailing colon segment
+    # as a modifier when it exactly matches one of these keywords (model
+    # ids legitimately contain colons, e.g. ollama "gpt-oss:120b");
+    # unknown suffixes must fail loudly at config load. Discussed in the
+    # 2026-11 sentinel phantom-trade follow-up (green memories effort
+    # migration).
+    VALID_REASONING_EFFORTS = ("low", "medium", "high", "minimal")
+
+    def _resolve_reasoning_effort(
+        self, provider: dict, explicit_effort: Optional[str]
+    ) -> Optional[str]:
+        """Resolve the reasoning effort for a completion call.
+
+        Precedence: explicit per-call kwarg > per-model configured
+        default (`reasoning_effort` on the llm.providers entry) > None
+        (no parameter sent; the provider's own default applies).
+
+        Parameter support is preflighted with
+        litellm.get_supported_openai_params(): supports_reasoning()
+        reports model *capability*, not parameter support, and returns
+        True even for providers that reject reasoning_effort (e.g. zai;
+        2026-10-20 probe). Sending an unsupported parameter raises
+        UnsupportedParamsError client-side and burns a provider
+        fallback, so models the registry cannot preflight are skipped
+        too — the configured effort degrades to the provider default
+        instead of failing the call.
+        """
+        model = provider.get("model", "")
+
+        effort = explicit_effort
+        if effort is not None and effort not in self.VALID_REASONING_EFFORTS:
+            self.logger.warning(
+                f"Invalid reasoning effort '{effort}' requested for"
+                f" model {model}; ignoring"
+            )
+            effort = None
+
+        configured = provider.get("reasoning_effort")
+        if configured is not None:
+            if configured not in self.VALID_REASONING_EFFORTS:
+                self.logger.warning(
+                    f"Invalid reasoning_effort '{configured}' configured"
+                    f" for model {model}; ignoring"
+                )
+            elif effort is None:
+                effort = configured
+
+        if effort is None:
+            return None
+
+        try:
+            supported = litellm.get_supported_openai_params(model=model)
+        except Exception as e:
+            self.logger.warning(
+                "Cannot preflight reasoning_effort support for model"
+                f" {model}: {e}; not sending the parameter"
+            )
+            return None
+
+        if not supported or "reasoning_effort" not in supported:
+            self.logger.warning(
+                f"Model {model} does not accept reasoning_effort;"
+                f" ignoring requested '{effort}' effort"
+            )
+            return None
+
+        return effort
+
     def _apply_cache_hints(
         self, messages: list, provider: dict = None
     ) -> list:
@@ -557,21 +634,19 @@ class LiteLLM(LLMBackend):
                         f" {provider['model']}"
                     )
 
-            # Explicit per-call reasoning effort (internal tier calls such as
-            # GREEN memories generation). Takes precedence over the
-            # reasoning_level heuristic above.
-            if reasoning_effort is not None:
-                if litellm.supports_reasoning(model=provider["model"]):
-                    completion_kwargs["reasoning_effort"] = reasoning_effort
-                    self.logger.info(
-                        f"Requesting explicit '{reasoning_effort}' reasoning"
-                        f" effort for model {provider['model']}"
-                    )
-                else:
-                    self.logger.warning(
-                        "Explicit reasoning effort requested but not"
-                        f" supported by model {provider['model']}; ignoring"
-                    )
+            # Reasoning effort resolution: explicit per-call kwarg
+            # (internal tier calls such as GREEN memories generation),
+            # then the per-model configured default on the provider
+            # entry — see _resolve_reasoning_effort.
+            effort = self._resolve_reasoning_effort(
+                provider, reasoning_effort
+            )
+            if effort is not None:
+                completion_kwargs["reasoning_effort"] = effort
+                self.logger.info(
+                    f"Requesting '{effort}' reasoning effort for model"
+                    f" {provider['model']}"
+                )
 
             self.logger.info(
                 f"Sending completion request to model: {provider['model']}"
@@ -754,19 +829,16 @@ class LiteLLM(LLMBackend):
                         f" {provider['model']} (async)"
                     )
 
-            # Explicit per-call reasoning effort (see chat()).
-            if reasoning_effort is not None:
-                if litellm.supports_reasoning(model=provider["model"]):
-                    completion_kwargs["reasoning_effort"] = reasoning_effort
-                    self.logger.info(
-                        f"Requesting explicit '{reasoning_effort}' reasoning"
-                        f" effort for model {provider['model']} (async)"
-                    )
-                else:
-                    self.logger.warning(
-                        "Explicit reasoning effort requested but not"
-                        f" supported by model {provider['model']}; ignoring"
-                    )
+            # Reasoning effort resolution (see chat()).
+            effort = self._resolve_reasoning_effort(
+                provider, reasoning_effort
+            )
+            if effort is not None:
+                completion_kwargs["reasoning_effort"] = effort
+                self.logger.info(
+                    f"Requesting '{effort}' reasoning effort for model"
+                    f" {provider['model']} (async)"
+                )
 
             self.logger.info(
                 "Sending async completion request to model:"

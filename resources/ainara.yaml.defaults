@@ -67,6 +67,8 @@ memory:
 
 # APIs
 apis:
+  coinmarketcal:
+    api_key: ""
   coinmarketcap:
     api_key: ""
   cryptoexchanges:

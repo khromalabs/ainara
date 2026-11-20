@@ -73,9 +73,9 @@ function getKeyDescription(pathArray) {
     const parentPart = pathArray.length > 1 ? pathArray[pathArray.length - 2] : '';
 
     const descriptions = {
-        'coinmarketcap': {
-            url: 'https://coinmarketcap.com/api/',
-            description: 'Used for extended quotes in cryptocurrency market data, not present in main markets'
+        'coinmarketcal': {
+            url: 'https://coinmarketcal.com/developer',
+            description: 'Used for the cryptocurrency events calendar (upcoming coins, listings, partnerships). Sign up at coinmarketcal.com/developer and paste your API key.'
         },
         'weather': {
             url: 'https://openweathermap.org/api',
@@ -123,7 +123,7 @@ function getKeyDescription(pathArray) {
         },
         'coinmarketcap': {
             url: 'https://coinmarketcap.com/api/',
-            description: 'Used for cryptocurrency market data'
+            description: 'Used for extended quotes in cryptocurrency market data, not present in main markets'
         },
         'helius': {
             url: 'https://helius.xyz/',
@@ -243,6 +243,30 @@ function renderSkillParameters(skillName, cap, currentKwargs) {
     return html;
 }
 
+// Defense-in-depth sanitizer for rendered markdown: changelog content must
+// never turn a wizard window into an XSS surface — strip script-ish elements,
+// on* handlers and javascript: URLs from the parsed HTML before it enters
+// the DOM. Callers render markdown with marked and append the returned
+// fragment; markdown links should be intercepted and opened externally.
+function sanitizeMarkdownHtml(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    tpl.content.querySelectorAll(
+        'script, style, iframe, object, embed, link, meta, base, form'
+    ).forEach(el => el.remove());
+    tpl.content.querySelectorAll('*').forEach(el => {
+        for (const attr of [...el.attributes]) {
+            const name = attr.name.toLowerCase();
+            if (name.startsWith('on')) el.removeAttribute(attr.name);
+            else if ((name === 'href' || name === 'src') &&
+                     /^\s*javascript:/i.test(attr.value)) {
+                el.removeAttribute(attr.name);
+            }
+        }
+    });
+    return tpl.content;
+}
+
 module.exports = {
     extractApiKeysFromConfig,
     formatKeyName,
@@ -250,5 +274,6 @@ module.exports = {
     normalizeModelName,
     parsePythonDefault,
     renderInputBySchema,
-    renderSkillParameters
+    renderSkillParameters,
+    sanitizeMarkdownHtml
 };
