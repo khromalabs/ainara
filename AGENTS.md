@@ -41,6 +41,22 @@ before proposing changes that cut against them.
   default** behind a config flag (e.g. `skills.builder.enabled: false`) so
   they can land and be reviewed without being exposed ungated.
 
+### Nothing the assistant says is pre-recorded
+- Ainara is a purely conversational system, felt as a live interaction.
+  Any sentence that reaches the user as assistant speech must be generated
+  in context (query, conversation history window, session language, tone).
+  The canonical pattern is the selection-time `skill_intention` sentence:
+  the same mechanical event becomes natural conversation because it is
+  composed with the conversation in context. A fixed/localized string in
+  the conversation stream is a pre-recording — unacceptable, including as
+  a fallback; when generation fails, **fail to silence** and let the
+  mechanical surface carry the information. Silence beats a recording.
+- Mechanical composition is reserved for UI *surfaces* (card titles,
+  button labels, estimate lines, receipt pills), never speech. Even inside
+  generated speech, **facts stay mechanical**: sizes, costs and counts are
+  framework-computed and injected into the generation prompt as data —
+  the model words the truth, it never computes or states numbers itself.
+
 ### Tiered skills model (see `docs/proposals/optional-skills-registry.md`, Github issue #17)
 - **Core skills** (`ainara/orakle/skills/`) must be universally useful: *would
   virtually every user expect it to just work on first run?* If not, it
