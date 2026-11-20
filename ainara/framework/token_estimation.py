@@ -37,6 +37,16 @@ so ~94KB of Japanese estimates ~31K tokens at the flat rate while the
 provider sees ~60–90K. Interpolating linearly between the two rates
 over the CJK fraction keeps mixed-language payloads monotonic; ceiling
 rounding preserves a conservative bias.
+
+TODO (#37): possible refinement — litellm.token_counter (already a
+framework dependency, used by the LLM backends for chat-history
+accounting) is accurate for mapped models and its fallback measures
+conservative on CJK. If live testing shows this estimator's Latin
+conservatism (overestimates English ~1.5x) visibly degrading the
+triggers, invert the layering: token_counter primary here, this
+density sniff as the failure fallback. Deliberately deferred: guards
+must not change behavior across litellm versions, and the error is on
+the safe side.
 """
 
 import math
