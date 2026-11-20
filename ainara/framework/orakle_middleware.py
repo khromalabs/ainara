@@ -630,12 +630,16 @@ class OrakleMiddleware:
         self.offload_trigger_share = self.config_manager.get(
             "orakle.offload.trigger_share", 0.5
         )
-        # C4 absolute constant (issue #37): the digest output budget —
-        # the digestion prompt mandates it and the mechanical check
-        # enforces it from the same number, so the instruction and the
-        # guard agree. Also caps trail-note bloat in the transcript.
+        # C4 digest bound (issue #37): derived from what the trail
+        # actually competes with — the interpreter's history share —
+        # with digest_max_chars as the absolute ceiling. The active
+        # bound is min(this ceiling, history-share bytes); the
+        # digestion prompt mandates the same number (see
+        # _digest_output_bound_chars), so instruction and guard agree.
+        # A digest above the bound is treated as a failed digestion —
+        # guidance, no retry, never forwarded.
         self.offload_digest_max_chars = self.config_manager.get(
-            "orakle.offload.digest_max_chars", 4096
+            "orakle.offload.digest_max_chars", 16384
         )
         # Budget ledger (issue #26 §6.9, minimal v1): guards the
         # interpretation path — the choke point where raw skill data
@@ -649,6 +653,20 @@ class OrakleMiddleware:
         )
         self.context_chars_per_token = self.config_manager.get(
             "orakle.context.chars_per_token", 3
+        )
+        # Effective-context ceiling (issue #37, research-backed): long-
+        # context accuracy degrades well before the advertised window
+        # (lost-in-the-middle; degradation even with perfect retrieval,
+        # 13.9-85% across models; multi-hop reasoning suffers most;
+        # effective context diverges from advertised beyond 128K-256K
+        # tokens). Every window-derived budget therefore assumes at
+        # most this many tokens regardless of the resolved window —
+        # interpretation prompts, history share, and all three offload
+        # escalator checks stay inside the zone where quality holds.
+        # 0 disables the cap (expert override: push the limits and
+        # accept the degradation).
+        self.effective_window_cap = self.config_manager.get(
+            "orakle.context.effective_window_cap", 128_000
         )
         # Ledger-driven interpretation window (issue #26 §6.10): the
         # interpreter's conversation context scales with the resolved
@@ -2333,11 +2351,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
     def _usable_context_tokens(self) -> int:
         """Usable context tokens (issue #26 §6.9 / #37): the backend's
-        resolved context window minus the reserve percentage — the one
-        derivation every window-derived check shares. Returns 0 when no
-        window can be resolved; callers either disable their guard
-        (never reject blind) or fall back to their static form (the
-        protective trigger never disables itself).
+        resolved context window, capped by the effective-context
+        ceiling (long-context degradation research — see the config
+        key), minus the reserve percentage — the one derivation every
+        window-derived check shares. Returns 0 when no window can be
+        resolved; callers either disable their guard (never reject
+        blind) or fall back to their static form (the protective
+        trigger never disables itself).
         """
         try:
             window_tokens = int(self.llm.get_context_window())
@@ -2347,6 +2367,9 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             window_tokens = 0
         if window_tokens <= 0:
             return 0
+        cap = self.effective_window_cap
+        if cap and cap > 0:
+            window_tokens = min(window_tokens, cap)
         reserve_pct = min(max(self.context_reserve_pct, 0), 90)
         return int(window_tokens * (100 - reserve_pct) / 100)
 
@@ -2443,6 +2466,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         window_tokens = self._resolve_digestion_window_tokens()
         if not window_tokens:
             return None
+        # Effective-context ceiling applies to the digestion model too
+        # (#37): reading feasibility is a quality question, not just a
+        # window question — a single digestion pass over 375K tokens on
+        # a 1M model degrades exactly like any other long prompt.
+        cap = self.effective_window_cap
+        if cap and cap > 0:
+            window_tokens = min(window_tokens, cap)
         reserve_pct = min(max(self.context_reserve_pct, 0), 90)
         usable = int(window_tokens * (100 - reserve_pct) / 100)
         share = min(max(self.offload_trigger_share, 0.0), 1.0)
@@ -2451,23 +2481,37 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
     def _digest_output_bound_chars(self) -> int:
         """C4 (issue #37): mechanical bound on a returned digest.
 
-        ``min(digest_max_chars, share × usable window bytes)`` — the
-        absolute constant the digestion prompt mandates and this check
-        enforces from the same number (instruction and guard agree);
-        the window share keeps the bound honest on very small windows.
+        ``min(digest_max_chars ceiling, history-share bytes)`` — the
+        trail rides the interpreter's history, so the honest bound is
+        the budget that history may occupy; the absolute ceiling only
+        binds on large windows. Research-evidence note (#37): the
+        former flat 4096-char constant discarded good, paid-for
+        digests of dense documents (live test: a 6.4KB faithful EULA
+        summary rejected because it exceeded 4096) — a constant that
+        ignores the window is wrong in both directions.
+
         Expressed in characters to match the prompt budget and the
-        history-bytes accounting (the bound caps trail-note bloat in
-        the transcript). A 0-window session falls back to the absolute
-        constant alone.
+        history-bytes accounting. The digestion prompt mandates the
+        same number (instruction and guard agree). A 0-window session
+        falls back to the absolute ceiling alone. On very small
+        windows the share bound wins and the bound shrinks with the
+        window — by construction.
         """
         bound = self.offload_digest_max_chars
         usable_tokens = self._usable_context_tokens()
         if usable_tokens > 0:
-            share = min(max(self.offload_trigger_share, 0.0), 1.0)
-            share_bound = int(
-                usable_tokens * share * self.context_chars_per_token
+            history_share_bytes = (
+                int(
+                    usable_tokens
+                    * self.context_chars_per_token
+                    * min(
+                        max(self.interpretation_history_share_pct, 0),
+                        100,
+                    )
+                    / 100
+                )
             )
-            bound = min(bound, share_bound)
+            bound = min(bound, max(history_share_bytes, 1))
         return max(bound, 1)
 
     def _digest_output_oversized(self, digest: str) -> bool:

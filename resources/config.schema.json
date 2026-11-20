@@ -239,8 +239,8 @@
                         },
                         "digest_max_chars": {
                             "type": "integer",
-                            "default": 4096,
-                            "description": "Absolute bound on a returned digest, in characters (issue #37, C4): the digestion prompt mandates it and the mechanical check enforces it from the same number, so instruction and guard agree; also caps trail-note bloat in the transcript. A digest above the bound is treated as a failed digestion — guidance, no retry, never forwarded."
+                            "default": 16384,
+                            "description": "Absolute ceiling on a returned digest, in characters (issue #37, C4): the active bound is min(this ceiling, the interpreter's history-share bytes), because the trail rides the history. The digestion prompt mandates the same number, so instruction and guard agree; a digest above the bound is treated as a failed digestion — guidance, no retry, never forwarded."
                         },
                         "max_turns": {
                             "type": "integer",
@@ -292,6 +292,11 @@
                             "type": "integer",
                             "default": 3,
                             "description": "Conservative bytes-per-token conversion for the budget ledger, multilingual-safe."
+                        },
+                        "effective_window_cap": {
+                            "type": "integer",
+                            "default": 128000,
+                            "description": "Effective-context ceiling in tokens (issue #37, research-backed): long-context accuracy degrades well before the advertised window (lost-in-the-middle; degradation even with perfect retrieval; multi-hop reasoning suffers most; effective context diverges from advertised beyond 128K-256K tokens). Every window-derived budget — interpretation prompt ledger, history share, and the offload sizing escalator — assumes at most this many tokens regardless of the resolved window. 0 disables the cap (expert override: accept the degradation)."
                         },
                         "interpretation_history": {
                             "type": "boolean",
