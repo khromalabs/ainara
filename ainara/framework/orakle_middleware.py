@@ -40,6 +40,7 @@ from ainara.framework.matcher.transformers import OrakleMatcherTransformers
 from ainara.framework.orakle_client import call_skill
 from ainara.framework.system_skills.base import BaseSystemSkill
 from ainara.framework.template_manager import TemplateManager
+from ainara.framework.token_estimation import estimate_tokens
 
 # from ainara.framework.utils import format_orakle_command
 
@@ -605,6 +606,11 @@ class OrakleMiddleware:
         # ceiling are digested by a bounded, skill-less Bureau agent instead
         # of being inlined into the interpretation prompt. Inert unless
         # enable_agent_spawn is on; defaults preserve today's behavior.
+        # raw_max_bytes is the explicit CAP on the derived trigger
+        # (issue #37): the trigger itself derives from the live window
+        # (see _offload_trigger_tokens) and this key only ever lowers
+        # it — a user-facing "never route anything bigger than this to
+        # analysis" override, not a per-model setting.
         self.offload_raw_max_bytes = self.config_manager.get(
             "orakle.offload.raw_max_bytes", 24000
         )
@@ -613,6 +619,23 @@ class OrakleMiddleware:
         )
         self.offload_timeout = self.config_manager.get(
             "orakle.offload.timeout", 300
+        )
+        # Sizing escalator share (issue #37): one share of the usable
+        # context window bounds all three derived checks — C1 (size
+        # trigger: payload alone would take this share of the usable
+        # window), C2 (digestion input feasibility) and the C4 share
+        # bound on the returned digest. Deliberately one key: the
+        # checks form one escalator and independent shares would only
+        # re-create the independent-magic-numbers problem.
+        self.offload_trigger_share = self.config_manager.get(
+            "orakle.offload.trigger_share", 0.5
+        )
+        # C4 absolute constant (issue #37): the digest output budget —
+        # the digestion prompt mandates it and the mechanical check
+        # enforces it from the same number, so the instruction and the
+        # guard agree. Also caps trail-note bloat in the transcript.
+        self.offload_digest_max_chars = self.config_manager.get(
+            "orakle.offload.digest_max_chars", 4096
         )
         # Budget ledger (issue #26 §6.9, minimal v1): guards the
         # interpretation path — the choke point where raw skill data
@@ -1684,145 +1707,191 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     return
 
             # Size-ceiling router (issue #26 §3.6): a result above the
-            # configured ceiling cannot fit the interpretation budget —
+            # C1 size trigger cannot fit the interpretation budget —
             # offload digestion to a bounded, skill-less Bureau agent
             # instead of inlining the payload into the prompt. A
             # skill-side 'analysis' digest preempts offload (tier 1).
-            if (
-                not analysis
-                and self.enable_agent_spawn
-                and len(result) > self.offload_raw_max_bytes
-            ):
-                # Digest cache (issue #26 P1.5): a previous digestion of
-                # these exact payload bytes is reused instead of paying
-                # for another bounded agent run. A hit is only possible
-                # for byte-identical data (payload-hash keying), so the
-                # cached digest is as fresh as the data received.
-                cached_digest = (
-                    self._digest_cache.get(result)
-                    if self._digest_cache
-                    else None
-                )
-                if cached_digest:
-                    logger.info(
-                        "ORAKLE: digest cache hit for oversized result"
-                        f" ({len(result)} bytes); reusing digest."
+            # The trigger derives from the live window with the static
+            # raw_max_bytes as cap (#37); the static byte comparison is
+            # the fallback when no window can be resolved (the
+            # protective trigger never disables itself).
+            if not analysis and self.enable_agent_spawn:
+                trigger_tokens = self._offload_trigger_tokens()
+                if trigger_tokens is not None:
+                    oversized = estimate_tokens(result) > trigger_tokens
+                else:
+                    oversized = len(result) > self.offload_raw_max_bytes
+                if oversized:
+                    # Digest cache (issue #26 P1.5): a previous digestion of
+                    # these exact payload bytes is reused instead of paying
+                    # for another bounded agent run. A hit is only possible
+                    # for byte-identical data (payload-hash keying), so the
+                    # cached digest is as fresh as the data received.
+                    cached_digest = (
+                        self._digest_cache.get(result)
+                        if self._digest_cache
+                        else None
                     )
-                    yield cached_digest
-                    return
-                # Spend axis (issue #26 P2, ratified with #18): on a
-                # metered digestion provider the mechanical size trigger
-                # becomes a consent boundary. The card is emitted by the
-                # framework after the trigger fires — the model can
-                # neither fabricate a request for what does not qualify
-                # nor skip one for what does. The turn ends with the
-                # card; approval resumes out-of-band
-                # (resume_offload_consent) and the digest streams back as
-                # a system-initiated segment. Local (non-metered)
-                # digestion keeps today's zero-friction behavior under
-                # every policy.
-                spend_policy = self._offload_spend_policy()
-                if self._is_digestion_model_metered():
-                    if spend_policy == "deny":
+                    if cached_digest:
+                        if self._digest_output_oversized(cached_digest):
+                            logger.warning(
+                                "ORAKLE: cached digest (%d chars) exceeds"
+                                " the output bound (%d chars); treating as"
+                                " failed digestion.",
+                                len(cached_digest),
+                                self._digest_output_bound_chars(),
+                            )
+                            yield self._oversized_guidance()
+                            return
                         logger.info(
-                            "ORAKLE: offload rejected by spend policy"
-                            " (deny)."
+                            "ORAKLE: digest cache hit for oversized result"
+                            f" ({len(result)} bytes); reusing digest."
                         )
-                        yield (
-                            "\nI retrieved the data but it is too large to"
-                            " analyze in one pass, and agentic analysis is"
-                            " disabled by your spending policy"
-                            " (orakle.offload.spend_policy). Try asking"
-                            " about a specific part of it, or change the"
-                            " setting if you want me to process it in"
-                            " steps.\n\n"
-                        )
+                        yield cached_digest
                         return
-                    if spend_policy == "ask":
-                        estimate = self._estimate_digest_spend(result)
-                        card = self._consent_registry.create(
-                            raw_result=result,
-                            query=query,
-                            chat_history=chat_history,
-                            reasoning_level=final_reasoning_level,
-                            estimate=estimate,
+                    # C2 digestion input feasibility (issue #37, pre-card,
+                    # metering-independent): reject a run that cannot
+                    # possibly read its own input — no consent card, no
+                    # agent run, no spend. Unknown digestion window skips
+                    # the check, not the offload ('never block on
+                    # unknown'; the doomed run dies gracefully Bureau-side).
+                    feasible = self._digestion_input_feasible(result)
+                    if feasible is False:
+                        logger.warning(
+                            "ORAKLE: oversized result (~%d tokens estimated)"
+                            " exceeds the digestion model's feasible input"
+                            " window; rejecting pre-card with guidance.",
+                            estimate_tokens(result),
                         )
-                        logger.info(
-                            "ORAKLE: offload consent required (spend_policy"
-                            "=ask, metered provider); card %s emitted.",
-                            card["decision_id"],
-                        )
-                        # The consent moment is fully mechanical
-                        # (#37): the action was already explained
-                        # conversationally by the selection-time
-                        # skill_intention sentence, streamed before the
-                        # skill executed — no spoken narration here.
-                        # The card carries only framework-composed
-                        # facts; the conversational layer lives at the
-                        # OUTCOME of the decision (consent_resume's
-                        # interpretation pass on approval; the denial
-                        # feedback comment on deny).
-                        strings = self._offload_consent_strings()
-                        yield {
-                            "type": "consent_request",
-                            "decision_id": card["decision_id"],
-                            "token": card["token"],
-                            "ttl": card["ttl"],
-                            # Generic decision surface (#18 primitive
-                            # shape): the framework composes everything
-                            # the renderer shows — title, quote (the
-                            # mechanical estimate line, never
-                            # model-stated), buttons, note. Polaris is
-                            # strictly presentational and renders any
-                            # future consent client unchanged.
-                            "title": strings["title"],
-                            "quote": strings["estimate"].format(
-                                t=estimate["est_input_tokens"],
-                                c=estimate["max_calls"],
-                            ),
-                            "buttons": [
-                                {"id": "approve",
-                                 "label": strings["yes"],
-                                 "style": "primary"},
-                                {"id": "deny",
-                                 "label": strings["no"],
-                                 "style": "secondary"},
-                                {"id": "always_allow",
-                                 "label": strings["always"],
-                                 "style": "ghost"},
-                            ],
-                            "note": strings["note"].format(
-                                m=max(1, round(card["ttl"] / 60))
-                            ),
-                            "estimate": estimate,
-                        }
+                        yield self._oversized_guidance()
                         return
-                yield "\n_orakle_loading_signal_|spawn_agent\n"
-                digest = yield from self._spawn_offload_digest(
-                    raw_result=result,
-                    query=query,
-                    chat_history=chat_history,
-                    reasoning_level=final_reasoning_level,
-                )
-                if digest:
-                    if self._digest_cache:
-                        self._digest_cache.put(result, digest)
-                    yield digest
+                    # Spend axis (issue #26 P2, ratified with #18): on a
+                    # metered digestion provider the mechanical size trigger
+                    # becomes a consent boundary. The card is emitted by the
+                    # framework after the trigger fires — the model can
+                    # neither fabricate a request for what does not qualify
+                    # nor skip one for what does. The turn ends with the
+                    # card; approval resumes out-of-band
+                    # (resume_offload_consent) and the digest streams back as
+                    # a system-initiated segment. Local (non-metered)
+                    # digestion keeps today's zero-friction behavior under
+                    # every policy.
+                    spend_policy = self._offload_spend_policy()
+                    if self._is_digestion_model_metered():
+                        if spend_policy == "deny":
+                            logger.info(
+                                "ORAKLE: offload rejected by spend policy"
+                                " (deny)."
+                            )
+                            yield (
+                                "\nI retrieved the data but it is too large to"
+                                " analyze in one pass, and agentic analysis is"
+                                " disabled by your spending policy"
+                                " (orakle.offload.spend_policy). Try asking"
+                                " about a specific part of it, or change the"
+                                " setting if you want to allow agentic"
+                                " analysis.\n\n"
+                            )
+                            return
+                        if spend_policy == "ask":
+                            estimate = self._estimate_digest_spend(result)
+                            card = self._consent_registry.create(
+                                raw_result=result,
+                                query=query,
+                                chat_history=chat_history,
+                                reasoning_level=final_reasoning_level,
+                                estimate=estimate,
+                            )
+                            logger.info(
+                                "ORAKLE: offload consent required (spend_policy"
+                                "=ask, metered provider); card %s emitted.",
+                                card["decision_id"],
+                            )
+                            # The consent moment is fully mechanical
+                            # (#37): the action was already explained
+                            # conversationally by the selection-time
+                            # skill_intention sentence, streamed before the
+                            # skill executed — no spoken narration here.
+                            # The card carries only framework-composed
+                            # facts; the conversational layer lives at the
+                            # OUTCOME of the decision (consent_resume's
+                            # interpretation pass on approval; the denial
+                            # feedback comment on deny).
+                            strings = self._offload_consent_strings()
+                            yield {
+                                "type": "consent_request",
+                                "decision_id": card["decision_id"],
+                                "token": card["token"],
+                                "ttl": card["ttl"],
+                                # Generic decision surface (#18 primitive
+                                # shape): the framework composes everything
+                                # the renderer shows — title, quote (the
+                                # mechanical estimate line, never
+                                # model-stated), buttons, note. Polaris is
+                                # strictly presentational and renders any
+                                # future consent client unchanged.
+                                "title": strings["title"],
+                                "quote": strings["estimate"].format(
+                                    t=estimate["est_input_tokens"],
+                                    c=estimate["max_calls"],
+                                ),
+                                "buttons": [
+                                    {"id": "approve",
+                                     "label": strings["yes"],
+                                     "style": "primary"},
+                                    {"id": "deny",
+                                     "label": strings["no"],
+                                     "style": "secondary"},
+                                    {"id": "always_allow",
+                                     "label": strings["always"],
+                                     "style": "ghost"},
+                                ],
+                                "note": strings["note"].format(
+                                    m=max(1, round(card["ttl"] / 60))
+                                ),
+                                "estimate": estimate,
+                            }
+                            return
+                    yield "\n_orakle_loading_signal_|spawn_agent\n"
+                    digest = yield from self._spawn_offload_digest(
+                        raw_result=result,
+                        query=query,
+                        chat_history=chat_history,
+                        reasoning_level=final_reasoning_level,
+                    )
+                    if digest:
+                        if self._digest_output_oversized(digest):
+                            # C4 (issue #37): a returned digest above
+                            # its bound is a failed digestion —
+                            # existing guidance path, no retry, never
+                            # forwarded, never cached.
+                            logger.warning(
+                                "ORAKLE: digest (%d chars) exceeds the"
+                                " output bound (%d chars); treating as"
+                                " failed digestion.",
+                                len(digest),
+                                self._digest_output_bound_chars(),
+                            )
+                            yield self._oversized_guidance()
+                            return
+                        if self._digest_cache:
+                            self._digest_cache.put(result, digest)
+                        yield digest
+                        return
+                    # Reject with guidance: anything above the ceiling is by
+                    # definition too big for the interpretation prompt, so
+                    # falling back to it would just reproduce the overflow
+                    # this design fixes.
+                    logger.warning(
+                        "ORAKLE: offload digestion failed for oversized result"
+                        f" ({len(result)} bytes); rejecting with guidance."
+                    )
+                    yield (
+                        "\nI retrieved the data but it is too large to analyze"
+                        " in one pass right now. Try asking about a specific"
+                        " part of it.\n\n"
+                    )
                     return
-                # Reject with guidance: anything above the ceiling is by
-                # definition too big for the interpretation prompt, so
-                # falling back to it would just reproduce the overflow
-                # this design fixes.
-                logger.warning(
-                    "ORAKLE: offload digestion failed for oversized result"
-                    f" ({len(result)} bytes); rejecting with guidance."
-                )
-                yield (
-                    "\nI retrieved the data but it is too large to analyze"
-                    " in one pass right now. Try asking about a specific"
-                    " part of it.\n\n"
-                )
-                return
 
             # Interpret data
             chat_context = self._get_chat_context(chat_history, memories)
@@ -1994,18 +2063,15 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         the payload token estimate (re-reads make the worst case roughly
         twice the payload), the turn bound and the provider identifier.
         """
-        chars_per_token = self.config_manager.get(
-            "orakle.context.chars_per_token", 3
-        )
         llm_cfg = self.config_manager.get("llm", {}) or {}
         provider = llm_cfg.get("selected_provider") or "default"
         return {
             "provider": provider,
             "payload_bytes": len(raw_result),
-            "est_input_tokens": int(
-                len(raw_result) / max(chars_per_token, 1)
-            )
-            * 2,
+            # Estimator-measured (issue #37): the flat 3-chars/token
+            # conversion under-estimated CJK payloads by 2–3× and the
+            # card showed an impossible price.
+            "est_input_tokens": estimate_tokens(raw_result) * 2,
             "max_calls": self.offload_max_turns,
         }
 
@@ -2189,6 +2255,25 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         if buffer:
             yield buffer
 
+    def _usable_context_tokens(self) -> int:
+        """Usable context tokens (issue #26 §6.9 / #37): the backend's
+        resolved context window minus the reserve percentage — the one
+        derivation every window-derived check shares. Returns 0 when no
+        window can be resolved; callers either disable their guard
+        (never reject blind) or fall back to their static form (the
+        protective trigger never disables itself).
+        """
+        try:
+            window_tokens = int(self.llm.get_context_window())
+        except Exception:
+            # Any resolution failure disables the guard: never reject
+            # blind.
+            window_tokens = 0
+        if window_tokens <= 0:
+            return 0
+        reserve_pct = min(max(self.context_reserve_pct, 0), 90)
+        return int(window_tokens * (100 - reserve_pct) / 100)
+
     def _interpretation_budget_bytes(self) -> int:
         """
         Budget ledger (issue #26 §6.9, minimal v1): byte ceiling for the
@@ -2201,24 +2286,132 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         window can be resolved, disabling the guard — never reject
         blind.
         """
-        try:
-            window_tokens = int(self.llm.get_context_window())
-        except Exception:
-            # Any resolution failure disables the guard: never reject
-            # blind.
-            window_tokens = 0
-        if window_tokens <= 0:
+        usable_tokens = self._usable_context_tokens()
+        if usable_tokens <= 0:
             return 0
-        reserve_pct = min(max(self.context_reserve_pct, 0), 90)
-        usable_tokens = window_tokens * (100 - reserve_pct) / 100
         return int(usable_tokens * self.context_chars_per_token)
 
+    def _offload_trigger_tokens(self) -> Optional[int]:
+        """C1 size trigger (issue #37): derived from the live window.
+
+        ``min(trigger_share × usable window tokens, raw_max_bytes)`` —
+        the same derivation pattern as the budget ledger, with the
+        static ``raw_max_bytes`` as the explicit cap (converted at the
+        configured Latin rate; it caps the derived value, never raises
+        it). Returns None when no window can be resolved: the caller
+        falls back to the static ``raw_max_bytes`` comparison — unlike
+        the budget guard, the protective trigger never disables itself.
+        """
+        usable_tokens = self._usable_context_tokens()
+        if usable_tokens <= 0:
+            return None
+        share = min(max(self.offload_trigger_share, 0.0), 1.0)
+        derived = int(usable_tokens * share)
+        static_cap = max(
+            1,
+            self.offload_raw_max_bytes // max(self.context_chars_per_token, 1),
+        )
+        return min(derived, static_cap)
+
+    def _resolve_digestion_window_tokens(self) -> Optional[int]:
+        """Digestion model context window for C2 (issue #37).
+
+        The digestion model is the one Bureau resolves (``llm`` config
+        → ``selected_provider``); the offload blueprint sets no
+        ``llm_providers``, so the two sites resolve the same selection
+        by construction. Resolution mirrors llm/base.py: explicit
+        ``context_window`` in the provider settings first, then the
+        LiteLLM registry lookup (no LLM instantiation). Returns None
+        when unresolvable — the C2 check is then SKIPPED, not the
+        offload ('never block on unknown'; the doomed run still dies
+        gracefully Bureau-side).
+        """
+        llm_cfg = self.config_manager.get("llm", {}) or {}
+        selected = llm_cfg.get("selected_provider") or ""
+        provider_cfg = None
+        for p in llm_cfg.get("providers", []) or []:
+            if p.get("model") == selected or p.get("name") == selected:
+                provider_cfg = p
+                break
+        if provider_cfg is None:
+            return None
+        configured = provider_cfg.get("context_window")
+        if isinstance(configured, int) and configured > 0:
+            return configured
+        if not selected:
+            return None
+        try:
+            # Lazy import: litellm startup cost must not burden sessions
+            # that never reach an oversized result.
+            import litellm
+
+            info = litellm.get_model_info(selected)
+        except Exception:
+            return None
+        for key in ("max_input_tokens", "max_tokens"):
+            value = info.get(key)
+            if isinstance(value, int) and value > 0:
+                return value
+        return None
+
+    def _digestion_input_feasible(self, raw_result: str) -> Optional[bool]:
+        """C2 (issue #37): can the digestion model read its own input?
+
+        ``est_tokens(payload) ≤ trigger_share × usable window`` of the
+        digestion model, estimator-measured. None = unknown (skip the
+        check, not the offload); False = reject pre-card with guidance:
+        no consent card, no agent run, no spend for a run that cannot
+        possibly read its input. Metering-independent: a doomed run is
+        a doomed run under every spend policy.
+        """
+        window_tokens = self._resolve_digestion_window_tokens()
+        if not window_tokens:
+            return None
+        reserve_pct = min(max(self.context_reserve_pct, 0), 90)
+        usable = int(window_tokens * (100 - reserve_pct) / 100)
+        share = min(max(self.offload_trigger_share, 0.0), 1.0)
+        return estimate_tokens(raw_result) <= int(usable * share)
+
+    def _digest_output_bound_chars(self) -> int:
+        """C4 (issue #37): mechanical bound on a returned digest.
+
+        ``min(digest_max_chars, share × usable window bytes)`` — the
+        absolute constant the digestion prompt mandates and this check
+        enforces from the same number (instruction and guard agree);
+        the window share keeps the bound honest on very small windows.
+        Expressed in characters to match the prompt budget and the
+        history-bytes accounting (the bound caps trail-note bloat in
+        the transcript). A 0-window session falls back to the absolute
+        constant alone.
+        """
+        bound = self.offload_digest_max_chars
+        usable_tokens = self._usable_context_tokens()
+        if usable_tokens > 0:
+            share = min(max(self.offload_trigger_share, 0.0), 1.0)
+            share_bound = int(
+                usable_tokens * share * self.context_chars_per_token
+            )
+            bound = min(bound, share_bound)
+        return max(bound, 1)
+
+    def _digest_output_oversized(self, digest: str) -> bool:
+        """C4 verdict (issue #37): a returned digest above its bound is
+        treated as a failed digestion — existing guidance path, no
+        retry, never forwarded to interpretation, never cached."""
+        return not digest or len(digest) > self._digest_output_bound_chars()
+
     def _oversized_guidance(self, offer_setting: bool = False) -> str:
-        """Rejection message for results that cannot fit the prompt."""
+        """Rejection message for results that cannot fit the prompt.
+
+        Deliberately does NOT promise step-by-step processing: nothing
+        implements it yet (issue #37 — the honest offer arrives with
+        the snapshot store + slice access, items 1+2). Migrates to the
+        generated-guidance seam (issue #37 doctrine: no pre-recorded
+        assistant speech).
+        """
         setting_hint = (
-            " You can enable agentic analysis in the settings to let me"
-            " process it in steps, or try asking about a specific part"
-            " of it."
+            " You can enable agentic analysis in the settings, or try"
+            " asking about a specific part of it."
             if offer_setting
             else " Try asking about a specific part of it."
         )
@@ -2278,20 +2471,29 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 "system_message is not initialized in OrakleMiddleware"
             )
 
-        # Budget ledger gate (issue #26 §6.9, minimal v1). The
-        # interpretation prompt is the one place raw skill data enters
-        # a prompt wholesale; when it exceeds the ledger budget,
-        # reject with guidance instead of overflowing the context
-        # window at the provider (which surfaces as an opaque upstream
-        # error). The agentic path has its own payload handling.
+        # Budget ledger gate (issue #26 §6.9, minimal v1; #37
+        # token-domain). The interpretation prompt is the one place raw
+        # skill data enters a prompt wholesale; when it exceeds the
+        # usable window, reject with guidance instead of overflowing
+        # the context window at the provider (which surfaces as an
+        # opaque upstream error). Measured by the shared estimator: the
+        # flat chars/token conversion under-estimated CJK payloads by
+        # 2–3× and passed them into the overflow this guard exists to
+        # prevent. The agentic path has its own payload handling.
         if not agentic_mode:
-            budget = self._interpretation_budget_bytes()
-            if budget and len(interpretation_prompt) > budget:
+            usable_tokens = self._usable_context_tokens()
+            prompt_tokens = (
+                estimate_tokens(interpretation_prompt)
+                if usable_tokens
+                else 0
+            )
+            if usable_tokens and prompt_tokens > usable_tokens:
                 logger.warning(
-                    "ORAKLE: interpretation prompt (%d bytes) exceeds the"
-                    " ledger budget (%d bytes); rejecting with guidance.",
-                    len(interpretation_prompt),
-                    budget,
+                    "ORAKLE: interpretation prompt (~%d tokens estimated)"
+                    " exceeds the usable window (%d tokens); rejecting"
+                    " with guidance.",
+                    prompt_tokens,
+                    usable_tokens,
                 )
                 yield self._oversized_guidance(offer_setting=True)
                 return
@@ -2632,6 +2834,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 )
                 user_context["recent_conversation"] = context_summary
 
+            output_bound_chars = self._digest_output_bound_chars()
             goal = (
                 "The following tool result is provided as data to analyze."
                 " Read it and produce a comprehensive digest of its"
@@ -2640,6 +2843,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 " reasonable follow-up question about this data might"
                 " need — the digest must stand on its own, independent of"
                 " any particular phrasing of a request.\n\n"
+                f"STRICT OUTPUT BUDGET: the report must stay under"
+                f" {output_bound_chars} characters. If the payload is"
+                " itself the requested content, do not copy it out:"
+                " produce the most faithful compact rendering that fits"
+                " the budget — structure, section map, key facts and"
+                " figures — so the mechanical bound on your output is"
+                " met, not exceeded.\n\n"
                 f"<tool_result>\n{raw_result}\n</tool_result>"
             )
 
@@ -2885,21 +3095,28 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     chat_history=entry["chat_history"],
                     reasoning_level=entry["reasoning_level"],
                 )
-                if digest and self._digest_cache:
-                    self._digest_cache.put(raw_result, digest)
-            if not digest:
+            # C4 (issue #37): a missing OR oversized digest is a failed
+            # digestion — existing guidance path, no retry, never
+            # forwarded to interpretation, never cached. The user
+            # already approved this run's spend; the message owns that
+            # honestly instead of pretending nothing happened.
+            if self._digest_output_oversized(digest):
                 logger.warning(
-                    "ORAKLE: approved offload digestion failed; rejecting"
-                    " with guidance (no fallback, no auto-retry)."
+                    "ORAKLE: approved digestion produced no usable digest"
+                    " (missing or above the %d-char output bound);"
+                    " rejecting with guidance (no fallback, no auto-retry).",
+                    self._digest_output_bound_chars(),
                 )
                 yield (
-                    "\nI started the analysis you approved, but it could"
-                    " not be completed right now — nothing was charged"
-                    " twice and no retry was attempted. Try asking about"
-                    " a specific part of the data, or ask me again"
+                    "\nI started the analysis you approved, but it did not"
+                    " produce a usable result this time — nothing was"
+                    " charged twice and no retry was attempted. Try asking"
+                    " about a specific part of the data, or ask me again"
                     " later.\n\n"
                 )
                 return
+            if self._digest_cache:
+                self._digest_cache.put(raw_result, digest)
             # Trail (#37): the digest persists as a mechanical,
             # never-spoken marker riding the segment — the permanent
             # trail is offer → decision → digest → spoken answer, and

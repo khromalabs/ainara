@@ -228,7 +228,19 @@
                         "raw_max_bytes": {
                             "type": "integer",
                             "default": 24000,
-                            "description": "Skill result size above which conversational routing goes to offload digestion (issue #26)."
+                            "description": "CAP on the derived offload size trigger (issue #37): the trigger derives from the live context window (trigger_share of the usable window) and this key only ever lowers it — a user-facing 'never route anything bigger than this to analysis' override, not a per-model setting. Also the static fallback trigger when no context window can be resolved (issue #26)."
+                        },
+                        "trigger_share": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "default": 0.5,
+                            "description": "One share of the usable context window bounding all three derived sizing checks (issue #37): the C1 size trigger (payload alone would take this share of the usable window), the C2 digestion input feasibility, and the C4 share bound on the returned digest. Deliberately one key — the checks form one escalator; independent shares would re-create the independent-magic-numbers problem."
+                        },
+                        "digest_max_chars": {
+                            "type": "integer",
+                            "default": 4096,
+                            "description": "Absolute bound on a returned digest, in characters (issue #37, C4): the digestion prompt mandates it and the mechanical check enforces it from the same number, so instruction and guard agree; also caps trail-note bloat in the transcript. A digest above the bound is treated as a failed digestion — guidance, no retry, never forwarded."
                         },
                         "max_turns": {
                             "type": "integer",
