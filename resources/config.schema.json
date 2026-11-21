@@ -204,7 +204,18 @@
                 "enabled": {"type": "boolean"},
                 "session_id": {"type": "string"},
                 "summary_enabled": {"type": "boolean"},
-                "vector_db_enabled": {"type": "boolean"}
+                "vector_db_enabled": {"type": "boolean"},
+                "injection": {
+                    "type": "object",
+                    "properties": {
+                        "semantic_floor": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": "GREEN 2.0 (issue #33): semantic-only floor for contextual memory injection. Candidates whose cosine-similarity component falls below this value are pruned regardless of importance/recency. Weak gate by design: prune egregious noise only; 0 disables."
+                        }
+                    }
+                }
             }
         },
         "orakle": {

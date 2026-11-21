@@ -160,6 +160,18 @@ class GREENMemories:
             # The factor by which the boost is multiplied for each subsequent update
             # in the same session.
             "session_relevance_decay_rate": 0.5,
+            # GREEN 2.0 §7.1 — semantic-only injection floor for contextual
+            # retrieval: candidates whose SEMANTIC COMPONENT falls below this
+            # cosine-similarity floor are pruned regardless of importance,
+            # recency or boosts. Deliberately gated on the semantic component
+            # only and deliberately LOW — prune egregious noise, never gate on
+            # the combined score (which conflates importance/recency; a floor
+            # there removes unimportant memories, not unrelated ones, and the
+            # high-value recalls are semantically distant by nature). 0
+            # disables the floor (1.0 legacy behaviour).
+            "semantic_floor": config.get(
+                "memory.injection.semantic_floor", 0.15
+            ),
         }
         self.nlp = load_spacy_model()
         self._db_lock = threading.Lock()
@@ -1280,6 +1292,7 @@ class GREENMemories:
                 return []
 
             ranked_memories = []
+            pruned_count = 0
             for doc, score in results_with_distances:
                 memory = doc.get("metadata", {})
                 memory_type = memory.get("memory_type")
@@ -1302,6 +1315,14 @@ class GREENMemories:
                 # For normalized vectors, cosine similarity can be calculated from
                 # squared L2 distance using: 1 - (distance / 2)
                 semantic_score = 1 - (score / 2)
+
+                # GREEN 2.0 §7.1 — semantic-only injection floor (weak gate,
+                # strong ordering): applied BEFORE boosts and the combined
+                # score, so importance/recency can no longer carry unrelated
+                # memories into the injection block.
+                if semantic_score < self.scoring_config["semantic_floor"]:
+                    pruned_count += 1
+                    continue
 
                 base_score = (
                     semantic_score * (1 - self.scoring_config["relevance_weight"])
@@ -1346,6 +1367,13 @@ class GREENMemories:
                     ]
 
                 ranked_memories.append((memory, combined_score))
+
+            if pruned_count:
+                logger.info(
+                    f"Semantic floor {self.scoring_config['semantic_floor']}"
+                    f" pruned {pruned_count}/{len(results_with_distances)}"
+                    " contextual candidates"
+                )
 
             ranked_memories.sort(key=lambda x: x[1], reverse=True)
 

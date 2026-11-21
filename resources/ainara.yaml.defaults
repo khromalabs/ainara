@@ -61,6 +61,11 @@ memory:
   vector_db_enabled: true
   summary_enabled: true
   session_id: "default_session"
+  # GREEN 2.0 (issue #33): semantic-only injection floor for contextual
+  # memory retrieval — prune egregious noise only (weak gate, low value;
+  # 0 disables). The default lives in green_memories.py scoring_config.
+#  injection:
+#    semantic_floor: 0.15
 #  embedding_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 #  storage_path: "~/.config/ainara/chat_memory.db"
 #  vector_db_path: "~/.config/ainara/vector_db"
