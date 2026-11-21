@@ -304,6 +304,12 @@ code {
     content: "⚙️";
 }
 
+/* Agent-cancel status (#35): the user stopped the run. Red light —
+ * the semaphore image: the run is halted. */
+.orakle-status-agent_cancelled:before {
+    content: "🔴";
+}
+
 /* Run-journal step record (#26/#35): transcript trail of an agent
  * run's progress labels. Same pill family as the other mechanical
  * records; the live channel is the com-ring signal. */

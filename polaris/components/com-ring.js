@@ -1808,6 +1808,11 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
+            // A renderer exception here is what strands the 'Answering'
+            // badge and the ring states: 'completed' never runs after a
+            // throw inside the stream loop, so log the throw with a tag
+            // — the red showInfo alone disappears in seconds.
+            console.error('[Agent] processAIResponse stream loop failed:', error);
             // await this.showError(event.content.message + " " + error);
             await this.showInfo(error, true);
             this.state.isProcessingLLM = false;
@@ -2684,6 +2689,44 @@ Visit our project site at: https://ainara.app
                 if (this.exchangeSilenced) {
                     break;
                 }
+                // Display-only stream events (mechanical status pills
+                // #37/#35, usage notices, no-TTS text) carry a plain
+                // string content; the canonical shape downstream is the
+                // audio-event object ({content, flags}). Normalize once
+                // so messageId tagging, flag checks and the queues see a
+                // single shape — a raw string here used to throw
+                // ('Cannot create property messageId on string') and
+                // strand the whole exchange before 'completed'.
+                if (
+                    event.type === 'message' &&
+                    event.content &&
+                    typeof event.content.content === 'string'
+                ) {
+                    const rawText = event.content.content;
+                    if (rawText.includes('_orakle_status_')) {
+                        // Mechanical markers are surface records, never
+                        // conversation: they must not float as raw text
+                        // in the live view. The history renders them as
+                        // pills (base.js) when the persisted record is
+                        // appended at 'completed' — retire the progress
+                        // label here, the turn is effectively over.
+                        this.agentProgressActive = false;
+                        const sttStatus =
+                            this.shadowRoot.querySelector('.stt-status');
+                        if (sttStatus) {
+                            sttStatus.classList.remove('active');
+                            sttStatus.textContent = '';
+                        }
+                        break;
+                    }
+                    event.content.content = {
+                        content: rawText,
+                        flags: event.content.flags || {
+                            command: false,
+                            audio: false,
+                        },
+                    };
+                }
                 if (event.type === 'message') {
                     const content = event.content.content;
                     const messageId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -2967,6 +3010,7 @@ Visit our project site at: https://ainara.app
                         this.documentView.setStreamingActive(false);
                         // The persisted pair supersedes the echo
                         this.exchangeUserTurn = '';
+                        console.log('[DocTrace] completed handler: badge cleared');
                     }
                 }
                 break;

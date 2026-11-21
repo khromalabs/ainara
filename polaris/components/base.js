@@ -368,7 +368,7 @@ class BaseComponent extends HTMLElement {
                 };
                 const label = labels[kind] || 'Notice';
                 codeBlocks.push(
-                    `<span class="consent-record orakle-status-record">${label}</span>`
+                    `<span class="consent-record orakle-status-record orakle-status-${kind}">${label}</span>`
                 );
                 return `%%CODEBLOCK${blockIndex++}%%`;
             }
@@ -394,9 +394,9 @@ class BaseComponent extends HTMLElement {
         // Agent report trail (#35): the skill-agent's dossier persists
         // as evidence; collapsed like the digest trail.
         text = text.replace(
-            /_orakle_agent_dossier_\|([^\n]*)\n```\n([\s\S]*?)\n```/g,
+            /_orakle_agent_dossier_(?:\|([^\n]*))?\n```\n([\s\S]*?)\n```/g,
             (text, title, body) => {
-                const safeTitle = escapeTrail(title);
+                const safeTitle = title ? escapeTrail(title) : '';
                 const label = safeTitle
                     ? `Report recorded: ${safeTitle}`
                     : 'Report recorded';
@@ -407,7 +407,7 @@ class BaseComponent extends HTMLElement {
             }
         );
         text = text.replace(
-            /_orakle_agent_dossier_\|[^\n]*/gm,
+            /_orakle_agent_dossier_(?:\|[^\n]*)?/gm,
             () => {
                 codeBlocks.push(
                     `<span class="consent-record agent-dossier-record">Report recorded</span>`
