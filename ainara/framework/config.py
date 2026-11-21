@@ -41,6 +41,17 @@ _NEXUS_MODULE_PREFIXES = [
     ("ainara.nexus", "skills.nexus"),
 ]
 
+# Substring hints identifying sensitive config keys (issue #34). Shared by
+# the masking pass (get_safe_config) and the round-trip restore pass
+# (restore_masked_values) so the two can never drift apart.
+SENSITIVE_KEY_HINTS = (
+    "api_key",
+    "apikey",  # camelCase 'apiKey' lowercases to this
+    "secret",
+    "password",
+    "token",
+)
+
 def register_nexus_root(module_prefix: str, config_prefix: str):
     """Register an external Nexus package root."""
     _NEXUS_MODULE_PREFIXES.append((module_prefix, config_prefix))
@@ -824,41 +835,93 @@ class ConfigManager:
         safe_config = copy.deepcopy(self.config)
 
         # Mask sensitive information like API keys
-        def mask_sensitive_values(
-            obj,
-            sensitive_keys=[
-                "api_key",
-                "apiKey",
-                "secret",
-                "password",
-                "token",
-            ],
-        ):
+        def mask_sensitive_values(obj):
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     if isinstance(value, (dict, list)):
-                        mask_sensitive_values(value, sensitive_keys)
+                        mask_sensitive_values(value)
                     elif (
                         any(
-                            sensitive_key in key.lower()
-                            for sensitive_key in sensitive_keys
+                            hint in key.lower()
+                            for hint in SENSITIVE_KEY_HINTS
                         )
                         and value
                     ):
                         # Mask the value but preserve a hint of its existence
-                        if isinstance(value, str) and len(value) > 4:
-                            obj[key] = (
-                                value[:2] + "*" * (len(value) - 4) + value[-2:]
-                            )
-                        else:
-                            obj[key] = "****"
+                        obj[key] = self._mask_value(value)
             elif isinstance(obj, list):
                 for item in obj:
                     if isinstance(item, (dict, list)):
-                        mask_sensitive_values(item, sensitive_keys)
+                        mask_sensitive_values(item)
 
         mask_sensitive_values(safe_config)
         return safe_config
+
+    @staticmethod
+    def _mask_value(value):
+        """Mask a single sensitive value. The ONLY producer of mask
+        strings — restore_masked_values (#34) pattern-matches against
+        exactly this transform. Short values collapse to a bare '****'.
+        """
+        if isinstance(value, str) and len(value) > 4:
+            return value[:2] + "*" * (len(value) - 4) + value[-2:]
+        return "****"
+
+    def restore_masked_values(self, new_config):
+        """Undo masking in an incoming config payload (issue #34).
+
+        GET /config masks sensitive keys for display; a client that
+        reads the config, changes an unrelated field and PUTs the
+        result back would otherwise store the mask string over the
+        real secret, and the provider fails at the next call with an
+        opaque upstream auth error (reproduced twice during #26 live
+        testing).
+
+        Any incoming sensitive-key value that is EXACTLY the mask of
+        the currently stored value is treated as "unchanged" and
+        substituted with the stored secret before the deep-merge, so a
+        mask string can never reach disk again. Substitution (not key
+        removal) is deliberate: the merge replaces list payloads
+        wholesale, so dropping a key inside a list element would
+        delete it from the stored config.
+
+        Lists are aligned by index; a client that REORDERS list
+        entries (e.g. llm.providers) between GET and PUT can therefore
+        get a different stored secret substituted than it masked. That
+        is still a valid secret of the same config, never corruption —
+        re-entering the key fixes the pairing. Values that are not an
+        exact mask of the stored value (real new keys, or keys with no
+        stored counterpart) pass through untouched.
+
+        Mutates and returns new_config.
+        """
+
+        def walk(incoming, stored):
+            if isinstance(incoming, dict):
+                stored_dict = stored if isinstance(stored, dict) else {}
+                for key, value in incoming.items():
+                    stored_value = stored_dict.get(key)
+                    if (
+                        any(hint in str(key).lower()
+                            for hint in SENSITIVE_KEY_HINTS)
+                        and isinstance(value, str)
+                        and isinstance(stored_value, str)
+                        and stored_value
+                        and value == self._mask_value(stored_value)
+                    ):
+                        incoming[key] = stored_value
+                    else:
+                        walk(value, stored_value)
+            elif isinstance(incoming, list):
+                stored_list = stored if isinstance(stored, list) else []
+                for i, item in enumerate(incoming):
+                    walk(
+                        item,
+                        stored_list[i] if i < len(stored_list) else None,
+                    )
+
+        walk(new_config, self.config)
+        return new_config
 
     def get_subdir(self, directory, subdirectory):
         """Returns a subdirectory ensuring it exists"""

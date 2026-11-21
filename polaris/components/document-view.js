@@ -227,6 +227,291 @@ class DocumentView extends BaseComponent {
         }
     }
 
+    /**
+     * Build the consent card DOM (issue #26 P2).
+     *
+     * Generic decision surface (#18 primitive shape): the backend
+     * composes EVERYTHING the card shows — title, quote (the mechanical
+     * estimate line, #37)
+     * already spoken/persisted in the conversation), button labels and
+     * the session/expiry note, all localized to the session language.
+     * This component is strictly presentational and renders any future
+     * consent client unchanged.
+     *
+     * The quote is the model explaining (subordinate); the title and
+     * buttons are the framework deciding (dominant) — the consent
+     * invariant made visible. TextContent only throughout.
+     */
+    renderConsentCard(documentElement, content) {
+        documentElement.dataset.decisionId = content.decision_id;
+        // The one-shot token lives in the render closure; keep it on the
+        // item so Escape-dismissal can hand it to com-ring for the
+        // server-side consume (#26).
+        documentElement.consentToken = content.token;
+        const card = document.createElement('div');
+        card.className = 'consent-card';
+
+        const headline = document.createElement('div');
+        headline.className = 'consent-headline';
+        headline.textContent = content.title || 'Accept?';
+        card.appendChild(headline);
+
+        if (content.quote) {
+            const quote = document.createElement('div');
+            quote.className = 'consent-quote';
+            quote.textContent = content.quote;
+            card.appendChild(quote);
+        }
+
+        const buttons = document.createElement('div');
+        buttons.className = 'consent-buttons';
+        const decisions = content.buttons || [
+            { id: 'approve', label: 'Yes', style: 'primary' },
+            { id: 'deny', label: 'No', style: 'secondary' },
+            { id: 'always_allow', label: 'Always', style: 'ghost' },
+        ];
+        const keyBindings = {};
+        const decisionEls = {};
+        for (const b of decisions) {
+            const el = document.createElement('button');
+            el.className = 'consent-button ' + (b.style || 'secondary');
+
+            // Keyboard accelerator (#26), mechanically derived so this
+            // stays a generic renderer: Alt + first letter of the
+            // (localized) label. Labels without a latin letter (e.g. CJK
+            // localizations) simply get no binding — the buttons remain
+            // the authority. First button wins a letter collision.
+            const match =
+                typeof b.label === 'string' ? b.label.match(/[a-zA-Z]/) : null;
+            if (match && !(match[0].toLowerCase() in keyBindings)) {
+                const letter = match[0].toLowerCase();
+                keyBindings[letter] = b.id;
+                const label = document.createElement('span');
+                label.className = 'consent-button-label';
+                label.textContent = b.label;
+                el.appendChild(label);
+                const hint = document.createElement('span');
+                hint.className = 'consent-button-hint';
+                hint.textContent = 'Alt+' + match[0].toUpperCase();
+                el.appendChild(hint);
+            } else {
+                el.textContent = b.label;
+            }
+
+            el.addEventListener('click', () => {
+                this.resolveConsent(documentElement, content, b.id, el);
+            });
+            buttons.appendChild(el);
+            decisionEls[b.id] = el;
+        }
+        card.appendChild(buttons);
+
+        // The keyboard's twin of the tap (capture phase, so it precedes
+        // com-ring's document-level handlers; com-ring itself ignores
+        // Alt-combos — accelerators, never typing prefixes). The handler
+        // self-guards: disabled buttons mean the card is resolved or
+        // expired; a detached card unregisters itself. One decision per
+        // press — auto-repeat must never re-post.
+        const onKeyDown = (event) => {
+            if (!documentElement.isConnected) {
+                document.removeEventListener('keydown', onKeyDown, true);
+                return;
+            }
+            const first = documentElement.querySelector('.consent-button');
+            if (!event.altKey || event.ctrlKey || event.metaKey) return;
+            if (event.repeat || !first || first.disabled) return;
+            const decision = keyBindings[event.key.toLowerCase()];
+            if (!decision) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.resolveConsent(
+                documentElement, content, decision, decisionEls[decision]
+            );
+        };
+        document.addEventListener('keydown', onKeyDown, true);
+        documentElement.consentKeyHandler = onKeyDown;
+
+        if (content.note) {
+            const note = document.createElement('div');
+            note.className = 'consent-note';
+            note.textContent = content.note;
+            card.appendChild(note);
+        }
+
+        const status = document.createElement('div');
+        status.className = 'consent-status';
+        card.appendChild(status);
+
+        const contentArea = document.createElement('div');
+        contentArea.className = 'document-content consent-content';
+        contentArea.appendChild(card);
+        documentElement.appendChild(contentArea);
+
+        // The offer is never silently auto-closed (#26 P2): on expiry it
+        // stays visible but visibly dead. The assistant can still close
+        // it conversationally (consent_closed) after this.
+        const ttlMs = (content.ttl || 600) * 1000;
+        documentElement.dataset.expiryTimer = String(setTimeout(() => {
+            this.updateConsentCard(content.decision_id, 'expired');
+        }, ttlMs));
+    }
+
+    /**
+     * Resolve a pending consent card (#26 P2). One decision, one
+     * emission: freeze the card synchronously (set-state-before-click —
+     * a fast complementary event must never land in the gap), stop the
+     * expiry timer, and emit to com-ring, which owns the POST. Shared
+     * by the button click and the Alt+<letter> accelerator; the keyboard
+     * listener stays registered but self-guards on the frozen buttons.
+     */
+    resolveConsent(documentElement, content, decision, buttonEl) {
+        this.setConsentButtonsEnabled(documentElement, false);
+        // The chosen answer stays legible under the freeze: a yellow ring
+        // marks what the user's hand decided (tap or Alt-key) while the
+        // unchosen options fade further. The buttons row keeps no other
+        // record — the conversation's record is the exchange.
+        const buttonsRow = documentElement.querySelector('.consent-buttons');
+        if (buttonsRow) {
+            buttonsRow.classList.add('resolved');
+        }
+        if (buttonEl) {
+            buttonEl.classList.add('consent-chosen');
+        }
+        if (documentElement.dataset.expiryTimer) {
+            clearTimeout(Number(documentElement.dataset.expiryTimer));
+            delete documentElement.dataset.expiryTimer;
+        }
+        this.emitEvent('consent-decision', {
+            decisionId: content.decision_id,
+            token: content.token,
+            decision,
+        });
+    }
+
+    /**
+     * Dissolve a consent card (#26 P2 conversational close): the model
+     * proposed closing it and the framework agreed. Soft fade, then
+     * gone — no residue; the conversation's record is the exchange.
+     */
+    removeConsentCard(decisionId) {
+        const el = this.container.querySelector(
+            `.document-item[data-decision-id="${decisionId}"]`
+        );
+        if (!el) return;
+        if (el.dataset.expiryTimer) {
+            clearTimeout(Number(el.dataset.expiryTimer));
+            delete el.dataset.expiryTimer;
+        }
+        if (el.consentKeyHandler) {
+            document.removeEventListener(
+                'keydown', el.consentKeyHandler, true
+            );
+            delete el.consentKeyHandler;
+        }
+        el.classList.add('consent-closing');
+        setTimeout(() => {
+            el.remove();
+            if (!this.container.firstElementChild) {
+                this.emitEvent('empty');
+            }
+        }, 400);
+    }
+
+    /**
+     * Escape-dismissal of a pending consent offer (#26): the user's
+     * hand, like the tap — the card dissolves and the offer is handed
+     * to com-ring for the server-side consume (a dismissed offer is a
+     * dead offer; it can never be honored afterwards). Only a still-
+     * pending card (live buttons) qualifies — resolved ones have
+     * nothing to dismiss. Returns true when a card was dismissed.
+     */
+    /**
+     * Sweep resolved consent-card remnants (#26 P2): after the user
+     * sends a follow-up message, any card that is no longer a live
+     * offer (answered, Esc-dismissed or TTL-dead — buttons disabled)
+     * dissolves with the same soft fade as the conversational close.
+     * A pending card is NEVER swept: the never-silently-auto-closed
+     * rule protects live offers, not receipts.
+     */
+    sweepResolvedConsentCards() {
+        if (!this.container) return;
+        const items = this.container.querySelectorAll(
+            '.document-item[data-decision-id]'
+        );
+        items.forEach((el) => {
+            const first = el.querySelector('.consent-button');
+            // Disabled buttons = the card is resolved or visibly dead.
+            // A missing buttons row (never rendered) also sweeps.
+            if (first && !first.disabled) return;
+            this.removeConsentCard(el.dataset.decisionId);
+        });
+    }
+
+    dismissPendingConsent() {
+        const items = this.container.querySelectorAll(
+            '.document-item[data-decision-id]'
+        );
+        // Newest was appended last and is drawn on top (the stacking
+        // grid) — dismiss that one.
+        for (let i = items.length - 1; i >= 0; i--) {
+            const el = items[i];
+            const first = el.querySelector('.consent-button');
+            if (!first || first.disabled) continue;
+            this.removeConsentCard(el.dataset.decisionId);
+            this.emitEvent('consent-dismissed', {
+                decisionId: el.dataset.decisionId,
+                token: el.consentToken,
+            });
+            return true;
+        }
+        return false;
+    }
+
+    setConsentButtonsEnabled(documentElement, enabled) {
+        documentElement.querySelectorAll('.consent-button').forEach((b) => {
+            b.disabled = !enabled;
+        });
+    }
+
+    /**
+     * Update a pending consent card's status line (#26 P2). Unknown or
+     * already-resolved decision ids are ignored: only the pending card
+     * reacts.
+     */
+    updateConsentCard(decisionId, status) {
+        const el = this.container.querySelector(
+            `.document-item[data-decision-id="${decisionId}"]`
+        );
+        if (!el) return;
+        const statusEl = el.querySelector('.consent-status');
+        if (!statusEl) return;
+        const messages = {
+            started: 'Working on it — I\'ll report back here when it\'s done.',
+            done: 'Done.',
+            denied: 'Skipped — nothing ran.',
+            expired: 'This offer expired — just ask me again.',
+        };
+        if (!messages[status]) {
+            // Unknown/pending status: leave the status line untouched but
+            // re-arm the buttons so the decision can be re-taken — which
+            // also means unmarking the previous choice, if any.
+            const buttonsRow = el.querySelector('.consent-buttons');
+            if (buttonsRow) {
+                buttonsRow.classList.remove('resolved');
+                buttonsRow.querySelectorAll('.consent-chosen').forEach(
+                    (b) => b.classList.remove('consent-chosen')
+                );
+            }
+            this.setConsentButtonsEnabled(el, true);
+            return;
+        }
+        statusEl.textContent = messages[status];
+        statusEl.classList.add('visible');
+        if (status === 'expired' || status === 'denied') {
+            this.setConsentButtonsEnabled(el, false);
+        }
+    }
+
     addDocument(content, format = 'text', title, scrollBottom = true) {
         const documentElement = document.createElement('div');
         documentElement.className = 'document-item';
@@ -349,7 +634,7 @@ class DocumentView extends BaseComponent {
             // controls.appendChild(scrollBottomButton);
         }
 
-        if (format !== 'nexus') {
+        if (format !== 'nexus' && format !== 'consent') {
             const formatBadge = document.createElement('span');
             formatBadge.className = 'format-badge';
             formatBadge.textContent = format;
@@ -505,6 +790,20 @@ class DocumentView extends BaseComponent {
         header.appendChild(docInfo);
         header.appendChild(controls);
         documentElement.appendChild(header);
+
+        if (format === 'consent') {
+            // Consent card (#26 P2): the framework-rendered decision
+            // surface for the offload spend axis. Strictly presentational:
+            // the numbers come framework-computed in the signal payload
+            // (never model-stated) and the click decision is delegated to
+            // com-ring via 'consent-decision' — this component never
+            // performs the POST itself. textContent only throughout: the
+            // provider identifier derives from configuration, but the
+            // card is rendered inside a document stream.
+            this.renderConsentCard(documentElement, content);
+            this.container.appendChild(documentElement);
+            return;
+        }
 
         if (format === 'nexus') {
             // Create iframe for nexus content
@@ -830,6 +1129,45 @@ class DocumentView extends BaseComponent {
     hydrateNexusFrames(container) {
         const frames = container.querySelectorAll('iframe.nexus-frame');
         frames.forEach(iframe => {
+            // Render-blob frames (#26 P2, §6.8): hydrate by id through
+            // the injected attachment resolver (transport lives in
+            // com-ring; this component stays presentational). The frame
+            // renders once the payload arrives.
+            if (iframe.dataset.nexusRef && !iframe.dataset.hydrated) {
+                if (typeof this.attachmentFetcher !== 'function') {
+                    console.warn(
+                        'No attachment resolver; cannot hydrate render blob',
+                        iframe.dataset.nexusRef
+                    );
+                    return;
+                }
+                iframe.dataset.hydrated = 'true';
+                // Race-free handoff: postMessage fires once BOTH the
+                // frame has loaded and the payload has arrived, in
+                // either order. Listeners register synchronously so a
+                // frame that loads during the fetch is never missed.
+                let loaded = false;
+                let payload = null;
+                const flush = () => {
+                    if (loaded && payload !== null && iframe.contentWindow) {
+                        iframe.contentWindow.postMessage(payload, '*');
+                    }
+                };
+                iframe.addEventListener('load', () => {
+                    loaded = true;
+                    flush();
+                });
+                this.attachmentFetcher(iframe.dataset.nexusRef)
+                    .then((data) => {
+                        payload = data?.result || data;
+                        flush();
+                    })
+                    .catch((e) => {
+                        console.error('Failed to hydrate render blob:', e);
+                        iframe.dataset.hydrated = '';
+                    });
+                return;
+            }
             // Only process frames that have data and haven't been hydrated yet
             if (iframe.dataset.nexusData && !iframe.dataset.hydrated) {
                 try {

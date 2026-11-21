@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 from pycountry import languages
@@ -55,6 +56,7 @@ class Agent:
         system_message: str,
         user_context: Optional[Dict[str, Any]] = None,
         conductor_agent: bool = False,
+        journal_queue=None,
     ):
         """
         Initialize the Agent.
@@ -86,6 +88,13 @@ class Agent:
             alpha_2=self.current_lang_code
         ).name
         self.conductor_agent = conductor_agent
+        # Run journal (issue #26): structured progress entries appended per
+        # turn. The single artifact backing progress reporting, cancellation
+        # reports and (later) resume. journal_queue, when provided, mirrors
+        # each entry to the parent process so Bureau can expose them
+        # mid-run.
+        self.journal: List[Dict[str, Any]] = []
+        self.journal_queue = journal_queue
         logger.info(
             f"AGENT self.current_lang_code: {self.current_lang_code}"
             f" self.current_language: {self.current_language}"
@@ -115,6 +124,16 @@ class Agent:
             + Agent._FORGED_REMOVAL_NOTE
             + text[end:]
         )
+
+    def _journal(self, entry_type: str, **fields: Any) -> None:
+        """Append a structured entry to the run journal (issue #26)."""
+        entry = {"ts": time.time(), "type": entry_type, **fields}
+        self.journal.append(entry)
+        if self.journal_queue is not None:
+            try:
+                self.journal_queue.put(entry, timeout=1)
+            except Exception as e:
+                logger.warning(f"Journal mirror failed: {e}")
 
     def _parse_goal_completion(self, text: str) -> tuple[Optional[bool], dict]:
         """
@@ -180,6 +199,7 @@ class Agent:
                 - failure_reason: Explanation if goal not achieved (None if successful)
         """
         logger.info(f"Agent '{self.name}' starting run. Goal: {goal}")
+        self._journal("run_start", goal=goal, max_turns=max_turns)
 
         # TODO add user profile, maybe memories as well?
         # user_profile = self.user_context.get("user_profile_summary", "")
@@ -286,6 +306,7 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
             skill_executed = False
             forged_result = False
             first_signal_pos = None
+            turn_skills = []
 
             # 3. Consume the stream
             for chunk in processed_stream:
@@ -298,6 +319,18 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
                             skill_id = chunk.split("|", 1)[1].strip()
                             if skill_id and skill_id not in skills_executed:
                                 skills_executed.append(skill_id)
+                            if skill_id not in turn_skills:
+                                turn_skills.append(skill_id)
+                                # Live step labels (#35): journal the skill
+                                # start the moment it passes through, so the
+                                # com-ring shows what the agent is doing
+                                # WHILE a long skill executes — not only
+                                # after the turn ends. Once per turn per
+                                # skill: repeated relays of the same label
+                                # add nothing.
+                                self._journal(
+                                    "skill_start", skill=skill_id
+                                )
                         skill_executed = True
                         # Everything the middleware yields from now on is
                         # system-injected (results); model-authored text
@@ -311,6 +344,10 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
                         continue
                     if "_orakle_forged_result_" in chunk:
                         forged_result = True
+                        continue
+                    if "_orakle_agent_progress_" in chunk:
+                        # Run-journal progress relay (#26): not agent
+                        # content, never part of the turn response.
                         continue
                     turn_response += chunk
                 elif isinstance(chunk, dict):
@@ -371,10 +408,31 @@ ORAKLE POLICY REMINDER: After one or more <orakle>query</orakle> tags, do NOT ad
                 )
                 goal_complete = None
 
+            # Journal: per-turn progress entry (issue #26). The label
+            # prefers the executed skill; skill-less runs (e.g. the
+            # offload digestion agent) fall back to a trimmed excerpt of
+            # the turn's own output so the com-ring can show the stage.
+            if turn_skills:
+                turn_label = f"Using {turn_skills[-1]}"
+            elif goal_complete is True:
+                turn_label = "Finalizing report"
+            else:
+                turn_label = " ".join(turn_response.split())[:80]
+                turn_label = turn_label or "Reasoning"
+            self._journal(
+                "turn", index=turn, label=turn_label, skills=turn_skills
+            )
+
             if goal_complete is True:
                 # # Agent explicitly signaled completion or failure
                 # if goal_complete:
                 logger.info("Agent signaled goal completion (success)")
+                self._journal(
+                    "done",
+                    success=True,
+                    turns_used=turn,
+                    skills_executed=skills_executed,
+                )
                 return {
                     "response": completion_data.get(
                         "final_answer", turn_response
@@ -402,7 +460,14 @@ Is the goal achieved now? Please follow the instructions provided and continue u
             self.llm.add_msg(evaluation_prompt, self.context, "user")
             logger.info(f"\nUSER:\n{evaluation_prompt}\n\n")
 
-            if not skill_executed:
+            # "No skills used" is a failure criterion only for agents
+            # that HAVE skills to use — it detects an agent chatting
+            # instead of acting. Skill-less agents (#26 offload-digest
+            # comprehension agents, allowed_skills: [] by design: they
+            # are the sanitization boundary and can never call skills)
+            # are judged solely by their final answer, so this heuristic
+            # must never fire for them.
+            if not skill_executed and self.allowed_skills:
                 turn_without_skills = turn_without_skills + 1
                 if turn_without_skills > max_turns_without_skills:
 
@@ -412,6 +477,13 @@ Is the goal achieved now? Please follow the instructions provided and continue u
                         f" without using skills (turn: {turn})"
                     )
                     logger.warning(failure_reason)
+                    self._journal(
+                        "done",
+                        success=False,
+                        turns_used=turn,
+                        skills_executed=skills_executed,
+                        failure_reason=failure_reason,
+                    )
                     return {
                         "response": final_response,
                         "turns_used": turn,
@@ -425,6 +497,16 @@ Is the goal achieved now? Please follow the instructions provided and continue u
         logger.warning(
             f"Agent '{self.name}' reached max turns ({max_turns}) without"
             " completing goal."
+        )
+        self._journal(
+            "done",
+            success=False,
+            turns_used=turn,
+            skills_executed=skills_executed,
+            failure_reason=(
+                f"Maximum turns ({max_turns}) reached without completing"
+                " goal"
+            ),
         )
         return {
             "response": final_response,

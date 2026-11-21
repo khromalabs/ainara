@@ -1484,6 +1484,13 @@ def create_app():
                     400,
                 )
 
+            # Mask round-trip guard (issue #34): a client that reads the
+            # masked GET /config, changes an unrelated field and PUTs the
+            # result back must not store mask strings over real secrets.
+            # Values that are exactly the mask of the stored secret are
+            # substituted with the secret itself before the merge.
+            data = config.restore_masked_values(data)
+
             # Fetch and cache skill property schemas from Orakle
             skill_properties = _get_skill_config_properties()
             if skill_properties is None:
@@ -1588,6 +1595,111 @@ def create_app():
                 yield event
 
         return Response(generate(), mimetype="text/event-stream")
+
+    @app.route("/consent/<decision_id>", methods=["POST"])
+    def consent_decision(decision_id):
+        """Consent-card decision endpoint (issue #26 P2; the pilot client
+        of #18's confirmation primitive).
+
+        Consent authority is the mechanical button click: the body must
+        carry the one-shot, TTL'd decision token issued with the card —
+        no stale, replayed or conversational "yes" can satisfy this
+        route. Approval resumes the deferred digestion out-of-band and
+        streams the digest back as a system-initiated segment (NDJSON,
+        same event shapes as /framework/chat). Denial and expiry are
+        no-ops that only retire the card.
+        """
+        data = request.get_json(silent=True) or {}
+        token = data.get("token", "")
+        decision = data.get("decision", "")
+        if decision not in ("approve", "always_allow", "deny", "dismiss"):
+            return jsonify({"error": "invalid decision"}), 400
+
+        middleware = app.chat_manager.orakle_middleware
+        if decision in ("deny", "dismiss"):
+            # A denial/dismissal is the user's act and fails closed by
+            # construction: nothing runs whether the offer was live,
+            # already consumed or unknown — the answer is always
+            # "denied". (It is the approval path that distinguishes a
+            # live offer from an unknown/expired token.) The consume
+            # happens inside deny_offload_consent, so a live offer dies
+            # with the act; when one was consumed the mechanical
+            # decision record is written, and an explicit deny
+            # additionally streams the conversational outcome segment
+            # (#37): the free bounded feedback comment — the model
+            # reacting to the outcome, never to the decision surface.
+            # A quietly expired offer leaves no record and no segment
+            # (the trail says walked-away, not decided); dismiss
+            # (Escape / put-it-away) is recorded distinctly from deny
+            # (rejected the analysis) so the history is honest about
+            # what the user did.
+            entry = middleware.deny_offload_consent(
+                decision_id, token, decision
+            )
+            if entry is not None:
+                # Mechanical decision record: persisted standalone (as
+                # its own history/memory entry) so the trail survives
+                # even a client that never reads the denial stream.
+                app.chat_manager.record_consent_decision(
+                    decision_id, decision
+                )
+            if entry is not None and decision == "deny":
+                # Explicit deny gets the conversational outcome segment
+                # (#37): a free, bounded feedback comment — the model
+                # reacting to the outcome, never to the decision
+                # surface. dismiss (Escape / put-it-away) stays a
+                # silent no-op: the user did not answer, and the
+                # fire-and-forget client fetch never reads a stream.
+                def generate_denial():
+                    yield from app.chat_manager.consent_denial_segment(
+                        decision_id, decision, entry
+                    )
+
+                return Response(
+                    generate_denial(), mimetype="text/event-stream"
+                )
+            return jsonify({"status": "denied"})
+
+        def generate():
+            yield from app.chat_manager.consent_resume(
+                decision_id, token, decision
+            )
+
+        return Response(generate(), mimetype="text/event-stream")
+
+    @app.route("/agent/run/<run_id>/cancel", methods=["POST"])
+    def agent_run_cancel(run_id):
+        """Stop an in-flight agent run (issue #35).
+
+        The cancel command is user-authoritative — unlike the consent
+        decision it needs no one-shot token: stopping work is not a
+        grant. The middleware's active-run registry is the validation
+        (unknown or already-finished run ids simply report nothing to
+        stop); a delivered request forwards the kill to Bureau. The
+        run's poll picks up the cancellation report and the
+        conversation ends the segment with the mechanical
+        agent_cancelled status pill.
+        """
+        middleware = app.chat_manager.orakle_middleware
+        cancelled = middleware.cancel_agent_run(run_id)
+        return jsonify({"cancelled": cancelled})
+
+    @app.route("/attachments/<blob_id>", methods=["GET"])
+    def get_attachment(blob_id):
+        """Render-blob hydration endpoint (issue #26 P2, §6.8).
+
+        Polaris fetches a UI-skill payload stored above the render
+        inline ceiling by id (live render and history replay). Local-
+        first: ids are content hashes (sha256 hex) — not guessable, not
+        enumerable — and the store lives in this process's data
+        directory. Unknown or malformed ids return 404; the payload is
+        the exact bytes the skill returned (full render fidelity).
+        """
+        middleware = app.chat_manager.orakle_middleware
+        blob = middleware._render_blob_store().get(blob_id)
+        if blob is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(blob)
 
     @app.route("/framework/chat/search", methods=["GET"])
     def search_chat_history():

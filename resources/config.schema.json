@@ -217,6 +217,109 @@
                 "match_providers": {
                     "type": "array",
                     "items": { "type": "string" }
+                },
+                "enable_agent_spawn": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Master switch for ephemeral Bureau agent spawning (requires_agent queries and issue #26 offload-digest routing). Off by default; standing consent is granted via the wizard."
+                },
+                "nexus": {
+                    "type": "object",
+                    "properties": {
+                        "data_inline_max_bytes": {
+                            "type": "integer",
+                            "default": 24000,
+                            "description": "UI-skill payload size above which the render channel switches from inlining the data into the transcript to storing it as a persistent render blob referenced by data_ref (hydrated by Polaris via GET /attachments/<id>); issue #26 P2, §6.8. Small payloads render exactly as before."
+                        }
+                    }
+                },
+                "offload": {
+                    "type": "object",
+                    "properties": {
+                        "raw_max_bytes": {
+                            "type": "integer",
+                            "default": 0,
+                            "description": "Optional lowering override on the derived offload size trigger (issue #37): the trigger derives from the live context window (trigger_share of the usable window — the payload-to-window ratio is what actually predicts degradation) and this key only ever lowers it — a user-facing 'never route anything bigger than this to analysis' override, not a per-model setting. 0 (default) disables the override; when no context window can be resolved the trigger falls back to a built-in static byte comparison that this key lowers too."
+                        },
+                        "trigger_share": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "default": 0.5,
+                            "description": "One share of the usable context window bounding all three derived sizing checks (issue #37): the C1 size trigger (payload alone would take this share of the usable window), the C2 digestion input feasibility, and the C4 share bound on the returned digest. Deliberately one key — the checks form one escalator; independent shares would re-create the independent-magic-numbers problem."
+                        },
+                        "digest_max_chars": {
+                            "type": "integer",
+                            "default": 16384,
+                            "description": "Absolute ceiling on a returned digest, in characters (issue #37, C4): the active bound is min(this ceiling, the interpreter's history-share bytes), because the trail rides the history. The digestion prompt mandates the same number, so instruction and guard agree; a digest above the bound is treated as a failed digestion — guidance, no retry, never forwarded."
+                        },
+                        "max_turns": {
+                            "type": "integer",
+                            "default": 4,
+                            "description": "Turn bound for the bounded, skill-less digestion agent."
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "default": 300,
+                            "description": "Execution timeout (seconds) for the digestion agent."
+                        },
+                        "spend_policy": {
+                            "type": "string",
+                            "enum": ["ask", "allow", "deny"],
+                            "default": "ask",
+                            "description": "Consent posture for offload digestion when the digestion model is a metered (cloud, paid) provider (#26 P2, ratified with #18): 'ask' shows a framework-rendered consent card per oversized result, 'allow' is a deliberate standing consent granted via the wizard's standing-consent step (the card's always-allow button upgrades the posture for the current session only), 'deny' rejects with guidance. Local (non-metered) digestion runs under every policy."
+                        },
+                        "consent_ttl": {
+                            "type": "integer",
+                            "default": 600,
+                            "description": "Lifetime (seconds) of a pending consent-card decision token; expiry is a no-op — the card dies and nothing auto-executes (#26 P2)."
+                        },
+                        "digest_cache": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean",
+                                    "default": true,
+                                    "description": "Reuse offload digests for byte-identical oversized results (payload-hash keyed, in-memory, session-scoped) instead of paying for a repeated digestion agent run (issue #26)."
+                                },
+                                "max_entries": {
+                                    "type": "integer",
+                                    "default": 8,
+                                    "description": "Maximum cached digests (LRU-evicted)."
+                                }
+                            }
+                        }
+                    }
+                },
+                "context": {
+                    "type": "object",
+                    "properties": {
+                        "reserve_pct": {
+                            "type": "integer",
+                            "default": 25,
+                            "description": "Percentage of the context window kept free (answer + follow-up headroom) when the budget ledger gates the interpretation prompt (issue #26 §6.9)."
+                        },
+                        "chars_per_token": {
+                            "type": "integer",
+                            "default": 3,
+                            "description": "Conservative bytes-per-token conversion for the budget ledger, multilingual-safe."
+                        },
+                        "effective_window_cap": {
+                            "type": "integer",
+                            "default": 128000,
+                            "description": "Effective-context ceiling in tokens (issue #37, research-backed): long-context accuracy degrades well before the advertised window (lost-in-the-middle; degradation even with perfect retrieval; multi-hop reasoning suffers most; effective context diverges from advertised beyond 128K-256K tokens). Every window-derived budget — interpretation prompt ledger, history share, and the offload sizing escalator — assumes at most this many tokens regardless of the resolved window. 0 disables the cap (expert override: accept the degradation)."
+                        },
+                        "interpretation_history": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Ledger-driven interpretation history window (issue #26 §6.10): the interpreter sees as much recent conversation as fits its share of the ledger budget (floored at 4 messages). false restores the fixed last-4-messages slice — the one-key rollback for small-model regressions."
+                        },
+                        "interpretation_history_share": {
+                            "type": "integer",
+                            "default": 40,
+                            "description": "Maximum share (percent) of the ledger budget the interpreter's history window may occupy, so history never squeezes the payload/answer space (issue #26 §6.10)."
+                        }
+                    }
                 }
             },
             "required": ["servers"]

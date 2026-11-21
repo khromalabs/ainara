@@ -262,6 +262,96 @@ code {
     content: "🔮✨";
 }
 
+/* Consent-card mechanical records (#26 P2): receipt pills, same visual
+ * family as .orakle-skill. Icons identify the record kind/outcome. */
+.consent-record {
+    display: inline-block;
+    max-width: 98%;
+    border-radius: 5px;
+    margin: 4px;
+    padding: 2px;
+    background-color: #AAA;
+    color: black;
+}
+
+.consent-card-record:before {
+    content: "❓";
+}
+
+.consent-decision-approved:before {
+    content: "✅";
+}
+
+.consent-decision-denied:before {
+    content: "🚫";
+}
+
+.consent-decision-dismissed:before {
+    content: "🤚";
+}
+
+/* Offload digest trail record (#37): receipt pill for the digest
+ * marker; the digest body itself renders right below as a fenced
+ * monospace note. Same pill family as the consent records. */
+.offload-digest-record:before {
+    content: "🔬";
+}
+
+/* Mechanical status signal (#37 generated-guidance seam): the
+ * fail-to-signal fallback when guidance generation fails — a surface,
+ * never speech. Same pill family. */
+.orakle-status-record:before {
+    content: "⚙️";
+}
+
+/* Agent-cancel status (#35): the user stopped the run. Red light —
+ * the semaphore image: the run is halted. */
+.orakle-status-agent_cancelled:before {
+    content: "🔴";
+}
+
+/* Run-journal step record (#26/#35): transcript trail of an agent
+ * run's progress labels. Same pill family as the other mechanical
+ * records; the live channel is the com-ring signal. */
+.agent-progress-record:before {
+    content: "🤖";
+}
+
+/* Agent report trail (#35): the skill-agent's dossier persisted as
+ * evidence; collapsed by default, expandable. Same pill family. */
+.agent-dossier-record:before {
+    content: "📋";
+}
+
+/* Collapsed report trails (#37/#35): digest and dossier bodies live
+ * inside a <details> so history keeps the evidence without wall-of-
+ * text dumps. */
+.trail-details {
+    display: block;
+    max-width: 98%;
+    margin: 4px;
+    border-radius: 5px;
+    background-color: #242424;
+}
+
+.trail-details summary {
+    cursor: pointer;
+    padding: 6px 10px;
+    color: #ccc;
+    font-size: 0.9em;
+}
+
+.trail-details .trail-body {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 40vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85em;
+    color: #bbb;
+}
+
 ::-webkit-scrollbar {
     width: 10px;
 }
@@ -443,4 +533,183 @@ th[data-sort]:hover .tablesort__icon {
 
 .live-turn-stamp {
     font-style: italic;
+}
+
+/* Consent card (#26 P2) — framework-rendered decision surface for the
+   offload spend axis (pilot client of #18's confirmation primitive).
+   Generic shape: title + quote + buttons arrive composed and localized
+   in the payload; this file only styles the surface.
+
+   The card deliberately draws NO surface of its own: the document view
+   already IS the floating window — a boxed card inside it would be a
+   window within the window. The consent content fills the whole
+   document area instead: big type on the same grey surface, with the
+   palette's single highlight colour (#f0f000) reserved for the
+   framework's question and the affirmative answer (the two things the
+   consent invariant makes dominant). */
+.consent-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin: 0;
+    padding: 0 40px;
+}
+
+.consent-card {
+    transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.consent-card.consent-closing {
+    opacity: 0;
+    transform: scale(0.97);
+}
+
+.consent-headline {
+    font-size: 30px;
+    font-weight: bold;
+    color: #f0f000;
+    margin-bottom: 22px;
+}
+
+/* The circled question mark — the universal "this is a question that
+   needs answering" sign. Drawn in CSS rather than an emoji so it stays
+   in the palette (grey ring, yellow mark): it belongs to the
+   framework's question, which is the loudest element on screen. */
+.consent-headline::before {
+    content: '?';
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 14px;
+    border: 3px solid #f0f000;
+    border-radius: 50%;
+    color: #f0f000;
+    font-size: 24px;
+    vertical-align: 2px; /* optically center against the headline text */
+}
+
+/* The model's explanation — visually subordinate to the framework's
+   question above it (the consent invariant made visible). The
+   quotation marks are presentational: the payload text stays exactly
+   what was spoken and persisted in the conversation. */
+.consent-quote {
+    font-size: 22px;
+    line-height: 1.6;
+    margin-bottom: 34px;
+    opacity: 0.75;
+    font-style: italic;
+}
+
+.consent-quote::before {
+    content: '“';
+    font-size: 30px;
+    color: white;
+}
+
+.consent-quote::after {
+    content: '”';
+    font-size: 30px;
+    color: white;
+}
+
+.consent-buttons {
+    display: flex;
+    flex-direction: row;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+/* Borderless, filled targets: on the grey surface a border reads as
+   chrome; the button shape itself is the affordance. Column layout so
+   the mechanical accelerator caption sits under the label. */
+.consent-button {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 64px; /* touch-friendly target */
+    border: none;
+    border-radius: 10px;
+    background: #333;
+    color: #e8e8e8;
+    font-family: inherit;
+    font-size: 22px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+/* Accelerator caption (#26): Alt + first letter of the (localized)
+   label, computed by the renderer — an honest hint that the card
+   answers from the keyboard too. Language-free; the payload stays
+   untouched. */
+.consent-button-hint {
+    font-size: 12px;
+    font-weight: normal;
+    opacity: 0.55;
+    letter-spacing: 0.5px;
+}
+
+.consent-button:hover:not(:disabled) {
+    background: #444;
+}
+
+.consent-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* The chosen answer stays legible under the disabled freeze: a yellow
+   ring marks what the user's hand decided (tap or Alt-key); the
+   unchosen options fade further. The ring follows the palette's single
+   highlight colour — the user's decision joins the framework's
+   question and the affirmative answer as the only yellow on screen. */
+.consent-button.consent-chosen {
+    box-shadow: 0 0 0 2px #f0f000;
+    opacity: 1;
+}
+
+.consent-buttons.resolved .consent-button:not(.consent-chosen) {
+    opacity: 0.3;
+}
+
+/* The affirmative answer shares the highlight colour with the
+   framework's question above it. */
+.consent-button.primary {
+    background: #666;
+}
+
+.consent-button.primary:hover:not(:disabled) {
+    background: #888;
+}
+
+/* The standing-policy decision stays deliberately quieter than the
+   per-run one, but remains a full touch-sized target. */
+.consent-button.ghost {
+    background: transparent;
+    color: #aaa;
+    border: 3px solid #333;
+}
+
+.consent-button.ghost:hover:not(:disabled) {
+    background: #333;
+}
+
+.consent-note {
+    font-size: 16px;
+    opacity: 0.55;
+    margin-bottom: 14px;
+}
+
+.consent-status {
+    display: none;
+    font-size: 20px;
+    color: white;
+}
+
+.consent-status.visible {
+    display: block;
 }

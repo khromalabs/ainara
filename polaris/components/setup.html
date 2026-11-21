@@ -23,6 +23,7 @@
                 <div class="step" data-step="skills">Skills</div>
                 <div class="step" data-step="mcp">MCP Servers</div>
                 <div class="step" data-step="shortcuts">Shortcuts</div>
+                <div class="step" data-step="agents">Agent Analysis</div>
                 <div class="step" data-step="finish">Finish</div>
             </div>
 
@@ -194,6 +195,31 @@
                         </div>
                     </div>
 
+                </div>
+
+                <!-- Agent analysis standing-consent step (#26) -->
+                <div class="step-panel" id="agents-panel">
+                    <h2>Large Data Analysis</h2>
+                    <p>Some answers need more data than fits in a single read — a long document, a large web page, a big file. For those, Ainara can analyze the data in steps using a background agent that reads it piecewise and reports a synthesis back to you.</p>
+                    <p id="agents-metered-warning" class="agents-metered-warning hidden">Your analysis model runs on a paid cloud provider, so each of these analyses consumes API credit. Choose how Ainara should proceed:</p>
+
+                    <div class="stt-options">
+                        <div class="stt-option">
+                            <input type="radio" name="agent-consent" id="agents-policy-allow" value="allow">
+                            <label for="agents-policy-allow">Always analyze</label>
+                            <p class="option-description">Ainara starts the analysis without asking each time. Recommended when your models run locally and cost nothing per use.</p>
+                        </div>
+                        <div class="stt-option">
+                            <input type="radio" name="agent-consent" id="agents-policy-ask" value="ask" checked>
+                            <label for="agents-policy-ask">Ask before analyzing</label>
+                            <p class="option-description">Ainara shows a confirmation card on screen each time; nothing is analyzed until you tap it. The card's "Always" choice lasts for the current session only — this page is the only place to allow it permanently.</p>
+                        </div>
+                        <div class="stt-option">
+                            <input type="radio" name="agent-consent" id="agents-policy-deny" value="deny">
+                            <label for="agents-policy-deny">Never analyze</label>
+                            <p class="option-description">Ainara will not run analysis agents; for oversized data it will suggest asking about a specific part of it instead.</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Finish step -->

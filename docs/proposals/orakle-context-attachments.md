@@ -1,6 +1,7 @@
 # Proposal: Orakle Context Attachment System
 
 **Status:** Draft — discussion and decision tracking in [Issue #26](https://github.com/khromalabs/ainara/issues/26); this document is the versioned record, with major decisions from the thread backported here.
+**Updated:** 2026-10-27 — the agent-offload re-scope, the spend/consent ratification and the implementation state (P1 + P1.5) are backported in §12. Where an update supersedes original sections (§5–§6.6, §8, §10), those retain the original design record.
 **Author:** Rubén Gómez
 **Date:** 2026-10-17
 **Related:** [Issue #26](https://github.com/khromalabs/ainara/issues/26) (discussion), Issue #18 (framework policy doctrine — skills request, framework bounds), Issue #17 (tiered skills model — shared skill-metadata surface). Implementation files: Orakle middleware (`ainara/framework/orakle_middleware.py`), two-stage matcher (`ainara/framework/matcher/transformers.py` — stage-1 embeddings; outdated module name), chat manager persistence flow (`ainara/framework/chat_manager.py`), GREEN memories (`ainara/framework/green_memories.py`), ChatMemory (`ainara/framework/chat_memory.py`). Adjacent but out of scope: Polaris context-window status feedback.
@@ -612,6 +613,29 @@ whole. Ladder: skill-side digest (preferred, free) → chunked digestion
 user-visible "analyzing a large file" feedback) → chunk stubs so
 follow-ups pull single slices.
 
+### 6.10 The interpreter becomes a ledger client
+
+The interpreter's conversation context was a hard-coded constant (last
+4 messages via `_get_chat_context`) — too little for reference
+resolution across turns. The window is now ledger-driven: the
+interpreter walks the history newest→oldest and keeps everything that
+fits its **share of the ledger budget** (§6.9's usable bytes ×
+`orakle.context.interpretation_history_share`, default 40%), with a
+**4-message floor** — tiny windows keep today's behavior by
+construction, since today's slice IS the floor. System messages are
+skipped as before; order is chronological.
+
+Config-gated for a one-key rollback:
+`orakle.context.interpretation_history` (default `true`); `false`
+restores the fixed last-4 slice byte-identically. An unresolvable
+context window also falls back to the floor.
+
+Deliberately NOT in this phase: surfacing the idle-time shrink/summary
+artifact to the interpreter as constant-cost long-range context — it
+depends on where the compaction output lives (GREEN 2.0, #33) and is
+tracked as a follow-up. The share cap exists so the history window can
+never squeeze the payload/answer space.
+
 ## 7. What deliberately does not change
 
 - **The Orakle frontend** — natural-language tags, no schemas in context.
@@ -657,6 +681,10 @@ This fits the user-is-authoritative philosophy.
 | `orakle.context.digest_chunk_bytes` | e.g. 24576 | Chunk size for map-reduce digestion of oversized results (§6.9) |
 | `orakle.context.digest_max_map_calls` | e.g. 12 | Sanity cap → beyond it, reject tier with guidance (§6.9) |
 
+**Update (re-scope, §12):** the `orakle.attachments.*` keys were dropped — never implemented; the store shrank to the future snapshot store. The `digest_chunk_bytes` / `digest_max_map_calls` keys are mooted by the re-scope (chunked digestion collapsed into the agent loop). The `orakle.nexus.*` render ceilings remain P2.
+
+**Update (2026-11-21, #37):** the live surface outgrew the list above; the current, authoritative key reference is `resources/config.schema.json`, and `docs/architecture/offload-sizing.md` documents the offload sizing model for advanced users. The sizing escalator (C1–C5) is implemented with a ratio-based C1 trigger (`orakle.offload.trigger_share` × usable window, effective-context cap inherited; `orakle.offload.raw_max_bytes` is now an optional lowering-only override, default 0), plus `orakle.offload.digest_max_chars`, `orakle.offload.spend_policy`, and `orakle.context.effective_window_cap`.
+
 ## 9. Relationship to modern practice
 
 The design aligns with the converging industry consensus on context
@@ -688,6 +716,7 @@ as "just re-run the tool".
 
 ## 10. Phasing
 
+**Update (§12):** superseded by the re-scope phasing — P1 and P1.5 are implemented; P2 is the consent card, Polaris progress rendering, snapshot store and Nexus render ceiling; P3 is slice access for above-window payloads, `requires_analysis`, ledger-driven interpretation window (§6.10). Agent offload is no longer deferred: it is the primary mechanism. The table below retains the original pre-re-scope phasing record.
 | Phase | Contents | Risk |
 |---|---|---|
 | **1** | `context_policy` / `rehydrate` / `replayable` / `snapshot_validator` declarations · stub format · `attachment_created` chunk in `chat_manager` · AttachmentStore with **recipe records only** (`reexecute`) · capture metadata in every record from day one · registration-time consistency checks · **budget ledger** (turn gate + digestion gate, §6.9 — guards the existing interpretation path too) | Minimal; inert until a skill opts in (ledger excepted: it guards from day one) |
@@ -711,6 +740,7 @@ resolved by §6.8: the paradigm difference is expressible as
 
 ## 11. Open points
 
+**Update (§12):** points 1 (chunk-embedding parameters) and 4 (rehydration budget) are mooted by the re-scope — the rehydration and embeddings passes are out of scope. Point 2 (digest authoring) is partially resolved: the skill-side `analysis` field is implemented; the interpretation prompt remains the fallback. Points 3, 5–9 stay open where still relevant to the shrunken scope.
 1. **Embedding target for retrieval**: stub summaries (atomic,
    matcher-style) for the normal tier — resolved; **chunked payloads**
    for the oversized-attachment tier (§6.9 ladder tier 3), where slices
@@ -746,6 +776,292 @@ resolved by §6.8: the paradigm difference is expressible as
    GREEN. The latter would also force the overdue rename of the
    outdated `matcher/transformers.py` module name (Fastembed, not
    Transformers, for a while now).
+
+---
+
+## 12. Update log
+
+### 2026-11-02 (later) — §6.10 implemented: the interpreter is a ledger client
+
+- `_get_chat_context` now derives the interpreter's history window
+  from the ledger: newest→oldest walk under
+  `orakle.context.interpretation_history_share` (40% of usable bytes),
+  4-message floor, chronological order. Gate
+  `orakle.context.interpretation_history` (default on) rolls back to
+  the fixed 4-message slice; unresolvable windows fall back to the
+  floor. §6.10 written into the document (it was referenced but never
+  recorded).
+- The idle-time shrink/summary artifact is explicitly out of this
+  phase (depends on GREEN 2.0 compaction output location).
+- 6 new unit tests (order preservation, budget exclusion, floor,
+  rollback gate, unresolvable window, system-skip in both paths); 88
+  total green.
+
+### 2026-11-02 — Wizard standing-consent step: the persistent `allow` path
+
+The setup wizard gains an **Agent Analysis** step (after Shortcuts) —
+the high-deliberation surface the card's session-scoped Always was
+designed to defer to:
+
+- Three postures, radio-selected: **Always analyze** (`allow`), **Ask
+  before analyzing** (`ask`, default preselection), **Never analyze**
+  (`deny`). One line makes the session/persistent split explicit: the
+  card's "Always" lasts for the current session only; this page is the
+  only place to allow it permanently.
+- **`orakle.enable_agent_spawn` rides the same decision**: any posture
+  other than "Never" grants the standing spawn gate (P1 router +
+  `requires_agent`); "Never" revokes it. This retires the interim
+  "stays `false`" arrangement — standing consent is now granted via the
+  wizard, as the spend-axis ratification intended.
+- **Metered-provider cost warning** mirrors
+  `_is_digestion_model_metered` (Ollama = local/free; fail-closed →
+  warning shows when the selection cannot be resolved), displayed as an
+  amber note above the options.
+- Read-modify-write of the real backend config via
+  `loadBackendConfig`/`saveBackendConfig` (the #34 contract); saves to
+  both PyBridge and Orakle. Schema description of `spend_policy`
+  corrected: persistent `allow` is wizard-only.
+
+### 2026-10-19 — Re-scope ratified: agent-offload digestion becomes the primary mechanism
+
+Recorded in the issue thread. The inversion: for analysis-class
+workloads, ephemeral Bureau agent offload (formerly ladder tier 4,
+§6.9) is promoted to the primary mechanism for keeping raw data out of
+the conversational context.
+
+- Ladder tiers 2–3 collapse into the agent loop: chunked map-reduce
+  digestion and chunk-stub slice retrieval are a fixed,
+  framework-scripted way to read a payload piecewise and decide what
+  matters; a bounded Bureau comprehension agent does the same
+  *adaptively* — the model decides what to re-read. One mechanism
+  replaces two.
+- The rehydration pass (§6.3) and embeddings retrieval drop out of
+  scope. Follow-ups are served by *re-offload* (kill-on-complete,
+  fresh agent primed with prior conclusions), not by injecting stored
+  data into chat context.
+- The AttachmentStore shrinks to a snapshot store for the
+  non-replayable class only: no validators, no retrieval index, no
+  rehydration budget. §5–§6.6 remain the design record for a future
+  revival.
+- The budget ledger simplifies: raw data never enters the
+  conversational context under any policy, so it guards only history,
+  GREEN and digests.
+- What survives unchanged: §6.8's two delivery channels; §6.9 tier 1
+  (skill-side `analysis` digest — preferred free tier, implemented);
+  §5's policy declarations (now governing the render channel and the
+  future snapshot work).
+
+### 2026-10-27 — Spend axis and consent ratified (with #18)
+
+Follow-up thread on cost, provider rate limits and the reliability of
+agentic digestion on metered providers:
+
+- `orakle.offload.spend_policy` (`ask` | `allow` | `deny`), default
+  `ask` when the digestion model is metered. `allow` is always a
+  deliberate user decision (wizard), never a default. Maps 1:1 onto
+  #18's `prompt` / `allow_all` / restricted postures.
+- The **consent invariant**: *the model proposes and explains; the
+  framework decides; the user authorizes with their hand.* Consent is
+  a mechanical input event — a framework-rendered card with
+  framework-computed numbers and a one-shot, TTL'd decision token —
+  never LLM-adjudicated conversation text (hallucination,
+  historical contamination and prompt-injection proofs; the payload
+  about to be digested is untrusted content). Voice narration hands
+  off to the button; a spoken "yes" carries no authority in v1.
+- The consent card is the v1 of #18's confirmation primitive; offload
+  is its pilot client (framework-internal, single mechanical trigger).
+  **Economic impact (metered spend)** becomes #18's second sensitivity
+  axis, alongside destructive risk.
+- Sequencing: P1.5 (no UI required) → consent card ships with P2 →
+  wizard standing-consent is the `allow` path. `enable_agent_spawn`
+  stays `false` until the wizard step + progress UI land; the ledger
+  rejection doubles as the discoverability path.
+
+### 2026-10-28 (later) — Card interaction revisions: session-scoped Always, generic surface, conversational close
+
+Live-design iteration on the P2 card (recorded on #26; supersedes the
+ratified text where noted):
+
+- **"Always allow" is session-scoped (revision of the spend/consent
+  ratification)**: the card's *Always* upgrades the posture to `allow`
+  in memory only — dies on reboot, never overrides an explicit standing
+  `deny`, never writes the config. The card click is low deliberation
+  (voice, mid-conversation); persistent standing consent is the
+  wizard's decision, where the metered-provider warning is read before
+  committing. The wizard step is now the ONLY path to persistent
+  `allow`.
+- **The card is the generic #18 confirmation-primitive shape, made
+  literal**: the payload carries everything the renderer shows — title,
+  quote, button labels, note — composed and localized by the backend to
+  the session language. Polaris is strictly presentational; any future
+  #18 client reuses the renderer unchanged.
+- **Minimal card**: framework title ("Accept Ainara's suggestion?"),
+  the narration as a subordinate quote (already spoken and in the
+  record — no ad-hoc card prose), horizontal touch-sized
+  Yes / No / Always buttons, one session/expiry line. The invariant is
+  visible in the layout: the model explains, the framework decides.
+- **Conversational close**: while a card is pending, chat_manager
+  injects a hint with the authorization rules (only the tap
+  authorizes; voice yes must be politely refused; decline/defer/close
+  via `<consent_close>id</consent_close>`). The model emits the tag;
+  chat_manager strips it before TTS; the middleware invalidates the
+  token server-side (a closed card is a dead offer); Polaris dissolves
+  the card. The card is never silently auto-closed: TTL expiry leaves
+  it visibly dead on screen.
+- **Narration localization (interim)**: short hand-written variants for
+  the 8 Kokoro languages keyed by the session language — the fixed
+  English string would have been read through a foreign G2P. The
+  model-interpreted narration (query-adapted, `skill_intention`-style)
+  remains the long-term fix (TODO + open design question at the
+  emission site: the trigger fires post-selection).
+
+### 2026-11-01 — The card's mechanical interaction set: keyboard, Escape-dismissal, de-boxed surface
+
+Live-use iteration on the P2 card (recorded on #26). The consent surface
+now has its full decision vocabulary, all on the mechanical channel:
+
+- **Keyboard accelerators (`Alt+<letter>`)**: the renderer binds
+  Alt + the first letter of each (localized) button label — mechanical,
+  derived from the payload, generic for any future #18 client; labels
+  without a latin letter (CJK localizations) get no binding and the
+  buttons remain the authority. A muted per-button caption states the
+  combination honestly. com-ring reserves Alt as an accelerator
+  modifier (same rationale as its existing Ctrl guard): an Alt-combo
+  never enters typing mode, so the any-letter-summons-input invariant
+  is untouched.
+- **Escape dismisses a pending offer**: the card dissolves (same soft
+  fade as the conversational close) and the one-shot token is consumed
+  server-side via the existing deny path — a dismissed offer is a dead
+  offer. This is an explicit mechanical user act, not an auto-close: it
+  does not revise the never-silently-auto-closed rule. Esc keeps its
+  exchange semantics (mute/hold during a response in flight outranks).
+  **Tab deliberately stays a pure view switch** — it moves between
+  surfaces and never decides anything.
+- **TTL semantics unchanged** (deliberate, after discussion): expiry
+  remains the mechanical validity backstop, `consent_close` owns the
+  conversational side, and dismissal-vs-expiry stay distinct states
+  (dismissed is a user act; expiry is a no-op with an honest
+  "ask me again" message). Revisit only with actual usage evidence.
+- **Visual revision**: the card draws no surface of its own anymore —
+  the document view already is the floating window, so the decision
+  fills the whole content area with bigger type (the de-boxing also
+  resolves a window-in-window nesting). Palette re-aligned to the
+  surface's grey + its single highlight colour (`#f0f000`), reserved
+  for the two things the invariant makes dominant: the framework's
+  question (with a CSS-drawn circled question mark) and the affirmative
+  answer. The quote gains presentational quotation marks; the payload
+  text stays exactly what was spoken.
+
+### 2026-10-28 — P2 opens: consent card + spend policy implemented
+
+Branch `dev012-agentloop`. The spend/consent ratification above is now
+code:
+
+- **`orakle.offload.spend_policy` (`ask` | `allow` | `deny`, default
+  `ask`)** gates the mechanical size-ceiling trigger when the digestion
+  model is metered. Metered detection resolves the default `llm`
+  provider (the one Bureau agents fall back to): the Ollama backend is
+  local — no spend axis, every policy runs friction-free; anything else
+  is metered, and an unresolvable selection counts as metered
+  (fail-closed: consent is asked rather than silently skipped).
+- **The consent card** is emitted by the middleware after the trigger
+  fires (size ceiling + no cached digest + `ask` + metered): a fixed
+  framework narration (voice-to-button handoff) plus a
+  `consent_request` signal carrying a **one-shot, TTL'd decision token**
+  (`orakle.offload.consent_ttl`, 600 s) and **ledger-computed numbers**
+  (provider, payload bytes, ~2× payload tokens, turn bound) — never
+  model-stated. The turn ends with the card; a spoken "yes" has no
+  authority.
+- **`POST /consent/<decision_id>`** (PyBridge) is the consent authority:
+  the body must carry the decision token. `deny` / expiry are no-ops
+  that only retire the card. Wrong-token attempts do not burn a pending
+  decision (validation precedes the pop — garbage posts cannot destroy
+  a card the user is about to click). Approval resumes out-of-band:
+  the deferred digestion runs and the digest streams back as a
+  **system-initiated segment** — a focused system-segment emitter in
+  `chat_manager` (same sentence/TTS batching and doc-fence state
+  machine as a chat turn; run-journal chunks stay signal-only), whose
+  text lands in history and chat memory as its own assistant entry.
+- **Token hygiene**: the decision token rides only the mechanical
+  channel (card signal → Polaris); chat history keeps a redacted
+  `_orakle_consent_card_|<decision_id>` marker, so a model can never
+  see, replay or fabricate it.
+- **"Always allow"** (third card button) flips the standing policy via
+  `config.set_exact` — the same deliberate decision as the wizard path,
+  taken in context. It commits before the resumed run.
+- **Polaris**: the document view renders the card (strictly
+  presentational — buttons delegate to com-ring, which owns the POST
+  and the resumed stream fed through the regular event machinery);
+  `agent_progress` labels from the resumed run reuse the P2 com-ring
+  rendering.
+- Tests: 58 LLM-free unit tests (router policy matrix, registry
+  one-shot/TTL/no-burn, resume semantics, digest-cache interplay);
+  the pre-P2 mechanical router tests pin the `allow` posture.
+- **Next**: wizard standing-consent step (the wizard-facing `allow`
+  path this unblocks); live integration test of the card loop.
+
+### 2026-10-27 — P1 + P1.5 implemented and live-tested
+
+Branch `dev012-agentloop`. Defaults preserve today's behavior except
+where noted.
+
+- **P1** (`d9e57286`, `3b0cd9e5`, `299fb538`, `e9e0e6a6`): run journal
+  in the agent loop (single artifact for progress, cancellation
+  reports and later resume); Bureau journal stream over the status
+  endpoint; size-ceiling router at the interpretation site
+  (`orakle.offload.raw_max_bytes`) routing oversized results to a
+  bounded, skill-less comprehension agent — the sanitization boundary,
+  only the digest returns to the conversation; reserved skill-side
+  `analysis` field (tier 1) preempting offload;
+  `_orakle_agent_progress_` signal chunks (Polaris rendering is P2).
+- **P1.5** (`1ba60428`, `2afb3fe8`, `a76661d6`):
+  - **Budget ledger, minimal v1 of §6.9**: the interpretation prompt
+    is gated at its single choke point (`stream_command_interpretation`)
+    against `window × (100 − reserve_pct)% × chars_per_token`. An
+    unresolvable window disables the guard — never reject blind. The
+    agentic path is exempt (own payload handling).
+  - **Behavior change vs §7**: a result too large for the ledger
+    budget with no consent for offload now **rejects with guidance
+    naming the setting** instead of silently inlining an overflow;
+    the rejection is also the discoverability path. Sub-budget
+    behavior is byte-identical.
+  - **Rate resilience**: concurrency 1 for digestion agents
+    (concurrent offload rejects with guidance); 429 backoff + one
+    retry on agent creation (shared helper, both spawn paths); failed
+    runs are never auto-retried — burned spend is not doubled without
+    consent.
+  - **Live integration test** (scenarios A–G against a real stack,
+    16384-token test window): all passing — inline regression, offload
+    happy path, digest boundary in history, Bureau-down guidance,
+    budget-fit inlining, ledger rejection, concurrency rejection.
+    Two bugs found and fixed: the no-skills failure rule made
+    skill-less digestion agents structurally unable to succeed
+    (`agent/core.py`), and the digest was written as prose without
+    the `<goal_complete>`/`<final_answer>` completion protocol
+    (blueprint now states it).
+- **Digest cache, the last P1.5 item** (`c2b864ae`):
+  payload-hash keyed reuse of offload digests — N follow-ups on the
+  same oversized payload pay for one digestion run (~15–25 s + real
+  tokens each otherwise). Design points:
+  - Keyed on SHA-256 of the raw payload bytes; a hit is only possible
+    for byte-identical data, so the cached digest is exactly as fresh
+    as the data received and §4 Rule 1 (no unlabeled stale data) holds
+    by construction — no staleness labeling applies.
+  - **Digestion goal made query-agnostic**: the agent now produces a
+    comprehensive, standalone digest of the payload instead of one
+    conditioned on the triggering query. This is the enabler for the
+    cache — a query-conditioned digest could not serve follow-ups.
+  - Session-scoped: in-memory `OrderedDict` with LRU eviction
+    (`orakle.offload.digest_cache.max_entries`, default 8), never
+    persisted; middleware lifetime = session scope. Off switch:
+    `orakle.offload.digest_cache.enabled` (default true).
+  - Failed digestions are not cached; a cache hit skips the loading
+    signal entirely (no agent run, instant response).
+- **Deferred**: consent card, Polaris `agent_progress` rendering,
+  snapshot store + re-offload, Nexus render inline ceiling +
+  `data_ref` hydration → P2; slice access for above-window payloads,
+  `requires_analysis` semantic flag, ledger-driven interpretation
+  window (§6.10) → P3.
 
 ---
 

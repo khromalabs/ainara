@@ -143,6 +143,26 @@ stops the reproduction entirely — voice *and* floating text — while the
 answer finishes generating into the history. Neither gesture ever marks or
 cuts the recorded answer: the log is what was said, always complete.
 
+### The voice is always live (nothing pre-recorded)
+
+Every word the user experiences as assistant speech is generated in context
+— never retrieved from a fixed string. A canned sentence, however well
+localized, reads as a recording, and a recording is the opposite of the
+live interaction this interface exists to create. The precedent is the
+selection-time `skill_intention` sentence: the same mechanical event (a
+skill was chosen) becomes natural conversation because it is composed with
+the query, the conversation window and the session language in context.
+
+Framework-composed text — card titles, button labels, estimate lines,
+receipt pills — belongs to *surfaces*, not speech. The boundary is not
+"backend vs frontend" but "what the assistant says vs what the UI shows".
+When in-context generation fails, the assistant stays silent and the
+mechanical surface carries the information: silence beats a recording.
+
+And the model never states numbers it was not given: sizes, costs and
+counts are framework-computed and injected as data. The model words the
+truth; the framework owns the truth.
+
 ### Content over chrome
 
 Panels and skill views (including Nexus web components) present *content* —
@@ -163,12 +183,23 @@ mechanisms.
 | Escape (ring or document view, response in flight) — press | Mutes reproduction: TTS stops, the answer keeps streaming as fast karaoke, and lands complete in the chat history when generation ends |
 | Escape (ring or document view, response in flight) — hold | Stops message reproduction: TTS and karaoke both stop; the answer still completes into the chat history, unmarked |
 | Escape (ring, idle) | Hides all windows |
+| Escape (document view, pending consent offer) | Dismisses the offer: the card dissolves and the one-shot decision token is consumed — a dead offer can never be honored afterwards. If the card was the only document item, the surface empties and the view returns to the ring |
 | Escape (document view) | Returns to the ring view |
 | Tab (ring) | Shows chat history |
 | Tab (history / document view) | Returns to the ring |
+| Alt + letter (pending consent card) | Resolves the decision — the keyboard's twin of the tap, bound mechanically to the first letter of each (localized) button label |
 | Arrow up / down (input bar) | Steps through previous drafts; the in-progress draft is stashed and restored; ↓ ends on an empty input |
 | User turn while a response is in flight | Queued (never dropped); dispatched, newline-joined, when the answer finishes |
 | Window blur | Ring view hides (voice continues); typing mode is intended to be cancelled (currently persists main-side — known landmine, see the windowing model reference) |
+
+Two keys carry structural meaning, everywhere and without exception:
+**Tab switches surfaces** — it moves between views and never decides
+anything; **Escape means leave** — it withdraws the user's presence from
+whatever holds it, which includes withdrawing an unanswered question
+(the consent card's offer dies with it). Modifier combos are in-surface
+accelerators, never typing prefixes: an Alt-combo resolves a pending
+decision or does nothing, but it never enters typing mode — the
+any-letter-summons-input invariant is untouched by them.
 
 The `WindowManager` (`polaris/windows/WindowManager.js`) and the per-window
 handlers (`getHandlers()` in each window class) enforce the show/hide/focus

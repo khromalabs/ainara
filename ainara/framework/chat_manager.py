@@ -27,6 +27,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Generator, List, Literal, Optional, Union
 
@@ -482,6 +483,48 @@ class ChatManager:
                 "loading",
                 {"state": "start", "type": "skill", "skill_id": skill_id},
             )
+            return
+
+        if "_orakle_agent_progress_" in sentence:
+            # Run-journal progress relay (issues #26/#35): a stage label
+            # from a spawned agent's journal, carrying the run id (#35)
+            # — the address the com-ring's Ctrl+C cancel command posts
+            # against. Forwarded as a signal event so it never reaches
+            # TTS/text output. Old format (label only) stays parseable.
+            parts = sentence.strip().split("|", 2)
+            run_id = parts[1].strip() if len(parts) > 2 else ""
+            label = (
+                parts[2].strip()
+                if len(parts) > 2
+                else (parts[1].strip() if len(parts) > 1 else "")
+            )
+            yield ndjson(
+                "signal",
+                "agent_progress",
+                {"label": label, "run_id": run_id},
+            )
+            return
+
+        if "_orakle_status_" in sentence:
+            # Mechanical status pill (#37, #35): a framework-written
+            # record — surface, never speech. Streamed as a display-only
+            # event (audio: False, same shape as the no-TTS path) so
+            # base.js renders the pill while TTS never speaks the
+            # marker.
+            cleaned_sentence = re.sub(
+                r"^\[\d{1,2}:\d{2}\]\s*", "", sentence
+            )
+            if stream_type == "json":
+                yield ndjson(
+                    "message",
+                    "stream",
+                    {
+                        "content": cleaned_sentence,
+                        "flags": {"command": False, "audio": False},
+                    },
+                )
+            else:
+                print(cleaned_sentence)
             return
 
         try:
@@ -1289,6 +1332,98 @@ class ChatManager:
             doc_format, doc_content = command_body.split(",", 1)
             return f"```{doc_format}\n{doc_content}```"
 
+    def _handle_test_consent_stream(self, command: str, stream: str):
+        """Handles streaming for the /testconsent command (issue #26 P2).
+
+        Emits the exact consent_request signal the middleware emits at
+        the mechanical trigger — but with a decision that is NOT
+        registered in the ConsentRegistry. The card renders and the
+        buttons work, yet any approval resolves against the real
+        /consent/<decision_id> endpoint and comes back 'expired': the
+        one-shot token validation is exercised fail-closed, and nothing
+        can ever run off a fabricated card (the consent invariant,
+        demonstrated live). A denial is answered 'denied' regardless —
+        the user's act is the answer, and it fails closed by
+        construction.
+        """
+        usage_msg = (
+            "Usage: /testconsent — renders an inert consent card (any"
+            " approval resolves as expired against the real endpoint;"
+            " denials are always answered as denied)."
+        )
+        if stream != "json":
+            print(usage_msg)
+            return
+
+        yield ndjson("signal", "loading", {"state": "start"})
+        strings = self.orakle_middleware._offload_consent_strings()
+        card = {
+            "type": "consent_request",
+            "decision_id": f"test_{uuid.uuid4().hex}",
+            # Fabricated token: never registered, never resolvable.
+            "token": "test-token-not-registered",
+            "ttl": 600,
+            # Generic decision surface, localized to the session
+            # language. Quote is the mechanical estimate line (#37).
+            "title": strings["title"],
+            "quote": strings["estimate"].format(t=32074, c=4),
+            "buttons": [
+                {"id": "approve", "label": strings["yes"],
+                 "style": "primary"},
+                {"id": "deny", "label": strings["no"],
+                 "style": "secondary"},
+                {"id": "always_allow", "label": strings["always"],
+                 "style": "ghost"},
+            ],
+            "note": strings["note"].format(m=10),
+            "estimate": {
+                "provider": config.get(
+                    "llm.selected_provider", "test-provider"
+                ),
+                "payload_bytes": 48211,
+                "est_input_tokens": 32074,
+                "max_calls": 4,
+            },
+        }
+        # Mirror the real turn's history marker (token never in history).
+        self.llm.add_msg(
+            f"\n_orakle_consent_card_|{card['decision_id']}\n",
+            self.chat_history,
+            "assistant",
+        )
+        yield ndjson("signal", "consent_request", card)
+        yield ndjson("signal", "loading", {"state": "stop"})
+        yield ndjson("signal", "completed", None)
+
+    def _handle_test_consent_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /testconsent command for all stream types."""
+        return self._handle_test_consent_stream(command, stream)
+
+    def _find_pending_consent_id(self) -> Optional[str]:
+        """Latest consent-card marker in history whose decision is still
+        pending in the middleware registry (#26 P2). Markers persist in
+        history after resolution, so the registry — not the marker — is
+        the source of truth; the scan just finds candidates newest-first.
+        """
+        if not self.chat_history:
+            return None
+        for msg in reversed(self.chat_history):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content", "")
+            if "_orakle_consent_card_|" not in content:
+                continue
+            match = re.search(
+                r"_orakle_consent_card_\|([A-Za-z0-9_]+)", content
+            )
+            if match and self.orakle_middleware.has_pending_consent(
+                match.group(1)
+            ):
+                return match.group(1)
+        return None
+
     def _handle_command(
         self, question: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -1308,6 +1443,9 @@ class ChatManager:
 
         if command.lower().startswith("/testuserui"):
             return self._handle_test_user_ui_command(command, stream)
+
+        if command.lower().startswith("/testconsent"):
+            return self._handle_test_consent_command(command, stream)
 
         if command.lower().startswith("/tts"):
             return self._handle_test_tts_command(command, stream)
@@ -1809,6 +1947,34 @@ class ChatManager:
                     " your Orakle commands."
                 )
 
+            # --- Pending consent card (#26 P2 conversational close) ---
+            # The last unanswered consent marker in history + a live
+            # registry entry mean the card is still on screen. The model
+            # must know the authorization rules: only the tap authorizes,
+            # voice agreement is refused politely, and decline/defer/
+            # change-of-subject closes the card via the mechanical tag
+            # (the model proposes the close; the framework executes it
+            # and kills the token server-side).
+            pending_consent_id = self._find_pending_consent_id()
+            if pending_consent_id:
+                system_hint_content += (
+                    "\n\nPENDING CONFIRMATION CARD: A confirmation card is"
+                    " on screen (offer id: "
+                    f"{pending_consent_id}) asking the user to authorize a"
+                    " paid multi-step analysis. Authorization rules: ONLY"
+                    " a tap on the card's button authorizes it — a spoken"
+                    " or typed yes/agreement carries NO authority and must"
+                    " never be treated as approval. If the user agrees or"
+                    " tells you to go ahead, warmly insist that they tap"
+                    " the confirmation button on the screen (you cannot"
+                    " accept it by voice). If the user declines, defers it"
+                    " (\"later\", \"not now\"), or clearly moves on to"
+                    " something else, respond naturally and then close the"
+                    " card by outputting exactly <consent_close>"
+                    f"{pending_consent_id}</consent_close> as the very last"
+                    " thing in your response."
+                )
+
             # Wrap in <system_hint> tags if there's any content
             if system_hint_content.strip():
                 system_hint_content = (
@@ -1895,6 +2061,23 @@ class ChatManager:
 
                 if (
                     isinstance(chunk, dict)
+                    and chunk.get("type") == "consent_request"
+                ):
+                    # Consent card (#26 P2; #18 confirmation primitive
+                    # pilot): the framework-rendered decision surface for
+                    # the offload spend axis. The decision token rides
+                    # only the signal channel to Polaris — history keeps
+                    # a redacted decision-id marker so the model can
+                    # never see, replay or fabricate the token.
+                    yield ndjson("signal", "consent_request", chunk)
+                    processed_answer += (
+                        "\n_orakle_consent_card_|"
+                        f"{chunk.get('decision_id', '')}\n"
+                    )
+                    continue
+
+                if (
+                    isinstance(chunk, dict)
                     and chunk.get("type") == "nexus_skill_result"
                 ):
                     vendor = chunk.get("vendor")
@@ -1953,11 +2136,20 @@ class ChatManager:
 
                     nexus_data = {
                         "component_path": component_path,
-                        "data": skill_data,
                         "query": query,
                         "mode": mode,
                         "panel_id": panel_id,
                     }
+                    if chunk.get("data_ref"):
+                        # Render inline ceiling (#26 P2, §6.8): payload
+                        # stored as a persistent render blob — the
+                        # transcript carries the reference plus a small
+                        # preview; Polaris hydrates by id at render
+                        # time. ChatMemory never holds payload bytes.
+                        nexus_data["data_ref"] = chunk["data_ref"]
+                        nexus_data["preview"] = chunk.get("preview", "")
+                    else:
+                        nexus_data["data"] = skill_data
 
                     # Create a descriptive message for the chat history
                     history_message = (
@@ -1971,6 +2163,34 @@ class ChatManager:
                 if not chunk:
                     continue
 
+                # Run-journal progress relay (#26/#35): forward as a
+                # signal event BEFORE the buffer machinery — the sentence
+                # batching would delay, merge or swallow it, and the
+                # marker must never reach the persisted answer or TTS.
+                # The segment path (_stream_system_segment) has the same
+                # interception; this is the main-flow counterpart.
+                if (
+                    isinstance(chunk, str)
+                    and "_orakle_agent_progress_" in chunk
+                ):
+                    yield from self._process_streaming_sentence(
+                        chunk.strip(), stream
+                    )
+                    continue
+
+                # Agent report trail (#35): mechanical record — persisted
+                # in the transcript, never streamed live, never spoken,
+                # never routed through the doc-fence machinery (the body
+                # is fenced and would otherwise flip the parse mode and
+                # render the report as a document). Polaris renders it
+                # from history after the turn, like the digest trail.
+                if (
+                    isinstance(chunk, str)
+                    and "_orakle_agent_dossier_" in chunk
+                ):
+                    processed_answer += chunk
+                    continue
+
                 processed_answer += chunk
 
                 # Route chunk to the correct buffer based on current parsing mode
@@ -1978,6 +2198,43 @@ class ChatManager:
                     doc_buffer += chunk
                 else:
                     text_buffer += chunk
+
+                # --- Conversational consent close (#26 P2) ---
+                # The model proposed dismissing the pending card via
+                # <consent_close>id</consent_close> (instructed by the
+                # pending-card hint). Strip the tag before it can reach
+                # TTS or the doc/sentence machinery, invalidate the token
+                # server-side (a closed card is a dead offer), and signal
+                # Polaris to dissolve the card. The tag can straddle
+                # chunks, hence the scan on the accumulated buffer.
+                if parsing_mode == "text" and "<consent_close>" in (
+                    text_buffer
+                ):
+                    close_match = re.search(
+                        r"<consent_close>([A-Za-z0-9_]+)"
+                        r"</consent_close>",
+                        text_buffer,
+                    )
+                    if close_match:
+                        decision_id = close_match.group(1)
+                        text_buffer = (
+                            text_buffer[: close_match.start()]
+                            + text_buffer[close_match.end():]
+                        )
+                        processed_answer = re.sub(
+                            r"\s*<consent_close>[A-Za-z0-9_]+"
+                            r"</consent_close>",
+                            "",
+                            processed_answer,
+                        )
+                        self.orakle_middleware.invalidate_offload_consent(
+                            decision_id
+                        )
+                        yield ndjson(
+                            "signal",
+                            "consent_closed",
+                            {"decision_id": decision_id},
+                        )
 
                 # --- State Machine for Parsing ---
                 # Loop to handle multiple state transitions within a single chunk (e.g., <doc>...</doc>)
@@ -2127,6 +2384,292 @@ class ChatManager:
             # For non-streaming mode, return the processed answer
             if not stream:
                 return processed_answer
+
+    def _fetch_interpretation_memories(self, query: str):
+        """Relevant GREEN memories for an out-of-band interpretation
+        pass (#37) — the same dynamic retrieval the user-turn path
+        performs, seeded with the offloaded query plus the recent
+        history for reference resolution."""
+        if not (self.memory_enabled and self.green_memories):
+            return None
+        history_tail = self.chat_history[-10:] if self.chat_history else []
+        parts = [
+            f"{m.get('role')}: {m.get('content', '')}"
+            for m in history_tail
+            if m.get("role") in ("user", "assistant")
+        ]
+        parts.append(query)
+        relevant = self.green_memories.get_relevant_memories(
+            "\n\n".join(parts)
+        )
+        if not relevant:
+            return None
+        processed = []
+        for mem in relevant:
+            mem_copy = mem.copy()
+            mem_copy["relevance_score"] = (
+                f"{mem_copy.get('relevance', 0.0):.2f}"
+            )
+            processed.append(mem_copy)
+        return processed
+
+    def consent_resume(
+        self, decision_id: str, token: str, decision: str
+    ) -> Generator[str, None, None]:
+        """Stream the out-of-band digestion segment for an approved
+        consent-card decision (issue #26 P2).
+
+        Runs entirely outside the user-turn flow: the original turn
+        already ended with the card. The middleware validates the one-shot
+        decision token (an unknown, replayed or expired decision yields an
+        'expired' consent_result signal — never an execution) and returns
+        the segment stream: the digestion runs out-of-band, and the
+        digest routes through the interpretation machinery (#37) so the
+        spoken answer is an in-conversation delivery derived from the
+        analysis — never the raw digest.
+        """
+        digest_stream = self.orakle_middleware.resume_offload_consent(
+            decision_id,
+            token,
+            decision,
+            memories_provider=self._fetch_interpretation_memories,
+        )
+        if digest_stream is None:
+            yield ndjson(
+                "signal",
+                "consent_result",
+                {"status": "expired", "decision_id": decision_id},
+            )
+            return
+        logger.info(
+            "CHAT: streaming approved offload digestion segment for"
+            " decision %s.",
+            decision_id,
+        )
+        yield ndjson(
+            "signal",
+            "consent_result",
+            {"status": "approved", "decision_id": decision_id},
+        )
+
+        # Mechanical decision record (#26 P2) rides the segment: it
+        # lands in the same history/memory entry as the digest it
+        # authorized — one permanent trail: offer → decision → digest.
+        # _stream_system_segment persists it but never speaks it.
+        record = f"\n_orakle_consent_decision_|{decision_id}|approved\n\n"
+
+        def _with_record():
+            yield record
+            yield from digest_stream
+
+        yield from self._stream_system_segment(_with_record())
+
+    def consent_denial_segment(
+        self, decision_id: str, decision: str, entry: dict
+    ) -> Generator[str, None, None]:
+        """Stream the conversational outcome segment for a consumed
+        deny decision (issue #37).
+
+        The conversational layer of the offload path lives at the
+        decision OUTCOME: the mechanical decision record is persisted
+        separately (by the endpoint, before this segment starts — it
+        must survive a client that never reads the stream), and the
+        spoken layer is a free, bounded feedback comment — the model
+        reacting to the outcome, never participating in the decision
+        surface. Called only for 'deny'; 'dismiss' (Escape,
+        put-it-away) stays silent: the user did not answer, commenting
+        would be chatter.
+
+        Failure posture (ratified): any feedback-generation failure —
+        429, timeout, empty output — closes the segment silently. The
+        record is already persisted, the card is already resolved in
+        the UI, and silence after a decline is a normal conversational
+        outcome. One attempt, no retries: the user just declined
+        spend; burning retries on a nicety would be tone-deaf.
+
+        `entry` is the snapshot returned by the middleware's
+        deny_offload_consent (query, payload size, chat history) — the
+        untrusted payload itself never enters the comment prompt.
+        """
+        def _segment():
+            feedback = self.orakle_middleware.denial_feedback_text(
+                query=entry.get("query", ""),
+                payload_bytes=entry.get("payload_bytes", 0),
+                chat_history=entry.get("chat_history"),
+                memories=self._fetch_interpretation_memories(
+                    entry.get("query", "")
+                ),
+            )
+            if feedback:
+                yield feedback
+
+        yield from self._stream_system_segment(_segment())
+
+    def record_consent_decision(self, decision_id: str, outcome: str) -> None:
+        """Persist a consent-card decision as a mechanical record (issue
+        #26 P2). Called by the PyBridge consent endpoint after a one-shot
+        decision was actually consumed — never for unknown/expired tokens
+        (a card that quietly died leaves no record: walked away).
+
+        The marker entry gives the conversation a permanent account of
+        the user's mechanical act and its outcome — the model channel
+        can read it (the static prompt carries the key) but can never
+        fabricate it (guardrail: the marker is a forbidden signal).
+        Never TTS'd: it is a record, not an utterance.
+        """
+        marker = f"\n_orakle_consent_decision_|{decision_id}|{outcome}\n"
+        self.llm.add_msg(marker, self.chat_history, "assistant")
+        if self.memory_enabled and self.chat_memory:
+            self.chat_memory.add_entry(marker, "assistant")
+        logger.info(
+            "CHAT: consent decision %s recorded as '%s'.",
+            decision_id,
+            outcome,
+        )
+
+    def _stream_system_segment(
+        self, chunks: Generator, stream: Literal["cli", "json"] = "json"
+    ) -> Generator[str, None, None]:
+        """Stream a system-initiated answer segment (issue #26 P2).
+
+        A focused version of chat_completion's output machinery for
+        segments that start outside a user turn: same sentence/TTS
+        batching and doc-fence state machine, but no user-turn handling
+        and no guardrail loop (the segment's source is the framework's
+        own digestion path, not a model channel). Run-journal progress
+        chunks become signal events and are kept out of the persisted
+        text. The accumulated text becomes the segment's assistant entry
+        in history and chat memory.
+        """
+        yield ndjson("signal", "loading", {"state": "start"})
+        processed_answer = ""
+        text_buffer = ""
+        doc_buffer = ""
+        parsing_mode = "text"
+        doc_format = "plaintext"
+
+        try:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                if (
+                    "_orakle_consent_decision_" in chunk
+                    or "_orakle_offload_digest_" in chunk
+                    or "_orakle_status_" in chunk
+                    or "_orakle_agent_dossier_" in chunk
+                ):
+                    # Mechanical records (#26 P2 / #37 / #35): the consent
+                    # decision, the offload digest, the status pills and
+                    # the agent report trail ride the segment's transcript
+                    # but are never spoken — they are records, not
+                    # utterances.
+                    processed_answer += chunk
+                    continue
+                if "_orakle_agent_progress_" in chunk or (
+                    "_orakle_loading_signal_" in chunk
+                ):
+                    # Run-journal progress / loading signals: forwarded
+                    # as signal events, never persisted as answer text.
+                    yield from self._process_streaming_sentence(
+                        chunk.strip(), stream
+                    )
+                    continue
+                processed_answer += chunk
+
+                # Route chunk to the correct buffer based on current
+                # parsing mode (same state machine as chat_completion).
+                if parsing_mode == "doc":
+                    doc_buffer += chunk
+                else:
+                    text_buffer += chunk
+
+                while True:
+                    state_changed = False
+                    if parsing_mode == "text":
+                        doc_start_match = re.search(
+                            r"```([\w\d_.-]*)\n", text_buffer
+                        )
+                        if doc_start_match:
+                            pre_doc_text = text_buffer[
+                                : doc_start_match.start()
+                            ]
+                            if pre_doc_text.strip():
+                                yield from self._process_regular_text(
+                                    pre_doc_text, stream
+                                )
+                            doc_format = (
+                                doc_start_match.group(1) or "plaintext"
+                            )
+                            if stream == "json":
+                                yield ndjson(
+                                    "ui",
+                                    "setView",
+                                    {
+                                        "view": "document",
+                                        "format": doc_format,
+                                    },
+                                )
+                            parsing_mode = "doc"
+                            doc_buffer = text_buffer[doc_start_match.end():]
+                            text_buffer = ""
+                            state_changed = True
+                    elif parsing_mode == "doc":
+                        doc_end_match = re.search(r"```", doc_buffer)
+                        if doc_end_match:
+                            doc_content = doc_buffer[
+                                : doc_end_match.start()
+                            ]
+                            if stream == "json":
+                                yield ndjson(
+                                    "content",
+                                    "full",
+                                    {"content": doc_content},
+                                )
+                            parsing_mode = "text"
+                            text_buffer = doc_buffer[doc_end_match.end():]
+                            doc_buffer = ""
+                            state_changed = True
+                    if not state_changed:
+                        break
+
+                if parsing_mode == "text" and text_buffer:
+                    sentences = self._extract_complete_sentences(text_buffer)
+                    if sentences:
+                        if stream == "json":
+                            yield ndjson(
+                                "signal", "loading", {"state": "stop"}
+                            )
+                        for sentence in sentences:
+                            yield from self._process_streaming_sentence(
+                                sentence, stream
+                            )
+                        last_sentence = sentences[-1]
+                        last_pos = (
+                            text_buffer.rfind(last_sentence)
+                            + len(last_sentence)
+                        )
+                        text_buffer = text_buffer[last_pos:].strip()
+
+            if text_buffer.strip():
+                yield from self._process_regular_text(text_buffer, stream)
+        except Exception as e:
+            logger.error(f"Error streaming system segment: {e}")
+            if stream == "json":
+                yield ndjson("signal", "error", {"message": str(e)})
+            processed_answer = f"Error: {str(e)}"
+        finally:
+            if processed_answer.strip():
+                self.llm.add_msg(
+                    processed_answer, self.chat_history, "assistant"
+                )
+                if self.memory_enabled and self.chat_memory:
+                    self.chat_memory.add_entry(processed_answer, "assistant")
+            else:
+                logger.warning("System segment produced no answer")
+                self.llm.add_msg("-", self.chat_history, "assistant")
+            if stream == "json":
+                yield ndjson("signal", "loading", {"state": "stop"})
+                yield ndjson("signal", "completed", None)
 
     def add_chat_history_to_params(
         self, params: dict, skill_info: dict

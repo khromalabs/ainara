@@ -566,9 +566,11 @@ class ChatDisplay extends BaseComponent {
             if (generation !== this.aiAnimationGeneration) return;
             // Chunks without a TTS duration (non-audio paths) fall back to
             // reading-rate pacing instead of an immediately-fading NaN timer.
+            // Same constants as com-ring's fastStreamDuration() (muted
+            // fast-karaoke path): ~30 chars/s, 0.25s floor — keep in sync.
             const safeDuration = (typeof duration === 'number' && duration > 0)
                 ? duration
-                : Math.max(1, text.length / 18);
+                : Math.min(5, Math.max(0.25, text.length / 30));
             const messageElement = this.addMessage(text, safeDuration, true, messageId);
             return this.runAIAnimation(messageElement, safeDuration);
         });

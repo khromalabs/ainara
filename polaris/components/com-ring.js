@@ -129,6 +129,16 @@ class ComRing extends BaseComponent {
             // Long-recording transcription hint (#19)
             this.recordingStartedAt = null;
             this.transcriptionHintActive = false;
+            // Offload agent progress (#26): a journal label from a spawned
+            // digestion agent is on the status line; the first answer
+            // chunk or 'completed' clears it.
+            this.agentProgressActive = false;
+            // Agent run cancel (#35): the com-ring captures the run id
+            // from the progress signals — the address the Ctrl+C stop
+            // command posts against. agentCancelling freezes the label
+            // at 'Cancelling…' until the run actually ends.
+            this.agentRunId = null;
+            this.agentCancelling = false;
 
             this.state = {
                 keyPressed: false,
@@ -214,6 +224,12 @@ class ComRing extends BaseComponent {
                 'ring-container element not found'
             );
             this.documentView = this.assert(document.querySelector('document-view'), 'document-view element not found');
+            // Render-blob hydration (#26 P2, §6.8): document-view is
+            // strictly presentational — it consumes this injected
+            // resolver for history-replay frames carrying data-nexus-ref
+            // (the live path hydrates here, in the transport owner).
+            this.documentView.attachmentFetcher = (blobId) =>
+                this.hydrateAttachment(blobId);
             this.llmProviderDisplay = this.assert(
                 this.shadowRoot.querySelector('.llm-provider-display'),
                 'llm-provider-display element not found'
@@ -575,6 +591,30 @@ class ComRing extends BaseComponent {
         this.documentView.addEventListener('documentview-history-today-clicked', () => this.fetchAndDisplayChatHistory());
         this.documentView.addEventListener('documentview-history-date-picked', (e) => this.fetchAndDisplayChatHistory(e.detail.date, false));
 
+        // Consent card decisions (#26 P2): the document-view is strictly
+        // presentational; com-ring owns the POST to the one-shot decision
+        // endpoint and the resumed system-initiated segment stream.
+        this.documentView.addEventListener('documentview-consent-decision', (e) => {
+            this.handleConsentDecision(e.detail);
+        });
+
+        // Escape-dismissal (#26): the offer is already dissolved client-
+        // side; com-ring only consumes it server-side. Recorded as
+        // 'dismiss' — distinct from the No button's 'deny' so the
+        // history is honest about what the user did (put it away vs
+        // rejected the analysis). Fire-and-forget: if the POST fails,
+        // the TTL retires the offer.
+        this.documentView.addEventListener('documentview-consent-dismissed', (e) => {
+            const { decisionId, token } = e.detail;
+            fetch(`${this.pybridgeEndpoint}/consent/${decisionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token, decision: 'dismiss' }),
+            }).catch((err) =>
+                console.warn('Consent dismissal consume failed', err)
+            );
+        });
+
         // Listen for search events
         this.documentView.addEventListener('documentview-search-requested', async (e) => {
             const query = e.detail.query;
@@ -658,10 +698,53 @@ class ComRing extends BaseComponent {
         document.addEventListener('keydown', async (event) => {
             // console.log("EVENT KEYDOWN");
             // console.log(event);
+
+            // Ctrl+C stops a live agent run (#35): the work-stopper,
+            // cleanly split from Escape's playback-axis controls (mute
+            // / skip karaoke — the stream continues underneath). The
+            // persistent 'Ctrl+C to stop' hint on the agent status line
+            // is the discovery surface. Guards keep legitimate copy
+            // working: a text selection or an editable focus passes
+            // through untouched.
+            if (
+                (event.ctrlKey || event.metaKey) &&
+                !event.altKey &&
+                !event.shiftKey &&
+                event.key.toLowerCase() === 'c' &&
+                this.agentProgressActive &&
+                this.agentRunId &&
+                !this.agentCancelling
+            ) {
+                const inner = event.composedPath
+                    ? event.composedPath()[0]
+                    : event.target;
+                const editable =
+                    (inner &&
+                        (inner.isContentEditable ||
+                            (inner.tagName &&
+                                ['INPUT', 'TEXTAREA'].includes(
+                                    inner.tagName.toUpperCase()
+                                )))) ||
+                    (window.getSelection && String(window.getSelection()));
+                if (!editable) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    this.cancelAgentRun();
+                    return;
+                }
+            }
+
             if (this.currentView === 'document' && event.key === this.config.get('shortcuts.hide', 'Escape')) {
                 if (this.state.isProcessingLLM || this.isProcessingMessage || this.messageQueue.length > 0) {
                     this.onEscapeDuringExchange(event);
                 } else if (!event.repeat) {
+                    // A pending consent offer (#26) dies first: the
+                    // user's hand dismissing it outranks the view switch.
+                    if (this.documentView.dismissPendingConsent()) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                    }
                     console.log('Escape in document view: switching back to ring view.');
                     this.switchToRingView();
                 }
@@ -718,6 +801,9 @@ class ComRing extends BaseComponent {
                     !isTypingMode &&
                     !this.state.isRecording &&
                     !event.ctrlKey &&
+                    // Alt is reserved for in-surface accelerators (e.g. the
+                    // consent card's Alt+<letter>, #26) — never a typing prefix
+                    !event.altKey &&
                     // don't process control+v
                     ( !(event.key.toLowerCase() === 'v' && event.ctrlKey) ) &&
                     (
@@ -911,13 +997,14 @@ class ComRing extends BaseComponent {
     // #19 item 3: karaoke continues (fast) while playback is muted — the
     // text stream is the clue that the answer is still being produced.
     // Pacing: never slower than the chunk's TTS duration, floored at a
-    // brisk-but-comfortable reading speed (~18 chars/s, a step above the
-    // ~13 chars/s of natural speech), bounded to keep tiny chunks from
+    // brisk reading speed (~30 chars/s, roughly double the ~13 chars/s of
+    // natural speech — muted playback should feel faster than listening),
+    // bounded to keep tiny chunks from
     // strobing and huge ones from outstaying their welcome.
     fastStreamDuration(content) {
         const text = (content && content.content) || '';
         const original = content && content.flags && content.flags.duration;
-        const byReading = Math.min(5, Math.max(0.6, text.length / 18));
+        const byReading = Math.min(5, Math.max(0.25, text.length / 30));
         return Math.min(typeof original === 'number' ? original : Infinity, byReading);
     }
 
@@ -1666,6 +1753,10 @@ class ComRing extends BaseComponent {
         // Drop any muted-stream backlog from a previous exchange (#19 item 3)
         this.mutedStreamQueue = [];
         this.exchangeSilenced = false;
+        // Consent-card remnants (#26 P2): a follow-up user message is
+        // the moment resolved/dead cards (answered, Esc'd, expired)
+        // dissolve — pending offers are never touched here.
+        this.documentView.sweepResolvedConsentCards();
         // The user turn of the exchange — echoed into an open chat-history
         // view immediately, since the persisted pair only lands on
         // 'completed' (#19 item 3).
@@ -1717,6 +1808,11 @@ class ComRing extends BaseComponent {
                 }
             }
         } catch (error) {
+            // A renderer exception here is what strands the 'Answering'
+            // badge and the ring states: 'completed' never runs after a
+            // throw inside the stream loop, so log the throw with a tag
+            // — the red showInfo alone disappears in seconds.
+            console.error('[Agent] processAIResponse stream loop failed:', error);
             // await this.showError(event.content.message + " " + error);
             await this.showInfo(error, true);
             this.state.isProcessingLLM = false;
@@ -1726,6 +1822,100 @@ class ComRing extends BaseComponent {
             // history
             this.exchangeUserTurn = '';
             // this.window.focus();
+        }
+    }
+
+    /**
+     * Consent-card decision handler (#26 P2). Posts the one-shot decision
+     * token to PyBridge; on approval the response is the resumed
+     * digestion as a system-initiated NDJSON segment, fed through the
+     * regular handleEvent machinery (loading signals, agent progress,
+     * streaming text, completed). Consent authority is this click — a
+     * spoken "yes" never reaches this path.
+     */
+    async handleConsentDecision({ decisionId, token, decision }) {
+        if (this.state.isProcessingLLM) {
+            // Another exchange owns the stream; the decision token stays
+            // valid until its TTL — the user can click again after it.
+            this.showInfo('Please wait for the current exchange to finish.');
+            this.documentView.updateConsentCard(decisionId, 'pending');
+            return;
+        }
+        this.state.isProcessingLLM = true;
+        if (decision === 'deny') {
+            // The decision is made: the card's job is done. The
+            // receipt lives in the conversation now — the decision-
+            // record pill — not on the card (#26 P2). The POST still
+            // consumes the offer server-side; if it fails, the TTL
+            // retires it. When the offer was live, the denial streams
+            // back as a system-initiated segment (#37): the free
+            // bounded feedback comment (or just silence on generation
+            // failure — the record is persisted server-side either
+            // way).
+            this.documentView.removeConsentCard(decisionId);
+        } else {
+            this.documentView.updateConsentCard(decisionId, 'started');
+        }
+        try {
+            const response = await fetch(
+                `${this.pybridgeEndpoint}/consent/${decisionId}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, decision }),
+                }
+            );
+            const contentType = response.headers.get('content-type') || '';
+            if (!response.ok || contentType.includes('application/json')) {
+                const body = await response.json().catch(() => ({}));
+                // A denial never reads "expired": the user's act is
+                // the answer, whatever state the token was in.
+                const expired =
+                    (body.status === 'expired' || response.status === 410) &&
+                    decision !== 'deny';
+                this.documentView.updateConsentCard(
+                    decisionId,
+                    expired ? 'expired' : 'denied'
+                );
+                if (decision !== 'deny' && !expired) {
+                    this.showInfo('The analysis could not be started.', true);
+                }
+                return;
+            }
+            // The offer was honored or explicitly denied: the card has
+            // no further role and dissolves now; agent progress (com-
+            // ring status) and the streamed segment are the feedback
+            // from here (#26 P2; denial feedback #37). A second
+            // removeConsentCard for deny is a no-op — the card went
+            // away before the POST.
+            this.documentView.removeConsentCard(decisionId);
+            // Streamed resumed segment — same event shapes as a chat turn.
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+                if (!this.state.isProcessingLLM) {
+                    reader.cancel();
+                    break;
+                }
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (line.trim()) {
+                        const event = JSON.parse(line);
+                        await this.handleEvent(event);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[Consent] decision failed:', error);
+            this.showInfo(error, true);
+            this.documentView.updateConsentCard(decisionId, 'expired');
+        } finally {
+            this.state.isProcessingLLM = false;
         }
     }
 
@@ -2112,6 +2302,44 @@ Visit our project site at: https://ainara.app
         }, 3000);
     }
 
+    cancelAgentRun() {
+        // Ctrl+C stop for a live agent run (#35). Optimistic surface:
+        // the status line freezes at 'Cancelling…' (further progress
+        // signals don't overwrite it) until the run actually ends —
+        // the kill is graceful→hard in Bureau and the poll interval is
+        // the delivery latency. Fire-and-forget POST: a failed relay
+        // leaves the run untouched, the next signal un-freezes the
+        // label, and the run still ends on its own.
+        if (!this.agentRunId || this.agentCancelling) return;
+        console.log('[Agent] Ctrl+C cancel requested for run', this.agentRunId);
+        this.agentCancelling = true;
+        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+        if (sttStatus) {
+            sttStatus.innerHTML = 'Processing:<br><i>Cancelling…</i>';
+        }
+        fetch(
+            `${this.pybridgeEndpoint}/agent/run/${encodeURIComponent(this.agentRunId)}/cancel`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            }
+        )
+            .then((res) => res.json())
+            .then((data) => {
+                if (!data || data.cancelled !== true) {
+                    // Nothing was stopped (unknown run, already finished,
+                    // relay failure): the surface goes back to tracking
+                    // the live run — the next progress signal repaints
+                    // the label.
+                    this.agentCancelling = false;
+                }
+            })
+            .catch((err) => {
+                console.warn('[Agent] cancel POST failed', err);
+                this.agentCancelling = false;
+            });
+    }
+
     abortLLMResponse() {
         console.log('Aborting speech playback (stream continues in background, #19 item 3)');
 
@@ -2461,9 +2689,61 @@ Visit our project site at: https://ainara.app
                 if (this.exchangeSilenced) {
                     break;
                 }
+                // Display-only stream events (mechanical status pills
+                // #37/#35, usage notices, no-TTS text) carry a plain
+                // string content; the canonical shape downstream is the
+                // audio-event object ({content, flags}). Normalize once
+                // so messageId tagging, flag checks and the queues see a
+                // single shape — a raw string here used to throw
+                // ('Cannot create property messageId on string') and
+                // strand the whole exchange before 'completed'.
+                if (
+                    event.type === 'message' &&
+                    event.content &&
+                    typeof event.content.content === 'string'
+                ) {
+                    const rawText = event.content.content;
+                    if (rawText.includes('_orakle_status_')) {
+                        // Mechanical markers are surface records, never
+                        // conversation: they must not float as raw text
+                        // in the live view. The history renders them as
+                        // pills (base.js) when the persisted record is
+                        // appended at 'completed' — retire the progress
+                        // label here, the turn is effectively over.
+                        this.agentProgressActive = false;
+                        const sttStatus =
+                            this.shadowRoot.querySelector('.stt-status');
+                        if (sttStatus) {
+                            sttStatus.classList.remove('active');
+                            sttStatus.textContent = '';
+                        }
+                        break;
+                    }
+                    event.content.content = {
+                        content: rawText,
+                        flags: event.content.flags || {
+                            command: false,
+                            audio: false,
+                        },
+                    };
+                }
                 if (event.type === 'message') {
                     const content = event.content.content;
                     const messageId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+                    // The digest answer supersedes the agent progress
+                    // label (#26): the digestion agent is done once its
+                    // findings start streaming.
+                    if (this.agentProgressActive) {
+                        this.agentProgressActive = false;
+                        this.agentRunId = null;
+                        this.agentCancelling = false;
+                        const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                        if (sttStatus) {
+                            sttStatus.classList.remove('active');
+                            sttStatus.textContent = '';
+                        }
+                    }
 
                     if (event.content && event.content.content) {
                         event.content.content.messageId = messageId;
@@ -2631,7 +2911,15 @@ Visit our project site at: https://ainara.app
                         const ringContainer = this.shadowRoot.querySelector('.ring-container');
                         ringContainer.classList.add('loading');
                         if (event.content?.type == "skill") {
-                            sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
+                            if (event.content.skill_id === 'spawn_agent') {
+                                // Agent spawn (#35): not a skill — an
+                                // autonomous process is starting. Same
+                                // two-line shape as the step labels that
+                                // follow it.
+                                sttStatus.innerHTML = 'Processing:<br><i>Preparing…</i>';
+                            } else {
+                                sttStatus.innerHTML = 'Using Skill:<br><i>' + event.content.skill_id + '</i>';
+                            }
                         } else {
                             if ( event.content.reasoning ) {
                                 sttStatus.textContent = 'Reasoning...';
@@ -2654,11 +2942,50 @@ Visit our project site at: https://ainara.app
                 }
                 break;
 
+            case 'agent_progress':
+                // Run-journal progress relay (#26/#35): stage labels from
+                // a spawned agent, relayed live while Orakle polls Bureau.
+                // Successive labels overwrite as the agent advances; the
+                // payload carries the run id (#35) — the address the
+                // Ctrl+C cancel command posts against — and the status
+                // line advertises it persistently (gentle discovery, no
+                // thinking required). The label derives from the agent's
+                // journal and the agent reads UNTRUSTED payload content
+                // — textContent only, never innerHTML.
+                if (event.type === 'signal') {
+                    const sttStatus = this.shadowRoot.querySelector('.stt-status');
+                    if (sttStatus) {
+                        this.agentRunId = (event.content && event.content.run_id) || null;
+                        if (!this.agentCancelling) {
+                            const label = ((event.content && event.content.label) || 'Working…').slice(0, 120);
+                            // Two-line shape, same rhythm as the skill
+                            // status: header + step. The step derives from
+                            // the agent's journal and the agent reads
+                            // UNTRUSTED content — DOM text node, never
+                            // innerHTML.
+                            sttStatus.innerHTML =
+                                'Processing... (Control+C to abort)<br>';
+                            const step = document.createElement('i');
+                            step.textContent = label;
+                            sttStatus.appendChild(step);
+                            sttStatus.classList.add('active');
+                        }
+                        this.agentProgressActive = true;
+                    }
+                }
+                break;
+
             case 'completed':
                 if (event.type === 'signal') {
                     console.log(`[DocTrace] completed signal: view=${this.currentView}/${this.docFormat} muted=${this.playbackMuted}`);
                     this.circle.classList.remove('skill-active');
                     this.isLLMStreaming = false;
+                    // #26: end any agent progress label with the turn.
+                    this.agentProgressActive = false;
+                    // #35: the run is over — the cancel address dies
+                    // with it.
+                    this.agentRunId = null;
+                    this.agentCancelling = false;
                     // #19 item 3: reopen the silence gate
                     this.exchangeSilenced = false;
 
@@ -2683,6 +3010,7 @@ Visit our project site at: https://ainara.app
                         this.documentView.setStreamingActive(false);
                         // The persisted pair supersedes the echo
                         this.exchangeUserTurn = '';
+                        console.log('[DocTrace] completed handler: badge cleared');
                     }
                 }
                 break;
@@ -2711,6 +3039,53 @@ Visit our project site at: https://ainara.app
                 }
                 break;
 
+            case 'consent_request':
+                // Consent card (#26 P2): framework-rendered decision
+                // surface for the offload spend axis. The payload carries
+                // the one-shot decision token — signal channel only, it
+                // must never enter visible conversation text. Opening
+                // the document view hands off to the card (#37): the
+                // action was already explained conversationally by the
+                // selection preview; the card shows the framework-
+                // computed numbers and the mechanical decision buttons.
+                if (event.type === 'signal') {
+                    this.switchToDocumentView('consent');
+                    this.documentView.addDocument(
+                        event.content,
+                        'consent',
+                        'Approval needed'
+                    );
+                }
+                break;
+
+            case 'consent_result':
+                // Out-of-band resume status (#26 P2): 'expired' means the
+                // one-shot decision token was unknown, replayed or timed
+                // out — the card dies, nothing executes.
+                if (event.type === 'signal') {
+                    const status = event.content?.status;
+                    if (status !== 'approved') {
+                        this.documentView.updateConsentCard(
+                            event.content?.decision_id,
+                            'expired'
+                        );
+                    }
+                }
+                break;
+
+            case 'consent_closed':
+                // Conversational close (#26 P2): the model proposed
+                // dismissing the pending card (user declined, deferred or
+                // moved on) and the framework killed the token
+                // server-side. The card dissolves quietly — no residue;
+                // the conversation's record is the exchange.
+                if (event.type === 'signal') {
+                    this.documentView.removeConsentCard(
+                        event.content?.decision_id
+                    );
+                }
+                break;
+
             case 'renderNexus':
                 if (event.type === 'ui') {
                     const orakleUrl = this.config.get('orakle.api_url');
@@ -2718,25 +3093,32 @@ Visit our project site at: https://ainara.app
                         this.showInfo('Orakle API URL not configured.', true);
                         return;
                     }
-                    const fullUrl = orakleUrl + event.content.component_path;
-                    const pathParts = event.content.component_path.split('/');
-                    const componentName = pathParts[pathParts.length - 2];
-                    this.switchToDocumentView('nexus');
-                    // Open-or-update keyed by the backend-computed panel_id
-                    // (#30): an existing panel for the same identity is
-                    // updated in place and brought to front, never cloned.
-                    this.documentView.upsertNexusDocument(
-                        {
-                            url: fullUrl,
-                            data: event.content.data,
-                            panelId: event.content.panel_id
-                        },
-                        componentName + "—" + event.content.query
-                    );
+                    // Render inline ceiling (#26 P2, §6.8): payloads
+                    // above the ceiling arrive by reference — hydrate
+                    // by id from the PyBridge store, then render with
+                    // full fidelity exactly as an inline payload.
+                    if (event.content.data_ref && !event.content.data) {
+                        this.hydrateAttachment(event.content.data_ref)
+                            .then((data) => {
+                                this.renderNexusContent(
+                                    orakleUrl, { ...event.content, data }
+                                );
+                            })
+                            .catch((err) => {
+                                console.error(
+                                    'ComRing: attachment hydration failed:', err
+                                );
+                                this.showInfo(
+                                    'Could not load the component data.', true
+                                );
+                            });
+                        return;
+                    }
+                    this.renderNexusContent(orakleUrl, event.content);
                 }
                 break;
 
-            case 'closeNexus':
+                    case 'closeNexus':
                 // Skill-initiated close (#30): the framework asked for a
                 // panel to be dismissed by panel_id. Nothing was rendered
                 // for this exchange; the interpretation text is the record.
@@ -2761,6 +3143,38 @@ Visit our project site at: https://ainara.app
                 }
                 break;
         }
+    }
+
+    renderNexusContent(orakleUrl, content) {
+        const fullUrl = orakleUrl + content.component_path;
+        const pathParts = content.component_path.split('/');
+        const componentName = pathParts[pathParts.length - 2];
+        this.switchToDocumentView('nexus');
+        // Open-or-update keyed by the backend-computed panel_id
+        // (#30): an existing panel for the same identity is
+        // updated in place and brought to front, never cloned.
+        this.documentView.upsertNexusDocument(
+            {
+                url: fullUrl,
+                data: content.data,
+                panelId: content.panel_id
+            },
+            componentName + "—" + content.query
+        );
+    }
+
+    // Render-blob hydration (#26 P2, §6.8): com-ring owns the transport;
+    // document-view only consumes the injected resolver (presentational
+    // component doctrine). Used by the live path above and by history
+    // replay (data-nexus-ref frames in document-view).
+    async hydrateAttachment(blobId) {
+        const response = await fetch(
+            `${this.pybridgeEndpoint}/attachments/${encodeURIComponent(blobId)}`
+        );
+        if (!response.ok) {
+            throw new Error(`attachment ${blobId}: HTTP ${response.status}`);
+        }
+        return response.json();
     }
 }
 

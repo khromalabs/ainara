@@ -265,12 +265,176 @@ class BaseComponent extends HTMLElement {
             return `%%CODEBLOCK${blockIndex++}%%`;
         });
 
+        // Consent-card mechanical records (#26 P2): rendered as
+        // receipts, never raw — the history view is for final users.
+        // The markers are framework-written (model output is killed by
+        // the guardrail), so what is rendered here is trustworthy.
+        text = text.replace(/_orakle_consent_card_\|([A-Za-z0-9_]+)/gm, () => {
+            codeBlocks.push(
+                `<span class="consent-record consent-card-record">Authorization requested</span>`
+            );
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        });
+        text = text.replace(
+            /_orakle_consent_decision_\|([A-Za-z0-9_]+)\|(approved|denied|dismissed)/gm,
+            (text, id, outcome) => {
+                const labels = {
+                    approved: 'Analysis authorized',
+                    denied: 'Analysis declined',
+                    dismissed: 'Offer dismissed',
+                };
+                codeBlocks.push(
+                    `<span class="consent-record consent-decision-${outcome}">${labels[outcome]}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
+        // Offload digest trail records (#37): the digest body follows
+        // the marker as a fenced note; the marker line renders as a
+        // receipt pill naming what was recorded. Framework-written
+        // (model output is killed by the guardrail), so the hoisted
+        // title is trustworthy — and already HTML-escaped with the
+        // rest of the text before this pass.
+        // Agent + digest report trails (#37/#35): marker + fenced body
+        // rendered as a record pill and a COLLAPSED report — the trail
+        // keeps the evidence in history without wall-of-text dumps; the
+        // conversation carries only the interpretation. Bodies are
+        // untrusted content: entity-escaped, never raw HTML.
+        const escapeTrail = (s) =>
+            String(s || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        const trailRecord = (pillHtml, body) => {
+            const safeBody = escapeTrail(body);
+            codeBlocks.push(
+                pillHtml +
+                    '<details class="trail-details"><summary>View report</summary>' +
+                    `<pre class="trail-body">${safeBody}</pre></details>`
+            );
+            return `%%CODEBLOCK${blockIndex++}%%`;
+        };
+
+        text = text.replace(
+            /_orakle_offload_digest_\|([a-f0-9]+)(?:\|([^\n|]*))?\n```\n([\s\S]*?)\n```/g,
+            (text, key, title, body) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Analysis recorded: ${safeTitle}`
+                    : 'Analysis recorded';
+                return trailRecord(
+                    `<span class="consent-record offload-digest-record">${label}</span>`,
+                    body
+                );
+            }
+        );
+
+        // Fallback for digest markers whose body is missing/malformed:
+        // the pill alone, body dropped (nothing unrendered leaks).
+        text = text.replace(
+            /_orakle_offload_digest_\|[a-f0-9]+(?:\|([^\n|]*))?/gm,
+            (text, title) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Analysis recorded: ${safeTitle}`
+                    : 'Analysis recorded';
+                codeBlocks.push(
+                    `<span class="consent-record offload-digest-record">${label}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
+        // Mechanical status signals (#37 generated-guidance seam): the
+        // fail-to-signal fallback when a guidance generation fails —
+        // a framework-composed status pill, never speech. Framework-
+        // written markers only (model output is killed by the
+        // guardrail), same trust basis as the consent records.
+        // Run-journal progress markers (#26/#35) are transformed too:
+        // they are framework-written records that must never appear as
+        // raw text in a transcript (live ones ride the signal channel
+        // and never persist; older transcripts may carry the leak).
+        text = text.replace(
+            /_orakle_status_\|([a-z_]+)/gm,
+            (text, kind) => {
+                const labels = {
+                    oversized_result: 'Data too large to read in one pass',
+                    approved_analysis_failed: 'Analysis did not complete',
+                    request_failed: 'Could not handle that request',
+                    app_data_invalid: 'App returned unreadable data',
+                    consent_denied: 'Analysis declined',
+                    agent_cancelled: 'Agent run stopped',
+                };
+                const label = labels[kind] || 'Notice';
+                codeBlocks.push(
+                    `<span class="consent-record orakle-status-record orakle-status-${kind}">${label}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
+        // Run-journal progress records (#26/#35): framework-written step
+        // markers (run_id|label, or label-only in the pre-#35 format).
+        // Rendered as pills, never raw text — the live channel is the
+        // com-ring signal; these are the transcript's honest trail.
+        text = text.replace(
+            /_orakle_agent_progress_\|([^\n|]+)(?:\|([^\n]*))?/gm,
+            (text, runId, label) => {
+                const step = (label || '').trim();
+                codeBlocks.push(
+                    `<span class="consent-record agent-progress-record">${
+                        step ? `Agent: ${escapeTrail(step)}` : 'Agent step'
+                    }</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
+        // Agent report trail (#35): the skill-agent's dossier persists
+        // as evidence; collapsed like the digest trail.
+        text = text.replace(
+            /_orakle_agent_dossier_(?:\|([^\n]*))?\n```\n([\s\S]*?)\n```/g,
+            (text, title, body) => {
+                const safeTitle = title ? escapeTrail(title) : '';
+                const label = safeTitle
+                    ? `Report recorded: ${safeTitle}`
+                    : 'Report recorded';
+                return trailRecord(
+                    `<span class="consent-record agent-dossier-record">${label}</span>`,
+                    body
+                );
+            }
+        );
+        text = text.replace(
+            /_orakle_agent_dossier_(?:\|[^\n]*)?/gm,
+            () => {
+                codeBlocks.push(
+                    `<span class="consent-record agent-dossier-record">Report recorded</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
         // Extract ORAKLE data blocks
         text = text.replace(/_orakle_nexus_data_\|([^\n]+)/gm, (text, skill) => {
             try {
                 const orakleUrl = this.config.get('orakle.api_url');
                 const json = JSON.parse(skill);
-                
+
+                // Render inline ceiling (#26 P2, §6.8): payloads above
+                // the inline ceiling are stored as persistent render
+                // blobs; the transcript carries data_ref + preview and
+                // the frame hydrates by id at render time (via the
+                // document-view attachment resolver). ChatMemory never
+                // held the bytes, so replay cannot inline them either.
+                if (json.data_ref && !json.data) {
+                    const refSrc = `${orakleUrl}${json.component_path}`;
+                    const refOutput = `<iframe class='nexus-frame' src='${refSrc}' data-nexus-ref='${json.data_ref}' sandbox='allow-scripts allow-same-origin allow-forms'></iframe>`;
+                    codeBlocks.push(refOutput);
+                    return `%%CODEBLOCK${blockIndex++}%%`;
+                }
+
                 // Encode data to be safe in HTML attribute
                 const encodedData = encodeURIComponent(JSON.stringify(json.data));
                 const src = `${orakleUrl}${json.component_path}`;

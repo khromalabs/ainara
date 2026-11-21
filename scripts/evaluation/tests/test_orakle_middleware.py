@@ -164,6 +164,31 @@ class TestOrakleMiddleware(unittest.TestCase):
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
         print("PASSED")
 
+    def test_consent_markers_are_forbidden_signals(self):
+        """Mechanical-channel consent markers (#26 P2) are model-
+        unwritable: the guardrail kills the stream. Only the framework
+        writes offers (_orakle_consent_card_) and the user's decision
+        records (_orakle_consent_decision_)."""
+        for marker in (
+            "_orakle_consent_card_|abc123",
+            "_orakle_consent_decision_|abc123|approved",
+            "_orakle_agent_progress_|reading section 2",
+        ):
+            result = self._run_test_stream(f"Sure, here you go: {marker}")
+            self.assertIn("[__AINARA_GUARDRAIL__]", result)
+            self.assertIn("forbidden", result.lower())
+
+    def test_consent_close_is_not_forbidden(self):
+        """<consent_close> is the model-proposes/framework-executes
+        channel — deliberately NOT a forbidden signal. It is stripped
+        downstream (chat_manager), not guardrailed here."""
+        input_text = (
+            "Of course, closing that card for you."
+            "<consent_close>abc123</consent_close>"
+        )
+        result = self._run_test_stream(input_text)
+        self.assertNotIn("[__AINARA_GUARDRAIL__]", result)
+
     def test_unterminated_command(self):
         """Tests that a stream ending with unclosed tag triggers a guardrail."""
         print("\n--- Testing: Unterminated command (unclosed tag) ---")
