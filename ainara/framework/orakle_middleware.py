@@ -1647,7 +1647,15 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 reasoning_level=final_reasoning_level,
             )
 
-            if agent_result:
+            if agent_result == self.AGENT_CANCELLED:
+                # User cancel (#35): the mechanical pill carries the
+                # fact; nothing is spoken (silence beats a recording).
+                # Sentinel check MUST precede the truthiness check —
+                # the sentinel is a non-empty string and would otherwise
+                # be written into the trail as if it were a report.
+                yield "\n_orakle_status_|agent_cancelled\n"
+                return
+            elif agent_result:
                 # Agent report trail (#35): the raw dossier persists as a
                 # mechanical, never-spoken record (same family as the
                 # digest trail — the history keeps the evidence), and the
@@ -1663,11 +1671,6 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     chat_context=chat_context,
                     reasoning_level=final_reasoning_level,
                 )
-                return
-            elif agent_result == self.AGENT_CANCELLED:
-                # User cancel (#35): the mechanical pill carries the
-                # fact; nothing is spoken (silence beats a recording).
-                yield "\n_orakle_status_|agent_cancelled\n"
                 return
             else:
                 yield self._guidance_or_status(
