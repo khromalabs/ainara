@@ -346,6 +346,37 @@ class BaseComponent extends HTMLElement {
             }
         );
 
+        // Deep Recall digest trail: same collapsed-record rendering as
+        // the offload digest. The bodyless fallback covers genuinely
+        // malformed markers only — the persisted trail keeps the body,
+        // same as the offload digest.
+        text = text.replace(
+            /_deep_recall_digest_\|([a-f0-9]+)(?:\|([^\n|]*))?\n```\n([\s\S]*?)\n```/g,
+            (text, key, title, body) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Recall recorded: ${safeTitle}`
+                    : 'Recall recorded';
+                return trailRecord(
+                    `<span class="consent-record deep-recall-record">${label}</span>`,
+                    body
+                );
+            }
+        );
+        text = text.replace(
+            /_deep_recall_digest_\|[a-f0-9]+(?:\|([^\n|]*))?/gm,
+            (text, title) => {
+                const safeTitle = escapeTrail(title);
+                const label = safeTitle
+                    ? `Recall recorded: ${safeTitle}`
+                    : 'Recall recorded';
+                codeBlocks.push(
+                    `<span class="consent-record deep-recall-record">${label}</span>`
+                );
+                return `%%CODEBLOCK${blockIndex++}%%`;
+            }
+        );
+
         // Mechanical status signals (#37 generated-guidance seam): the
         // fail-to-signal fallback when a guidance generation fails —
         // a framework-composed status pill, never speech. Framework-

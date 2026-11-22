@@ -218,6 +218,19 @@
                 }
             }
         },
+        "deep_recall": {
+            "type": "object",
+            "description": "Deep Recall: deliberative investigation of the user's memories and past conversations (exposed as the deep_recall system skill; triggered by the model through the ordinary ORAKLE channel).",
+            "additionalProperties": true,
+            "properties": {
+                "max_turns": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 6,
+                    "description": "Expert-level: maximum investigation turns per Deep Recall run (0 disables Deep Recall entirely). Expert setting — never surfaced in the setup wizard."
+                }
+            }
+        },
         "orakle": {
             "type": "object",
             "properties": {

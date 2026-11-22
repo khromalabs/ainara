@@ -36,10 +36,12 @@ from pygame import mixer
 
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
+from ainara.framework.deep_recall import DeepRecallEngine
 from ainara.framework.green_memories import GREENMemories
 from ainara.framework.loading_animation import LoadingAnimation
 from ainara.framework.orakle_middleware import (OrakleCapabilityFetcher,
                                                 OrakleMiddleware)
+from ainara.framework.skills.register import register_service
 from ainara.framework.storage.base import StorageBackend
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.tts.base import TTSBackend
@@ -227,6 +229,20 @@ class ChatManager:
             system_message=self.system_message,
             capabilities=self.capabilities,
         )
+
+        # Deep Recall engine (deliberative memory tier): registered for
+        # the system_skills adapter to fetch at run time; the engine
+        # resolves its LLM from the memory tier per run.
+        self.deep_recall_engine = None
+        if (
+            self.memory_enabled
+            and self.green_memories
+            and self.chat_memory
+        ):
+            self.deep_recall_engine = DeepRecallEngine(
+                self.green_memories, self.chat_memory
+            )
+            register_service("deep_recall_engine", self.deep_recall_engine)
 
         self.llm.add_msg(self.system_message, self.chat_history, "system")
 
@@ -2191,6 +2207,21 @@ class ChatManager:
                     processed_answer += chunk
                     continue
 
+                # Deep Recall digest trail: mechanical record — never
+                # streamed live, never spoken, never routed through the
+                # doc-fence machinery; Polaris renders it from history
+                # after the turn, like the other trail records. Persisted
+                # wholesale (same doctrine as the offload digest trail):
+                # Polaris renders trail records from the persisted store,
+                # so without the body the record would be a pill forever;
+                # GREEN's dedup absorbs any derivative re-assimilation.
+                if (
+                    isinstance(chunk, str)
+                    and "_deep_recall_digest_" in chunk
+                ):
+                    processed_answer += chunk
+                    continue
+
                 processed_answer += chunk
 
                 # Route chunk to the correct buffer based on current parsing mode
@@ -2340,6 +2371,7 @@ class ChatManager:
                 )
 
                 # Log assistant response to chat memory
+                # Log assistant response to chat memory.
                 if self.memory_enabled and self.chat_memory and save_to_memory:
                     self.chat_memory.add_entry(processed_answer, "assistant")
             else:

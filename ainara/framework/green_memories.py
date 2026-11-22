@@ -67,61 +67,43 @@ MEMORY_SOFT_MAX_WORDS = 60
 # `reasoning_effort` on the llm.providers entry.
 MEMORY_REASONING_EFFORT = "low"
 
+# Mechanical trail marker whose content must never feed memory
+# extraction. A Deep Recall digest is a derived, cited view of this
+# very memory store; re-assimilating it would make GREEN extract
+# memories from its own output (self-referential drift). The whole
+# turn is skipped, user side included: a recall turn asks about the
+# past rather than reporting new experiences, and turn pairing must
+# stay intact.
+_DEEP_RECALL_DIGEST_MARKER = "_deep_recall_digest_"
+
+
+def group_extraction_turns(new_messages):
+    """Group raw persisted messages into (user_msg, assistant_msg)
+    extraction turns.
+
+    Turns whose assistant message carries a Deep Recall digest trail
+    are excluded entirely — the digest is derived content that must
+    never be re-assimilated (see _DEEP_RECALL_DIGEST_MARKER). Returns
+    (turns, skipped_digest_count).
+    """
+    conversation_turns = []
+    skipped_digest_turns = 0
+    for i, message in enumerate(new_messages):
+        if message.get("role") == "assistant" and i > 0:
+            prev_message = new_messages[i - 1]
+            if prev_message.get("role") == "user":
+                if _DEEP_RECALL_DIGEST_MARKER in (
+                    message.get("content") or ""
+                ):
+                    skipped_digest_turns += 1
+                    continue
+                conversation_turns.append((prev_message, message))
+    return conversation_turns, skipped_digest_turns
+
+
 # Define a set of stopwords for normalization.
 # We use spaCy's list and can extend it if needed.
 STOPWORDS = set(SPACY_STOP_WORDS)
-
-
-# TODO: GREEN Memories v2 — Compact LLM-Native Memory Format
-#
-# Context: During a design session (2026-03-29), a significant architectural
-# improvement was identified for how memory text is stored and injected into
-# context windows. The core insight is that memories are consumed almost
-# exclusively by LLMs, not humans — so natural language prose is unnecessarily
-# token-expensive. A more token-efficient, LLM-native format was designed.
-#
-# Proposed dual-field memory schema:
-#
-#   - `memory` (compact, PRIMARY): A concise key:value notation using dotted
-#     namespaces to express hierarchy while keeping each entry strictly atomic.
-#     Used everywhere for LLM context injection and memory processing prompts.
-#     Examples:
-#       "loc: London"
-#       "kids: John, Betty"
-#       "core_drive.goal: John edu sovereignty"
-#       "core_drive.catalyst: school fail → special-ed force"
-#       "core_drive.solution: Polaris/Ainara autonomous learn"
-#
-#   - `description` (natural language, SECONDARY): Human-readable version,
-#     generated once at creation time by the same LLM call. Mostly static —
-#     only refreshed when new_memory_text is explicitly provided on reinforce.
-#     Used for: generate_user_profile, generate_recent_memories, and any
-#     human-facing memory browser feature.
-#
-# Key design constraints:
-#   - Atomic model MUST be preserved: one fact = one DB entry = one vector.
-#     Grouping multiple facts into one document would blur the embedding and
-#     degrade retrieval precision. The dotted namespace (core_drive.goal: ...)
-#     preserves relational context without clustering.
-#   - Vector retrieval remains unchanged — compact text embeds well and LLMs
-#     parse it natively, yielding significantly more memories per context window.
-#   - The "network" aspect of GREEN (topic-based boosting) is unaffected.
-#
-# Estimated token savings: 40-60% per memory entry in context injection,
-# allowing proportionally more memories in the same context budget.
-#
-# Migration path:
-#   1. Add `description` column to user_memories (follow _update_schema() pattern).
-#   2. One-time script: populate `description` from existing `memory` text (already
-#      natural language — no transformation needed for existing records).
-#   3. New memories: update consolidated_memory_processing.mu and
-#      extract_memory_candidate_system.mu to instruct the LLM to produce both
-#      a compact `memory` field and a natural language `description` field.
-#   4. Update context injection to use compact `memory` field.
-#   5. Update generate_user_profile and generate_recent_memories templates to
-#      use the `description` field for richer narrative synthesis.
-#   6. Set migration flag (see _check_fastembed_migration() pattern) and trigger
-#      vector DB reset to re-embed all memories in compact format.
 
 
 class GREENMemories:
@@ -310,6 +292,22 @@ class GREENMemories:
     def update_llm(self, llm):
         self.llm = llm
         self.context_window = llm.get_context_window() or 4096  # default 4k
+
+    def get_memory_llm_chain(self):
+        """Public accessor for memory-tier LLM work outside GREEN
+        itself (e.g. the Deep Recall engine): the failover chain of
+        (llm, reasoning_effort) pairs in _run_with_memory_llm order —
+        configured memories processors first, then the default LLM.
+        Each pair carries the reasoning effort _memory_reasoning_effort
+        prescribes, so reasoning models with an analysis channel (e.g.
+        gpt-oss on Groq) keep their completion budget for visible
+        content instead of returning it all spent."""
+        providers = config.get("llm.memories_processors", []) or []
+        chain = []
+        for provider_name in [*providers, None]:
+            llm = self._get_memory_llm(provider_name)
+            chain.append((llm, self._memory_reasoning_effort(llm)))
+        return chain
 
     _ALL_MEMORY_PROVIDERS_FAILED = object()
 
@@ -1462,13 +1460,20 @@ class GREENMemories:
 
         logger.info(f"Found {len(new_messages)} new messages to process.")
 
-        # Group messages into user/assistant turns
-        conversation_turns = []
-        for i, message in enumerate(new_messages):
-            if message.get("role") == "assistant" and i > 0:
-                prev_message = new_messages[i - 1]
-                if prev_message.get("role") == "user":
-                    conversation_turns.append((prev_message, message))
+        # Group messages into user/assistant turns. Turns whose
+        # assistant message carries a Deep Recall digest trail are
+        # excluded (see group_extraction_turns): the digest is derived
+        # from this very memory store, and re-assimilating it would let
+        # GREEN extract memories from its own output.
+        conversation_turns, skipped_digest_turns = group_extraction_turns(
+            new_messages
+        )
+        if skipped_digest_turns:
+            logger.info(
+                "Skipped %d turn(s) carrying Deep Recall digest trails"
+                " (derived content — never re-assimilated).",
+                skipped_digest_turns,
+            )
 
         if not conversation_turns:
             logger.info(

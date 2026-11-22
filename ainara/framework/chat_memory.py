@@ -225,6 +225,7 @@ class ChatMemory:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
+        all_contexts: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search entries using text search with syntax support, or vector search if prefixed with ~.
@@ -233,6 +234,11 @@ class ChatMemory:
           -word    : Exclude word
           word     : Include word
           ~query   : Semantic search (ignores syntax)
+
+        all_contexts: search across every stored conversation context
+        instead of only the active one (Deep Recall's corpus spans all
+        threads). The semantic route is context-agnostic by design;
+        the flag affects the exact/text route.
         """
         if not query:
             return []
@@ -279,7 +285,8 @@ class ChatMemory:
             exclude_terms=exclude_terms,
             start_date=start_date,
             end_date=end_date,
-            users=users
+            users=users,
+            all_contexts=all_contexts
         )
 
     def get_total_messages(self) -> int:

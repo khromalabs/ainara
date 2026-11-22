@@ -289,6 +289,7 @@ class SQLiteStorage(StorageBackend):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
+        all_contexts: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search text with advanced filtering.
@@ -299,9 +300,16 @@ class SQLiteStorage(StorageBackend):
             offset: Pagination offset
             include_terms: List of substrings that MUST be present (AND logic)
             exclude_terms: List of substrings that MUST NOT be present (NOT logic)
+            all_contexts: Drop the context_id scoping (search every
+                stored conversation; Deep Recall's corpus spans all
+                threads)
         """
-        sql_query = "SELECT * FROM messages WHERE context_id = ?"
-        params = [self.context_id]
+        if all_contexts:
+            sql_query = "SELECT * FROM messages WHERE 1=1"
+            params: List[Any] = []
+        else:
+            sql_query = "SELECT * FROM messages WHERE context_id = ?"
+            params = [self.context_id]
 
         # Handle legacy query param or simple usage
         if query and not include_terms:

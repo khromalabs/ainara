@@ -297,6 +297,12 @@ code {
     content: "🔬";
 }
 
+/* Deep Recall digest trail record: receipt pill for the recall
+ * marker. Same pill family; the looking-back image. */
+.deep-recall-record:before {
+    content: "🕯️";
+}
+
 /* Mechanical status signal (#37 generated-guidance seam): the
  * fail-to-signal fallback when guidance generation fails — a surface,
  * never speech. Same pill family. */

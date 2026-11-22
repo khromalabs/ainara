@@ -1129,6 +1129,7 @@ class OrakleMiddleware:
             "_orakle_consent_decision_",
             "_orakle_agent_dossier_",
             "_orakle_offload_digest_",
+            "_deep_recall_digest_",
         )
         max_signal_len = max(len(s) for s in forbidden_signals)
 
@@ -1757,6 +1758,28 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
             skill_instance = self.system_skills[selected_skill_id]
             result = skill_instance.run(query, parameters, chat_history)
+
+            if selected_skill_id == "deep_recall":
+                # Deep Recall delivery (deliberative memory tier). In
+                # agentic mode the raw result is the agent's
+                # observation, like any skill result; conversational
+                # mode gets the mechanical digest trail plus the spoken
+                # answer from the recall-specific interpretation
+                # contract (#37 shape: never the raw digest).
+                if agentic_mode:
+                    yield json.dumps(
+                        result if isinstance(result, dict)
+                        else {"success": False}
+                    )
+                    return
+                yield from self._deliver_deep_recall(
+                    result,
+                    query,
+                    chat_history=chat_history,
+                    memories=memories,
+                    reasoning_level=final_reasoning_level,
+                )
+                return
 
             chat_context = self._get_chat_context(chat_history)
             for chunk in self.stream_command_interpretation(
@@ -3696,6 +3719,113 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         if title:
             marker += f"|{title}"
         return f"\n{marker}\n```\n{body}\n```\n\n"
+
+    @staticmethod
+    def _deep_recall_trail_chunk(digest: str) -> str:
+        """The never-spoken trail chunk for a Deep Recall run.
+
+        Shape: ``_deep_recall_digest_|<digest-hash>|<title>`` followed
+        by the digest body in a fenced block. Same conventions as the
+        offload trail (_offload_trail_chunk): the title is hoisted from
+        the '# Digest: <title>' first line and internal fences are
+        neutralized so they can never terminate the outer fence. The
+        chunk persists wholesale (Polaris renders trail records from
+        the persisted store, so a body stripped there would be
+        permanently invisible).
+        """
+        body = digest.strip()
+        title = None
+        heading = re.match(r"#\s*Digest:\s*(.+?)\s*($|\n)", body)
+        if heading:
+            title = heading.group(1)
+            body = body[heading.end():].lstrip()
+        if title:
+            # Marker-safe: single line, no pipes, no backticks.
+            title = re.sub(r"[|`\r\n]+", " ", title).strip()
+            if not title:
+                title = None
+        # Neutralize any fenced blocks the digest carries so they can
+        # never terminate the outer trail fence.
+        body = body.replace("```", "'''")
+        marker = f"_deep_recall_digest_|{OffloadDigestCache.key(digest)}"
+        if title:
+            marker += f"|{title}"
+        return f"\n{marker}\n```\n{body}\n```\n\n"
+
+    def _deliver_deep_recall(
+        self,
+        result: Any,
+        query: str,
+        chat_history: Optional[List[Dict]] = None,
+        memories: Optional[List[Dict]] = None,
+        reasoning_level: float = 0.0,
+    ) -> Generator[str, None, None]:
+        """Conversational delivery for a Deep Recall run.
+
+        Success: the digest rides the transcript as a mechanical trail
+        record (rendered collapsed by Polaris), then the spoken answer
+        streams from the recall-specific interpretation contract.
+        Failure: a status pill carries the fact and the interpretation
+        still runs — without a digest — so the turn completes with
+        honest humility instead of a dead end (fail to silence; the
+        template's no-digest branch carries the contract).
+        """
+        digest = None
+        if isinstance(result, dict) and result.get("success"):
+            digest = result.get("digest")
+        if digest:
+            yield self._deep_recall_trail_chunk(digest)
+        else:
+            logger.warning(
+                "ORAKLE: deep recall returned no digest; delivering"
+                " honest-failure answer."
+            )
+            yield "\n_orakle_status_|deep_recall_failed\n"
+        chat_context = self._get_chat_context(chat_history, memories)
+        for chunk in self._stream_deep_recall_answer(
+            digest, query, chat_context, reasoning_level
+        ):
+            yield chunk
+
+    def _stream_deep_recall_answer(
+        self,
+        digest: Optional[str],
+        query: str,
+        chat_context: Optional[dict] = None,
+        reasoning_level: float = 0.0,
+    ) -> Generator[str, None, None]:
+        """Stream the spoken answer from the recall-specific
+        interpretation contract (framework.deep_recall.interpretation).
+        No separate overflow gate: the digest is engine-bounded
+        (DIGEST_MAX_CHARS) and the chat context is ledger-driven by
+        _get_chat_context."""
+        interpretation_prompt = self.template_manager.render(
+            "framework.deep_recall.interpretation",
+            {
+                "digest": digest,
+                "query": query,
+                "chat_context": chat_context or {},
+                "language": self.current_language or "English",
+            },
+        )
+        if not self.system_message:
+            raise ValueError(
+                "system_message is not initialized in OrakleMiddleware"
+            )
+        interpretation_stream = self.llm.chat(
+            chat_history=self.llm.prepare_chat(
+                system_message=self.system_message,
+                new_message=interpretation_prompt,
+            ),
+            stream=True,
+            reasoning_level=reasoning_level,
+        )
+        cleaned_stream = self._strip_think_blocks_from_stream(
+            interpretation_stream
+        )
+        for chunk in cleaned_stream:
+            if chunk:
+                yield chunk
 
     def _create_bureau_agent(
         self,
