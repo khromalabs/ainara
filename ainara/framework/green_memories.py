@@ -2373,12 +2373,28 @@ class GREENMemories:
                     " current batch to LLM context."
                 )
 
+            # Candidate topics for reuse: the nearest existing topic labels
+            # to this exchange, via the cached topic embeddings. Without
+            # this the extraction LLM invents a fresh descriptive label per
+            # memory and the vocabulary degenerates into one-off titles
+            # (~1 topic per memory), which dilutes topic-based boosting.
+            # Cost is one small embedding (~ms) on top of an LLM call.
+            candidate_topics = self.get_relevant_topics_for_context(
+                conversation_snippet,
+                max_topics=config.get(
+                    "user_profile.green_memories.extraction_topic_candidates",
+                    15,
+                ),
+                min_similarity=0.0,
+            )
+
             # Step 3: Use the LLM to decide on the action
             processing_prompt = self.template_manager.render(
                 "framework.green_memories.consolidated_memory_processing",
                 {
                     "conversation_snippet": conversation_snippet,
                     "existing_memories": existing_memories,
+                    "candidate_topics": candidate_topics,
                 },
             )
             system_prompt = self.template_manager.render(

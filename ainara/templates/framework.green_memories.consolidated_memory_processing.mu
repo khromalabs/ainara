@@ -11,7 +11,7 @@ Here are some existing memories from the user's profile that might be related.
 
 **Existing Memories:**
 {{#existing_memories}}
-- ID: {{id}}, Relevance: {{relevance}}, Memory: "{{memory}}"
+- ID: {{id}}, Topic: {{topic}}, Relevance: {{relevance}}, Memory: "{{memory}}"
 {{/existing_memories}}
 {{^existing_memories}}
 No similar memories found.
@@ -41,6 +41,26 @@ When writing any memory text (`memory` in `create`, `new_memory_text` in `reinfo
 - Write in third-person but drop "The user" when the subject is obvious from context.
 - Prefer short factual statements: "Enjoys jazz, dislikes pop" over "The user has expressed that they enjoy jazz music and do not enjoy pop music."
 - Hard limit: 30 words for simple facts, 60 words for complex or composite memories.
+
+**Topic Assignment**
+Every created memory carries a `topic` label used to group related
+memories and boost them during retrieval. Choose it as follows:
+- Prefer reusing one of the candidate topics below when it fits the new
+  memory (reuse keeps the vocabulary small and retrieval precise).
+- Otherwise create a new topic naming a broad, reusable category (2-5
+  words, e.g. "Trading Strategy", "Family Schedule") — never a one-off
+  description of this specific exchange (e.g. avoid labels like
+  "Askable demo task contact July message").
+- Plain words only; no underscores or camelCase; follow the capitalization
+  style of the candidate topics.
+
+Candidate existing topics (most similar to this conversation):
+{{#candidate_topics}}
+- {{.}}
+{{/candidate_topics}}
+{{^candidate_topics}}
+No existing topics available yet.
+{{/candidate_topics}}
 
 **Step 4: Provide JSON Output**
 Respond with a single JSON object containing your decision.
