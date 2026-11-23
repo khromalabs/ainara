@@ -213,6 +213,84 @@
                             "minimum": 0,
                             "maximum": 1,
                             "description": "GREEN 2.0 (issue #33): semantic-only floor for contextual memory injection. Candidates whose cosine-similarity component falls below this value are pruned regardless of importance/recency. Weak gate by design: prune egregious noise only; 0 disables."
+                        },
+                        "search_history_exchanges": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "default": 2,
+                            "description": "Recent user/assistant exchanges embedded to seed contextual memory retrieval. Only reference resolution needs them — conversational continuity is carried by the session topic — so more turns mostly add noise."
+                        },
+                        "topic_boost": {
+                            "type": "object",
+                            "properties": {
+                                "assistant_weight": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1,
+                                    "default": 0.4,
+                                    "description": "Relevance multiplier contribution for memories whose topic matches the assistant-evaluated session topic (most authoritative source; detected in the background from the settled exchange)."
+                                },
+                                "query_weight": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1,
+                                    "default": 0.3,
+                                    "description": "Relevance multiplier contribution for memories whose topic matches the topics semantically matched from the raw search context (instant reaction to the latest turn; noisier)."
+                                },
+                                "max_topics": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 50,
+                                    "default": 5,
+                                    "description": "Rank-based cap on query-side matched topics. A fixed absolute threshold is not scale-invariant with vocabulary size (noise text crosses any useful threshold when taking the max over thousands of labels), so the boost set is bounded by rank instead."
+                                },
+                                "max_session_topics": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 50,
+                                    "default": 10,
+                                    "description": "Rank-based cap on stored topics mapped from the generated session-topic label (higher-precision matches than the query side, so a wider cap)."
+                                },
+                                "min_similarity": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1,
+                                    "default": 0.2,
+                                    "description": "Low similarity floor applied after the rank caps: text whose best topic match is below this boosts nothing at all."
+                                }
+                            }
+                        },
+                        "session_topic": {
+                            "type": "object",
+                            "properties": {
+                                "classifier_enabled": {
+                                    "type": "boolean",
+                                    "default": true,
+                                    "description": "Per-turn background LLM call that GENERATES a free-form topic label for the current conversation (or NONE for small talk). Disable to rely only on the topic fused into the background summary pass."
+                                },
+                                "detection_window_messages": {
+                                    "type": "integer",
+                                    "minimum": 2,
+                                    "maximum": 50,
+                                    "default": 10,
+                                    "description": "How many recent messages the topic classifier sees. Older context is already carried by the conversation summary, so more adds cost without information."
+                                },
+                                "max_message_chars": {
+                                    "type": "integer",
+                                    "minimum": 50,
+                                    "maximum": 2000,
+                                    "default": 250,
+                                    "description": "Per-message truncation inside the classifier window — topic detection needs the gist, not message bodies. Bounds the window cost worst-case."
+                                },
+                                "max_age_turns": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 20,
+                                    "default": 3,
+                                    "description": "Turns the session topic stays active without fresh background confirmation before it stops boosting retrieval."
+                                }
+                            }
                         }
                     }
                 }

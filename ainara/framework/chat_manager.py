@@ -126,6 +126,43 @@ class ChatManager:
         )
         self.notifications_prompt = ""
 
+        # --- Session Topic (assistant-evaluated, decaying) ---
+        # Detected in the background while the user composes their next
+        # turn and applied atomically at the start of the next one (same
+        # pattern as new_summary). Decays after session_topic_max_age
+        # turns without confirmation so stale topics stop boosting
+        # memory retrieval.
+        self.session_topic_max_age = config.get(
+            "memory.injection.session_topic.max_age_turns", 3
+        )
+        # Recent-exchange window for retrieval seeding. The session topic
+        # carries the conversational continuity, so this only needs to
+        # cover reference resolution ("what about the second option?").
+        self.search_history_exchanges = config.get(
+            "memory.injection.search_history_exchanges", 2
+        )
+        # Per-turn topic classifier (background LLM call). The session
+        # topic is a GENERATED free-form label describing what the
+        # conversation is about right now — never picked from the stored
+        # topic vocabulary, which cannot abstain (any text scores ~0.5
+        # against some label when the vocabulary is large).
+        self.session_topic_classifier_enabled = config.get(
+            "memory.injection.session_topic.classifier_enabled", True
+        )
+        self.session_topic_window = config.get(
+            "memory.injection.session_topic.detection_window_messages", 10
+        )
+        # Per-message truncation inside the classifier window: topic
+        # detection needs the gist, not message bodies (code blocks,
+        # Deep Recall trails...). Bounds the window cost worst-case.
+        self.session_topic_max_msg_chars = config.get(
+            "memory.injection.session_topic.max_message_chars", 250
+        )
+        self.current_session_topic: Optional[str] = None
+        self.new_session_topic: Optional[str] = None
+        self.session_topic_age = 0
+        self.session_topic_lock = threading.Lock()
+
         self.max_guardrail_retries = config.get("guardrails.max_retries", 2)
         self._orakle_trailing_text_violation = False
         # --- Memory Decay Tracking (persisted between sessions) ---
@@ -267,6 +304,12 @@ class ChatManager:
         ):
             self.decay_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="DecayThread"
+            )
+
+        self.topic_executor = None
+        if self.memory_enabled and self.green_memories:
+            self.topic_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="TopicThread"
             )
 
         if self.summary_enabled:
@@ -668,14 +711,12 @@ class ChatManager:
     def _generate_conversation_summary(self, messages_to_summarize):
         """Generate a summary of conversation messages using the LLM
 
-        Args:
-            messages_to_summarize: List of message dictionaries to summarize
-
         Returns:
-            str: Generated summary text
+            tuple: (generated summary text, fused session-topic label or
+                None when the LLM did not emit a usable Topic line)
         """
         if not messages_to_summarize:
-            return ""
+            return "", None
 
         # Format messages for the LLM
         formatted_messages = []
@@ -698,6 +739,10 @@ class ChatManager:
             "conversation_text": conversation_text,
             "max_summary_tokens": max_summary_tokens,
             "max_summary_chars": max_summary_chars,
+            # Fused session-topic detection: the summary pass is also
+            # asked to name the current conversation topic, which becomes
+            # the most authoritative session-topic update (Tier 1).
+            "current_topic": self.current_session_topic or "none",
         }
 
         # If we already have a summary, include it to maintain continuity
@@ -724,6 +769,17 @@ class ChatManager:
             self.llm.add_msg(prompt, temp_history, "user")
             summary = self.llm.chat(chat_history=temp_history, stream=False)
 
+            # Extract the fused session-topic line BEFORE cleaning/truncating
+            # (truncation could otherwise cut it off).
+            topic_match = re.search(
+                r"^topic:\s*(.+)$", summary, re.IGNORECASE | re.MULTILINE
+            )
+            session_topic = (
+                topic_match.group(1).strip() if topic_match else None
+            )
+            if topic_match:
+                summary = summary[: topic_match.start()].rstrip()
+
             # Clean up the summary
             summary = summary.strip()
             if summary.startswith("Summary:"):
@@ -747,11 +803,11 @@ class ChatManager:
                     summary = summary[:cutoff_point]
 
             logger.info(f"Generated conversation summary: {summary[:50]}...")
-            return summary
+            return summary, session_topic
         except Exception as e:
             logger.error(f"Error generating conversation summary: {e}")
             # Fall back to template-based summary
-            return self._create_template_summary(messages_to_summarize)
+            return self._create_template_summary(messages_to_summarize), None
 
     def _update_summary_in_background(self):
         """Trigger background task to update the conversation summary"""
@@ -770,9 +826,11 @@ class ChatManager:
 
         def _background_summary_task():
             try:
-                # Generate the summary
-                new_summary = self._generate_conversation_summary(
-                    messages_to_summarize
+                # Generate the summary (also fuses a session-topic label)
+                new_summary, llm_topic = (
+                    self._generate_conversation_summary(
+                        messages_to_summarize
+                    )
                 )
                 # Safely update the new_summary with the lock
                 with self.buffer_lock:
@@ -781,6 +839,16 @@ class ChatManager:
                     logger.info(
                         f"Generated new summary: {new_summary[:50]}..."
                     )
+                # Tier 1: the assistant-evaluated topic is the most
+                # authoritative session-topic update; it is applied at
+                # the start of the next turn alongside the summary.
+                if llm_topic:
+                    with self.session_topic_lock:
+                        self.new_session_topic = llm_topic
+                        logger.info(
+                            "Fused session topic from summary pass:"
+                            f" {llm_topic}"
+                        )
 
             except Exception as e:
                 logger.error(f"Error in background summary task: {e}")
@@ -794,6 +862,82 @@ class ChatManager:
 
         # Submit the task to our executor
         self.summary_executor.submit(_background_summary_task)
+
+    def _update_session_topic_in_background(self):
+        """Trigger the background per-turn session-topic update.
+
+        A small LLM call (in TopicThread, invisible to response latency)
+        generates a free-form label for what the conversation is about
+        RIGHT NOW, prioritizing the last messages: a topic switch in the
+        latest exchange becomes the new topic on the next turn. It may
+        reply NONE (greetings, small talk) — generation can abstain,
+        selection from the stored topic vocabulary cannot. The heavier
+        assistant-evaluated topic also arrives fused into the background
+        summary pass whenever that fires; both feed the same pending slot
+        and are applied atomically at the start of the next turn."""
+        if not (self.memory_enabled and self.green_memories):
+            return
+        if not self.topic_executor or not self.session_topic_classifier_enabled:
+            return
+
+        window_msgs = [
+            msg
+            for msg in self.chat_history[-self.session_topic_window:]
+            if isinstance(msg, dict)
+            and msg.get("role") in ("user", "assistant")
+            and msg.get("content")
+        ]
+        if not window_msgs:
+            return
+        window_lines = []
+        for msg in window_msgs:
+            content = " ".join(msg["content"].split())
+            if len(content) > self.session_topic_max_msg_chars:
+                content = (
+                    content[: self.session_topic_max_msg_chars].rstrip()
+                    + "…"
+                )
+            window_lines.append(f"{msg['role']}: {content}")
+
+        template_context = {
+            "previous_topic": self.current_session_topic or "none",
+            "conversation_window": "\n".join(window_lines),
+        }
+        if self.current_summary and self.current_summary != "-":
+            template_context["current_summary"] = self.current_summary
+        prompt = self.template_manager.render(
+            "framework.chat_manager.session_topic", template_context
+        )
+
+        def _background_topic_task():
+            try:
+                temp_history = []
+                self.llm.add_msg(
+                    "You are a helpful assistant.", temp_history, "system"
+                )
+                self.llm.add_msg(prompt, temp_history, "user")
+                raw = self.llm.chat(chat_history=temp_history, stream=False)
+                label = (raw or "").strip().strip("'\"")
+                if re.fullmatch(
+                    r"(none|n/?a|unknown|no( clear)? topic)[.!\"]*",
+                    label,
+                    re.IGNORECASE,
+                ):
+                    return
+                if not label:
+                    return
+                # Skip if an unapplied update is already pending —
+                # it is fresher (or the LLM-fused Tier 1 result).
+                with self.session_topic_lock:
+                    if self.new_session_topic is None:
+                        self.new_session_topic = label[:60]
+                        logger.info(
+                            f"Background topic classifier: {label[:60]}"
+                        )
+            except Exception as e:
+                logger.error(f"Error in background topic task: {e}")
+
+        self.topic_executor.submit(_background_topic_task)
 
     def _update_notifications_in_background(self):
         """Trigger background task to update the notifications notification"""
@@ -844,6 +988,8 @@ class ChatManager:
             self.summary_executor.shutdown(wait=True)
         if self.decay_executor:
             self.decay_executor.shutdown(wait=True)
+        if self.topic_executor:
+            self.topic_executor.shutdown(wait=True)
 
     def _trigger_memory_decay_in_background(self):
         """Trigger background task to decay memory relevance."""
@@ -1838,6 +1984,30 @@ class ChatManager:
                         )
                         logger.info("Retrieved new summary for application")
 
+            # --- Session Topic (dynamic, updated by background thread) ---
+            # Atomically apply the latest background-detected topic, then
+            # age the current one: without fresh confirmation it decays so
+            # stale topics stop boosting memory retrieval.
+            with self.session_topic_lock:
+                if self.new_session_topic:
+                    self.current_session_topic = self.new_session_topic
+                    self.new_session_topic = None
+                    self.session_topic_age = 0
+                    logger.info(
+                        "Applied new session topic:"
+                        f" {self.current_session_topic}"
+                    )
+                elif self.current_session_topic:
+                    self.session_topic_age += 1
+                    if self.session_topic_age > self.session_topic_max_age:
+                        logger.info(
+                            "Session topic expired after"
+                            f" {self.session_topic_age} turns:"
+                            f" {self.current_session_topic}"
+                        )
+                        self.current_session_topic = None
+                        self.session_topic_age = 0
+
             # ============================================================
             # PHASE 1: Build system_hint_content (per-turn dynamic content)
             # ============================================================
@@ -1874,10 +2044,12 @@ class ChatManager:
             # --- Context Memories (dynamic per turn) ---
             self.processed_memories_for_template = None
             if self.memory_enabled and self.green_memories:
-                # Build search query from recent turns for semantic search
+                # Build search query from recent turns for semantic search.
+                # Only enough turns for reference resolution: the session
+                # topic carries the conversational continuity now.
                 history_for_search = self.prepare_chat_history_for_skill()[
-                    -10:
-                ]  # Last 5 exchanges
+                    -(self.search_history_exchanges * 2):
+                ]
 
                 search_context_parts = []
                 if self.current_summary and self.current_summary != "-":
@@ -1897,7 +2069,8 @@ class ChatManager:
                 search_context = "\n\n".join(search_context_parts)
 
                 relevant_memories = self.green_memories.get_relevant_memories(
-                    search_context
+                    search_context,
+                    session_topic=self.current_session_topic,
                 )
 
                 if relevant_memories:
@@ -2398,6 +2571,10 @@ class ChatManager:
             if self.notifications_enabled:
                 self._update_notifications_in_background()
 
+            # Trigger background session-topic detection (runs every turn;
+            # cheap embedding inference while the user composes the next one)
+            self._update_session_topic_in_background()
+
             # --- Memory Decay ---
             if self.memory_enabled and self.memory_decay_interval > 0:
                 self.turn_counter += 1
@@ -2432,7 +2609,8 @@ class ChatManager:
         ]
         parts.append(query)
         relevant = self.green_memories.get_relevant_memories(
-            "\n\n".join(parts)
+            "\n\n".join(parts),
+            session_topic=self.current_session_topic,
         )
         if not relevant:
             return None

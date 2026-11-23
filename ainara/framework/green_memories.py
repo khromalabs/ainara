@@ -28,7 +28,7 @@ import numpy as np
 import uuid
 from datetime import datetime, timezone
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from fastembed import TextEmbedding
@@ -154,6 +154,38 @@ class GREENMemories:
             "semantic_floor": config.get(
                 "memory.injection.semantic_floor", 0.15
             ),
+            # Session-topic boost weights (multiplicative blend). The
+            # semantic similarity between the query and the memory text is
+            # the base ranking signal; topic hits act as multipliers on top
+            # of the memory's relevance. The assistant-evaluated session
+            # topic (declared in the background from the settled exchange)
+            # is the most authoritative source; query-matched topics react
+            # instantly to the latest turn but are noisier. When both
+            # sources hit the same topic the weights sum — that sum is the
+            # designed ceiling, not accidental double-counting.
+            "topic_boost_assistant_weight": config.get(
+                "memory.injection.topic_boost.assistant_weight", 0.4
+            ),
+            "topic_boost_query_weight": config.get(
+                "memory.injection.topic_boost.query_weight", 0.3
+            ),
+            # Rank-based cap on matched topics. A fixed absolute threshold
+            # is not scale-invariant with vocabulary size: taking max over
+            # thousands of candidate labels, pure-noise text still crosses
+            # any useful threshold (measured: noise tops ~0.50, real
+            # matches start ~0.53), so the boost set would fire on a
+            # near-constant fraction of the store. Bounding by RANK makes
+            # the boost magnitude predictable; the low floor only rejects
+            # obviously-unrelated text.
+            "topic_boost_max_topics": config.get(
+                "memory.injection.topic_boost.max_topics", 5
+            ),
+            "topic_boost_max_session_topics": config.get(
+                "memory.injection.topic_boost.max_session_topics", 10
+            ),
+            "topic_boost_min_similarity": config.get(
+                "memory.injection.topic_boost.min_similarity", 0.2
+            ),
         }
         self.nlp = load_spacy_model()
         self._db_lock = threading.Lock()
@@ -181,6 +213,12 @@ class GREENMemories:
         # Cache all topics on initialization to avoid repeated DB queries
         self.all_topics = self.get_all_topics()
         logger.info(f"Cached {len(self.all_topics)} unique memory topics.")
+        # Topic-label embedding cache: (topics, vectors), index-aligned.
+        # Embedding the whole vocabulary is expensive (seconds for dozens
+        # of labels) while retrievals happen per turn, so it is rebuilt
+        # lazily after any vocabulary change (see _refresh_topic_list).
+        self._topic_cache: Optional[Tuple[List[str], np.ndarray]] = None
+        self._topic_cache_lock = threading.Lock()
 
         # Check if we need to force a full rescan of chat history
         self._check_and_force_rescan()
@@ -1147,49 +1185,117 @@ class GREENMemories:
             logger.error(f"Failed to retrieve memory topics: {e}")
             return []
 
+    def _refresh_topic_list(self) -> None:
+        """Re-reads the topic vocabulary from the DB and invalidates the
+        topic-embedding cache (rebuilt lazily on the next retrieval).
+        Single mutation point for the topic vocabulary."""
+        self.all_topics = self.get_all_topics()
+        self._topic_cache = None
+
+    def _get_topic_embeddings(
+        self,
+    ) -> Tuple[List[str], Optional[np.ndarray]]:
+        """Returns the topic vocabulary with lazily-computed cached
+        embeddings, index-aligned."""
+        with self._topic_cache_lock:
+            if self._topic_cache is not None:
+                return self._topic_cache
+        if not self.topic_matcher_model or not self.all_topics:
+            return self.all_topics, None
+        try:
+            vectors = np.array(
+                list(self.topic_matcher_model.embed(self.all_topics))
+            )
+        except Exception as e:
+            logger.error(f"Failed to embed topic labels: {e}")
+            return self.all_topics, None
+        with self._topic_cache_lock:
+            if self._topic_cache is None:
+                self._topic_cache = (list(self.all_topics), vectors)
+        return self._topic_cache
+
+    @staticmethod
+    def _cosine_similarities(
+        vector: np.ndarray, matrix: np.ndarray
+    ) -> np.ndarray:
+        """Cosine similarity of one vector against each row of a matrix."""
+        norm_vector = np.linalg.norm(vector)
+        norms = np.linalg.norm(matrix, axis=1)
+        return (matrix @ vector) / (norms * norm_vector + 1e-9)
+
     def get_relevant_topics_for_context(
-        self, context: str, threshold: float = 0.3
+        self,
+        context: str,
+        max_topics: int = 5,
+        min_similarity: float = 0.2,
     ) -> List[str]:
         """
-        Identifies relevant memory topics for a given conversation context using
-        semantic similarity.
+        Identifies relevant memory topics for a given conversation context
+        using semantic similarity, bounded by rank: the top `max_topics`
+        most similar labels above `min_similarity` (see scoring_config for
+        why rank, not a fixed threshold).
         """
         if not self.topic_matcher_model:
             return []
 
-        all_topics = self.all_topics
-        if not all_topics:
+        all_topics, topic_vecs = self._get_topic_embeddings()
+        if not all_topics or topic_vecs is None:
             return []
 
         logger.info("Checking relevant topics...")
 
         try:
-            # Generate embeddings (returns generators)
-            context_embedding_gen = self.topic_matcher_model.embed([context])
-            topic_embeddings_gen = self.topic_matcher_model.embed(all_topics)
-
-            # Convert to numpy arrays
-            context_vec = next(context_embedding_gen)
-            topic_vecs = np.array(list(topic_embeddings_gen))
+            # Generate embedding (returns a generator)
+            context_vec = next(self.topic_matcher_model.embed([context]))
 
             # Calculate Cosine Similarity: (A . B) / (||A|| * ||B||)
-            norm_context = np.linalg.norm(context_vec)
-            norm_topics = np.linalg.norm(topic_vecs, axis=1)
+            similarities = self._cosine_similarities(context_vec, topic_vecs)
 
-            dot_products = np.dot(topic_vecs, context_vec)
-
-            # Calculate scores (add epsilon to avoid division by zero)
-            similarities = dot_products / (norm_topics * norm_context + 1e-9)
-
-            # Filter based on threshold
-            relevant_indices = np.where(similarities > threshold)[0]
-            relevant_topics = [all_topics[i] for i in relevant_indices]
+            order = np.argsort(similarities)[::-1][:max_topics]
+            relevant_topics = [
+                all_topics[i]
+                for i in order
+                if similarities[i] > min_similarity
+            ]
 
             return relevant_topics
         except Exception as e:
             logger.error(
                 f"Failed to determine relevant topics via embeddings: {e}"
             )
+            return []
+
+    def get_topics_similar_to_label(
+        self,
+        label: str,
+        max_topics: int = 10,
+        min_similarity: float = 0.2,
+    ) -> List[str]:
+        """Maps a free-form, generated session-topic label onto stored
+        memory topic labels via embedding similarity (top `max_topics`
+        above `min_similarity`), so phrasing drift ("cooking pasta" vs
+        "cooking") still hits. The session topic itself is generated by
+        the chat manager's background classifier — this is only the
+        retrieval-time mapping, never the source of the state (selection
+        from the vocabulary cannot abstain)."""
+        if not label:
+            return []
+        if not self.topic_matcher_model:
+            return [label] if label in self.all_topics else []
+        all_topics, topic_vecs = self._get_topic_embeddings()
+        if not all_topics or topic_vecs is None:
+            return [label] if label in self.all_topics else []
+        try:
+            label_vec = next(self.topic_matcher_model.embed([label]))
+            similarities = self._cosine_similarities(label_vec, topic_vecs)
+            order = np.argsort(similarities)[::-1][:max_topics]
+            return [
+                all_topics[i]
+                for i in order
+                if similarities[i] > min_similarity
+            ]
+        except Exception as e:
+            logger.error(f"Failed to match session topic label: {e}")
             return []
 
     def _normalize_memory_text(self, text: str) -> str:
@@ -1215,19 +1321,49 @@ class GREENMemories:
         top_k: Optional[int] = None,
         exclude_ids: Optional[List[str]] = None,
         topic_boost: bool = True,
+        session_topic: Optional[str] = None,
     ) -> List[Dict]:
         """
         Finds memories relevant to the user's query using a hybrid approach.
         It combines the most important 'key memories' (reflex) with memories
         found via semantic search (contextual).
+
+        Args:
+            session_topic: optional assistant-evaluated topic for the current
+                conversation (decaying session state maintained by the chat
+                manager). Boosts memories whose topic matches it, on top of
+                the instant query-side topic matching.
         """
         relevant_topics = []
         if topic_boost:
-            relevant_topics = self.get_relevant_topics_for_context(query)
+            relevant_topics = self.get_relevant_topics_for_context(
+                query,
+                max_topics=self.scoring_config["topic_boost_max_topics"],
+                min_similarity=self.scoring_config[
+                    "topic_boost_min_similarity"
+                ],
+            )
             if relevant_topics:
                 logger.info(
                     "Identified relevant topics via semantic search:"
                     f" {relevant_topics}"
+                )
+
+        session_topic_hits: List[str] = []
+        if topic_boost and session_topic:
+            session_topic_hits = self.get_topics_similar_to_label(
+                session_topic,
+                max_topics=self.scoring_config[
+                    "topic_boost_max_session_topics"
+                ],
+                min_similarity=self.scoring_config[
+                    "topic_boost_min_similarity"
+                ],
+            )
+            if session_topic_hits:
+                logger.info(
+                    f"Session topic '{session_topic}' maps to stored"
+                    f" topics: {session_topic_hits}"
                 )
         if not self.vector_storage:
             raise RuntimeError(
@@ -1302,12 +1438,27 @@ class GREENMemories:
                 if memory_type == "key_memories":
                     relevance *= self.scoring_config["key_memory_boost"]
 
-                # Boost relevance if the memory's topic is currently active
+                # Topic boosts (multiplicative, weights in scoring_config):
+                # the assistant-evaluated session topic is the stable
+                # anchor; query-matched topics react instantly to the
+                # latest turn.
+                topic_boost_mult = 1.0
+                if (
+                    session_topic_hits
+                    and memory_topic in session_topic_hits
+                ):
+                    topic_boost_mult += self.scoring_config[
+                        "topic_boost_assistant_weight"
+                    ]
                 if relevant_topics and memory_topic in relevant_topics:
-                    relevance *= self.scoring_config["key_memory_boost"]
+                    topic_boost_mult += self.scoring_config[
+                        "topic_boost_query_weight"
+                    ]
+                if topic_boost_mult > 1.0:
+                    relevance *= topic_boost_mult
                     logger.debug(
-                        f"Boosting memory {memory.get('id')} due to relevant"
-                        f" topic: {memory_topic}"
+                        f"Boosting memory {memory.get('id')} (topic:"
+                        f" {memory_topic}, x{topic_boost_mult:.2f})"
                     )
 
                 # For normalized vectors, cosine similarity can be calculated from
@@ -1912,6 +2063,8 @@ class GREENMemories:
                 logger.info(
                     f"Indexed new memory (ID: {memory_id}) in vector store."
                 )
+            # A new memory may have introduced a new topic label.
+            self._refresh_topic_list()
             return full_memory_obj
         except Exception as e:
             logger.error(f"Failed to create new memory in database: {e}")
@@ -2067,7 +2220,7 @@ class GREENMemories:
             # Step 3: Refresh cached key memories if any retracted memory
             # was a key memory
             self.all_key_memories = self.get_key_memories()
-            self.all_topics = self.get_all_topics()
+            self._refresh_topic_list()
 
         except Exception as e:
             logger.error(f"Failed to retract memories: {e}")
@@ -2122,11 +2275,15 @@ class GREENMemories:
                     f"Deleted {deleted_count} memories from SQLite."
                 )
 
-            if deleted_count > 0 and self.vector_storage:
-                self.vector_storage.delete(memory_ids)
-                logger.info(
-                    f"Deleted {len(memory_ids)} memories from vector store."
-                )
+            if deleted_count > 0:
+                if self.vector_storage:
+                    self.vector_storage.delete(memory_ids)
+                    logger.info(
+                        f"Deleted {len(memory_ids)} memories from vector"
+                        " store."
+                    )
+                # The vocabulary may have lost its last topic member.
+                self._refresh_topic_list()
         except Exception as e:
             logger.error(f"Failed to delete memories: {e}")
 
