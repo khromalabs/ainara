@@ -358,6 +358,53 @@ class ChatMemory:
             all_contexts=all_contexts
         )
 
+    def browse_window(
+        self,
+        start_date: str,
+        end_date: str,
+        offset: int = 0,
+        limit: int = 25,
+        all_contexts: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Chronological page of raw messages within a period. The
+        coverage instrument behind Deep Recall's browse_logs tool:
+        bare dates cover the whole day, results are ordered oldest
+        first so a period can be read in sequence."""
+        start_dt = resolve_date_bound(start_date, is_end=False)
+        end_dt = resolve_date_bound(end_date, is_end=True)
+        if start_dt is None or end_dt is None:
+            return []
+        return self.storage.get_messages(
+            limit=limit,
+            offset=offset,
+            sort="ASC",
+            start_date=start_dt.isoformat(),
+            end_date=end_dt.isoformat(),
+            all_contexts=all_contexts,
+        )
+
+    def window_overview(
+        self,
+        start_date: str,
+        end_date: str,
+        all_contexts: bool = True,
+    ) -> Dict[str, Any]:
+        """Mechanical density facts about a period (message counts,
+        first/last activity, weekly distribution); date bounds
+        normalized here so every caller shares the same semantics."""
+        start_dt = resolve_date_bound(start_date, is_end=False)
+        end_dt = resolve_date_bound(end_date, is_end=True)
+        if start_dt is None or end_dt is None:
+            return {"count": 0, "first": None, "last": None, "weekly": []}
+        overview = self.storage.window_overview(
+            start_dt.isoformat(),
+            end_dt.isoformat(),
+            all_contexts=all_contexts,
+        )
+        return overview if overview else {
+            "count": 0, "first": None, "last": None, "weekly": []
+        }
+
     def get_total_messages(self) -> int:
         """Get total number of messages in the history"""
         return self.storage.get_message_count()

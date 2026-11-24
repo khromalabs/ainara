@@ -44,6 +44,10 @@ from ainara.framework.config import config
 from ainara.framework.llm.base import LLMBackend
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.storage import get_vector_backend
+from ainara.framework.storage.time_bounds import (
+    resolve_epoch_bound,
+    timestamp_to_epoch,
+)
 from ainara.framework import vector_recipe
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.utils import format_relative_time_terse, load_spacy_model
@@ -909,6 +913,17 @@ class GREENMemories:
             if not content:
                 continue
             metadata = memory.copy()
+            # Numeric epoch mirrors for date-scoped memory retrieval
+            # (Chroma range operators only work on numeric metadata;
+            # created_at anchors a memory to the conversation that
+            # produced it, which is the period it belongs to).
+            for src, dst in (
+                ("created_at", "created_ts"),
+                ("last_updated", "updated_ts"),
+            ):
+                epoch = timestamp_to_epoch(memory.get(src))
+                if epoch is not None:
+                    metadata[dst] = epoch
             normalized_content = self._normalize_memory_text(content)
             documents_to_add.append(
                 {"page_content": normalized_content, "metadata": metadata}
@@ -1191,15 +1206,31 @@ class GREENMemories:
             logger.error(f"Failed to check if profile is empty: {e}")
             return False  # Safer to assume not empty on error
 
-    def get_all_topics(self) -> List[str]:
-        """Retrieves a unique list of all topics from the user_memories table."""
+    def get_all_topics(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[str]:
+        """Retrieves a unique list of topics from the user_memories
+        table, optionally scoped to the period the memories were
+        created in. Bare dates cover the whole day; bounds filter on
+        the numeric created_ts mirror (SQLite column added with recipe
+        v3) falling back to the ISO string when the column is absent.
+        """
+        start_dt = resolve_epoch_bound(start_date, is_end=False)
+        end_dt = resolve_epoch_bound(end_date, is_end=True)
+        sql = "SELECT DISTINCT topic FROM user_memories WHERE status = 'current'"
+        params: List[Any] = []
+        if start_dt is not None:
+            sql += " AND date(created_at) >= date(?)"
+            params.append(start_date)
+        if end_dt is not None:
+            sql += " AND date(created_at) <= date(?)"
+            params.append(end_date)
         try:
             with self.storage.conn:
                 cursor = self.storage.conn.cursor()
-                cursor.execute(
-                    "SELECT DISTINCT topic FROM user_memories WHERE status ="
-                    " 'current'"
-                )
+                cursor.execute(sql, params)
                 topics = [row[0] for row in cursor.fetchall()]
                 return topics
         except Exception as e:
@@ -1336,6 +1367,33 @@ class GREENMemories:
             normalized_text if normalized_text else text
         )  # Fallback to original if empty
 
+    def count_memories_in_window(
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> int:
+        """Number of current memories created within the window. The
+        mechanical density fact that drives adaptive top_k for
+        date-scoped memory retrieval."""
+        start_dt = resolve_epoch_bound(start_date, is_end=False)
+        end_dt = resolve_epoch_bound(end_date, is_end=True)
+        sql = "SELECT COUNT(*) FROM user_memories WHERE status = 'current'"
+        params: List[Any] = []
+        if start_dt is not None:
+            sql += " AND created_ts >= ?"
+            params.append(start_dt)
+        if end_dt is not None:
+            sql += " AND created_ts <= ?"
+            params.append(end_dt)
+        try:
+            with self.storage.conn:
+                cursor = self.storage.conn.cursor()
+                cursor.execute(sql, params)
+                return cursor.fetchone()[0]
+        except Exception as e:
+            logger.error(f"Failed to count memories in window: {e}")
+            return 0
+
     def get_relevant_memories(
         self,
         query: str,
@@ -1343,6 +1401,8 @@ class GREENMemories:
         exclude_ids: Optional[List[str]] = None,
         topic_boost: bool = True,
         session_topic: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> List[Dict]:
         """
         Finds memories relevant to the user's query using a hybrid approach.
@@ -1354,6 +1414,12 @@ class GREENMemories:
                 conversation (decaying session state maintained by the chat
                 manager). Boosts memories whose topic matches it, on top of
                 the instant query-side topic matching.
+            start_date/end_date: optional period bounds ("YYYY-MM-DD" or
+                full ISO) on the memory's creation date — candidates are
+                ranked WITHIN the period, not globally. This is the
+                instrument for period-recall queries ('what happened in
+                September'): a month's salient events are a few dozen
+                memories, not thousands of messages.
         """
         relevant_topics = []
         if topic_boost:
@@ -1425,6 +1491,17 @@ class GREENMemories:
             # Build the filter dynamically to support multiple conditions.
             filter_conditions = []
 
+            # Period bounds: numeric epoch mirror only — Chroma range
+            # operators cannot work on the ISO-string created_at. The
+            # creation date anchors a memory to the conversation that
+            # produced it.
+            start_ts = resolve_epoch_bound(start_date, is_end=False)
+            end_ts = resolve_epoch_bound(end_date, is_end=True)
+            if start_ts is not None:
+                filter_conditions.append({"created_ts": {"$gte": start_ts}})
+            if end_ts is not None:
+                filter_conditions.append({"created_ts": {"$lte": end_ts}})
+
             # Exclude IDs from reflex memories and any initially passed IDs.
             if exclude_ids is not None and exclude_ids:
                 filter_conditions.append({"id": {"$nin": exclude_ids}})
@@ -1441,6 +1518,9 @@ class GREENMemories:
                 query,
                 limit=initial_results_count,
                 filter_dict=filter_dict,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                ts_key="created_ts",
             )
 
             if not results_with_distances:

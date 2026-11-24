@@ -240,10 +240,15 @@ class SQLiteStorage(StorageBackend):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         users: Optional[List[str]] = None,
+        all_contexts: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get messages with pagination and filtering."""
-        query = "SELECT * FROM messages WHERE context_id = ?"
-        params = [self.context_id]
+        if all_contexts:
+            query = "SELECT * FROM messages WHERE 1=1"
+            params: List[Any] = []
+        else:
+            query = "SELECT * FROM messages WHERE context_id = ?"
+            params = [self.context_id]
 
         if start_date:
             query += " AND timestamp >= ?"
@@ -279,6 +284,47 @@ class SQLiteStorage(StorageBackend):
             (self.context_id,),
         )
         return cursor.fetchone()[0]
+
+    def window_overview(
+        self,
+        start_date: str,
+        end_date: str,
+        all_contexts: bool = True,
+    ) -> Dict[str, Any]:
+        """Mechanical density facts about a period: total message
+        count, first/last timestamps and a per-week distribution.
+        Framework-computed data for Deep Recall's planning — the model
+        words the truth, it never computes it."""
+        if all_contexts:
+            base = "FROM messages WHERE 1=1"
+            params: List[Any] = []
+        else:
+            base = "FROM messages WHERE context_id = ?"
+            params = [self.context_id]
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                f"SELECT COUNT(id), MIN(timestamp), MAX(timestamp) {base}"
+                " AND timestamp >= ? AND timestamp <= ?",
+                params + [start_date, end_date],
+            )
+            count, first, last = cursor.fetchone()
+            cursor.execute(
+                f"SELECT strftime('%Y-W%W', timestamp) wk, COUNT(*)"
+                f" {base} AND timestamp >= ? AND timestamp <= ?"
+                " GROUP BY wk ORDER BY wk",
+                params + [start_date, end_date],
+            )
+            weekly = [(row[0], row[1]) for row in cursor.fetchall()]
+            return {
+                "count": count,
+                "first": first,
+                "last": last,
+                "weekly": weekly,
+            }
+        except Exception as e:
+            logger.error(f"Failed to build window overview: {e}")
+            return {"count": 0, "first": None, "last": None, "weekly": []}
 
     def search_text(
         self,

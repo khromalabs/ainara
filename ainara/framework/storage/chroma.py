@@ -130,17 +130,21 @@ class ChromaVectorStorage(VectorStorageBackend):
         return ids
 
     def _date_where_clauses(
-        self, start_ts: Optional[float], end_ts: Optional[float]
+        self,
+        start_ts: Optional[float],
+        end_ts: Optional[float],
+        ts_key: str = "timestamp_ts",
     ) -> List[Dict[str, Any]]:
         """Epoch date bounds as Chroma `where` clauses. Range
         operators only work on numeric metadata, so the bounds filter
-        on the numeric "timestamp_ts" mirror, never on the ISO-string
-        "timestamp"."""
+        on the numeric epoch mirror named by `ts_key` ("timestamp_ts"
+        for chat logs, "created_ts" for memories), never on ISO-string
+        metadata."""
         clauses = []
         if start_ts is not None:
-            clauses.append({"timestamp_ts": {"$gte": start_ts}})
+            clauses.append({ts_key: {"$gte": start_ts}})
         if end_ts is not None:
-            clauses.append({"timestamp_ts": {"$lte": end_ts}})
+            clauses.append({ts_key: {"$lte": end_ts}})
         return clauses
 
     def _combine_where(
@@ -148,9 +152,10 @@ class ChromaVectorStorage(VectorStorageBackend):
         filter_dict: Optional[Dict[str, Any]],
         start_ts: Optional[float],
         end_ts: Optional[float],
+        ts_key: str = "timestamp_ts",
     ) -> Optional[Dict[str, Any]]:
         """Merge caller metadata filters with epoch date bounds."""
-        clauses = self._date_where_clauses(start_ts, end_ts)
+        clauses = self._date_where_clauses(start_ts, end_ts, ts_key)
         if not clauses:
             return filter_dict if filter_dict else None
         if filter_dict:
@@ -164,6 +169,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         filter_dict: Optional[Dict[str, Any]] = None,
         start_ts: Optional[float] = None,
         end_ts: Optional[float] = None,
+        ts_key: str = "timestamp_ts",
     ) -> List[Dict[str, Any]]:
         """
         Search for similar texts
@@ -173,9 +179,9 @@ class ChromaVectorStorage(VectorStorageBackend):
             limit: Maximum number of results
             filter_dict: Optional metadata filters for ChromaDB's 'where' clause
             start_ts: Optional Unix-epoch lower bound (inclusive) on
-                "timestamp_ts" metadata; results ranked within the window
+                `ts_key` metadata; results ranked within the window
             end_ts: Optional Unix-epoch upper bound (inclusive) on
-                "timestamp_ts" metadata
+                `ts_key` metadata
 
         Returns:
             List of search results
@@ -187,7 +193,9 @@ class ChromaVectorStorage(VectorStorageBackend):
         results = self.collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            where=self._combine_where(filter_dict, start_ts, end_ts),
+            where=self._combine_where(
+                filter_dict, start_ts, end_ts, ts_key
+            ),
         )
 
         # Convert to standard format
@@ -217,6 +225,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         filter_dict: Optional[Dict[str, Any]] = None,
         start_ts: Optional[float] = None,
         end_ts: Optional[float] = None,
+        ts_key: str = "timestamp_ts",
     ) -> List[tuple[Dict[str, Any], float]]:
         """
         Search for similar texts and return documents with their distance scores.
@@ -226,9 +235,9 @@ class ChromaVectorStorage(VectorStorageBackend):
             limit: Maximum number of results
             filter_dict: Optional metadata filters for ChromaDB's 'where' clause
             start_ts: Optional Unix-epoch lower bound (inclusive) on
-                "timestamp_ts" metadata
+                `ts_key` metadata
             end_ts: Optional Unix-epoch upper bound (inclusive) on
-                "timestamp_ts" metadata
+                `ts_key` metadata
 
         Returns:
             List of tuples, where each tuple contains a result dictionary and its distance score.
@@ -240,7 +249,9 @@ class ChromaVectorStorage(VectorStorageBackend):
         results = self.collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            where=self._combine_where(filter_dict, start_ts, end_ts),
+            where=self._combine_where(
+                filter_dict, start_ts, end_ts, ts_key
+            ),
         )
 
         # Convert to standard format

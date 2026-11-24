@@ -37,13 +37,14 @@ class VectorStorageBackend(ABC):
         filter_dict: Optional[Dict[str, Any]] = None,
         start_ts: Optional[float] = None,
         end_ts: Optional[float] = None,
+        ts_key: str = "timestamp_ts",
     ) -> List[Dict[str, Any]]:
         """Search for similar documents.
 
         start_ts/end_ts: optional Unix-epoch bounds (inclusive) on the
-        documents' "timestamp_ts" numeric metadata. Results are ranked
-        WITHIN the window (top `limit` among the documents that fall
-        inside it), not globally and then filtered.
+        documents' `ts_key` numeric metadata (default "timestamp_ts").
+        Results are ranked WITHIN the window (top `limit` among the
+        documents that fall inside it), not globally and then filtered.
         """
         pass
 
@@ -55,6 +56,7 @@ class VectorStorageBackend(ABC):
         filter_dict: Optional[Dict[str, Any]] = None,
         start_ts: Optional[float] = None,
         end_ts: Optional[float] = None,
+        ts_key: str = "timestamp_ts",
     ) -> List[tuple[Dict[str, Any], float]]:
         """Search for similar documents and return their scores."""
         pass
