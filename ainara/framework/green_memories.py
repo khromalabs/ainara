@@ -28,7 +28,7 @@ import numpy as np
 import uuid
 from datetime import datetime, timezone
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     from fastembed import TextEmbedding
@@ -118,7 +118,20 @@ class GREENMemories:
         self,
         llm: LLMBackend,
         chat_memory: ChatMemory,
+        sync_progress_callback: Optional["Callable[[int, int], None]"] = None,
     ):
+        """
+        Args:
+            sync_progress_callback: optional ``done, total`` callback
+                invoked while the vector mirror of the memory store is
+                rebuilt (recipe gate or drift repair at startup). When
+                provided, the host reports the rebuild to the UI and
+                boot gates on it; the sync is batched so progress is
+                granular.
+        """
+        self.llm = llm
+        self.chat_memory = chat_memory
+        self.sync_progress_callback = sync_progress_callback
         self.llm = llm
         self.chat_memory = chat_memory
         self._memory_llm_cache = {}
@@ -326,7 +339,9 @@ class GREENMemories:
                         f" ({vector_count} memories). This can happen after a"
                         " manual deletion. Triggering re-sync."
                     )
-                self._sync_profile_to_vector_store()
+                self._sync_profile_to_vector_store(
+                    progress_callback=self.sync_progress_callback
+                )
                 vector_recipe.mark_current(
                     vector_path, "profile", embedding_model
                 )
@@ -885,10 +900,15 @@ class GREENMemories:
                     memory[key] = None
         return memory
 
-    def _sync_profile_to_vector_store(self):
+    def _sync_profile_to_vector_store(
+        self, progress_callback: Optional[Callable[[int, int], None]] = None
+    ):
         import time
 
-        """Clears and rebuilds the memory vector index from the profile."""
+        """Clears and rebuilds the memory vector index from the profile.
+        Embedding is batched so a host-side progress callback can
+        follow along (3000 memories in one call would report nothing
+        for minutes)."""
         if not self.vector_storage:
             logger.debug(
                 "Vector storage not available, skipping profile sync."
@@ -930,7 +950,22 @@ class GREENMemories:
             )
 
         if documents_to_add:
-            self.vector_storage.add_documents(documents_to_add)
+            batch_size = 250
+            for offset in range(0, len(documents_to_add), batch_size):
+                batch = documents_to_add[offset:offset + batch_size]
+                self.vector_storage.add_documents(batch)
+                if progress_callback:
+                    done = min(offset + batch_size, len(documents_to_add))
+                    try:
+                        progress_callback(done, len(documents_to_add))
+                    except Exception:
+                        logger.exception(
+                            "Profile sync progress callback failed"
+                        )
+                logger.info(
+                    f"Indexed {min(offset + batch_size, len(documents_to_add))}"
+                    f" / {len(documents_to_add)} memories."
+                )
             duration = time.time() - start_time
             logger.info(
                 f"Successfully indexed {len(documents_to_add)}"

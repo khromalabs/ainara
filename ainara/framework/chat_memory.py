@@ -22,7 +22,7 @@ import os
 import re
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ainara.framework.storage import get_text_backend, get_vector_backend
 # Import our storage backends
@@ -43,6 +43,7 @@ class ChatMemory:
         self,
         storage_backend: StorageBackend,
         context: Optional[Dict[str, str]] = None,
+        vector_rebuild_callback: Optional["Callable[[int, int], None]"] = None,
     ):
         """
         Initialize memory with context-aware storage
@@ -50,6 +51,13 @@ class ChatMemory:
         Args:
             context: Dictionary of context identifiers (persona, user, etc.)
             storage_backend: Custom storage backend (if provided)
+            vector_rebuild_callback: optional ``done, total`` callback
+                invoked while a recipe-gated vector rebuild runs. When
+                provided, the rebuild runs SYNCHRONOUSLY so the host
+                can gate readiness on it and report progress (pybridge
+                streams "Rebuilding conversation index..." to the UI);
+                without it the rebuild runs in a background thread and
+                semantic search is degraded until it completes.
         """
         # Import global config
         from ainara.framework.config import config
@@ -107,17 +115,26 @@ class ChatMemory:
             ):
                 logger.info(
                     "Vector recipe changed (%s); rebuilding the vector"
-                    " index in the background",
+                    " index",
                     vector_recipe.stale_reason(
                         vector_path, "chat", embedding_model
                     ),
                 )
-                threading.Thread(
-                    target=self._rebuild_vector_recipe,
-                    args=(vector_path, embedding_model),
-                    daemon=True,
-                    name="vector-recipe-rebuild",
-                ).start()
+                if vector_rebuild_callback is not None:
+                    # The host wants to gate readiness on a complete
+                    # index (and report progress): run inline.
+                    self._rebuild_vector_recipe(
+                        vector_path,
+                        embedding_model,
+                        progress_callback=vector_rebuild_callback,
+                    )
+                else:
+                    threading.Thread(
+                        target=self._rebuild_vector_recipe,
+                        args=(vector_path, embedding_model),
+                        daemon=True,
+                        name="vector-recipe-rebuild",
+                    ).start()
         except ImportError:
             logger.warning(
                 f"Vector storage backend '{vector_type}' dependencies not"
@@ -129,9 +146,12 @@ class ChatMemory:
             self.vector_storage = None
 
     def _rebuild_vector_recipe(
-        self, vector_path: str, embedding_model: str
+        self,
+        vector_path: str,
+        embedding_model: str,
+        progress_callback: Optional["Callable[[int, int], None]"] = None,
     ) -> None:
-        """Background rebuild after a vector-recipe change.
+        """Rebuild after a vector-recipe change.
 
         The vector store is a disposable mirror of the relational store;
         re_index_vectors() derives it anew. No backup of the old mirror
@@ -140,10 +160,10 @@ class ChatMemory:
         restoring a blob.
         """
         try:
-            self.re_index_vectors()
+            self.re_index_vectors(progress_callback=progress_callback)
             vector_recipe.mark_current(vector_path, "chat", embedding_model)
         except Exception as e:
-            logger.error(f"Background vector recipe rebuild failed: {e}")
+            logger.error(f"Vector recipe rebuild failed: {e}")
 
     def add_entry(
         self,
@@ -491,12 +511,21 @@ class ChatMemory:
         # For now, return just the current context
         return [self.context]
 
-    def re_index_vectors(self, batch_size: int = 100):
+    def re_index_vectors(
+        self,
+        batch_size: int = 100,
+        progress_callback: Optional["Callable[[int, int], None]"] = None,
+    ):
         """
         Clears and rebuilds the entire vector index from the text storage.
 
         This is a utility for maintenance, such as when changing embedding models
         or ensuring consistency between the text and vector stores.
+
+        Args:
+            batch_size: messages per embedding batch.
+            progress_callback: optional ``done, total`` callback invoked
+                after each batch, for host-side progress reporting.
         """
         if not self.vector_storage:
             logger.warning("No vector storage configured. Cannot re-index.")
@@ -539,6 +568,14 @@ class ChatMemory:
             if documents_to_add:
                 self.vector_storage.add_documents(documents_to_add)
 
+            indexed = min(offset + batch_size, total_messages)
+            if progress_callback:
+                try:
+                    progress_callback(indexed, total_messages)
+                except Exception:
+                    logger.exception(
+                        "Vector re-index progress callback failed"
+                    )
             logger.info(
                 f"Indexed {offset + len(messages)} /"
                 f" {total_messages} messages."

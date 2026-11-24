@@ -500,5 +500,71 @@ class TestChatMemoryWindowHelpers(unittest.TestCase):
         self.assertEqual(ov_all["count"], 3)
 
 
+class _FakeVectorBackend:
+    """Minimal vector backend recording add_documents batches."""
+
+    def __init__(self):
+        self.batches = []
+
+    def reset(self):
+        pass
+
+    def add_documents(self, documents):
+        self.batches.append(len(documents))
+        return [d["metadata"].get("id", str(i)) for i, d in enumerate(documents)]
+
+    def search(self, query, limit=5, **kwargs):
+        return []
+
+
+class TestReindexProgress(unittest.TestCase):
+    """The recipe-gated rebuild must report progress and, when the
+    host provides a callback, gate boot on completion (pybridge streams
+    'Rebuilding conversation index...')."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.storage = SQLiteStorage(
+            db_path=os.path.join(self.tmpdir, "test.db"),
+            context_id="persona-test",
+        )
+        for i in range(3):
+            self.storage.add_message(
+                content=f"m{i}", role="user",
+                metadata={"timestamp": "2026-06-01T08:0%d:00+00:00" % i},
+            )
+        self.cm = ChatMemory.__new__(ChatMemory)
+        self.cm.storage = self.storage
+        self.cm.vector_storage = _FakeVectorBackend()
+
+    def tearDown(self):
+        self.storage.close()
+
+    def test_progress_callback_per_batch(self):
+        events = []
+        self.cm.re_index_vectors(
+            batch_size=2,
+            progress_callback=lambda done, total: events.append((done, total)),
+        )
+        self.assertEqual(events, [(2, 3), (3, 3)])
+        self.assertEqual(self.cm.vector_storage.batches, [2, 1])
+
+    def test_rebuild_marks_recipe_current(self):
+        self.assertFalse(
+            is_current(self.tmpdir, "chat", "model-x")
+        )
+        self.cm._rebuild_vector_recipe(self.tmpdir, "model-x")
+        self.assertTrue(is_current(self.tmpdir, "chat", "model-x"))
+
+    def test_callback_exception_never_breaks_rebuild(self):
+        def bad_callback(done, total):
+            raise RuntimeError("UI exploded")
+
+        self.cm.re_index_vectors(
+            batch_size=2, progress_callback=bad_callback
+        )
+        self.assertEqual(self.cm.vector_storage.batches, [2, 1])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

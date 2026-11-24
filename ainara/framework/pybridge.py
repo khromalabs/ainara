@@ -972,7 +972,21 @@ def create_app():
     # 2. Initialize ChatMemory if enabled (Injecting system storage)
     chat_memory = None
     if config.get("memory.enabled", True):
-        chat_memory = ChatMemory(storage_backend=system_storage)
+
+        def chat_index_progress(done: int, total: int):
+            # Vector index rebuild happens inline at boot so the UI
+            # reports it and readiness gates on a complete mirror.
+            pct = 20 + int((done / total) * 30) if total else 50
+            _send_progress(
+                "running",
+                pct,
+                f"Rebuilding conversation index... ({done}/{total})",
+            )
+
+        chat_memory = ChatMemory(
+            storage_backend=system_storage,
+            vector_rebuild_callback=chat_index_progress,
+        )
         logger.info("Chat memory initialized")
     else:
         logger.info("Chat memory disabled by configuration")
@@ -987,9 +1001,19 @@ def create_app():
     if chat_memory:
         # GREENMemories are completely dependant of ChatMemory so is ok to enable
         # them only if chat_memory is present, with a direct reference
+
+        def memory_index_progress(done: int, total: int):
+            pct = 50 + int((done / total) * 15) if total else 65
+            _send_progress(
+                "running",
+                pct,
+                f"Rebuilding memory index... ({done}/{total})",
+            )
+
         green_memories = GREENMemories(
             llm=app.llm,
             chat_memory=chat_memory,
+            sync_progress_callback=memory_index_progress,
         )
         logger.info("User Memories Manager initialized")
         # Perform initial consolidation at startup

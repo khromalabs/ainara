@@ -107,27 +107,53 @@ class Service extends EventEmitter {
 
     async waitForHealth(timeout) {
         const startTime = Date.now();
-
-        while (Date.now() - startTime < timeout) {
-            if (this.process && this.process.exitCode !== null) {
-                throw new Error(
-                    `${this.name} process exited unexpectedly with code ${this.process.exitCode} before becoming healthy. Error: ${this.errorMsg}`
-                );
+        // The PYBRIDGE_PROGRESS stream is a liveness signal: while the
+        // service reports running progress (e.g. a vector-index rebuild
+        // that can legitimately take many minutes), the health deadline
+        // keeps extending so a long but active boot is never killed.
+        let deadline = startTime + timeout;
+        const progressHandler = (data) => {
+            const line = data.toString();
+            if (!line.startsWith('PYBRIDGE_PROGRESS:')) {
+                return;
             }
             try {
-                const response = await fetch(this.url);
-                if (response.ok) {
-                    this.healthy = true;
-                    // Logger.log(`${this.name} is healthy`);
-                    return;
+                const update = JSON.parse(
+                    line.substring('PYBRIDGE_PROGRESS:'.length)
+                );
+                if (update.status === 'running') {
+                    deadline = Date.now() + timeout;
                 }
-            } catch (error) {
-                // Ignore connection errors during startup, just keep polling
-                this.errorMsg = error.message;
+            } catch {
+                // Malformed progress lines are logged upstream
             }
+        };
+        this.on('stdout', progressHandler);
 
-            this.emit('progress-tick');
-            await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+            while (Date.now() < deadline) {
+                if (this.process && this.process.exitCode !== null) {
+                    throw new Error(
+                        `${this.name} process exited unexpectedly with code ${this.process.exitCode} before becoming healthy. Error: ${this.errorMsg}`
+                    );
+                }
+                try {
+                    const response = await fetch(this.url);
+                    if (response.ok) {
+                        this.healthy = true;
+                        // Logger.log(`${this.name} is healthy`);
+                        return;
+                    }
+                } catch (error) {
+                    // Ignore connection errors during startup, just keep polling
+                    this.errorMsg = error.message;
+                }
+
+                this.emit('progress-tick');
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        } finally {
+            this.removeListener('stdout', progressHandler);
         }
 
         throw new Error(`Timeout waiting for ${this.name} to become healthy`);
