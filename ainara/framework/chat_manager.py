@@ -312,13 +312,14 @@ class ChatManager:
                 max_workers=1, thread_name_prefix="TopicThread"
             )
 
-        if self.summary_enabled:
-            # Summary generation fields
-            self.trimmed_messages_buffer = []
-            # Lock specifically for buffer operations
-            self.buffer_lock = threading.Lock()
-            self.summary_in_progress = False
-            self.current_summary = "-"
+        # Summary fields are created unconditionally: the manual /compact
+        # command must work even when the automatic summary path
+        # (memory.summary_enabled) is disabled.
+        self.trimmed_messages_buffer = []
+        # Lock specifically for buffer operations
+        self.buffer_lock = threading.Lock()
+        self.summary_in_progress = False
+        self.current_summary = "-"
 
         if self.notifications_enabled:
             # Lock specifically for buffer operations
@@ -1440,6 +1441,123 @@ class ChatManager:
 
         return generator()
 
+    def _handle_compact_command(
+        self, command: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Handles the /compact command.
+
+        Manually trims the current session into the conversation summary:
+        everything but the last two exchanges (plus any sticky messages,
+        same contract as trim_context) is condensed into the summary,
+        which is injected on the next turn via system_hint_content.
+        Synchronous by design — the user asked for the window to be freed
+        now — and independent of memory.summary_enabled, which gates only
+        the automatic path.
+        """
+        # Fold any in-flight automatic summary first: wait for it and
+        # apply its pending result before generating, so continuity
+        # merging in _generate_conversation_summary sees it and the
+        # pending new_summary cannot overwrite ours on the next turn.
+        waited = 0.0
+        while self.summary_in_progress and waited < 60.0:
+            time.sleep(0.25)
+            waited += 0.25
+
+        to_summarize = []
+        kept = []
+        system_message = None
+        with self.buffer_lock:
+            if self.new_summary and self.new_summary != "-":
+                self.current_summary = self.new_summary
+                self.new_summary = "-"
+            # Messages dropped by automatic trimming but not yet
+            # summarized (e.g. a failed background pass put them back):
+            # condense them too, oldest first, or their content would be
+            # lost from the context window entirely.
+            to_summarize.extend(self.trimmed_messages_buffer)
+            self.trimmed_messages_buffer = []
+
+            system_message = None
+            body = []
+            for msg in self.chat_history:
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("role") == "system" and system_message is None:
+                    system_message = msg
+                else:
+                    body.append(msg)
+
+            # Keep the last two exchanges verbatim; sticky messages are
+            # never summarized (same contract as trim_context: they must
+            # persist verbatim) — they rejoin the tail in original order.
+            keep_count = min(len(body), 4)
+            tail_start = len(body) - keep_count
+            dropped = body[:tail_start]
+            to_summarize.extend(
+                [m for m in dropped if not m.get("sticky")]
+            )
+            kept = (
+                [m for m in dropped if m.get("sticky")]
+                + body[tail_start:]
+            )
+
+        if not to_summarize:
+            response = (
+                "Nothing to compact: the session is already within the"
+                " last two exchanges."
+            )
+            return self._compact_response(response, stream)
+
+        tokens_before = self._count_tokens_in_history()
+        summary, llm_topic = self._generate_conversation_summary(to_summarize)
+
+        if summary:
+            self.current_summary = summary
+
+        # Fused session-topic from the summary pass: same discipline as
+        # the background tasks — never clobber a pending update.
+        if llm_topic:
+            with self.session_topic_lock:
+                if self.new_session_topic is None:
+                    self.new_session_topic = llm_topic
+
+        new_history = []
+        if system_message is not None:
+            new_history.append(system_message)
+        new_history.extend(kept)
+        self.chat_history = new_history
+
+        tokens_after = self._count_tokens_in_history()
+        summary_tokens = self.llm._get_token_count(summary, "user")
+        logger.info(
+            f"Manual compact: {len(to_summarize)} messages summarized,"
+            f" {len(kept)} kept verbatim,"
+            f" {tokens_before - tokens_after} tokens removed from history"
+        )
+
+        response = (
+            f"Session compacted: {len(to_summarize)} messages condensed"
+            f" into the conversation summary (~"
+            f"{tokens_before - tokens_after} tokens freed, summary ~"
+            f"{summary_tokens} tokens)."
+        )
+        return self._compact_response(response, stream)
+
+    def _compact_response(
+        self, response: str, stream: Optional[Literal["cli", "json"]]
+    ):
+        """Deliver a /compact result for all stream types."""
+        if stream is None:
+            return response
+
+        def generator():
+            if stream == "cli":
+                print(response)
+                return
+            yield ndjson("signal", "infoMessage", {"message": response})
+
+        return generator()
+
     def _handle_test_nexus_command(
         self, command: str, stream: Optional[Literal["cli", "json"]]
     ):
@@ -1596,6 +1714,9 @@ class ChatManager:
 
         if command.lower() in ["/memory", "/nomemory"]:
             return self._handle_memory_command(command, stream)
+
+        if command.lower() == "/compact":
+            return self._handle_compact_command(command, stream)
 
         if command.lower().startswith("/testdocview"):
             return self._handle_test_doc_view_command(command, stream)
@@ -2030,12 +2151,11 @@ class ChatManager:
             #         self.first_turn = False
             #         logger.info("SKILLS HINT injected (first turn)")
 
-            # --- Conversation Summary (dynamic, updated by background thread) ---
-            if (
-                self.summary_enabled
-                and self.current_summary
-                and self.current_summary != "-"
-            ):
+            # --- Conversation Summary (dynamic, updated by background
+            # thread or the manual /compact command) ---
+            # Injected whenever a summary exists, regardless of
+            # summary_enabled: that flag gates the AUTOMATIC path only.
+            if self.current_summary and self.current_summary != "-":
                 system_hint_content += (
                     f"\n\n--- Conversation Summary ---\n"
                     f"{self.current_summary}"
