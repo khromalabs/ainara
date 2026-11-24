@@ -2038,6 +2038,7 @@ class ComRing extends BaseComponent {
 - **/provider**: Show the current LLM provider.
 - **/memory**: Toggle conversation memory on.
 - **/nomemory**: Toggle conversation memory off.
+- **/compact**: Condense the current session into a summary, keeping the last two exchanges.
 ### Tips
 - Click the tray icon (left button) to toggle visibility.
 - You can switch to another application while typing in the input control and recover your edited text later with the arrow up key.
