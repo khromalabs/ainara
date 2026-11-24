@@ -27,6 +27,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from ainara.framework.storage.base import StorageBackend
+from ainara.framework.storage.time_bounds import resolve_date_bound
 
 logger = logging.getLogger(__name__)
 
@@ -327,12 +328,18 @@ class SQLiteStorage(StorageBackend):
                 sql_query += " AND content NOT LIKE ?"
                 params.append(f"%{term}%")
 
+        # Bare "YYYY-MM-DD" bounds are expanded to day boundaries so the
+        # string comparison against full ISO timestamps covers the whole
+        # day (a bare end date used to exclude it entirely). Unparseable
+        # bounds keep their raw string, as before.
         if start_date:
+            start_dt = resolve_date_bound(start_date, is_end=False)
             sql_query += " AND timestamp >= ?"
-            params.append(start_date)
+            params.append(start_dt.isoformat() if start_dt else start_date)
         if end_date:
+            end_dt = resolve_date_bound(end_date, is_end=True)
             sql_query += " AND timestamp <= ?"
-            params.append(end_date)
+            params.append(end_dt.isoformat() if end_dt else end_date)
         if users:
             sql_query += f" AND user IN ({','.join('?' for _ in users)})"
             params.extend(users)

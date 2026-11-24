@@ -35,8 +35,16 @@ class VectorStorageBackend(ABC):
         query: str,
         limit: int = 5,
         filter_dict: Optional[Dict[str, Any]] = None,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """Search for similar documents."""
+        """Search for similar documents.
+
+        start_ts/end_ts: optional Unix-epoch bounds (inclusive) on the
+        documents' "timestamp_ts" numeric metadata. Results are ranked
+        WITHIN the window (top `limit` among the documents that fall
+        inside it), not globally and then filtered.
+        """
         pass
 
     @abstractmethod
@@ -45,6 +53,8 @@ class VectorStorageBackend(ABC):
         query: str,
         limit: int = 5,
         filter_dict: Optional[Dict[str, Any]] = None,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
     ) -> List[tuple[Dict[str, Any], float]]:
         """Search for similar documents and return their scores."""
         pass

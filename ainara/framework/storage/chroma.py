@@ -129,11 +129,41 @@ class ChromaVectorStorage(VectorStorageBackend):
 
         return ids
 
+    def _date_where_clauses(
+        self, start_ts: Optional[float], end_ts: Optional[float]
+    ) -> List[Dict[str, Any]]:
+        """Epoch date bounds as Chroma `where` clauses. Range
+        operators only work on numeric metadata, so the bounds filter
+        on the numeric "timestamp_ts" mirror, never on the ISO-string
+        "timestamp"."""
+        clauses = []
+        if start_ts is not None:
+            clauses.append({"timestamp_ts": {"$gte": start_ts}})
+        if end_ts is not None:
+            clauses.append({"timestamp_ts": {"$lte": end_ts}})
+        return clauses
+
+    def _combine_where(
+        self,
+        filter_dict: Optional[Dict[str, Any]],
+        start_ts: Optional[float],
+        end_ts: Optional[float],
+    ) -> Optional[Dict[str, Any]]:
+        """Merge caller metadata filters with epoch date bounds."""
+        clauses = self._date_where_clauses(start_ts, end_ts)
+        if not clauses:
+            return filter_dict if filter_dict else None
+        if filter_dict:
+            clauses.insert(0, filter_dict)
+        return clauses[0] if len(clauses) == 1 else {"$and": clauses}
+
     def search(
         self,
         query: str,
         limit: int = 5,
         filter_dict: Optional[Dict[str, Any]] = None,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search for similar texts
@@ -142,6 +172,10 @@ class ChromaVectorStorage(VectorStorageBackend):
             query: Search query
             limit: Maximum number of results
             filter_dict: Optional metadata filters for ChromaDB's 'where' clause
+            start_ts: Optional Unix-epoch lower bound (inclusive) on
+                "timestamp_ts" metadata; results ranked within the window
+            end_ts: Optional Unix-epoch upper bound (inclusive) on
+                "timestamp_ts" metadata
 
         Returns:
             List of search results
@@ -153,7 +187,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         results = self.collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            where=filter_dict if filter_dict else None,
+            where=self._combine_where(filter_dict, start_ts, end_ts),
         )
 
         # Convert to standard format
@@ -181,6 +215,8 @@ class ChromaVectorStorage(VectorStorageBackend):
         query: str,
         limit: int = 5,
         filter_dict: Optional[Dict[str, Any]] = None,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
     ) -> List[tuple[Dict[str, Any], float]]:
         """
         Search for similar texts and return documents with their distance scores.
@@ -189,6 +225,10 @@ class ChromaVectorStorage(VectorStorageBackend):
             query: Search query
             limit: Maximum number of results
             filter_dict: Optional metadata filters for ChromaDB's 'where' clause
+            start_ts: Optional Unix-epoch lower bound (inclusive) on
+                "timestamp_ts" metadata
+            end_ts: Optional Unix-epoch upper bound (inclusive) on
+                "timestamp_ts" metadata
 
         Returns:
             List of tuples, where each tuple contains a result dictionary and its distance score.
@@ -200,7 +240,7 @@ class ChromaVectorStorage(VectorStorageBackend):
         results = self.collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            where=filter_dict if filter_dict else None,
+            where=self._combine_where(filter_dict, start_ts, end_ts),
         )
 
         # Convert to standard format

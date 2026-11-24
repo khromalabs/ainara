@@ -44,6 +44,7 @@ from ainara.framework.config import config
 from ainara.framework.llm.base import LLMBackend
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.storage import get_vector_backend
+from ainara.framework import vector_recipe
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.utils import format_relative_time_terse, load_spacy_model
 
@@ -291,11 +292,28 @@ class GREENMemories:
                 ).fetchone()[0]
             vector_count = self.vector_storage.count()
 
-            if needs_reset == "true" or sqlite_count != vector_count:
+            # Third, the recipe gate: a mirror built with a different
+            # derivation recipe (metadata schema version or embedding
+            # model) is stale by definition even when counts agree.
+            recipe_stale_reason = vector_recipe.stale_reason(
+                vector_path, "profile", embedding_model
+            )
+
+            if (
+                needs_reset == "true"
+                or sqlite_count != vector_count
+                or recipe_stale_reason is not None
+            ):
                 if needs_reset == "true":
                     logger.info(
                         "Vector DB needs reset due to explicit flag. Starting"
                         " full sync..."
+                    )
+                elif recipe_stale_reason is not None:
+                    logger.info(
+                        "Vector recipe changed (%s); rebuilding user"
+                        " profile memories vector index...",
+                        recipe_stale_reason,
                     )
                 else:
                     logger.warning(
@@ -305,6 +323,9 @@ class GREENMemories:
                         " manual deletion. Triggering re-sync."
                     )
                 self._sync_profile_to_vector_store()
+                vector_recipe.mark_current(
+                    vector_path, "profile", embedding_model
+                )
             else:
                 logger.info(
                     "Vector DB is consistent with SQLite"

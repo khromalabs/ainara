@@ -20,12 +20,18 @@
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ainara.framework.storage import get_text_backend, get_vector_backend
 # Import our storage backends
 from ainara.framework.storage.base import StorageBackend
+from ainara.framework.storage.time_bounds import (
+    resolve_date_bound,
+    timestamp_to_epoch,
+)
+from ainara.framework import vector_recipe
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +96,28 @@ class ChatMemory:
             logger.info(
                 f"Using {vector_type} vector backend with context {context_id}"
             )
+
+            # Recipe gate: the vector mirror is disposable derived data.
+            # When it was built with a different derivation recipe
+            # (metadata schema version or embedding model) it is stale
+            # by definition — rebuild it in the background from the
+            # relational source of truth instead of repairing it.
+            if not vector_recipe.is_current(
+                vector_path, "chat", embedding_model
+            ):
+                logger.info(
+                    "Vector recipe changed (%s); rebuilding the vector"
+                    " index in the background",
+                    vector_recipe.stale_reason(
+                        vector_path, "chat", embedding_model
+                    ),
+                )
+                threading.Thread(
+                    target=self._rebuild_vector_recipe,
+                    args=(vector_path, embedding_model),
+                    daemon=True,
+                    name="vector-recipe-rebuild",
+                ).start()
         except ImportError:
             logger.warning(
                 f"Vector storage backend '{vector_type}' dependencies not"
@@ -99,6 +127,23 @@ class ChatMemory:
         except Exception as e:
             logger.error(f"Failed to initialize vector storage: {e}")
             self.vector_storage = None
+
+    def _rebuild_vector_recipe(
+        self, vector_path: str, embedding_model: str
+    ) -> None:
+        """Background rebuild after a vector-recipe change.
+
+        The vector store is a disposable mirror of the relational store;
+        re_index_vectors() derives it anew. No backup of the old mirror
+        is taken: it carries no information the relational store does
+        not, and a failed rebuild is retried by fixing the code, not by
+        restoring a blob.
+        """
+        try:
+            self.re_index_vectors()
+            vector_recipe.mark_current(vector_path, "chat", embedding_model)
+        except Exception as e:
+            logger.error(f"Background vector recipe rebuild failed: {e}")
 
     def add_entry(
         self,
@@ -135,6 +180,14 @@ class ChatMemory:
             entry_metadata["timestamp"] = datetime.now(
                 timezone.utc
             ).isoformat()
+
+        # Numeric epoch mirror of the timestamp for vector-store date
+        # filtering (Chroma range operators only work on numeric
+        # metadata). Recomputed even for caller-supplied timestamps so
+        # it can never drift from the string form.
+        ts_epoch = timestamp_to_epoch(entry_metadata["timestamp"])
+        if ts_epoch is not None:
+            entry_metadata["timestamp_ts"] = ts_epoch
 
         # Add context information to metadata
         for key, value in self.context.items():
@@ -247,13 +300,29 @@ class ChatMemory:
         if query.startswith("~"):
             search_query = query[1:].strip()
             if self.vector_storage:
-                # Note: Vector storage typically doesn't support offset pagination efficiently
-                # We pass the limit.
-                return self.vector_storage.search(
-                    search_query,
-                    limit=limit,
-                    # We could add date filters here if the vector backend supports it
-                )
+                start_dt = resolve_date_bound(start_date, is_end=False)
+                end_dt = resolve_date_bound(end_date, is_end=True)
+                if (start_date and start_dt is None) or (
+                    end_date and end_dt is None
+                ):
+                    # An explicit bound we cannot parse cannot scope the
+                    # vector search; the text route still handles the
+                    # raw string, so fall through to it.
+                    query = search_query
+                else:
+                    # Note: Vector storage typically doesn't support offset
+                    # pagination efficiently. We pass the limit. Date bounds
+                    # are applied natively by the backend (numeric metadata
+                    # filter), so results are ranked WITHIN the window, not
+                    # globally and then filtered.
+                    return self.vector_storage.search(
+                        search_query,
+                        limit=limit,
+                        start_ts=(
+                            start_dt.timestamp() if start_dt else None
+                        ),
+                        end_ts=end_dt.timestamp() if end_dt else None,
+                    )
             # Fallback to text search if no vector storage, treating query as literal
             query = search_query
 
@@ -409,6 +478,10 @@ class ChatMemory:
                 meta["message_id"] = msg["id"]
                 meta["role"] = msg["role"]
                 meta["timestamp"] = msg["timestamp"]
+                # Numeric epoch mirror for vector-store date filtering.
+                ts_epoch = timestamp_to_epoch(msg["timestamp"])
+                if ts_epoch is not None:
+                    meta["timestamp_ts"] = ts_epoch
                 if msg.get("user"):
                     meta["user"] = msg["user"]
 
