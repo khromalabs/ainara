@@ -1872,6 +1872,24 @@ def create_app():
             logger.error(traceback.format_exc())
             return jsonify({"error": "Failed to retrieve chat history."}), 500
 
+    @app.route("/framework/chat/context", methods=["GET"])
+    def get_chat_context_usage():
+        """
+        Report current context-window usage for the active LLM session.
+
+        Returns the token count of the live conversation history (system
+        message included — the same accounting trim_context uses)
+        against the model's context window.
+        """
+        if not hasattr(app, "chat_manager"):
+            return jsonify({"error": "Chat manager is not available."}), 503
+
+        try:
+            return jsonify(app.chat_manager.get_context_usage())
+        except Exception as e:
+            logger.error(f"Error fetching context usage: {e}")
+            return jsonify({"error": "Failed to retrieve context usage."}), 500
+
     @app.route("/framework/tts", methods=["POST"])
     def framework_tts():
         data = request.get_json()

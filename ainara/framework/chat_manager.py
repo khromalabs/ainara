@@ -1017,6 +1017,24 @@ class ChatManager:
             with self.decay_lock:
                 self.decay_in_progress = False
 
+    def get_context_usage(self):
+        """Return current context-window usage for the active session.
+
+        Uses the same accounting as trim_context: total tokens held in
+        the live chat history (system message included) against the
+        model's context window.
+        """
+        used_tokens = self._count_tokens_in_history()
+        context_window = self.llm.get_context_window()
+        percentage = None
+        if context_window:
+            percentage = round(used_tokens / context_window * 100, 1)
+        return {
+            "used_tokens": used_tokens,
+            "context_window": context_window,
+            "percentage": percentage,
+        }
+
     def trim_context(self, max_tokens=None, reserved_tokens=0):
         """
         Trim the chat history to stay within token limits while preserving context.
