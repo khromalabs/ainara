@@ -356,6 +356,32 @@ class ComRing extends BaseComponent {
         }
     }
 
+    _formatTokenCount(n) {
+        if (n == null || n === undefined) return '?';
+        if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+        return String(n);
+    }
+
+    async showContextUsage() {
+        try {
+            const response = await fetch(`${this.pybridgeEndpoints.chat}/context`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            const used = this._formatTokenCount(data.used_tokens);
+            const window = this._formatTokenCount(data.context_window);
+            const pct =
+                data.percentage != null ? ` (${data.percentage}%)` : '';
+            this.llmProviderDisplay.textContent = `Context: ${used} / ${window}${pct}`;
+        } catch (error) {
+            console.error('Error fetching context usage:', error);
+            this.llmProviderDisplay.textContent = 'Context Unknown';
+        }
+        this.llmProviderDisplay.classList.add('visible');
+        setTimeout(() => {
+            this.llmProviderDisplay.classList.remove('visible');
+        }, 4000);
+    }
+
     initializeEventListeners() {
         console.log('ComRing: Initializing event listeners');
         console.log('ComRing: Setting up IPC event listeners');
@@ -532,6 +558,9 @@ class ComRing extends BaseComponent {
                 setTimeout(() => {
                     this.llmProviderDisplay.classList.remove('visible');
                 }, 4000);
+            } else if (message.trim() === '/context') {
+                console.log('Handling /context command');
+                await this.showContextUsage();
             } else if (message.trim() === '/documents') {
                 if (this.documentView && this.documentView.shadowRoot.querySelector('.document-container').childElementCount > 0 && this.docFormat !== 'chat-history') {
                     this.switchToDocumentView(this.docFormat);
@@ -2036,6 +2065,7 @@ class ComRing extends BaseComponent {
 - **/history**: View your chat history.
 - **/documents**: Switch to the document view.
 - **/provider**: Show the current LLM provider.
+- **/context**: Show current context window usage.
 - **/memory**: Toggle conversation memory on.
 - **/nomemory**: Toggle conversation memory off.
 - **/compact**: Condense the current session into a summary, keeping the last two exchanges.
