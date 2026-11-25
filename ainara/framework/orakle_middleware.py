@@ -625,6 +625,7 @@ class OrakleMiddleware:
         system_message: Optional[str] = None,
         capabilities: Optional[dict] = None,
         config_manager: Optional[ConfigManager] = None,
+        enable_system_skills: bool = True,
     ):
         """
         Initialize the OrakleMiddleware.
@@ -635,6 +636,12 @@ class OrakleMiddleware:
             system_message: System message for LLM context
             capabilities: Optional pre-loaded capabilities dictionary
             config_manager: Optional ConfigManager instance
+            enable_system_skills: Load conversation-scope system skills
+                (they execute in-process via the owning conversation's
+                service registry). Bureau worker middleware must pass
+                False: system skills cannot run in an agent process, and
+                advertising them there only invites wrong-tool selection
+                and improvisation on failure.
         """
         self.llm = llm
         self.orakle_servers = orakle_servers
@@ -824,9 +831,12 @@ class OrakleMiddleware:
             self.capabilities = fetcher.fetch_capabilities()
 
         # --- System Skills ---
-        # Load system skills from the framework's system_skills directory
+        # Conversation-scope skills execute in-process via the service
+        # registry of the process that owns them (the conversation's
+        # ChatManager); Bureau worker middleware does not load them at all.
         self.system_skills = {}
-        self._load_system_skills()
+        if enable_system_skills:
+            self._load_system_skills()
 
         # Register skills with the matcher
         for skill in self.capabilities:

@@ -565,11 +565,14 @@ def run_agent_in_process(
             # Initialize LLM backend for this process with the specific provider
             llm = create_llm_backend(llm_config, selected_provider=provider)
 
-            # Initialize Orakle middleware for this process
+            # Initialize Orakle middleware for this process. System
+            # skills are conversation-scope: they cannot execute here
+            # (no service registry), so they are never advertised.
             orakle = OrakleMiddleware(
                 llm=llm,
                 orakle_servers=orakle_servers,
                 capabilities=agent_capabilities,
+                enable_system_skills=False,
             )
             orakle.system_message = final_system_message
 
