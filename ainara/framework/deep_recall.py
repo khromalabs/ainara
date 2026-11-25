@@ -91,11 +91,30 @@ LOG_HIT_CLIP = 400
 # suggested log window (min/max hit dates +- this many days) scopes
 # search_logs calls so a precise timeframe replaces an unbounded scan.
 RECALL_WINDOW_DAYS = 90
+# Evidence budget: total chars of tool observation accepted per
+# attempt, across all tools. Bounds the attempt's cost by construction
+# — the resource that actually exploded in production (broad queries
+# over wide windows) is capped mechanically, not left to the model's
+# pacing discipline. When it trips, further tool calls are refused and
+# the model is told to synthesize from what it has.
+MAX_EVIDENCE_CHARS = 24000
+# Resent-transcript trim: only the last K tool observations stay in
+# full; older ones collapse to their header line (citation handles
+# stay valid — they live in the attempt registry). Bounds the
+# O(breadth x turns) resend growth.
+EVIDENCE_LEDGER_KEEP = 3
 
 _TOOL_RE = re.compile(r"<tool>\s*(\{.*?\})\s*</tool>", re.DOTALL)
 _FINAL_RE = re.compile(r"<final>(.*)</final>", re.DOTALL)
-# Citations in a digest: [M:<id>] / [L:<id> @ <timestamp>].
+# Citations in a digest: [M:<handle>] / [L:<handle> @ <timestamp>].
+# Handles are the short per-attempt integers the tools advertise;
+# the registry expands them to real ids before the digest leaves the
+# engine (the optional @ part is tolerated on input, rewritten on
+# expansion).
 _CITATION_RE = re.compile(r"\[([ML]):([^\]\s@]+)")
+_CITATION_EXPAND_RE = re.compile(
+    r"\[([ML]):([^\]\s@]+)(?:\s+@[^\]]*)?\]"
+)
 
 _NUDGE_NOTE = (
     "[System: your last response did not follow the protocol. Respond"
@@ -111,13 +130,81 @@ _NUDGE_INVESTIGATE_NOTE = (
 )
 
 _NUDGE_CITATION_NOTE = (
-    "[System: the digest carries no citations, or cites ids that never"
-    " appeared in any tool result. Citations must come verbatim from"
-    " the evidence you gathered: investigate with the tools, then cite"
-    " the ids exactly as the results showed them. If the evidence does"
-    " not cover the topic, say so in the Known gaps section instead of"
-    " writing an uncited digest.]"
+    "[System: the digest cites handles that were never returned by any"
+    " tool. Cite ONLY the valid handles listed below, verbatim. If the"
+    " evidence does not cover the topic, say so in the Known gaps"
+    " section instead of writing an uncited digest.]"
 )
+
+
+class _Attempt:
+    """Per-attempt mechanical state: the citation-handle registry and
+    the evidence-budget counter.
+
+    Tools register each evidence hit under a short sequential handle
+    ([M:1], [L:2], ...) so the model cites trivially-copyable integers
+    instead of transcribing long ids — citation fabrication becomes a
+    copy error instead of a recall failure (the dominant production
+    rejection). The registry expands handles back to real ids before
+    the digest leaves the engine, so the trail and the interpretation
+    keep real citations. Also owns the evidence-budget accounting
+    (MAX_EVIDENCE_CHARS).
+    """
+
+    def __init__(self):
+        self._by_handle = {}  # handle str -> (kind, real_id, ts)
+        self._counter = 0  # one keyspace: handles are globally unique
+        self.evidence_chars = 0
+
+    def register(self, kind: str, real_id, ts=None) -> str:
+        """Map a real evidence id to (or return its existing) short
+        handle."""
+        for handle, (k, rid, _) in self._by_handle.items():
+            if k == kind and rid == real_id:
+                return handle
+        self._counter += 1
+        handle = str(self._counter)
+        self._by_handle[handle] = (kind, real_id, ts)
+        return handle
+
+    def _resolve(self, kind: str, handle: str):
+        entry = self._by_handle.get(str(handle))
+        return entry if entry and entry[0] == kind else None
+
+    def valid_citations(self, found) -> bool:
+        """True when every (kind, handle) pair the digest cites was
+        actually registered from a tool result."""
+        return all(self._resolve(kind, handle) for kind, handle in found)
+
+    def handle_list(self) -> str:
+        """All registered handles as mechanical text (for repair
+        nudges)."""
+        def _sort_key(item):
+            handle, (kind, _, _) = item
+            try:
+                return (kind, int(handle))
+            except ValueError:
+                return (kind, 0)
+        return ", ".join(
+            f"{kind}:{handle}"
+            for handle, (kind, _, _) in sorted(
+                self._by_handle.items(), key=_sort_key
+            )
+        )
+
+    def expand(self, digest: str) -> str:
+        """Rewrite handle citations back to real ids (the digest that
+        leaves the engine always carries real citations)."""
+        def _repl(match):
+            kind, handle = match.group(1), match.group(2)
+            entry = self._resolve(kind, handle)
+            if not entry:
+                return match.group(0)
+            _, real_id, ts = entry
+            if kind == "L":
+                return f"[L:{real_id} @ {ts}]" if ts else f"[L:{real_id}]"
+            return f"[M:{real_id}]"
+        return _CITATION_EXPAND_RE.sub(_repl, digest)
 
 
 class DeepRecallEngine:
@@ -250,7 +337,14 @@ class DeepRecallEngine:
         tool_calls = {"search_memories": 0, "search_logs": 0,
                       "list_topics": 0, "window_overview": 0,
                       "browse_logs": 0}
-        seen_ids = set()  # evidence ids actually returned by tools
+        attempt = _Attempt()
+        tool_msg_indices: List[int] = []
+        evidence_exhausted = False
+        # Note for the one grace repair turn (see below): a digest
+        # synthesized at the budget boundary and rejected must not die
+        # with the loop — production incident 2026-11-25 lost seven
+        # providers exactly there.
+        pending_repair: Optional[str] = None
         provider_name = "?"
         provider_conf = getattr(llm, "provider", None)
         if isinstance(provider_conf, dict):
@@ -270,15 +364,18 @@ class DeepRecallEngine:
             provider_name, reasoning_effort, self._context_window,
         )
         for turn in range(max_turns):
-            if turn == max_turns - 1 and any(tool_calls.values()):
-                # Budget guard: a final turn with evidence must
-                # synthesize, not keep searching (the dominant failure
-                # mode observed in production logs).
+            if turn == max_turns - 2 and any(tool_calls.values()):
+                # Budget guard fires one turn BEFORE the end: the
+                # synthesis needs its own turn, and a final rejected at
+                # the boundary gets the last turn as a grace repair
+                # (see pending_repair below). Firing on the very last
+                # turn made every rejection unrecoverable.
                 messages.append({
                     "role": "user",
                     "content": (
-                        "BUDGET NOTE: this is your final turn. Do not"
-                        " call more tools: emit <final> now with the"
+                        "BUDGET NOTE: your next turn is your final"
+                        " turn. Do not call more tools after it: emit"
+                        " <final> now or on your next turn with the"
                         " best digest the evidence you gathered"
                         " supports, listing what is still missing under"
                         " 'Known gaps:'."
@@ -299,9 +396,17 @@ class DeepRecallEngine:
             )
             messages.append({"role": "assistant", "content": text})
 
-            final = _FINAL_RE.search(text)
-            if final:
-                digest = final.group(1).strip()
+            digest = None
+            final_m = _FINAL_RE.search(text)
+            if final_m:
+                digest = final_m.group(1).strip()
+            elif text.startswith("<final>"):
+                # Unclosed marker: the intent is unambiguous, and a
+                # production incident lost whole providers to the
+                # missing closing tag. Salvage mechanically instead of
+                # spending a nudge on tag punctuation.
+                digest = text[len("<final>"):].strip()
+            if digest is not None:
                 # Mechanical evidence contract: the model words the
                 # truth, it never writes without it.
                 if not any(tool_calls.values()):
@@ -326,12 +431,12 @@ class DeepRecallEngine:
                     })
                     continue
                 found = _CITATION_RE.findall(digest)
-                if found and any(
-                    (kind, cid) not in seen_ids
-                    for kind, cid in found
-                ):
-                    # Fabricated citation: an id the tools never
-                    # returned. Same doctrine as _scrub_forged_results.
+                if found and not attempt.valid_citations(found):
+                    # Fabricated citation: a handle the tools never
+                    # registered. Same doctrine as
+                    # _scrub_forged_results. The repair nudge carries
+                    # the valid handles: the fix is a mechanical copy
+                    # task, not a recall task.
                     nudges += 1
                     if nudges > 2:
                         logger.warning(
@@ -339,13 +444,18 @@ class DeepRecallEngine:
                             " repeatedly; aborting this provider."
                         )
                         return None
+                    pending_repair = (
+                        _NUDGE_CITATION_NOTE
+                        + f" Valid citation handles:"
+                        f" {attempt.handle_list()}."
+                    )
                     logger.warning(
-                        "DEEP_RECALL: rejected digest citing ids never"
-                        " returned by tools; nudging."
+                        "DEEP_RECALL: rejected digest citing handles"
+                        " never returned by tools; nudging."
                     )
                     messages.append({
                         "role": "user",
-                        "content": _NUDGE_CITATION_NOTE,
+                        "content": pending_repair,
                     })
                     continue
                 if len(digest) > DIGEST_MAX_CHARS:
@@ -359,7 +469,10 @@ class DeepRecallEngine:
                     "DEEP_RECALL: digest ready in %d turns, tool calls:"
                     " %s", turn + 1, tool_calls,
                 )
-                return {"success": True, "digest": digest,
+                # Expand handles to real ids: the digest that leaves
+                # the engine always carries real citations (the trail
+                # and the interpretation never see handles).
+                return {"success": True, "digest": attempt.expand(digest),
                         "turns": turn + 1}
 
             match = None
@@ -373,6 +486,11 @@ class DeepRecallEngine:
                         " nudges; aborting."
                     )
                     return None
+                if turn == max_turns - 1 and "# Digest" in text:
+                    # A digest-shaped response without markers, at the
+                    # boundary: keep it repairable via the grace turn
+                    # instead of dying to punctuation.
+                    pending_repair = _NUDGE_NOTE
                 messages.append({"role": "user", "content": _NUDGE_NOTE})
                 continue
 
@@ -384,13 +502,80 @@ class DeepRecallEngine:
                     args = {}
             except json.JSONDecodeError:
                 name, args = None, {}
-            observation = self._execute_tool(name, args, tool_calls)
-            seen_ids.update(_CITATION_RE.findall(observation))
+            observation = self._execute_tool(
+                name, args, tool_calls, attempt,
+                budget_exhausted=evidence_exhausted,
+            )
+            evidence = _clip(observation, MAX_OBS_CHARS)
+            attempt.evidence_chars += len(evidence)
+            evidence_exhausted = (
+                attempt.evidence_chars >= MAX_EVIDENCE_CHARS
+            )
             messages.append({
                 "role": "user",
-                "content": "TOOL RESULT:\n" + _clip(observation,
-                                                    MAX_OBS_CHARS),
+                "content": "TOOL RESULT:\n" + evidence,
             })
+            tool_msg_indices.append(len(messages) - 1)
+            # Ledger trim: older evidence collapses to its header line
+            # so the resent transcript stays O(evidence budget), not
+            # O(breadth x turns). Citation handles remain valid — they
+            # live in the attempt registry, not in the messages.
+            while len(tool_msg_indices) > EVIDENCE_LEDGER_KEEP:
+                idx = tool_msg_indices.pop(0)
+                messages[idx]["content"] = (
+                    messages[idx]["content"].split("\n", 1)[0]
+                    + "\n[…collapsed to bound context; evidence"
+                    " gathered here remains cited and valid:"
+                    f" {attempt.handle_list()}]"
+                )
+
+        # Grace repair turn (once, bounded): a digest synthesized at
+        # the budget boundary and rejected for citation handles or
+        # missing markers used to be unrecoverable — the loop ended
+        # right after the rejection. One extra turn turns the repair
+        # into the mechanical copy-fix the nudge asks for.
+        if pending_repair is not None:
+            if messages[-1]["role"] == "assistant":
+                messages.append({
+                    "role": "user",
+                    "content": pending_repair,
+                })
+            logger.info(
+                "DEEP_RECALL: boundary-rejected digest; granting one"
+                " repair turn."
+            )
+            try:
+                response = llm.chat(
+                    chat_history=messages,
+                    stream=False,
+                    reasoning_effort=reasoning_effort,
+                )
+            except Exception:
+                logger.warning("DEEP_RECALL: repair turn failed.")
+                response = None
+            text = (response or "").strip()
+            if text:
+                digest = None
+                final_m = _FINAL_RE.search(text)
+                if final_m:
+                    digest = final_m.group(1).strip()
+                elif text.startswith("<final>"):
+                    digest = text[len("<final>"):].strip()
+                if digest is not None:
+                    found = _CITATION_RE.findall(digest)
+                    if (
+                        attempt.valid_citations(found)
+                        and len(digest) <= DIGEST_MAX_CHARS
+                    ):
+                        logger.info(
+                            "DEEP_RECALL: digest recovered on the"
+                            " repair turn."
+                        )
+                        return {
+                            "success": True,
+                            "digest": attempt.expand(digest),
+                            "turns": max_turns + 1,
+                        }
 
         logger.warning(
             "DEEP_RECALL: turn budget (%d) exhausted without a digest.",
@@ -405,25 +590,37 @@ class DeepRecallEngine:
         name: Optional[str],
         args: Dict[str, Any],
         tool_calls: Dict[str, int],
+        attempt: _Attempt,
+        budget_exhausted: bool = False,
     ) -> str:
         """Dispatch an internal retrieval tool; returns the observation
-        text (never raises)."""
+        text (never raises). Once the evidence budget is exhausted, no
+        tool executes: the refusal itself is the mechanical synthesis
+        instruction."""
+        if budget_exhausted:
+            return (
+                f"EVIDENCE BUDGET EXHAUSTED ({attempt.evidence_chars}"
+                f" chars gathered; budget {MAX_EVIDENCE_CHARS}). Do not"
+                " call more tools: emit <final> now with the best"
+                " digest the evidence you gathered supports, listing"
+                " what you could not check under 'Known gaps:'."
+            )
         try:
             if name == "list_topics":
                 tool_calls[name] += 1
                 return self._tool_list_topics(args)
             if name == "search_memories":
                 tool_calls[name] += 1
-                return self._tool_search_memories(args)
+                return self._tool_search_memories(args, attempt)
             if name == "search_logs":
                 tool_calls[name] += 1
-                return self._tool_search_logs(args)
+                return self._tool_search_logs(args, attempt)
             if name == "window_overview":
                 tool_calls[name] += 1
                 return self._tool_window_overview(args)
             if name == "browse_logs":
                 tool_calls[name] += 1
-                return self._tool_browse_logs(args)
+                return self._tool_browse_logs(args, attempt)
             return (
                 f"ERROR: unknown tool {name!r}. Available tools:"
                 " list_topics, search_memories, search_logs,"
@@ -460,7 +657,8 @@ class DeepRecallEngine:
         return "Memory topics:\n" + "\n".join(f"- {t}" for t in clipped) \
             + suffix
 
-    def _tool_search_memories(self, args: Dict[str, Any]) -> str:
+    def _tool_search_memories(self, args: Dict[str, Any],
+                              attempt: _Attempt) -> str:
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             return (
@@ -512,8 +710,9 @@ class DeepRecallEngine:
             return "\n".join(lines)
         clip = MEMORY_CLIP_WINDOWED if windowed else MEMORY_CLIP_UNWINDOWED
         for m in hits:
+            handle = attempt.register("M", m.get("id"))
             lines.append(
-                f"[M:{m.get('id')}] (topic={m.get('topic')},"
+                f"[M:{handle}] (topic={m.get('topic')},"
                 f" relevance={m.get('relevance')},"
                 f" status={m.get('status')},"
                 f" created={m.get('created_at')},"
@@ -568,7 +767,8 @@ class DeepRecallEngine:
             lines.append(f"- messages per week: {bars}")
         return "Window overview (mechanical facts):\n" + "\n".join(lines)
 
-    def _tool_browse_logs(self, args: Dict[str, Any]) -> str:
+    def _tool_browse_logs(self, args: Dict[str, Any],
+                          attempt: _Attempt) -> str:
         """Chronological, paged traversal of a period's raw log. The
         coverage instrument when memories are thin or absent, and for
         verifying the day-by-day shape of a period."""
@@ -618,13 +818,16 @@ class DeepRecallEngine:
                 f"More remain: page with offset={offset + len(messages)}."
             )
         for e in messages:
+            handle = attempt.register("L", e.get("id"), e.get("timestamp"))
             lines.append(
-                f"[L:{e.get('id')} @ {e.get('timestamp')}]"
-                f" ({e.get('role')}) {_clip(e.get('content'), LOGS_CLIP)}"
+                f"[L:{handle}]"
+                f" ({e.get('timestamp')}, {e.get('role')})"
+                f" {_clip(e.get('content'), LOGS_CLIP)}"
             )
         return "Conversation log (chronological):\n" + "\n".join(lines)
 
-    def _tool_search_logs(self, args: Dict[str, Any]) -> str:
+    def _tool_search_logs(self, args: Dict[str, Any],
+                          attempt: _Attempt) -> str:
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             return (
@@ -655,9 +858,11 @@ class DeepRecallEngine:
             context = e.get("context_id")
             if context is None:
                 context = (e.get("metadata") or {}).get("context_id")
+            handle = attempt.register("L", e.get("id"), e.get("timestamp"))
             lines.append(
-                f"[L:{e.get('id')} @ {e.get('timestamp')}]"
-                f" (context={context}, role={e.get('role')})"
+                f"[L:{handle}]"
+                f" ({e.get('timestamp')}, context={context},"
+                f" role={e.get('role')})"
                 f" {_clip(e.get('content'), LOG_HIT_CLIP)}"
             )
         return "Conversation log hits:\n" + "\n".join(lines)

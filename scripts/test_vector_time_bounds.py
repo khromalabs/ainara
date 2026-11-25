@@ -37,6 +37,7 @@ from ainara.framework.vector_recipe import (  # noqa: E402
 from ainara.framework.chat_memory import ChatMemory  # noqa: E402
 from ainara.framework.deep_recall import (  # noqa: E402
     DeepRecallEngine,
+    _Attempt,
     _memory_top_k,
 )
 
@@ -326,7 +327,7 @@ class TestDeepRecallWindowedTools(unittest.TestCase):
             "query": "temas de septiembre",
             "start_date": "2025-09-01",
             "end_date": "2025-09-30",
-        })
+        }, _Attempt())
         self.assertEqual(len(green.calls), 1)
         call = green.calls[0]
         self.assertEqual(call["start_date"], "2025-09-01")
@@ -339,7 +340,8 @@ class TestDeepRecallWindowedTools(unittest.TestCase):
     def test_search_memories_unwindowed_keeps_search_limit(self):
         green = _StubGreen(candidates=5000)
         engine = _bare_engine(green, _StubChatMemory())
-        engine._tool_search_memories({"query": "madrid accident"})
+        engine._tool_search_memories({"query": "madrid accident"},
+                                     _Attempt())
         self.assertEqual(green.calls[0]["top_k"], 8)
         self.assertIsNone(green.calls[0]["start_date"])
 
@@ -349,7 +351,7 @@ class TestDeepRecallWindowedTools(unittest.TestCase):
         engine._tool_search_memories({
             "query": "q", "start_date": "2026-11-17",
             "end_date": "2026-11-24",
-        })
+        }, _Attempt())
         self.assertEqual(green.calls[0]["top_k"], 5)
 
     def test_search_memories_rejects_unparseable_dates(self):
@@ -357,7 +359,7 @@ class TestDeepRecallWindowedTools(unittest.TestCase):
         engine = _bare_engine(green, _StubChatMemory())
         obs = engine._tool_search_memories({
             "query": "q", "end_date": "not a date",
-        })
+        }, _Attempt())
         self.assertIn("ERROR", obs)
         self.assertEqual(green.calls, [])
 
@@ -409,14 +411,19 @@ class TestDeepRecallWindowedTools(unittest.TestCase):
         engine = _bare_engine(_StubGreen(), chat)
         obs = engine._tool_browse_logs({
             "start_date": "2025-06-01", "end_date": "2025-06-30",
-        })
+        }, _Attempt())
         self.assertIn("345 messages total", obs)
         self.assertIn("showing 0-2", obs)
         self.assertIn("offset=2", obs)
-        self.assertIn("[L:aaa @ 2025-06-01T08:00:00+00:00]", obs)
-        self.assertIn("[L:bbb @ 2025-06-01T09:00:00+00:00]", obs)
+        # Handles: sequential integers, expanded to real ids only in
+        # the returned digest — observations carry [L:<n>] plus the
+        # timestamp as plain metadata.
+        self.assertIn("[L:1]", obs)
+        self.assertIn("[L:2]", obs)
+        self.assertIn("2025-06-01T08:00:00+00:00", obs)
+        self.assertIn("2025-06-01T09:00:00+00:00", obs)
         self.assertLess(
-            obs.index("[L:aaa"), obs.index("[L:bbb @"),
+            obs.index("[L:1]"), obs.index("[L:2]"),
             "browse must be chronological",
         )
         self.assertEqual(chat.browse_calls[0]["offset"], 0)
@@ -426,7 +433,7 @@ class TestDeepRecallWindowedTools(unittest.TestCase):
         engine = _bare_engine(_StubGreen(), chat)
         obs = engine._tool_browse_logs({
             "start_date": "2025-06-01", "end_date": "2025-06-30",
-        })
+        }, _Attempt())
         self.assertIn("no conversation messages recorded", obs)
         self.assertEqual(chat.browse_calls, [])
 

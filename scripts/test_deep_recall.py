@@ -97,9 +97,8 @@ LOG1 = {
 
 FINAL = (
     "# Digest: solar panel installation\n"
-    "User installed 6 solar panels in March 2024 [M:mem-001]."
-    " The roof needed reinforcement first [L:log-77 @"
-    " 2024-03-12T10:00:00].\n\n"
+    "User installed 6 solar panels in March 2024 [M:1]."
+    " The roof needed reinforcement first [L:2].\n\n"
     "Known gaps: no later maintenance records found."
 )
 
@@ -178,9 +177,12 @@ def test_happy_path():
     check("digest budget injected from template", any(
         "8000" in m["content"] for m in llm.calls[0]))
     check("mem citation in prompt", any(
-        "[M:mem-001]" in m["content"] for c in llm.calls for m in c))
+        "[M:1]" in m["content"] for c in llm.calls for m in c))
     check("log citation in prompt", any(
-        "[L:log-77" in m["content"] for c in llm.calls for m in c))
+        "[L:2]" in m["content"] for c in llm.calls for m in c))
+    check("handles expanded to real ids in digest",
+          "[M:mem-001]" in result["digest"]
+          and "[L:log-77 @ 2024-03-12T10:00:00]" in result["digest"])
     check("semantic is the default log route", "~solar"
           in chat_mem.queries)
     check("suggested log window injected in observation", any(
@@ -240,8 +242,9 @@ def test_protocol_recovery_and_failures():
         "without investigation" in m["content"]
         for c in llm.calls for m in c))
 
-    # Fabricated citation (id never returned by tools) -> rejected.
-    fabricated = FINAL.replace("[L:log-77", "[L:log-999")
+    # Fabricated citation (handle never registered) -> rejected;
+    # the nudge carries the valid handles mechanically.
+    fabricated = FINAL.replace("[L:2]", "[L:9]")
     engine, llm, _ = build_engine(
         [TOOL_MEMS, f"<final>{fabricated}</final>", TOOL_LOGS,
          f"<final>{FINAL}</final>"],
@@ -251,7 +254,11 @@ def test_protocol_recovery_and_failures():
     check("fabricated citation rejected then recovers",
           bool(result) and result["success"])
     check("citation nudge sent", any(
-        "never appeared in any tool result" in m["content"]
+        "never returned by any" in m["content"]
+        for c in llm.calls for m in c))
+    check("citation nudge lists valid handles", any(
+        # At rejection time only search_memories had run: M:1.
+        "Valid citation handles: M:1" in m["content"]
         for c in llm.calls for m in c))
 
     # Persistent ungrounded finals -> provider exhausted -> None.
@@ -294,14 +301,32 @@ def test_protocol_recovery_and_failures():
 def test_disabled():
     print("[disabled via max_turns=0]")
     from ainara.framework import deep_recall as dr
-    original = dr.config.get("deep_recall.max_turns", 6)
+    _patch_config_isolation(dr)
+    original = dr.config.get("deep_recall.max_turns", None)
     try:
         dr.config.set("deep_recall.max_turns", 0)
         engine, llm, _ = build_engine([f"<final>{FINAL}</final>"])
         check("run disabled -> None", engine.run("solar") is None)
         check("no LLM spent when disabled", len(llm.calls) == 0)
     finally:
+        _restore_config_isolation(dr, original)
+
+
+def _patch_config_isolation(dr):
+    """Tests mutate deep_recall.max_turns; config.set persists to the
+    live user config via save(). Suppress disk writes for the test's
+    lifetime so only the in-memory dict changes."""
+    dr.config._original_save = dr.config.save
+    dr.config.save = lambda *a, **k: None
+
+
+def _restore_config_isolation(dr, original):
+    if original is None:
+        dr.config.config.pop("deep_recall", None)
+    else:
         dr.config.set("deep_recall.max_turns", original)
+    dr.config.save = dr.config._original_save
+    del dr.config._original_save
 
 
 def test_trail_and_persistence_helpers():
@@ -338,7 +363,7 @@ def test_trail_and_persistence_helpers():
          "chat_context": {}, "language": "English"},
     )
     check("interpretation renders digest",
-          "Known gaps" in rendered and "[M:mem-001]" in rendered)
+          "Known gaps" in rendered and "[M:1]" in rendered)
     rendered_fail = tm.render(
         "framework.deep_recall.interpretation",
         {"digest": None, "query": "solar",
@@ -434,12 +459,120 @@ def test_timeframe_passthrough():
         registry.unregister_service("deep_recall_engine")
 
 
+def test_evidence_budget_and_grace():
+    print("[evidence budget, handles, ledger trim, grace repair]")
+    from ainara.framework import deep_recall as dr
+    from ainara.framework.deep_recall import (
+        MAX_EVIDENCE_CHARS, MAX_OBS_CHARS,
+    )
+    _patch_config_isolation(dr)
+    original = dr.config.get("deep_recall.max_turns", None)
+    try:
+        # Unclosed <final> marker: salvage the digest mechanically.
+        engine, _, _ = build_engine(
+            [TOOL_MEMS, TOOL_LOGS, "<final>" + FINAL],
+            memories=[MEM1], entries=[LOG1],
+        )
+        result = engine.run("solar")
+        check("unclosed final marker salvaged",
+              bool(result) and result["success"])
+
+        # Boundary-rejected digest gets ONE grace repair turn: the
+        # production incident lost seven providers exactly here.
+        dr.config.set("deep_recall.max_turns", 3)
+        fabricated = FINAL.replace("[L:2]", "[L:9]")
+        engine, llm, _ = build_engine(
+            [TOOL_MEMS, TOOL_LOGS, f"<final>{fabricated}</final>",
+             f"<final>{FINAL}</final>"],
+            memories=[MEM1], entries=[LOG1],
+        )
+        result = engine.run("solar")
+        check("boundary-rejected digest recovered on grace turn",
+              bool(result) and result["success"])
+        check("grace turn counted", result and result["turns"] == 4)
+        check("repair note carries valid handles", any(
+            "Valid citation handles: L:2, M:1" in m["content"]
+            for c in llm.calls for m in c))
+
+        # Evidence budget: refusal observation surfaces and the digest
+        # still lands; the budget bounds the attempt by construction.
+        dr.config.set("deep_recall.max_turns", 12)
+        long_entries = [
+            {"id": f"log-{i}", "context_id": "general",
+             "timestamp": f"2024-03-12T10:0{i}:00", "role": "user",
+             "content": "evidence " * 100}
+            for i in range(8)
+        ]
+        final_logs = (
+            "# Digest: solar panel installation\n"
+            "The electrician flagged the roof [L:2].\n\n"
+            "Known gaps: no memory records matched."
+        )
+        engine, llm, _ = build_engine(
+            [TOOL_LOGS] * 7 + [TOOL_LOGS, f"<final>{final_logs}</final>"],
+            memories=[MEM1], entries=long_entries,
+        )
+        result = engine.run("solar")
+        refusals = [
+            m for c in llm.calls for m in c
+            if m["role"] == "user"
+            and "EVIDENCE BUDGET EXHAUSTED" in m["content"]
+        ]
+        check("evidence budget refusal surfaced", len(refusals) >= 1)
+        check("digest delivered under budget pressure",
+              bool(result) and result["success"])
+        # The resent transcript's live evidence stays within budget +
+        # one observation slack (older results are collapsed; the sum
+        # over all call contexts would double-count the resends).
+        live_evidence = sum(
+            len(m["content"]) - len("TOOL RESULT:\n")
+            for m in llm.calls[-1]
+            if m["role"] == "user"
+            and m["content"].startswith("TOOL RESULT:\n")
+            and "collapsed to bound context" not in m["content"]
+        )
+        check("live evidence bounded",
+              live_evidence < MAX_EVIDENCE_CHARS + 2 * MAX_OBS_CHARS,
+              f"({live_evidence})")
+
+        # Ledger trim: only the last EVIDENCE_LEDGER_KEEP observations
+        # stay full in the resent transcript.
+        engine, llm, _ = build_engine(
+            [TOOL_MEMS, TOOL_LOGS, TOOL_MEMS, TOOL_LOGS, TOOL_MEMS,
+             f"<final>{FINAL}</final>"],
+            memories=[MEM1], entries=[LOG1],
+        )
+        result = engine.run("solar")
+        check("ledger trim keeps digest flowing",
+              bool(result) and result["success"])
+        tool_msgs = [
+            m for m in llm.calls[-1]
+            if m["role"] == "user"
+            and m["content"].startswith("TOOL RESULT:")
+        ]
+        collapsed = sum(
+            "collapsed to bound context" in m["content"]
+            for m in tool_msgs
+        )
+        check("5 tool observations in final context", len(tool_msgs) == 5)
+        check("oldest observations collapsed", collapsed == 2)
+        check("recent observations stay full",
+              all("collapsed" not in m["content"]
+                  for m in tool_msgs[-3:]))
+        check("collapsed marker lists valid handles", any(
+            "remains cited and valid: L:2, M:1" in m["content"]
+            for m in tool_msgs))
+    finally:
+        _restore_config_isolation(dr, original)
+
+
 def main():
     test_registry_and_skill_adapter()
     test_happy_path()
     test_exact_mode_and_window_bounds()
     test_timeframe_passthrough()
     test_protocol_recovery_and_failures()
+    test_evidence_budget_and_grace()
     test_disabled()
     test_trail_and_persistence_helpers()
     test_green_digest_turn_exclusion()
