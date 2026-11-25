@@ -70,6 +70,14 @@ before proposing changes that cut against them.
 - **Nexus Apps** are for complex bundles (UI components, licensing,
   multi-capability apps). One skill file + SKILL.md → skill tier; more than
   that → Nexus.
+- **System skills** (`ainara/framework/system_skills/`) are the encapsulated
+  tier: in-process execution via the owning conversation's service registry,
+  internal steps, ONE unified result surface — never advertised to Bureau
+  workers (conversation-scope guard). Routing is capability-first, agent-last:
+  a skill whose card declares `compound_scope` absorbs multi-part requests
+  directly; the agentic process handles only multi-capability coordination.
+  Every turn produces exactly one synthesis — see
+  `docs/architecture/orakle-routing.md`.
 
 ### Skill conventions
 - One skill = one `.py` + OPTIONALLY one `SKILL.md` (agentskills.io

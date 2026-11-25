@@ -1,7 +1,10 @@
 # System skills tier & Orakle routing: one interpretation per turn
 
-**Status**: draft for discussion — companion GitHub issue records the
-decision (open one before merging).
+**Status**: ratified and graduated — the contract (invariant, taxonomy,
+routing rule) now lives in
+[docs/architecture/orakle-routing.md](../architecture/orakle-routing.md);
+this proposal records the decision history. Companion GitHub issue
+records the decision.
 **Related**: issue #17 (tiered skills model), issue #35 (agent trails),
 `docs/architecture/meta-search.md` (graduation pattern this doc follows).
 
