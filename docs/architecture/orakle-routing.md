@@ -3,8 +3,7 @@
 Technical reference for Orakle's request routing: how a user turn
 becomes either one skill execution or one agentic process. Contract-level
 documentation: what the rules are, where they live, and the invariants
-that must hold. Decision history lives in
-[docs/proposals/system-skills-tier-and-routing.md](../proposals/system-skills-tier-and-routing.md).
+that must hold.
 
 ## The invariant
 
@@ -124,3 +123,23 @@ pairs (run through the evaluation harness, `scripts/evaluation/`):
 Candidate blocks are rendered via `format_skill_block` from the real
 capability payload, so the eval cannot drift from what the production
 selection prompt shows.
+
+## Open follow-ups
+
+Deliberately parked (no immediate need; each needs its own design
+pass):
+
+- **Delegation pre-recall reflex (A′)**: when a goal is delegated to
+  Bureau, mechanically run the Deep Recall engine on the goal text and
+  attach the digest to blueprint context as data (cheap vector
+  pre-check gates the investigation; a "no relevant recorded history"
+  line prevents the agent from hunting logs). Prompt stays untouched —
+  framework reflex, not model judgment.
+- **Bureau recall access (B2)**: expose a recall endpoint on PyBridge
+  so Bureau agents can dig recorded history mid-task while PyBridge
+  stays single corpus owner. Requires zero prompt changes (capability
+  card does the teaching).
+- **UI-command skill surface**: what a window-command system skill's
+  `run()` needs beyond today's signature (window-manager channel,
+  latency budgets) — Polaris-side design pass when the first voice-UI
+  system skill lands.

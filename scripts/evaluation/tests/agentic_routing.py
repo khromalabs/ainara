@@ -18,7 +18,7 @@
 
 """
 Adversarial routing pairs for the system-skills tier
-(docs/proposals/system-skills-tier-and-routing.md).
+(docs/architecture/orakle-routing.md).
 
 Verifies the capability-first, agent-last rule: a skill whose card
 declares compound scope absorbs a compound request directly (one

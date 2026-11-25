@@ -24,8 +24,8 @@ from typing import Any, Dict
 class BaseSystemSkill(ABC):
     """Abstract base class for system skills that run within the middleware."""
 
-    # Declared compound scope (tier contract, docs/proposals/
-    # system-skills-tier-and-routing.md): True when the skill's own
+    # Declared compound scope (tier contract, see
+    # docs/architecture/orakle-routing.md): True when the skill's own
     # documented contract covers multi-part requests — internal steps
     # absorbing the whole request and returning ONE unified result.
     # Rendered mechanically in the skill's selection block so the
