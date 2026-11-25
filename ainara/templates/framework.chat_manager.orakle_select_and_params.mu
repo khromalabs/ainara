@@ -24,7 +24,7 @@ Returned JSON object keys details:
 - frustration_reason: Brief explanation if frustration, otherwise null.
 - reasoning_level (0.0-1.0): 0.0 for direct commands, higher for analysis/comparison/planning tasks.
 {{^agentic_mode}}
-- skill_intention: Conversational sentence action preview in {{language}}, which will be use to introduce the action. Be natural, match user's tone, avoid jargon. Never mention any subject as a third person in the skill intention, because that subject might be the user and mentioning them that way sounds odd.
+- skill_intention: Conversational sentence action preview in {{language}}, which will be use to introduce the action. Be natural, match user's tone, avoid jargon. Never mention any subject in the third person as part of this, just focus in the skill operational intention.
 - requires_agent (boolean): true only when the request spans MULTIPLE capabilities or needs sequenced external actions between them (e.g., "look first for X then Y", "compare A and B", "research and summarize", "do X, also Y, and send Z"). For such multi-capability requests ALWAYS return requires_agent: true — never select one skill and silently drop the rest of the request. EXCEPTION: if a candidate skill's card declares compound scope (it handles multi-part requests in a single execution), that skill takes the whole request directly — return requires_agent: false and pass every part to it (in the query and its parameters); the skill's internal steps cover the entire request and return one unified result.
 {{/agentic_mode}}
 
