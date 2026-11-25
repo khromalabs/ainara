@@ -537,6 +537,15 @@ def format_skill_block(
         "Description:"
         f" {skill_info.get('full_description', skill_info.get('description', 'No description'))}\n"
     )
+    if skill_info.get("compound_scope", False):
+        # Declared compound scope: the card's own claim that it absorbs
+        # multi-part requests into ONE unified result. Mechanical data,
+        # full depth only — it belongs to the selection layer, which is
+        # the component deciding direct execution vs agent delegation.
+        block += (
+            "Compound scope: handles multi-part requests covering"
+            " several topics or goals in a single execution.\n"
+        )
 
     parameters = list(
         skill_info.get("run_info", {}).get("parameters", {}).items()

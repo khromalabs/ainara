@@ -24,6 +24,16 @@ from typing import Any, Dict
 class BaseSystemSkill(ABC):
     """Abstract base class for system skills that run within the middleware."""
 
+    # Declared compound scope (tier contract, docs/proposals/
+    # system-skills-tier-and-routing.md): True when the skill's own
+    # documented contract covers multi-part requests — internal steps
+    # absorbing the whole request and returning ONE unified result.
+    # Rendered mechanically in the skill's selection block so the
+    # selection LLM can take a compound request directly instead of
+    # always delegating it to an agentic process. The claim must be
+    # explicit on the card; inferred scope is never trusted.
+    compound_scope = False
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -107,6 +117,7 @@ class BaseSystemSkill(ABC):
             "run_info": self.run_info,
             "full_description": self.full_description,
             "embeddings_boost_factor": self.embeddings_boost_factor,
+            "compound_scope": self.compound_scope,
             "type": self.type,
             "ui": self.ui,
             "vendor": self.vendor,

@@ -388,8 +388,8 @@ def test_timeframe_passthrough():
         memories=[MEM1], entries=[LOG1],
     )
     engine.run("solar", timeframe="a few days ago")
-    check("engine goal carries TIMEFRAME", any(
-        "TIMEFRAME: the events are expected around: a few days ago"
+    check("engine goal carries TIMEFRAME(S)", any(
+        "TIMEFRAME(S): the events are expected around: a few days ago"
         in m["content"] for c in llm.calls for m in c))
 
     engine_nb, llm_nb, _ = build_engine(
@@ -398,8 +398,19 @@ def test_timeframe_passthrough():
     )
     engine_nb.run("solar")
     check("no timeframe -> no TIMEFRAME goal line", not any(
-        "TIMEFRAME: the events are expected" in m["content"]
+        "TIMEFRAME(S): the events are expected" in m["content"]
         for c in llm_nb.calls for m in c))
+
+    # Compound scope: several stated periods reach the goal as one
+    # mechanical line.
+    engine_c, llm_c, _ = build_engine(
+        [TOOL_MEMS, TOOL_LOGS, f"<final>{FINAL}</final>"],
+        memories=[MEM1], entries=[LOG1],
+    )
+    engine_c.run("solar and the trip", timeframe=["last week", "in March"])
+    check("compound timeframes join one line", any(
+        "TIMEFRAME(S): the events are expected around: last week; in"
+        " March." in m["content"] for c in llm_c.calls for m in c))
 
     # Skill adapter: selection-LLM parameters reach the engine.
     engine2, llm2, _ = build_engine(
@@ -412,10 +423,13 @@ def test_timeframe_passthrough():
         result = skill.run("solar", {"timeframe": "last week"})
         check("adapter forwards timeframe",
               result.get("success") is True and any(
-                  "TIMEFRAME: the events are expected around: last week"
+                  "TIMEFRAME(S): the events are expected around: last week"
                   in m["content"] for c in llm2.calls for m in c))
         check("run_info declares timeframe", "timeframe"
               in skill.run_info.get("parameters", {}))
+        check("run_info declares compound scope",
+              skill.run_info.get("info", "").find("compound") != -1
+              or skill.compound_scope is True)
     finally:
         registry.unregister_service("deep_recall_engine")
 

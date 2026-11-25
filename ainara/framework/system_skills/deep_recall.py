@@ -32,7 +32,17 @@ from ainara.framework.system_skills.base import BaseSystemSkill
 
 
 class SystemSkillDeepRecall(BaseSystemSkill):
-    """Deliberative recall of the user's own past: memories + logs."""
+    """Deliberative recall of the user's own past: memories + logs.
+
+    Declared compound scope (see BaseSystemSkill.compound_scope):
+    handles compound recall requests — several topics, people or
+    periods recalled at once ("what did we say about X last week and Y
+    in March") — in a single investigation. The internal loop
+    decomposes the query and returns ONE cited digest covering all
+    parts; interpretation happens once, whole, never per-part.
+    """
+
+    compound_scope = True
 
     @property
     def name(self) -> str:
@@ -43,7 +53,9 @@ class SystemSkillDeepRecall(BaseSystemSkill):
         return (
             "Deep Recall: recover the full picture of past events,"
             " shared history, previous conversations and past decisions"
-            " from the user's memories and conversation records."
+            " from the user's memories and conversation records. Handles"
+            " compound recall requests covering multiple topics or"
+            " periods in a single investigation."
         )
 
     @property
@@ -54,10 +66,14 @@ class SystemSkillDeepRecall(BaseSystemSkill):
             " before, previous conversations, shared history, personal"
             " events, plans made earlier, 'what did we say/talk about',"
             " 'remember when', 'do you recall', 'lo que hablamos',"
-            " 'recuerda cuando'. Also for checking the recorded history"
-            " before stating anything about past events. NOT for general"
-            " knowledge, encyclopedic or historical facts about the"
-            " world, web search, or current/real-time information."
+            " 'recuerda cuando'. Also for compound recall requests"
+            " bundling several past topics or periods at once ('what did"
+            " we say about X last week and Y in March'): one"
+            " investigation covers all parts. Also for checking the"
+            " recorded history before stating anything about past"
+            " events. NOT for general knowledge, encyclopedic or"
+            " historical facts about the world, web search, or"
+            " current/real-time information."
         )
 
     @property
@@ -66,17 +82,22 @@ class SystemSkillDeepRecall(BaseSystemSkill):
             "info": (
                 "Pass the recall topic as the query: the events, topic"
                 " or period to reconstruct from the recorded history."
+                " For compound requests pass every part in the same"
+                " query — one investigation covers all of them."
             ),
             "parameters": {
                 "timeframe": {
-                    "type": "string",
+                    "type": "array",
                     "required": False,
                     "default": None,
                     "description": (
-                        "Approximate period the recalled events happened,"
-                        " as the user stated it (e.g. 'a few days ago',"
-                        " 'last week', 'in March'). Optional; scopes the"
-                        " history search and cuts investigation time."
+                        "Approximate period(s) the recalled events"
+                        " happened, as the user stated them (e.g. ['a"
+                        " few days ago'], ['last week', 'in March'])."
+                        " One entry per stated period; a single period"
+                        " may also arrive as a plain string. Optional;"
+                        " scopes the history search and cuts"
+                        " investigation time."
                     ),
                 },
             },

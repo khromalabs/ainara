@@ -183,11 +183,25 @@ class OrakleEvaluator:
             selection_data = json.loads(selection_response)
             selected_skill_id = selection_data.get("skill_id")
             extracted_parameters = selection_data.get("parameters", {})
-
-            # Calculate skill selection accuracy
-            skill_selection_correct = (
-                selected_skill_id == test_case.expected_skill_id
+            selected_requires_agent = bool(
+                selection_data.get("requires_agent", False)
             )
+
+            # Calculate skill selection accuracy. For agent-delegation
+            # cases the correct answer is skill_id null (empty
+            # expectation) with requires_agent true.
+            skill_selection_correct = (
+                (selected_skill_id or "") == (test_case.expected_skill_id or "")
+            )
+
+            # Agent-routing verdict: only scored when the case asserts
+            # it (requires_agent-driven adversarial pairs).
+            agent_routing_correct = None
+            if test_case.expected_requires_agent is not None:
+                agent_routing_correct = int(
+                    selected_requires_agent
+                    == test_case.expected_requires_agent
+                )
 
             # Calculate parameter extraction score
             param_score, param_details = calculate_parameter_score(
@@ -199,16 +213,41 @@ class OrakleEvaluator:
                 "prompt": prompt,
                 "response": selection_response,
                 "selected_skill_id": selected_skill_id,
+                "selected_requires_agent": selected_requires_agent,
                 "extracted_parameters": extracted_parameters,
                 "skill_selection_correct": skill_selection_correct,
+                "agent_routing_correct": agent_routing_correct,
                 "parameter_details": param_details,
             }
 
             results["metrics"]["selection"] = {
                 "duration": selection_duration,
                 "skill_selection_correct": int(skill_selection_correct),
+                "agent_routing_correct": agent_routing_correct,
                 "parameter_score": param_score,
             }
+
+            if selected_requires_agent:
+                # Delegation case: no skill execution and no
+                # interpretation pass — the agentic process is the
+                # result surface. The delegation verdict itself is the
+                # test: skill null + the asserted requires_agent.
+                delegation_ok = (
+                    selected_skill_id is None
+                    and agent_routing_correct != 0
+                )
+                results["metrics"]["interpretation"] = {
+                    "duration": 0,
+                    "keyword_match_rate": 1,
+                }
+                results["metrics"]["overall_success"] = int(
+                    delegation_ok
+                )
+                logger.info(
+                    f"Completed test case: {test_case.test_id}, Success:"
+                    f" {results['metrics']['overall_success']} (delegation)"
+                )
+                return results
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM selection response: {str(e)}")
@@ -325,8 +364,18 @@ class OrakleEvaluator:
                 >= self.config.interpretation_score_threshold
             )
 
+            agent_routing_ok = (
+                results["metrics"]["selection"].get(
+                    "agent_routing_correct"
+                )
+                != 0
+            )
+
             overall_success = (
-                skill_correct and param_score_ok and interp_score_ok
+                skill_correct
+                and param_score_ok
+                and interp_score_ok
+                and agent_routing_ok
             )
 
             results["metrics"]["overall_success"] = int(overall_success)

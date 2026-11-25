@@ -29,6 +29,7 @@ from typing import Dict, List
 DEFAULT_TEST_SUITES = [
     "general_skills",
     "complex_queries",
+    "agentic_routing",
 ]
 
 

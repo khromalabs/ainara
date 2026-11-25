@@ -46,6 +46,12 @@ class TestCase:
     candidate_skills_info: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # Expected requires_agent verdict from the selection phase (None =
+    # not asserted by this case). True cases delegate to an agentic
+    # process: expected_skill_id stays empty (skill_id must be null in
+    # the selection) and no interpretation pass runs.
+    expected_requires_agent: Optional[bool] = None
+
     # Whether to run the matcher or use provided candidate skills
     run_matcher: bool = False
 

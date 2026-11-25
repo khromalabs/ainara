@@ -50,7 +50,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ainara.framework.config import config
 from ainara.framework.storage.time_bounds import resolve_date_bound
@@ -61,7 +61,10 @@ logger = logging.getLogger(__name__)
 # --- Tuning constants ---------------------------------------------------
 # Expert knobs live in code on purpose (zero user-facing config); the
 # single config override is deep_recall.max_turns (0 = disable).
-DEFAULT_MAX_TURNS = 6
+# Sized for the compound case (declared compound scope): ~2 investigation
+# turns per recalled topic plus synthesis. The budget guard makes the
+# final turn force synthesis, so an unused surplus costs nothing.
+DEFAULT_MAX_TURNS = 8
 SEARCH_LIMIT = 8
 
 # Windowed memory retrieval (search_memories with start/end): top_k
@@ -136,7 +139,7 @@ class DeepRecallEngine:
         self,
         query: str,
         history_tail: Optional[List[Dict]] = None,
-        timeframe: Optional[str] = None,
+        timeframe: Union[str, List[str], None] = None,
     ) -> Optional[Dict[str, Any]]:
         """Investigate the corpora for `query` and return
         {"success": True, "digest": str, "turns": int} or None.
@@ -147,14 +150,23 @@ class DeepRecallEngine:
         investigation to the next one; the default LLM is the final
         fallback. All exhausted -> None (fail to silence).
 
-        `timeframe` is the user-stated period extracted by the
-        selection LLM (e.g. 'a few days ago'); it reaches the loop as
-        a mechanical goal line and is resolved against the current
-        date to scope log searches.
+        `timeframe` is the user-stated period(s) extracted by the
+        selection LLM (e.g. 'a few days ago', or a list like
+        ['last week', 'in March'] for compound requests); each entry
+        reaches the loop as a mechanical goal line and is resolved
+        against the current date to scope log searches.
         """
         max_turns = self._max_turns()
         if max_turns == 0:
             return None
+        timeframes: List[str] = []
+        if isinstance(timeframe, str):
+            timeframes = [timeframe]
+        elif timeframe:
+            timeframes = [
+                t.strip() for t in timeframe
+                if isinstance(t, str) and t.strip()
+            ]
         try:
             chain = self.green_memories.get_memory_llm_chain()
         except Exception:
@@ -164,7 +176,7 @@ class DeepRecallEngine:
             try:
                 result = self._run_loop(
                     query, history_tail, max_turns, llm, reasoning_effort,
-                    timeframe,
+                    timeframes,
                 )
             except Exception:
                 logger.exception(
@@ -199,7 +211,7 @@ class DeepRecallEngine:
         max_turns: int,
         llm,
         reasoning_effort: Optional[str],
-        timeframe: Optional[str] = None,
+        timeframes: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         system_prompt = self.template_manager.render(
             "framework.deep_recall.investigator_system",
@@ -221,11 +233,12 @@ class DeepRecallEngine:
             if tail:
                 goal_parts += ["", "RECENT CONVERSATION (for reference):"]
                 goal_parts += tail
-        if timeframe:
+        if timeframes:
             goal_parts += [
                 "",
-                f"TIMEFRAME: the events are expected around: {timeframe}.",
-                "Resolve this against today's date and scope search_logs"
+                "TIMEFRAME(S): the events are expected around: "
+                + "; ".join(timeframes) + ".",
+                "Resolve these against today's date and scope search_logs"
                 " with start_date/end_date accordingly.",
             ]
         messages: List[Dict[str, Any]] = [
