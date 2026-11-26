@@ -24,6 +24,7 @@ from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pathspec import GitIgnoreSpec
 
+from ainara.framework.redaction import redact_text
 from ainara.framework.skill import Skill
 
 # Directories never scanned, by name (applies at any depth).
@@ -94,6 +95,11 @@ class SystemFilescanner(Skill):
         .gitignore (if present) is honored too, so a code project is
         scanned the way a developer sees it.
       - Binary files are skipped; only text content is searched.
+      - Search matches are mechanically redacted when they contain
+        secret-shaped text (API keys, tokens, passwords) before leaving
+        the skill; over-redaction on look-alike lines is the intended
+        fail-safe direction. Patterns are configurable via the
+        security.redaction config keys.
 
     This skill is read-only: it never modifies, moves or deletes files.
     """
@@ -387,7 +393,7 @@ class SystemFilescanner(Skill):
                         {
                             "file": rel.as_posix(),
                             "line": lineno,
-                            "text": line.strip()[:500],
+                            "text": redact_text(line.strip()[:500]),
                         }
                     )
                     if len(matches) >= limit:

@@ -19,6 +19,7 @@
 from pathlib import Path
 from typing import Annotated, Any, Dict, Optional, Union
 
+from ainara.framework.redaction import redact_text
 from ainara.framework.skill import Skill
 
 
@@ -31,6 +32,14 @@ class SystemFileread(Skill):
     skill: it neither searches directory trees (use the file scanner
     skill) nor locates files by name or attributes (use the file finder
     skill). It is read-only: it never modifies files.
+
+    Secret redaction: content is mechanically scanned for secret-shaped
+    text (API keys, tokens, passwords, provider credentials) and the
+    matching spans are replaced with [REDACTED] before the response is
+    built. This happens framework-side and is NOT optional judgment:
+    lines that merely look secret-shaped may be over-redacted, which is
+    the intended fail-safe direction. Patterns are configurable via the
+    security.redaction config keys.
     """
 
     matcher_info = (
@@ -104,9 +113,10 @@ class SystemFileread(Skill):
 
             lines_returned = len(out_lines)
             truncated = byte_capped or (offset - 1 + lines_returned) < total_lines
+            content = redact_text("\n".join(out_lines))
             result = {
                 "success": True,
-                "content": "\n".join(out_lines),
+                "content": content,
                 "total_lines": total_lines,
                 "offset": offset,
                 "lines_returned": lines_returned,

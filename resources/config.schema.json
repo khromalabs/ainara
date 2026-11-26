@@ -426,6 +426,37 @@
             },
             "required": ["servers"]
         },
+        "security": {
+            "type": "object",
+            "description": "Framework-level security and privacy guards applied mechanically to content leaving the machine.",
+            "properties": {
+                "redaction": {
+                    "type": "object",
+                    "description": "Mechanical secret redaction applied by file-analysis skills (fileread, filescanner) before content reaches any model.",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Master switch. When false, no redaction is applied at all (not recommended when remote LLM providers are configured)."
+                        },
+                        "use_builtins": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Include the built-in secret patterns (key/value assignments, provider token shapes, connection strings, PEM headers)."
+                        },
+                        "extra_patterns": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Additional user-defined regexes applied on top of the built-ins. If a pattern declares a (?P<secret>...) group, only that group is replaced and the rest of the line stays intact; otherwise the whole match is replaced with [REDACTED]."
+                        }
+                    },
+                    "additionalProperties": true
+                }
+            },
+            "additionalProperties": true
+        },
         "stt": {
             "type": "object",
             "properties": {
