@@ -55,6 +55,79 @@ logger = logging.getLogger(__name__)
 _FORGED_RESULT_RE = re.compile(r"Orakle query\s+'[^']*'\s*result\s*:")
 _FORGERY_SCAN_WINDOW = 1200
 
+# --- Orakle tag-shape guardrails -------------------------------------
+#
+# The well-formed tag contract is enforced by _extract_orakle_tags()
+# against two exact patterns. Everything the model writes in a tag-like
+# context that is NOT well-formed must still be caught: LLMs mutate the
+# command format (dropped '<', stray whitespace, glued names, typos like
+# oracle/oragle/orakel). Enumerating variants cannot converge, so the
+# detectors are STRUCTURAL: generic tag tokens classified by capped edit
+# distance, plus a residual malformed-construct scan at end-of-stream.
+
+# Tag-shaped tokens are rare in legitimate output (orakle commands and
+# occasional HTML), so the classifier can afford Damerau distance 2:
+# it covers the whole observed typo space — substitutions (oracle,
+# oragle, orackle, orakla), transpositions (orakel — the German word,
+# also orakel/orcale/oralce letter swaps) and the c/a drifts (orcale,
+# oracale). Legitimate markup (div, code, think, b) is distance 4+.
+# All cap-2 uses are restricted to tag-like contexts, never prose.
+_TYPO_DISTANCE_CAP = 2
+
+
+def _damerau_levenshtein(a: str, b: str, cap: int = 1) -> int:
+    """Restricted Damerau-Levenshtein distance with early cutoff.
+
+    Returns ``cap + 1`` as soon as the true distance provably exceeds
+    ``cap``, keeping per-token classification cheap.
+    """
+    la, lb = len(a), len(b)
+    if abs(la - lb) > cap:
+        return cap + 1
+    if la == 0:
+        return lb if lb <= cap else cap + 1
+    prev2 = None
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        row_min = i
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            val = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if (i > 1 and j > 1 and a[i - 1] == b[j - 2]
+                    and a[i - 2] == b[j - 1]):
+                val = min(val, prev2[j - 2] + 1)
+            cur[j] = val
+            if val < row_min:
+                row_min = val
+        if row_min > cap:
+            return cap + 1
+        prev2, prev = prev, cur
+    return prev[lb] if prev[lb] <= cap else cap + 1
+
+
+# Complete tag-like token ('<name …>', '</name>', '<name/>'). Used to
+# classify near-miss tag names generically instead of hardcoding them.
+_TAG_TOKEN_RE = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9_-]*)[^>]*>")
+
+# Dangling '<' + name with no '>' yet (only checked end-of-stream).
+_DANGLING_NAME_RE = re.compile(r"[<\uFF1C]\s*/?\s*([A-Za-z][A-Za-z0-9_-]*)")
+
+# Structural orakle constructs that are never well-formed. Matched
+# against the lowercased buffer by _has_potential_tag() so broken
+# commands are HELD (never streamed raw to the user) until the
+# end-of-stream malformed check fires the guardrail.
+_FUZZY_ORAKLE_RE = re.compile(
+    r"""[<\uFF1C]\s*/?\s*orakle[^a-z]   # <orakle…, </orakle>, < orakle …
+      | orakle\s*/?[>\uFF1E]            # orakle>, orakle/>, orakle ＞
+      | &lt;\s*/?\s*orakle""",          # entity-encoded open/close
+    re.VERBOSE,
+)
+
+# Bare trailing 'orakle' could still grow into 'orakle>' or '<orakle'
+# with the next token — keep it buffered meanwhile.
+_BARE_TRAILING_ORAKLE_RE = re.compile(r"(?:^|[^a-z0-9_-])orakle$")
+
 # Static fallback for the C1 offload size trigger (issue #37): used only
 # when no context window can be resolved (the ratio-based derivation is
 # unavailable). Matches the pre-derivation default so the protective
@@ -372,58 +445,59 @@ class OrakleCapabilityFetcher:
         self.orakle_servers = orakle_servers
         self._config_properties_cache = None
 
-    def fetch_capabilities(self) -> List[dict]:
-        """Query Orakle servers for capabilities and store them in structured format."""
-        capabilities = []
-        max_attempts = 10
+    def fetch_once(self) -> List[dict]:
+        """Single non-blocking pass over the configured servers.
+
+        Returns the first non-empty capability list found, or [] —
+        no sleeps, no retries. Callers that need patience wrap this
+        in their own retry policy (see fetch_capabilities).
+        """
+        for server in self.orakle_servers:
+            try:
+                response = requests.get(
+                    f"{server}/capabilities", timeout=2
+                )
+                if response.status_code == 200:
+                    raw_capabilities = response.json()
+                    capabilities = self._process_orakle_skills(
+                        raw_capabilities
+                    )
+                    if capabilities:
+                        logger.info(
+                            f"Successfully loaded {len(capabilities)}"
+                            f" skills from Orakle server: {server}"
+                        )
+                        return capabilities
+            except requests.RequestException as e:
+                logger.warning(
+                    f"Failed to connect to Orakle server {server}:"
+                    f" {str(e)}"
+                )
+        return []
+
+    def fetch_capabilities(
+        self, max_attempts: int = 10, delay: float = 2.0
+    ) -> List[dict]:
+        """Query Orakle servers for capabilities, retrying until found.
+
+        BLOCKING: up to max_attempts single-pass probes with ``delay``
+        seconds between them (~20s by default). Startup callers that
+        must not stall on a slow Orakle use fetch_once() plus a
+        background recovery strategy instead.
+        """
         attempts = 0
-
-        while not capabilities:
-            for server in self.orakle_servers:
-                try:
-                    response = requests.get(
-                        f"{server}/capabilities", timeout=2
-                    )
-                    if response.status_code == 200:
-                        raw_capabilities = response.json()
-                        capabilities = self._process_orakle_skills(
-                            raw_capabilities
-                        )
-                        if capabilities:
-                            logger.info(
-                                f"Successfully loaded {len(capabilities)}"
-                                f" skills from Orakle server: {server}"
-                            )
-                            return capabilities
-                        else:
-                            attempts += 1
-                            if attempts > max_attempts:
-                                logger.warning(
-                                    "Max attempts reached. No Orakle"
-                                    " capabilities found."
-                                )
-                                return []
-                            time.sleep(2)
-                except requests.RequestException as e:
-                    time.sleep(2)
-                    logger.warning(
-                        f"Failed to connect to Orakle server {server}:"
-                        f" {str(e)}"
-                    )
-                    attempts += 1
-                    if attempts > max_attempts:
-                        logger.warning(
-                            "Max attempts reached. No Orakle capabilities"
-                            " found."
-                        )
-                        return []
-                    continue
-
-        if self.orakle_servers:
-            logger.warning(
-                "No Orakle capabilities found, is the Orakle server running?"
-            )
-        return capabilities
+        while True:
+            capabilities = self.fetch_once()
+            if capabilities:
+                return capabilities
+            attempts += 1
+            if attempts >= max_attempts:
+                logger.warning(
+                    "Max attempts reached. No Orakle capabilities"
+                    " found."
+                )
+                return []
+            time.sleep(delay)
 
     def fetch_config_properties(self) -> Optional[Dict[str, Any]]:
         """Fetch the flat full_key -> property schema map from Orakle."""
@@ -832,12 +906,31 @@ class OrakleMiddleware:
             f" {self.reasoning_effort_limit}"
         )
 
-        # Initialize capabilities
+        # Initialize capabilities. The initial probe is a single quick
+        # pass: services start in parallel and Orakle may still be
+        # discovering skills (its Flask server listens only after
+        # discovery). Blocking here on retries delayed app startup by
+        # ~20s AND still gave up permanently, leaving the session
+        # crippled (e.g. only deep_recall registered) — the 2026-11-26
+        # 19:27 web-search failure. Degraded mode is recoverable now:
+        # a background thread registers the full roster as soon as
+        # Orakle responds.
         if capabilities is not None:
             self.capabilities = capabilities
+            degraded_start = False
         else:
             fetcher = OrakleCapabilityFetcher(self.orakle_servers)
-            self.capabilities = fetcher.fetch_capabilities()
+            self.capabilities = fetcher.fetch_once()
+            degraded_start = bool(
+                not self.capabilities and self.orakle_servers
+            )
+            if degraded_start:
+                logger.warning(
+                    "Orakle capabilities unavailable at startup; starting"
+                    " in degraded mode. A background recovery task will"
+                    " register skills as soon as the Orakle server"
+                    " responds."
+                )
 
         # --- System Skills ---
         # Conversation-scope skills execute in-process via the service
@@ -848,7 +941,21 @@ class OrakleMiddleware:
             self._load_system_skills()
 
         # Register skills with the matcher
-        for skill in self.capabilities:
+        self._register_capability_skills(self.capabilities)
+
+        # NOTE: started AFTER system skills load — they append their
+        # entries to self.capabilities, and the recovery merge below
+        # preserves exactly what exists at thread start.
+        self._capabilities_pending = degraded_start
+        if degraded_start:
+            self._start_capability_recovery(fetcher)
+
+        # logger.info("-----------------")
+        # logger.info(pprint.pformat(skill))
+
+    def _register_capability_skills(self, skills: List[dict]) -> None:
+        """Register capability skills with the matcher."""
+        for skill in skills:
             self.matcher.register_skill(
                 skill["name"],
                 skill["description"],
@@ -861,8 +968,42 @@ class OrakleMiddleware:
                 },
             )
 
-        # logger.info("-----------------")
-        # logger.info(pprint.pformat(skill))
+    def _start_capability_recovery(
+        self, fetcher: "OrakleCapabilityFetcher"
+    ) -> None:
+        """Self-heal a degraded start: poll for Orakle capabilities in
+        the background and register them once the server responds.
+
+        Exits as soon as the roster is recovered (process lifetime
+        otherwise; daemon thread never blocks shutdown). Registry
+        entries are fully built before insertion in the matcher, so
+        concurrent match() reads stay consistent. In-process system
+        skill entries already present in self.capabilities at thread
+        start are preserved in the merged roster.
+        """
+
+        def _recover() -> None:
+            preserved = list(self.capabilities)
+            delay = 5.0
+            while True:
+                time.sleep(delay)
+                delay = min(delay * 2, 60.0)
+                fetched = fetcher.fetch_once()
+                if fetched:
+                    self._register_capability_skills(fetched)
+                    self.capabilities = fetched + preserved
+                    self._capabilities_pending = False
+                    logger.info(
+                        "ORAKLE capabilities recovered after startup"
+                        f" race: {len(fetched)} skills registered."
+                    )
+                    return
+
+        threading.Thread(
+            target=_recover,
+            daemon=True,
+            name="orakle-capability-recovery",
+        ).start()
 
     def _get_correction_message(self) -> str:
         """Returns a guardrail message for malformed orakle tags."""
@@ -921,6 +1062,15 @@ class OrakleMiddleware:
             " Please try again without nesting tags.\n\n"
         )
 
+    def _get_empty_query_message(self) -> str:
+        """Returns a guardrail message for orakle tags with empty queries."""
+        logger.info("GUARDRAIL empty query message generated")
+        return (
+            "\n\n[__AINARA_GUARDRAIL__] Error: Orakle tag found but the"
+            " query is empty. Use the format: <orakle>your query"
+            " here</orakle>. Please try again with a non-empty query.\n\n"
+        )
+
     def _normalize_query_content(self, content: str) -> str:
         """Normalize query content by collapsing whitespace and newlines."""
         normalized = re.sub(r"\s+", " ", content)
@@ -956,15 +1106,25 @@ class OrakleMiddleware:
         return bool(re.search(pattern, text, re.IGNORECASE))
 
     def _has_potential_tag(self, text: str) -> bool:
-        """Check if text contains a full or partial opening tag."""
+        """Check if text contains a full or partial orakle tag — or a
+        malformed/typo variant that could still complete into one."""
         text_lower = text.lower()
         if "<orakle" in text_lower:
+            return True
+        # Malformed constructs (missing '<', stray whitespace, glued
+        # names, entity-encoded brackets): hold so they never stream raw.
+        if _FUZZY_ORAKLE_RE.search(text_lower):
+            return True
+        # Bare trailing 'orakle' may still grow into 'orakle>' or
+        # '<orakle…' with the next token.
+        if _BARE_TRAILING_ORAKLE_RE.search(text_lower):
             return True
         # Check for unclosed '<' near the end of the buffer
         last_open = text.rfind("<")
         if last_open != -1 and text.find(">", last_open) == -1:
             # Only consider it a potential tag if the characters after '<'
-            # match the start of 'orakle' (case-insensitive)
+            # match the start of 'orakle' (case-insensitive) or a near-miss
+            # of it (e.g. '<oracle', '<orakel' mid-stream)
             after_open = text[last_open + 1:].lower()
             if after_open == "":
                 return True
@@ -976,6 +1136,10 @@ class OrakleMiddleware:
                 if after_open == keyword:
                     return True
                 keyword = keyword[:-1]
+            if _damerau_levenshtein(
+                after_open, "orakle", _TYPO_DISTANCE_CAP
+            ) <= _TYPO_DISTANCE_CAP:
+                return True
         return False
 
     def _check_for_nested_tags(self, text: str) -> bool:
@@ -1001,24 +1165,64 @@ class OrakleMiddleware:
 
         return False
 
+    def _check_for_malformed_orakle(
+        self, text: str, consumed_spans: List[tuple[int, int]]
+    ) -> bool:
+        """Detect orakle written in a tag-like context that is NOT a
+        well-formed tag: missing '<' ('orakle>…</orakle>'), stray
+        whitespace ('< orakle>', '<orakle >'), glued/punctuated names
+        ('<oraklecmd', '<orakle;'), entity-encoded brackets, or a
+        dangling near-miss name whose '>' never came ('<oracle').
+
+        Runs at END-OF-STREAM only: mid-stream a still-growing tag
+        ('<orakle>query</orakle' awaiting its '>') would false-positive.
+        Occurrences inside successfully extracted tags (consumed_spans)
+        are legitimate and skipped. Prose mentioning 'orakle' as a word
+        (no bracket adjacency) never matches.
+        """
+        for m in re.finditer(r"orakle", text, re.IGNORECASE):
+            if any(s <= m.start() < e for s, e in consumed_spans):
+                continue
+            prefix = text[:m.start()]
+            post = text[m.end():m.end() + 6]
+            tag_ish = (
+                re.search(r"[<\uFF1C]\s*/?\s*$", prefix)
+                or re.search(r"&lt;\s*/?\s*$", prefix)
+                or re.match(r"\s*/?[>\uFF1E]", post)
+                or re.match(r"\s*&gt;", post)
+            )
+            if tag_ish:
+                return True
+        for m in _DANGLING_NAME_RE.finditer(text):
+            name = m.group(1).lower()
+            if name != "orakle" and _damerau_levenshtein(
+                name, "orakle", _TYPO_DISTANCE_CAP
+            ) <= _TYPO_DISTANCE_CAP:
+                return True
+        return False
+
     def update_llm(self, llm):
         self.llm = llm
 
     def _check_for_typo_tags(self, text: str) -> Optional[str]:
-        """Check for common typo variants of orakle tags.
+        """Detect near-miss orakle tag names via capped edit distance.
 
-        Returns the typo tag name if found, None otherwise.
+        Scans every COMPLETE tag-like token ('<name …>', '</name>',
+        '<name/>') and returns the first name within
+        _TYPO_DISTANCE_CAP Damerau-Levenshtein distance of 'orakle'
+        (e.g. oracle, oragle, orakel, orcale). Requiring the closing
+        '>' makes the scan safe mid-stream: incomplete near-miss tags
+        are held in the buffer by _has_potential_tag() instead.
         """
-        typo_patterns = [
-            r"<(oracle)[^>]*>",
-            r"<(oragle)[^>]*>",
-            r"</(oracle)>",
-            r"</(oragle)>",
-        ]
-        for pattern in typo_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                return match.group(1)
+        for match in _TAG_TOKEN_RE.finditer(text):
+            name = match.group(1)
+            low = name.lower()
+            if low == "orakle":
+                continue
+            if _damerau_levenshtein(
+                low, "orakle", _TYPO_DISTANCE_CAP
+            ) <= _TYPO_DISTANCE_CAP:
+                return name
         return None
 
     def _extract_orakle_tags(self, text: str) -> tuple[
@@ -1035,7 +1239,8 @@ class OrakleMiddleware:
               data: the tag content when query attr is present, None otherwise
             - Boolean indicating if there's an unclosed tag
             - Typo tag name if found, None otherwise
-            - Guardrail type if violation detected ('attribute', 'self_closing', 'nested'), None otherwise
+            - Guardrail type if violation detected ('attribute',
+              'self_closing', 'nested', 'empty_query'), None otherwise
         """
         # First check for typos
         typo = self._check_for_typo_tags(text)
@@ -1082,6 +1287,12 @@ class OrakleMiddleware:
 
         # Sort by position
         tags.sort(key=lambda t: t[0])
+
+        # An extracted tag with an empty query is a broken command: the
+        # model must retry with real content instead of vanishing
+        # silently (the tag would otherwise be 'processed' as a no-op).
+        if any(not t[2] for t in tags):
+            return [], False, None, "empty_query"
 
         # Check for unclosed tag
         open_pattern = r"<orakle(?:\s[^>]*)?>|<orakle>"
@@ -1228,6 +1439,8 @@ class OrakleMiddleware:
                     yield self._get_self_closing_rejection_message()
                 elif guardrail_type == "nested":
                     yield self._get_nested_tags_rejection_message()
+                elif guardrail_type == "empty_query":
+                    yield self._get_empty_query_message()
                 return
 
             if tags:
@@ -1306,6 +1519,8 @@ class OrakleMiddleware:
                     yield self._get_self_closing_rejection_message()
                 elif guardrail_type == "nested":
                     yield self._get_nested_tags_rejection_message()
+                elif guardrail_type == "empty_query":
+                    yield self._get_empty_query_message()
             elif typo:
                 yield buffer
                 yield self._get_typo_correction_message(typo)
@@ -1349,7 +1564,15 @@ class OrakleMiddleware:
 
                 # Any remaining text after tags
                 remaining = buffer[last_end:]
-                if remaining and not found_orakle:
+                if remaining and self._check_for_malformed_orakle(
+                    remaining, []
+                ):
+                    yield remaining
+                    logger.info(
+                        "GUARDRAIL generated: malformed orakle construct"
+                    )
+                    yield self._get_correction_message()
+                elif remaining and not found_orakle:
                     yield remaining
                 elif remaining and found_orakle:
                     if any(c.isalpha() for c in remaining):
@@ -1358,9 +1581,43 @@ class OrakleMiddleware:
                             f" command: '{remaining.strip()}'"
                         )
                         yield "\n_orakle_trailing_text_discarded_\n"
+            elif self._check_for_malformed_orakle(buffer, []):
+                yield buffer
+                logger.info("GUARDRAIL generated: malformed orakle construct")
+                yield self._get_correction_message()
             elif not found_orakle:
                 # No tags found, yield remaining buffer
                 yield buffer
+
+    def _capabilities_booting_guidance(
+        self,
+        query: str,
+        chat_history: Optional[List[Dict]] = None,
+        memories: Optional[List[Dict]] = None,
+    ) -> str:
+        """Mechanical event + generated guidance for commands arriving
+        while the Orakle roster is still recovering from a degraded
+        start (#37 seam: framework-composed facts, model-worded
+        speech; fails to the mechanical status signal)."""
+        return self._guidance_or_status(
+            "capabilities_booting",
+            query,
+            facts={
+                "Cause": (
+                    "external skills are not loaded yet; the framework"
+                    " is still initializing them"
+                ),
+                "Working now": (
+                    "only local conversation-scope capabilities"
+                ),
+                "Outlook": (
+                    "external skills become available in a few moments;"
+                    " retrying shortly should succeed"
+                ),
+            },
+            chat_history=chat_history,
+            memories=memories,
+        )
 
     def _process_orakle_request(
         self,
@@ -1416,6 +1673,15 @@ class OrakleMiddleware:
         )
 
         if not matches:
+            if self._capabilities_pending:
+                logger.warning(
+                    "ORAKLE: degraded start — capabilities still loading;"
+                    " request not routed."
+                )
+                yield self._capabilities_booting_guidance(
+                    query, chat_history=chat_history, memories=memories
+                )
+                return
             error_msg = f"Request '{query}' didn't match any available skill."
             logger.warning(f"ORAKLE: {error_msg}")
             yield self._guidance_or_status(
@@ -1569,6 +1835,18 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     logger.warning(
                         f"ORAKLE: Hallucinated skill_id '{selected_skill_id}'"
                     )
+                    if self._capabilities_pending:
+                        # Degraded start: the roster is still recovering;
+                        # retrying selection against the crippled menu is
+                        # pointless — surface the degraded state instead.
+                        logger.warning(
+                            "ORAKLE: degraded start — skipping selection"
+                            " retries."
+                        )
+                        selected_skill_id = None
+                        selection_data["skill_id"] = None
+                        provider_success = True
+                        break
                     if attempt < max_attempts - 1:
                         current_chat_history.append(
                             {
@@ -1732,6 +2010,15 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             parameters = selection_data.get("parameters", {})
 
         if not selected_skill_id:
+            if self._capabilities_pending:
+                logger.warning(
+                    "ORAKLE: degraded start — selection produced no"
+                    " usable skill; surfacing booting state."
+                )
+                yield self._capabilities_booting_guidance(
+                    query, chat_history=chat_history, memories=memories
+                )
+                return
             if selection_data.get("error_msg"):
                 error_msg = selection_data.get("error_msg")
             else:
@@ -3288,6 +3575,12 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             "The user was offered a deep analysis of retrieved data"
             " (too large to read in one pass) and declined it through"
             " the decision card."
+        ),
+        "capabilities_booting": (
+            "Orakle's external capability system is still initializing:"
+            " skills have not loaded yet and the framework is recovering"
+            " them in the background. They become available in a few"
+            " moments."
         ),
     }
 

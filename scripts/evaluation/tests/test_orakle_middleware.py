@@ -200,11 +200,72 @@ class TestOrakleMiddleware(unittest.TestCase):
         print("PASSED")
 
     def test_empty_command(self):
-        """Tests that an empty command block does not get processed."""
+        """Tests that an empty command block triggers the empty-query guardrail."""
         print("\n--- Testing: Empty command block ---")
         input_text = "<orakle></orakle>"
         result = self._run_test_stream(input_text)
         self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertIn("query is empty", result)
+        print("PASSED")
+
+    # --- Malformed shape battery (missing '<', stray whitespace, glued
+    # names, encoding). These variants used to bypass the guardrails and
+    # stream raw to the user; each must now hit the malformed-tag
+    # guardrail and never execute.
+
+    def _assert_malformed(self, input_text):
+        result = self._run_test_stream(input_text)
+        self.assertIn("[__AINARA_GUARDRAIL__]", result)
+        self.assertNotIn("[PROCESSED_COMMAND_SUCCESSFULLY]", result)
+        return result
+
+    def test_malformed_missing_open_angle_bracket(self):
+        """'orakle>cmd</orakle>' without '<' must hit the guardrail."""
+        print("\n--- Testing: Malformed (missing open angle bracket) ---")
+        self._assert_malformed("orakle>command</orakle>")
+        self._assert_malformed("orakle>command")
+        print("PASSED")
+
+    def test_malformed_space_after_open_bracket(self):
+        """'< orakle>cmd</orakle>' (space after '<') must hit the guardrail."""
+        print("\n--- Testing: Malformed (space after open bracket) ---")
+        self._assert_malformed("< orakle>command</orakle>")
+        print("PASSED")
+
+    def test_malformed_whitespace_before_close(self):
+        """'<orakle >cmd</orakle>' (space before '>') must hit the guardrail."""
+        print("\n--- Testing: Malformed (whitespace before close) ---")
+        self._assert_malformed("<orakle >command</orakle>")
+        self._assert_malformed("<orakle\n>command</orakle>")
+        print("PASSED")
+
+    def test_malformed_glued_or_punctuated_name(self):
+        """'<oraklecmd...' and '<orakle;>...' must hit the guardrail."""
+        print("\n--- Testing: Malformed (glued/punctuated tag name) ---")
+        self._assert_malformed("<oraklecmd</orakle>")
+        self._assert_malformed("<orakle;>command</orakle>")
+        self._assert_malformed("<oraklewhat time</orakle>")
+        print("PASSED")
+
+    def test_malformed_close_without_open(self):
+        """A lone '</orakle>' must hit the guardrail, not stream raw."""
+        print("\n--- Testing: Malformed (close tag without open) ---")
+        self._assert_malformed("let me check </orakle> done")
+        print("PASSED")
+
+    def test_malformed_entity_encoded(self):
+        """Entity-encoded tags must hit the guardrail."""
+        print("\n--- Testing: Malformed (entity-encoded brackets) ---")
+        self._assert_malformed("&lt;orakle&gt;command&lt;/orakle&gt;")
+        print("PASSED")
+
+    def test_extended_typo_variants(self):
+        """Typos beyond oracle/oragle (orakel, orcale, ...) are caught."""
+        print("\n--- Testing: Extended typo variants ---")
+        for wrong in ("orakel", "orcale", "oralce", "oracale", "orakla"):
+            result = self._assert_malformed(f"<{wrong}>command</{wrong}>")
+            self.assertIn(wrong, result.lower())
         print("PASSED")
 
     def test_multiple_commands_in_stream(self):
