@@ -624,51 +624,85 @@
     }
    ]
   },
-  "system_fileop": {
-   "description": "Perform file operations in the local system as file read, list or exists",
-   "id": "system_fileop",
+  "system_fileread": {
+   "description": "Read the contents of one specific file, given its exact path. Returns a slice of the file: large files are capped per call and the response carries total_lines and next_offset so remaining parts can be requested with offset/limit. This is a single-file, single-call skill: it neither searches directory trees (use the file scanner skill) nor locates files by name or attributes (use the file finder skill). It is read-only: it never modifies files.",
+   "id": "system_fileread",
    "parameters": [
     {
      "default": null,
-     "description": "Whether pattern matching is case sensitive (for find operation)",
+     "description": "Exact path to the file to read",
+     "name": "path",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "First line to return, 1-based. Combine with limit to page through a large file using next_offset",
+     "name": "offset",
+     "required": false,
+     "type": "integer"
+    },
+    {
+     "default": null,
+     "description": "Maximum number of lines to return (capped at 2000 lines / 50KB per call)",
+     "name": "limit",
+     "required": false,
+     "type": "integer"
+    }
+   ]
+  },
+  "system_filescanner": {
+   "description": "Explore and analyze a directory tree containing many files. Maps the shape of a folder or project (file-type breakdown, directory structure), searches file CONTENTS across the whole tree (literal text or regular expression), lists the immediate contents of one directory, and checks whether a specific path exists. This skill is read-only: it never modifies, moves or deletes files.",
+   "id": "system_filescanner",
+   "parameters": [
+    {
+     "default": null,
+     "description": "'overview' maps the whole tree: file counts, total size, file-type breakdown and directory structure. 'search' looks inside the files and returns every match with file, line number and text. 'list' shows the immediate contents of one directory. 'exists' checks whether the path exists and whether it is a file or a directory.",
+     "name": "action",
+     "required": true,
+     "type": "one of: 'overview', 'search', 'list', 'exists'"
+    },
+    {
+     "default": null,
+     "description": "Directory to analyze, or the exact path to check for the 'exists' action",
+     "name": "path",
+     "required": true,
+     "type": "string"
+    },
+    {
+     "default": null,
+     "description": "Text or regular expression to find inside the files (search action only)",
+     "name": "query",
+     "required": false,
+     "type": "string"
+    },
+    {
+     "default": false,
+     "description": "Treat 'query' as a regular expression instead of literal text (search action only, default False)",
+     "name": "is_regex",
+     "required": false,
+     "type": "boolean"
+    },
+    {
+     "default": false,
+     "description": "Case-sensitive matching (search action only, default False)",
      "name": "case_sensitive",
      "required": false,
      "type": "boolean"
     },
     {
      "default": null,
-     "description": "Content to write to file (for write operation)",
-     "name": "content",
+     "description": "Only include files whose relative path matches this wildcard pattern, e.g. '*.py' or 'docs/*.md' (search and list actions only)",
+     "name": "glob",
      "required": false,
      "type": "string"
     },
     {
-     "default": null,
-     "description": "The operation to perform (read, list, exists)",
-     "name": "operation",
-     "required": true,
-     "type": "one of: 'read', 'list', 'exists'"
-    },
-    {
-     "default": null,
-     "description": "Path to the file or directory",
-     "name": "path",
-     "required": true,
-     "type": "string or Path"
-    },
-    {
-     "default": null,
-     "description": "File pattern to match (for find operation)",
-     "name": "pattern",
+     "default": 100,
+     "description": "Maximum number of search matches to return (search action only, default 100, capped at 200)",
+     "name": "max_results",
      "required": false,
-     "type": "string"
-    },
-    {
-     "default": null,
-     "description": "Whether to operate recursively (for delete/list operations)",
-     "name": "recursive",
-     "required": false,
-     "type": "boolean"
+     "type": "integer"
     }
    ]
   },
@@ -1042,6 +1076,6 @@
    ]
   }
  },
- "fingerprint": "93ff4d59cc014349",
+ "fingerprint": "afc23de634cc3747",
  "source_url": "http://localhost:8100"
 }

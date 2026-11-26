@@ -68,12 +68,12 @@ SNIFF_BYTES = 8192
 
 
 class SystemFilescanner(Skill):
-    """Analyze and understand a directory tree containing many files.
+    """Explore and analyze a directory tree containing many files.
 
-    Gives an structural overview of a folder or project (file-type
-    breakdown, directory map) and searches file CONTENTS across the whole
-    tree (literal text or regular expression), reporting file and line
-    number for every match.
+    Maps the shape of a folder or project (file-type breakdown, directory
+    structure), searches file CONTENTS across the whole tree (literal
+    text or regular expression), lists the immediate contents of one
+    directory, and checks whether a specific path exists.
 
     Behavioral rules:
       - Use 'overview' first when the tree is unknown: it shows the shape
@@ -83,9 +83,12 @@ class SystemFilescanner(Skill):
         results are capped: if 'truncated' is true, narrow the query
         (add a glob filter or a more specific pattern) instead of paging
         blindly.
-      - Read the matching regions afterwards with the file operations
-        skill's 'read' operation, using offset/limit to request slices
-        rather than whole large files.
+      - Use 'list' for the immediate contents of a single directory;
+        'overview' already covers the whole tree, so avoid both for the
+        same question.
+      - Read the matching regions afterwards with the file read skill,
+        using offset/limit to request slices rather than whole large
+        files.
       - Hidden directories (starting with '.'), dependency/cache/build
         directories and lock files are excluded by default; the root
         .gitignore (if present) is honored too, so a code project is
@@ -96,19 +99,23 @@ class SystemFilescanner(Skill):
     """
 
     matcher_info = (
-        "Analyze a folder or project that contains many files: show its"
-        " structure and file-type breakdown, and search the CONTENTS of all"
-        " files in the tree for a text or pattern, reporting file and line"
-        " number. Built for whole collections of files, not single known"
-        " files. Examples include: 'explain how this project is organized',"
-        " 'where is the routing implemented in this codebase?', 'find every"
-        " mention of invoices across my notes folder', 'what kinds of files"
-        " are in this directory?', 'search this repository for handleAuth'."
-        " Use the file operations skill instead to read one specific file"
-        " by exact path, and the file finder skill to locate a single file"
-        " by name. Keywords: analyze, scan, overview, structure, codebase,"
-        " project, repository, folder, directory, tree, across files,"
-        " contents search, grep, contains, implemented, organized."
+        "Explore and analyze a folder or project that contains many files:"
+        " show its structure and file-type breakdown, search the CONTENTS"
+        " of all files in the tree for a text or pattern reporting file"
+        " and line number, list the immediate contents of one directory,"
+        " or check whether a specific path exists. Built for whole"
+        " collections of files, not single known files. Examples include:"
+        " 'explain how this project is organized', 'where is the routing"
+        " implemented in this codebase?', 'find every mention of invoices"
+        " across my notes folder', 'what kinds of files are in this"
+        " directory?', 'search this repository for handleAuth', 'what is"
+        " in this folder?', 'does notes/2024 exist?'. Use the file read"
+        " skill instead to read one specific file by exact path, and the"
+        " file finder skill to locate a single file by name. Keywords:"
+        " analyze, scan, overview, structure, codebase, project,"
+        " repository, folder, directory, tree, list, contents, exists,"
+        " across files, contents search, grep, contains, implemented,"
+        " organized."
     )
 
     def __init__(self):
@@ -118,13 +125,18 @@ class SystemFilescanner(Skill):
     async def run(
         self,
         action: Annotated[
-            Literal["overview", "search"],
-            "'overview' maps the tree: file counts, total size, file-type"
-            " breakdown and directory structure. 'search' looks inside the"
-            " files and returns every match with file, line number and text.",
+            Literal["overview", "search", "list", "exists"],
+            "'overview' maps the whole tree: file counts, total size,"
+            " file-type breakdown and directory structure. 'search' looks"
+            " inside the files and returns every match with file, line"
+            " number and text. 'list' shows the immediate contents of one"
+            " directory. 'exists' checks whether the path exists and"
+            " whether it is a file or a directory.",
         ],
         path: Annotated[
-            str, "Root directory to analyze (a folder, not a single file)"
+            str,
+            "Directory to analyze, or the exact path to check for the"
+            " 'exists' action",
         ],
         query: Annotated[
             Optional[str],
@@ -142,8 +154,9 @@ class SystemFilescanner(Skill):
         ] = False,
         glob: Annotated[
             Optional[str],
-            "Only search files whose relative path matches this wildcard"
-            " pattern, e.g. '*.py' or 'docs/*.md' (search action only)",
+            "Only include files whose relative path matches this wildcard"
+            " pattern, e.g. '*.py' or 'docs/*.md' (search and list"
+            " actions only)",
         ] = None,
         max_results: Annotated[
             Optional[int],
@@ -151,24 +164,28 @@ class SystemFilescanner(Skill):
             " default 100, capped at 200)",
         ] = 100,
     ) -> Dict[str, Any]:
-        """Scan a directory tree: overview its structure or search its contents"""
-        root = Path(path).expanduser()
-        if not root.is_dir():
+        """Scan a directory tree: overview, contents search, list or exists"""
+        path_ = Path(path).expanduser()
+        if action == "exists":
+            return await self._check_exists(path_)
+        if not path_.is_dir():
             return {
                 "success": False,
-                "error": f"Not a directory: {root}",
+                "error": f"Not a directory: {path_}",
             }
 
         if action == "overview":
-            return await self._overview(root)
+            return await self._overview(path_)
         if action == "search":
             if not query:
                 return {
                     "success": False,
                     "error": "The 'query' parameter is required for search",
                 }
-            return await self._search(root, query, is_regex, case_sensitive,
+            return await self._search(path_, query, is_regex, case_sensitive,
                                       glob, max_results)
+        if action == "list":
+            return await self._list_dir(path_, glob)
         return {"success": False, "error": f"Unsupported action: {action}"}
 
     # ------------------------------------------------------------------
@@ -393,3 +410,73 @@ class SystemFilescanner(Skill):
                 " query or add a glob filter to get complete results."
             ]
         return result
+
+    # ------------------------------------------------------------------
+    # list / exists actions
+    # ------------------------------------------------------------------
+
+    async def _list_dir(
+        self, root: Path, glob: Optional[str]
+    ) -> Dict[str, Any]:
+        """List the immediate children of one directory (one level only)."""
+        entries: List[Dict[str, Any]] = []
+        truncated = False
+        try:
+            children = sorted(
+                root.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
+            )
+        except OSError as e:
+            return {"success": False, "error": str(e)}
+
+        for child in children:
+            name = child.name
+            if (
+                name in DEFAULT_EXCLUDED_DIRS
+                or (child.is_dir() and name.startswith("."))
+            ):
+                continue
+            rel_child = child.relative_to(root)
+            rel_posix = rel_child.as_posix()
+            if glob and not fnmatch.fnmatch(rel_posix, glob) and \
+                    not fnmatch.fnmatch(name, glob):
+                continue
+            spec = self._gitignore_for(root)
+            if spec is not None and spec.match_file(rel_posix):
+                continue
+            entry: Dict[str, Any] = {
+                "name": name,
+                "type": "dir" if child.is_dir() else "file",
+            }
+            if child.is_file():
+                try:
+                    entry["size"] = child.stat().st_size
+                except OSError:
+                    entry["size"] = 0
+            entries.append(entry)
+            if len(entries) >= MAX_OVERVIEW_ENTRIES:
+                truncated = True
+                break
+
+        result = {
+            "success": True,
+            "path": str(root),
+            "entries": entries,
+            "count": len(entries),
+            "truncated": truncated,
+        }
+        if truncated:
+            result["notes"] = [
+                "Listing capped; use a glob filter or the overview action"
+                " to narrow it down."
+            ]
+        return result
+
+    async def _check_exists(self, path: Path) -> Dict[str, Any]:
+        """Check whether a specific path exists and what it is."""
+        return {
+            "success": True,
+            "path": str(path),
+            "exists": path.exists(),
+            "is_file": path.is_file() if path.exists() else None,
+            "is_dir": path.is_dir() if path.exists() else None,
+        }
