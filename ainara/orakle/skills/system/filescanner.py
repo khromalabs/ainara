@@ -62,10 +62,28 @@ BINARY_EXTS = frozenset(
 MAX_SEARCH_FILE_BYTES = 1_000_000
 # Hard ceiling for search results returned in one call.
 MAX_SEARCH_RESULTS = 200
-# Hard ceiling for structure entries returned by overview.
-MAX_OVERVIEW_ENTRIES = 500
+# Directories shown in the overview map, most populated first.
+MAX_OVERVIEW_DIRS = 80
+# Entries shown in a one-level directory listing.
+MAX_LIST_ENTRIES = 200
 # Byte sniff window for binary detection.
 SNIFF_BYTES = 8192
+
+
+def _expand_glob_braces(glob: str) -> List[str]:
+    """Expand ``{a,b}`` alternations, which fnmatch does not support.
+
+    Selectors routinely emit brace globs (``*.{py,md}``); without this
+    they silently match nothing.
+    """
+    match = re.search(r"\{([^{}]+)\}", glob)
+    if not match:
+        return [glob]
+    expanded: List[str] = []
+    prefix, suffix = glob[: match.start()], glob[match.end():]
+    for alt in match.group(1).split(","):
+        expanded.extend(_expand_glob_braces(prefix + alt + suffix))
+    return expanded
 
 
 class SystemFilescanner(Skill):
@@ -275,43 +293,52 @@ class SystemFilescanner(Skill):
 
     async def _overview(self, root: Path) -> Dict[str, Any]:
         files = 0
-        dirs = 0
         total_bytes = 0
         by_ext: Dict[str, Dict[str, int]] = {}
-        structure: List[str] = []
+        files_per_dir: Dict[str, int] = {}
+        top_level: List[str] = []
         truncated = False
 
-        for dirpath, dirnames, _ in os.walk(root, topdown=True):
-            current = Path(dirpath)
-            dirnames[:] = sorted(
-                d for d in dirnames if not self._is_excluded_dir(d)
-            )
-            rel_dir = current.relative_to(root)
-            if current != root:
-                dirs += 1
-                structure.append((rel_dir.as_posix()) + "/")
-            if len(structure) >= MAX_OVERVIEW_ENTRIES:
-                truncated = True
-                break
+        for fpath, rel in self._walk_files(root):
+            if self._looks_binary(fpath):
+                continue
+            files += 1
+            try:
+                size = fpath.stat().st_size
+            except OSError:
+                size = 0
+            total_bytes += size
+            ext = fpath.suffix.lower() or "(no extension)"
+            entry = by_ext.setdefault(ext, {"files": 0, "bytes": 0})
+            entry["files"] += 1
+            entry["bytes"] += size
+            parent = rel.parent.as_posix()
+            files_per_dir[parent] = files_per_dir.get(parent, 0) + 1
 
-        if not truncated:
-            for fpath, rel in self._walk_files(root):
-                if self._looks_binary(fpath):
+        # Root entries: the shallow map the agent orients itself with.
+        try:
+            for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+                if self._is_excluded_dir(child.name) or (
+                    child.is_dir() and child.name.startswith(".")
+                ):
                     continue
-                files += 1
-                try:
-                    size = fpath.stat().st_size
-                except OSError:
-                    size = 0
-                total_bytes += size
-                structure.append(rel.as_posix())
-                ext = fpath.suffix.lower() or "(no extension)"
-                entry = by_ext.setdefault(ext, {"files": 0, "bytes": 0})
-                entry["files"] += 1
-                entry["bytes"] += size
-                if len(structure) >= MAX_OVERVIEW_ENTRIES:
-                    truncated = True
-                    break
+                top_level.append(
+                    child.name + ("/" if child.is_dir() else "")
+                )
+        except OSError:
+            pass
+
+        # Compact per-directory map: most populated directories first.
+        # A flat list of every file path would flood the agent context
+        # with tens of KB for medium-sized trees; directories-with-counts
+        # carry the same orientation value at a fraction of the size.
+        directories = {
+            d: n
+            for d, n in sorted(
+                files_per_dir.items(), key=lambda kv: -kv[1]
+            )[:MAX_OVERVIEW_DIRS]
+        }
+        truncated = len(files_per_dir) > len(directories)
 
         languages = {
             ext: entry
@@ -325,18 +352,19 @@ class SystemFilescanner(Skill):
             "root": str(root),
             "summary": {
                 "files": files,
-                "directories": dirs,
+                "directories": len(files_per_dir),
                 "total_bytes": total_bytes,
             },
             "file_types": languages,
-            "structure": structure,
+            "top_level": top_level,
+            "directories": directories,
             "truncated": truncated,
         }
         if truncated:
             result["notes"] = [
-                "Structure listing capped at"
-                f" {MAX_OVERVIEW_ENTRIES} entries; use the search action to"
-                " locate specific content instead of listing more."
+                "Directory map capped at"
+                f" {MAX_OVERVIEW_DIRS} entries (most populated first); use"
+                " the search action to locate specific content."
             ]
         return result
 
@@ -365,13 +393,18 @@ class SystemFilescanner(Skill):
         else:
             pattern = re.compile(re.escape(query), flags)
 
+        glob_patterns = (
+            _expand_glob_braces(glob) if glob else None
+        )
         limit = min(int(max_results or 100), MAX_SEARCH_RESULTS)
         matches: List[Dict[str, Any]] = []
         files_searched = 0
         truncated = False
 
         for fpath, rel in self._walk_files(root):
-            if glob and not fnmatch.fnmatch(rel.as_posix(), glob):
+            if glob_patterns and not any(
+                fnmatch.fnmatch(rel.as_posix(), g) for g in glob_patterns
+            ):
                 continue
             try:
                 if fpath.stat().st_size > MAX_SEARCH_FILE_BYTES:
@@ -393,7 +426,7 @@ class SystemFilescanner(Skill):
                         {
                             "file": rel.as_posix(),
                             "line": lineno,
-                            "text": redact_text(line.strip()[:500]),
+                            "text": redact_text(line.strip()[:200]),
                         }
                     )
                     if len(matches) >= limit:
@@ -414,6 +447,12 @@ class SystemFilescanner(Skill):
             result["notes"] = [
                 "Search stopped after reaching the result cap; narrow the"
                 " query or add a glob filter to get complete results."
+            ]
+        elif not files_searched and glob_patterns:
+            result["notes"] = [
+                "No files matched the glob filter, so nothing was searched;"
+                " the empty result reflects the filter, not the content."
+                " Simplify or drop the glob and search again."
             ]
         return result
 
@@ -459,7 +498,7 @@ class SystemFilescanner(Skill):
                 except OSError:
                     entry["size"] = 0
             entries.append(entry)
-            if len(entries) >= MAX_OVERVIEW_ENTRIES:
+            if len(entries) >= MAX_LIST_ENTRIES:
                 truncated = True
                 break
 

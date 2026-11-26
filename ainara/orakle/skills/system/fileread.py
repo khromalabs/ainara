@@ -19,6 +19,7 @@
 from pathlib import Path
 from typing import Annotated, Any, Dict, Optional, Union
 
+from ainara.framework.config import config
 from ainara.framework.redaction import redact_text
 from ainara.framework.skill import Skill
 
@@ -58,12 +59,22 @@ class SystemFileread(Skill):
     embeddings_boost_factor = 2
 
     # Read result caps, mirroring the convention used by coding agents:
-    # at most 2000 lines or 50KB per call, whichever is hit first.
+    # at most 2000 lines or 16KB per call, whichever is hit first. The
+    # byte cap is deliberately tighter than typical coding-agent tools:
+    # the primary consumer is the Bureau agent loop running fast, small
+    # models, where a 50KB observation reliably degrades the loop into
+    # repetition. Configurable via skills.fileread.max_lines / max_bytes.
     READ_MAX_LINES = 2000
-    READ_MAX_BYTES = 50_000
+    READ_MAX_BYTES = 16_000
 
     def __init__(self):
         super().__init__()
+        self.max_lines = int(
+            config.get("skills.fileread.max_lines", self.READ_MAX_LINES)
+        )
+        self.max_bytes = int(
+            config.get("skills.fileread.max_bytes", self.READ_MAX_BYTES)
+        )
 
     async def run(
         self,
@@ -78,7 +89,7 @@ class SystemFileread(Skill):
         limit: Annotated[
             Optional[int],
             "Maximum number of lines to return (capped at 2000 lines /"
-            " 50KB per call)",
+            " 16KB per call)",
         ] = None,
     ) -> Dict[str, Any]:
         """Read a slice of a file's contents, capped and with paging metadata"""
@@ -87,6 +98,15 @@ class SystemFileread(Skill):
     async def _read_file(self, path: Path, **kwargs) -> Dict[str, Any]:
         """Read a slice of file contents, capped and with paging metadata"""
         if not path.is_file():
+            if path.is_dir():
+                return {
+                    "success": False,
+                    "error": (
+                        "Path is a directory, not a file: use the file"
+                        " scanner skill to explore it, or read a specific"
+                        " file inside it"
+                    ),
+                }
             return {"success": False, "error": "File does not exist"}
 
         try:
@@ -96,8 +116,8 @@ class SystemFileread(Skill):
 
             offset = max(1, int(kwargs.get("offset") or 1))
             limit = min(
-                max(1, int(kwargs.get("limit") or self.READ_MAX_LINES)),
-                self.READ_MAX_LINES,
+                max(1, int(kwargs.get("limit") or self.max_lines)),
+                self.max_lines,
             )
 
             out_lines: list = []
@@ -105,7 +125,7 @@ class SystemFileread(Skill):
             byte_capped = False
             for line in lines[offset - 1:offset - 1 + limit]:
                 encoded = line.encode("utf-8")
-                if size + len(encoded) + 1 > self.READ_MAX_BYTES:
+                if size + len(encoded) + 1 > self.max_bytes:
                     byte_capped = True
                     break
                 out_lines.append(line)
