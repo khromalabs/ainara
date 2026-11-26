@@ -157,8 +157,12 @@ def create_app(internet_available: bool):
     app.internet_available = internet_available
 
     # Store reference to capabilities manager, passing the global config
+    manager_s = time.monotonic()
     app.capabilities_manager = CapabilitiesManager(
         app, config, internet_available, startup_time=startup_time.timestamp()
+    )
+    logger.info(
+        f"CapabilitiesManager initialized in {time.monotonic() - manager_s:.2f}s"
     )
 
     # --- Scheduler ---
@@ -227,7 +231,6 @@ if __name__ == "__main__":
     if args.profile:
         import cProfile
         import pstats
-        import os
         # Use the log directory from logging_manager
         log_dir = logging_manager._log_directory
         profile_output = os.path.join(log_dir, "orakle_profile.prof")
@@ -235,7 +238,12 @@ if __name__ == "__main__":
         profiler = cProfile.Profile()
         profiler.enable()
 
+    _app_s = time.monotonic()
     app = create_app(internet_available=is_online)
+    logger.info(
+        f"Orakle app created in {time.monotonic() - _app_s:.2f}s;"
+        " opening HTTP listener."
+    )
 
     # Run the app with or without profiling
     try:

@@ -20,6 +20,7 @@ import sys
 import atexit
 import logging
 import copy
+import time
 from typing import Any, Dict, Optional
 from pathlib import Path
 
@@ -53,6 +54,7 @@ class CapabilitiesManager:
         self.providers = []
         self.provider_map: Dict[str, Any] = {}
         resource_base_dir = self._get_resource_base_dir()
+        manager_init_s = time.monotonic()
 
         # Initialize Connector Router
         self.router = ConnectorRouter(resource_base_dir / "resources/contracts")
@@ -113,6 +115,11 @@ class CapabilitiesManager:
 
         # Load all capabilities
         self.load_capabilities()
+        logger.info(
+            f"Capability providers initialized and capabilities loaded"
+            f" in {time.monotonic() - manager_init_s:.2f}s total"
+            f" ({len(self.capabilities)} capabilities)."
+        )
 
         # Register API endpoints for capabilities
         self.register_capability_endpoints()
@@ -178,13 +185,20 @@ class CapabilitiesManager:
     def load_capabilities(self):
         """Load all capabilities by delegating to registered providers."""
         logger.info("Loading capabilities from all providers...")
+        load_s = time.monotonic()
         self.capabilities = {}  # Clear existing capabilities
         self.load_errors = []   # Clear previous errors
 
         for provider in self.providers:
             try:
+                provider_s = time.monotonic()
                 discovered_caps = provider.discover()
                 self.capabilities.update(discovered_caps)
+                logger.info(
+                    f"Provider {type(provider).__name__} discovered"
+                    f" {len(discovered_caps)} capabilities in"
+                    f" {time.monotonic() - provider_s:.2f}s"
+                )
                 if hasattr(provider, 'load_errors'):
                     self.load_errors.extend(provider.load_errors)
             except Exception as e:
@@ -193,6 +207,9 @@ class CapabilitiesManager:
                     f" {type(provider).__name__}: {e}",
                     exc_info=True,
                 )
+        logger.info(
+            f"All providers discovered in {time.monotonic() - load_s:.2f}s"
+        )
 
         # Apply the user's capability denylist (`skills.disabled`: list of
         # capability IDs). Disabled capabilities remain loaded — re-enabling

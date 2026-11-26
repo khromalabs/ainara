@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import venv
 from pathlib import Path
 from typing import (Annotated, Any, Dict, Literal, Optional, Union, get_args,
@@ -530,6 +531,7 @@ class BasePythonSkillProvider(CapabilityProvider):
 
                 full_module_path = f"{prefix_module}.{module_path}"
                 logger.info(f"Importing module: {full_module_path}")
+                module_import_s = time.monotonic()
 
                 # In frozen mode, load from file path directly
                 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -551,6 +553,12 @@ class BasePythonSkillProvider(CapabilityProvider):
                 else:
                     # Development mode - use standard import
                     module = importlib.import_module(full_module_path)
+                module_import_s = time.monotonic() - module_import_s
+                if module_import_s > 2.0:
+                    logger.warning(
+                        f"Slow skill import: {full_module_path} took"
+                        f" {module_import_s:.2f}s"
+                    )
                 if hasattr(module, class_name):
                     skill_class = getattr(module, class_name)
 
@@ -631,6 +639,7 @@ class BasePythonSkillProvider(CapabilityProvider):
                                 f"Loaded skill: {class_name} as"
                                 f" {snake_name} with embeddings_boost_factor:"
                                 f" {embeddings_boost_factor}"
+                                f" (import {module_import_s:.2f}s)"
                             )
                         except Exception as inst_e:
                             logger.error(
