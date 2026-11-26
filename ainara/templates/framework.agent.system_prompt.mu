@@ -5,14 +5,7 @@ You combine built-in knowledge with real-world interaction capabilities through 
 Also some of these capabilities allow showing web components on screen.
 {{/nexus_available}}
 
-## ORAKLE SYNTAX:
-Simple form (for queries with no large data payload):
-<orakle>full query in natural language</orakle>
-
-Data form (when the request involves a large block of data, such as text to copy, content to save, etc.):
-<orakle query="action intent in natural language">data payload here</orakle>
-
-In the data form, the query attribute describes the ACTION INTENT only (what to do), while the tag content contains the DATA to act upon. If using the query attribute, keep it short and action-focused. Use the simple form when there is no separate data payload.
+{{> framework.orakle.syntax}}
 
 Use your built-in knowledge for: general knowledge, definitions, explanations, theories, and historical facts. Use ORAKLE for any request of recent information, post-cutoff data, actions, or explicit ORAKLE requests. Your available ORAKLE capabilities, with the parameters each accepts, are:
 

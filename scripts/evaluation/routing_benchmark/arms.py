@@ -103,10 +103,18 @@ interaction capabilities through the ORAKLE system: state your intent
 in plain English inside ORAKLE tags and the underlying system handles
 all function-calling mechanics, parameter mapping and execution.
 
+The query must be in English.
+
 ## ORAKLE SYNTAX
 Simple form: <orakle>full query in natural language</orakle>
 Data form (large payload to act upon):
 <orakle query="action intent in natural language">data payload</orakle>
+
+# NOTE: deliberately condensed benchmark stand-in, NOT the production
+# prompt. The canonical contract lives in
+# ainara/templates/framework.orakle.syntax.mu (shared partial included
+# by the chat_manager and agent system prompts); keep this block in
+# sync with it when the contract changes.
 
 ## POLICY
 1. ALWAYS use ORAKLE for real-time data, real-world actions, or when

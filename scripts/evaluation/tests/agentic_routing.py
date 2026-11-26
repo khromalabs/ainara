@@ -312,6 +312,32 @@ class AgenticRoutingTestSuite(TestSuite):
                 ],
                 metadata={"tier": "matcher_survival"},
             ),
+            # 6. Multi-facet research question (the 2026-11-26 session
+            # failure shape): several distinct sub-questions bundled
+            # into one web-search phrasing. search_web has no compound
+            # scope and returns per-query raw results — the findings
+            # need gathering and combining -> agent, even though the
+            # query names a single mechanism.
+            TestCase(
+                test_id="multifacet_research_delegates",
+                description=(
+                    "Multi-facet research request phrased as one search:"
+                    " delegate to the agent"
+                ),
+                input_query=(
+                    "search the web for statistics and studies on"
+                    " co-parenting conflict in Spain, including shared"
+                    " custody rates, and specifically how children with"
+                    " autism affect post-separation conflict"
+                ),
+                expected_skill_id="",
+                expected_parameters={},
+                expected_requires_agent=True,
+                mock_skill_execution_result="",
+                expected_interpretation_keywords=[],
+                candidate_skills_info=SEARCH_WEB_BLOCK,
+                metadata={"tier": "agent_delegation"},
+            ),
         ]
 
         super().__init__(name, description, test_cases)
