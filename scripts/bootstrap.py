@@ -44,7 +44,6 @@ import os
 import shutil
 import subprocess
 import sys
-import venv
 
 MIN_PYTHON = (3, 11)
 RECOMMENDED_PYTHON = (3, 12)
@@ -142,6 +141,20 @@ def install_python_deps(venv_dir: str) -> None:
         [python, "-m", "pip", "install", "-e", "."],
         "Installing the ainara package in editable mode",
     )
+    # Record the requirements digest so the startup requirements guard
+    # (ainara/framework/requirements_guard.py) does not re-install on
+    # first service start. Keep the file name in sync with DIGEST_FILE.
+    import hashlib
+
+    digest = hashlib.sha256(
+        open(os.path.join(REPO_ROOT, "requirements.txt"), "rb").read()
+    ).hexdigest()
+    with open(
+        os.path.join(venv_dir, ".ainara-requirements.sha256"),
+        "w",
+        encoding="utf-8",
+    ) as fh:
+        fh.write(digest + "\n")
 
 
 def install_node_deps(force: bool) -> None:

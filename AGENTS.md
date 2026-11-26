@@ -241,6 +241,20 @@ npm ci
 
 Venv location: `.venv` by default; override with `--venv-dir` / `AINARA_VENV_DIR`. A legacy `venv/` directory is still detected by Polaris and `scripts/services.py`.
 
+### Dependency guard (source checkouts)
+
+After `git pull`, new entries in `requirements.txt` are installed
+automatically on the next service start: the requirements guard
+(`ainara/framework/requirements_guard.py`, invoked from
+`ainara/framework/__init__.py`) compares a digest of
+`requirements.txt` against one recorded in the venv and runs
+`pip install -r requirements.txt` once on mismatch, serialized by a
+venv-level lock file (Polaris spawns orakle/pybridge/bureau in
+parallel). Bootstrap records the digest at install time. Escape
+hatch: `AINARA_SKIP_REQUIREMENTS_GUARD=1`. Fail-open: if pip fails,
+startup continues and the real ImportError names the missing
+package; the next start retries.
+
 ## Running the Frontend (Polaris)
 
 ```bash

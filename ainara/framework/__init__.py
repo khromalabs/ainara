@@ -18,7 +18,14 @@
 
 
 __version__ = "0.12.0"
-__version_info__ = (0,12,0)
+__version_info__ = (0, 12, 0)
+
+# Sync the virtualenv with requirements.txt BEFORE any heavy import of
+# this package (every service entry point goes through here). stdlib-only
+# and a no-op on the happy path; see requirements_guard docstring.
+from ainara.framework.requirements_guard import ensure_requirements
+
+ensure_requirements()
 
 
 def _use_system_dns_for_aiohttp():
