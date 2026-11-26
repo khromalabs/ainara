@@ -52,15 +52,20 @@ REDACTED = "[REDACTED]"
 # spans. Most use a ``secret`` group so only the credential itself is
 # replaced and the line structure survives for the model to read.
 DEFAULT_SECRET_PATTERNS: List[str] = [
-    # key: value / key = value assignments (YAML, .env, Python, JSON...)
-    r"(?i)\b(api[_-]?key|api[_-]?secret|secret|secret[_-]?key|"
-    r"access[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|"
-    r"token|password|passwd|pwd|passphrase|client[_-]?secret|"
-    r"private[_-]?key)\b(\s*[:=]\s*)(['\"]?)"
-    r"(?P<secret>[^\s'\"]{4,})(['\"]?)",
-    # UPPER_CASE = value .env style
-    r"(?i)^\s*[a-z0-9_]*(key|secret|token|password|passwd|credentials)"
-    r"[a-z0-9_]*\s*=\s*(['\"]?)(?P<secret>[^\s'\"]{4,})(['\"]?)",
+    # key/value assignments (YAML, JSON, Python, TOML...). The key may
+    # be any identifier ENDING in a sensitive word - alphavantage_api_key,
+    # VAULT_TOKEN, db.password, bot_token, wallet_address - optionally
+    # quoted, so compound names are covered wherever they appear. The
+    # sensitive word must be the identifier's suffix: it keeps plain
+    # identifiers like 'tokens' or 'tokenizer' (token counts, code) out
+    # of the blast radius.
+    r"(?i)['\"]?[\w.\-]{0,64}?(?:"
+    r"api[_-]?keys?|api[_-]?secrets?|api[_-]?hash|"
+    r"client[_-]?secrets?|secret[_-]?keys?|secrets?|"
+    r"access[_-]?keys?|access[_-]?tokens?|auth[_-]?tokens?|"
+    r"refresh[_-]?tokens?|token|passphrases?|passwords?|passwd|pwd|"
+    r"private[_-]?keys?|wallet[_-]?address|wallet|credentials"
+    r")['\"]?\s*[:=]\s*['\"]?(?P<secret>[^\s'\"]{4,})['\"]?",
     # credentials inside connection strings / DSNs
     r"(?i)\b(postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|amqp|"
     r"smtp|ftp)://(?P<secret>[^:\s/@]{1,}:[^@\s/]{1,})@",
