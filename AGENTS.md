@@ -184,8 +184,15 @@ before proposing changes that cut against them.
 ### Repo conventions
 - `docs/` holds tracked, shareable documentation and proposals; `notes/` is
   the gitignored home for local working notes.
-- GitHub issues are the canonical discussion/decision record; tracked docs
-  mirror the agreed state back.
+- Proposals-first workflow: new ideas land as `docs/proposals/*.md` drafts
+  (status header, motivation, design sketch). A GitHub issue is opened only
+  when a proposal moves toward implementation — i.e. it would take real
+  time or many coordinated steps — and becomes the canonical
+  discussion/decision record from then on; the proposal is updated to
+  mirror the agreed decisions back. Small, self-evident changes need
+  neither.
+- Until an idea earns an issue, the proposal itself is the record: reference
+  it from code comments and commits instead of opening a tracking issue.
 
 ## Branching, PRs & Releases
 
