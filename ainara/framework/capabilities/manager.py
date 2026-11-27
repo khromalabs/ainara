@@ -342,6 +342,16 @@ class CapabilitiesManager:
                 if "ui" in cap_data:
                     info["ui"] = cap_data["ui"]
 
+            # Declared opt-in attributes ride for every type: routing
+            # tier claim (compound_scope) and conversational delivery
+            # contract (interpretation_template). Absent by default.
+            if cap_data.get("compound_scope"):
+                info["compound_scope"] = True
+            if cap_data.get("interpretation_template"):
+                info["interpretation_template"] = cap_data[
+                    "interpretation_template"
+                ]
+
             # Expose wizard-facing state only in 'full' mode
             if view_mode == "full":
                 instance = cap_data.get("instance")

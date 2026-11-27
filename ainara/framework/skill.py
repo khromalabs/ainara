@@ -17,6 +17,7 @@
 # Lesser General Public License for more details.
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from ainara.framework.config import nexus_prefix_from_module_name
 from ainara.framework.skill_properties import ConfigurablePropertiesMixin
@@ -42,9 +43,29 @@ class Skill(ConfigurablePropertiesMixin, ABC):
         (panel-mode UI skills; issue #30).
       - ``analysis`` — skill-side digest payload (issue #26, ladder tier
         1): the skill's own distilled findings. Travels only on the model
-        channel: stripped from the result before render/history and fed
-        to the interpretation pass in place of the raw data.
+        channel: stripped from the result before render/history, persisted
+        as a mechanical trail record and fed to the interpretation pass
+        in place of the raw data.
     """
+
+    # Declared compound scope (tier contract, see
+    # docs/architecture/orakle-routing.md): True when the skill's own
+    # documented contract covers multi-part requests — internal steps
+    # absorbing the whole request and returning ONE unified result.
+    # Passed through the capabilities payload (opt-in, absent by
+    # default) and rendered mechanically in the skill's selection block
+    # so the selection LLM can take a compound request directly instead
+    # of always delegating it to an agentic process. The claim must be
+    # explicit on the card; inferred scope is never trusted.
+    compound_scope = False
+
+    # Declared conversational delivery contract (opt-in, absent by
+    # default): names a template that replaces the generic
+    # command-interpretation one when the skill's result is worded
+    # into speech. The template receives the same variable set as the
+    # generic one, plus ``analysis`` (the skill-side digest, when one
+    # was extracted).
+    interpretation_template: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Optional metadata defaults

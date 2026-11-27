@@ -614,6 +614,26 @@ class BasePythonSkillProvider(CapabilityProvider):
                                     ),
                                 ),
                             }
+                            # Declared tier/surface attributes (opt-in,
+                            # absent by default): compound_scope claims
+                            # multi-part absorption on the routing tier;
+                            # interpretation_template names a skill-
+                            # specific interpretation contract replacing
+                            # the generic one in conversational delivery.
+                            compound_scope = getattr(
+                                instance, "compound_scope", False
+                            )
+                            if compound_scope:
+                                capability_info["compound_scope"] = bool(
+                                    compound_scope
+                                )
+                            interpretation_template = getattr(
+                                instance, "interpretation_template", None
+                            )
+                            if interpretation_template:
+                                capability_info["interpretation_template"] = (
+                                    str(interpretation_template)
+                                )
                             if capability_type == "nexus":
                                 config_params = []
                                 try:
