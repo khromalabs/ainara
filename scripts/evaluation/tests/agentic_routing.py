@@ -33,13 +33,22 @@ what the production selection prompt shows.
 """
 
 from ainara.framework.orakle_middleware import format_skill_block
-from ainara.framework.system_skills.deep_recall import SystemSkillDeepRecall
+from ainara.orakle.skills.memory.deep_recall import MemoryDeepRecall
 
 from .base import TestCase, TestSuite
 
-DEEP_RECALL_BLOCK = format_skill_block(
-    SystemSkillDeepRecall().get_definition()
-)
+# The real Deep Recall core skill, payload built through the same
+# mechanical channel the Orakle capabilities endpoint uses.
+from ainara.framework.capabilities.skills import introspect_run
+
+DEEP_RECALL_BLOCK = format_skill_block({
+    "name": "memory_deep_recall",
+    "description": MemoryDeepRecall.__doc__,
+    "full_description": MemoryDeepRecall.__doc__,
+    "matcher_info": MemoryDeepRecall.matcher_info,
+    "run_info": introspect_run(MemoryDeepRecall, "memory_deep_recall"),
+    "compound_scope": True,
+})
 
 # Faithful stand-in payload rendered through the same mechanical
 # channel as the real cards (the Orakle-registered skills are not
@@ -128,8 +137,8 @@ DEEP_RECALL_DIGEST_MOCK = {
 }
 
 DEEP_RECALL_MATCHER_SKILL = {
-    "name": "deep_recall",
-    "description": SystemSkillDeepRecall.description,
+    "name": "memory_deep_recall",
+    "description": MemoryDeepRecall.__doc__ or "Deliberate recall of the user's own past.",
     "parameters": [
         {
             "name": "timeframe",
@@ -202,7 +211,7 @@ class AgenticRoutingTestSuite(TestSuite):
                     "remember what we said about the Vega project last"
                     " week and also about the trip in March"
                 ),
-                expected_skill_id="deep_recall",
+                expected_skill_id="memory_deep_recall",
                 expected_parameters={
                     "timeframe": ["last week", "in March"],
                 },
@@ -216,7 +225,7 @@ class AgenticRoutingTestSuite(TestSuite):
                 candidate_skills_info=(
                     DEEP_RECALL_BLOCK + "---\n\n" + SEARCH_WEB_BLOCK
                 ),
-                metadata={"tier": "system_skill_compound"},
+                metadata={"tier": "encapsulated_compound"},
             ),
             # 2. Recall + action -> spans capabilities -> agent. The
             # compound-scope card is present and must NOT absorb it:
@@ -271,7 +280,7 @@ class AgenticRoutingTestSuite(TestSuite):
                 input_query=(
                     "what did we decide about the trip last week?"
                 ),
-                expected_skill_id="deep_recall",
+                expected_skill_id="memory_deep_recall",
                 expected_parameters={"timeframe": ["last week"]},
                 expected_requires_agent=False,
                 mock_skill_execution_result=DEEP_RECALL_DIGEST_MOCK,
@@ -282,7 +291,7 @@ class AgenticRoutingTestSuite(TestSuite):
                 candidate_skills_info=(
                     DEEP_RECALL_BLOCK + "---\n\n" + SEARCH_WEB_BLOCK
                 ),
-                metadata={"tier": "system_skill_single"},
+                metadata={"tier": "encapsulated_single"},
             ),
             # 5. Matcher top_k survival: a compound recall phrasing must
             # still rank deep_recall into the candidate set ahead of
@@ -297,7 +306,7 @@ class AgenticRoutingTestSuite(TestSuite):
                     "remember what we said about the Vega project last"
                     " month and the trip in March"
                 ),
-                expected_skill_id="deep_recall",
+                expected_skill_id="memory_deep_recall",
                 expected_parameters={},
                 mock_skill_execution_result=DEEP_RECALL_DIGEST_MOCK,
                 expected_interpretation_keywords=[

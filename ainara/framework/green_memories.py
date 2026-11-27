@@ -72,23 +72,25 @@ MEMORY_SOFT_MAX_WORDS = 60
 # `reasoning_effort` on the llm.providers entry.
 MEMORY_REASONING_EFFORT = "low"
 
-# Mechanical trail marker whose content must never feed memory
-# extraction. A Deep Recall digest is a derived, cited view of this
-# very memory store; re-assimilating it would make GREEN extract
-# memories from its own output (self-referential drift). The whole
-# turn is skipped, user side included: a recall turn asks about the
-# past rather than reporting new experiences, and turn pairing must
+# Mechanical digest trail marker (unified: offload digestion and
+# skill-side analysis digests alike) whose content must never feed
+# memory extraction. A digest is a derived, cited view of data the
+# framework already processed — often of this very memory store;
+# re-assimilating it would make GREEN extract memories from its own
+# output (self-referential drift). The whole turn is skipped, user
+# side included: an analysis turn asks about or summarizes other
+# data rather than reporting new experiences, and turn pairing must
 # stay intact.
-_DEEP_RECALL_DIGEST_MARKER = "_deep_recall_digest_"
+_ANALYSIS_TRAIL_MARKER = "_orakle_offload_digest_"
 
 
 def group_extraction_turns(new_messages):
     """Group raw persisted messages into (user_msg, assistant_msg)
     extraction turns.
 
-    Turns whose assistant message carries a Deep Recall digest trail
+    Turns whose assistant message carries a digest trail record
     are excluded entirely — the digest is derived content that must
-    never be re-assimilated (see _DEEP_RECALL_DIGEST_MARKER). Returns
+    never be re-assimilated (see _ANALYSIS_TRAIL_MARKER). Returns
     (turns, skipped_digest_count).
     """
     conversation_turns = []
@@ -97,7 +99,7 @@ def group_extraction_turns(new_messages):
         if message.get("role") == "assistant" and i > 0:
             prev_message = new_messages[i - 1]
             if prev_message.get("role") == "user":
-                if _DEEP_RECALL_DIGEST_MARKER in (
+                if _ANALYSIS_TRAIL_MARKER in (
                     message.get("content") or ""
                 ):
                     skipped_digest_turns += 1
@@ -1748,7 +1750,7 @@ class GREENMemories:
         logger.info(f"Found {len(new_messages)} new messages to process.")
 
         # Group messages into user/assistant turns. Turns whose
-        # assistant message carries a Deep Recall digest trail are
+        # assistant message carries a digest trail record are
         # excluded (see group_extraction_turns): the digest is derived
         # from this very memory store, and re-assimilating it would let
         # GREEN extract memories from its own output.
@@ -1757,7 +1759,7 @@ class GREENMemories:
         )
         if skipped_digest_turns:
             logger.info(
-                "Skipped %d turn(s) carrying Deep Recall digest trails"
+                "Skipped %d turn(s) carrying digest trail records"
                 " (derived content — never re-assimilated).",
                 skipped_digest_turns,
             )

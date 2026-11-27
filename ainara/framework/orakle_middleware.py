@@ -18,9 +18,7 @@
 
 
 import hmac
-import importlib
 import hashlib
-import inspect
 import json
 import logging
 import os
@@ -38,7 +36,6 @@ from ainara.framework.config import ConfigManager
 from ainara.framework.llm import create_llm_backend
 from ainara.framework.matcher.transformers import OrakleMatcherTransformers
 from ainara.framework.orakle_client import call_skill
-from ainara.framework.system_skills.base import BaseSystemSkill
 from ainara.framework.template_manager import TemplateManager
 from ainara.framework.token_estimation import estimate_tokens
 
@@ -708,7 +705,6 @@ class OrakleMiddleware:
         system_message: Optional[str] = None,
         capabilities: Optional[dict] = None,
         config_manager: Optional[ConfigManager] = None,
-        enable_system_skills: bool = True,
     ):
         """
         Initialize the OrakleMiddleware.
@@ -719,12 +715,6 @@ class OrakleMiddleware:
             system_message: System message for LLM context
             capabilities: Optional pre-loaded capabilities dictionary
             config_manager: Optional ConfigManager instance
-            enable_system_skills: Load conversation-scope system skills
-                (they execute in-process via the owning conversation's
-                service registry). Bureau worker middleware must pass
-                False: system skills cannot run in an agent process, and
-                advertising them there only invites wrong-tool selection
-                and improvisation on failure.
         """
         self.llm = llm
         self.orakle_servers = orakle_servers
@@ -932,20 +922,9 @@ class OrakleMiddleware:
                     " responds."
                 )
 
-        # --- System Skills ---
-        # Conversation-scope skills execute in-process via the service
-        # registry of the process that owns them (the conversation's
-        # ChatManager); Bureau worker middleware does not load them at all.
-        self.system_skills = {}
-        if enable_system_skills:
-            self._load_system_skills()
-
         # Register skills with the matcher
         self._register_capability_skills(self.capabilities)
 
-        # NOTE: started AFTER system skills load — they append their
-        # entries to self.capabilities, and the recovery merge below
-        # preserves exactly what exists at thread start.
         self._capabilities_pending = degraded_start
         if degraded_start:
             self._start_capability_recovery(fetcher)
@@ -1359,7 +1338,6 @@ class OrakleMiddleware:
             "_orakle_consent_decision_",
             "_orakle_agent_dossier_",
             "_orakle_offload_digest_",
-            "_deep_recall_digest_",
         )
         max_signal_len = max(len(s) for s in forbidden_signals)
 
@@ -2053,52 +2031,7 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             f" {parameters}"
         )
 
-        # --- Handle System Skills ---
-        if selected_skill_id in self.system_skills:
-            logger.info(
-                f"ORAKLE: Executing system skill: {selected_skill_id}"
-            )
-            if skill_intention and not agentic_mode:
-                yield f"\n{skill_intention}\n\n"
-            yield f"\n_orakle_loading_signal_|{selected_skill_id}\n"
-
-            skill_instance = self.system_skills[selected_skill_id]
-            result = skill_instance.run(query, parameters, chat_history)
-
-            if selected_skill_id == "deep_recall":
-                # Deep Recall delivery (deliberative memory tier). In
-                # agentic mode the raw result is the agent's
-                # observation, like any skill result; conversational
-                # mode gets the mechanical digest trail plus the spoken
-                # answer from the recall-specific interpretation
-                # contract (#37 shape: never the raw digest).
-                if agentic_mode:
-                    yield json.dumps(
-                        result if isinstance(result, dict)
-                        else {"success": False}
-                    )
-                    return
-                yield from self._deliver_deep_recall(
-                    result,
-                    query,
-                    chat_history=chat_history,
-                    memories=memories,
-                    reasoning_level=final_reasoning_level,
-                )
-                return
-
-            chat_context = self._get_chat_context(chat_history)
-            for chunk in self.stream_command_interpretation(
-                result,
-                query,
-                chat_context=chat_context,
-                reasoning_level=final_reasoning_level,
-                agentic_mode=agentic_mode,
-            ):
-                yield chunk
-            return  # Stop processing, as we've handled this system skill
-
-        # --- Handle Regular Skills ---
+        # --- Regular Skills ---
         if skill_intention and not agentic_mode:
             # Yield introduction message
             yield f"\n{skill_intention}\n\n"
@@ -2138,6 +2071,13 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             # from the payload before render/history, fed to the
             # interpretation pass in place of the raw data.
             analysis, result = self._extract_skill_analysis(result)
+            if isinstance(analysis, str) and analysis.strip():
+                # Skill-side digest (issue #26 tier 1) now persists as a
+                # mechanical trail record, same doctrine as the offload
+                # digest: the trail keeps the evidence in history and
+                # gives follow-up turns access to details the
+                # interpretation compacted away. Never spoken.
+                yield self._analysis_trail_chunk(analysis)
 
             if (
                 skill_info
@@ -2444,7 +2384,11 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
             # Interpret data
             chat_context = self._get_chat_context(chat_history, memories)
-            # Get interpretation as a stream for regular skills
+            # Get interpretation as a stream for regular skills.
+            # A skill-declared interpretation contract (opt-in
+            # 'interpretation_template' payload attribute) replaces the
+            # generic one; the analysis rides its own template variable
+            # alongside the generic formatted_results.
             interpretation_results = [analysis] if analysis else [result]
             for interpretation_chunk in self.stream_command_interpretation(
                 interpretation_results,
@@ -2452,6 +2396,12 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                 chat_context=chat_context,
                 reasoning_level=final_reasoning_level,
                 agentic_mode=agentic_mode,
+                analysis=analysis,
+                template_name=(
+                    skill_info.get("interpretation_template")
+                    if skill_info
+                    else None
+                ),
             ):
                 yield interpretation_chunk
 
@@ -2664,39 +2614,6 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             if skill["name"] == skill_id:
                 return skill
         return {}
-
-    def _load_system_skills(self):
-        """Dynamically loads system skills from the system_skills directory."""
-        skills_dir = os.path.join(os.path.dirname(__file__), "system_skills")
-        if not os.path.isdir(skills_dir):
-            logger.warning(f"System skills directory not found: {skills_dir}")
-            return
-
-        for filename in os.listdir(skills_dir):
-            if filename.endswith(".py") and not filename.startswith("__"):
-                module_name = f"ainara.framework.system_skills.{filename[:-3]}"
-                try:
-                    module = importlib.import_module(module_name)
-                    for name, obj in inspect.getmembers(
-                        module, inspect.isclass
-                    ):
-                        if (
-                            issubclass(obj, BaseSystemSkill)
-                            and obj is not BaseSystemSkill
-                        ):
-                            skill_instance = obj()
-                            skill_definition = skill_instance.get_definition()
-                            self.capabilities.append(skill_definition)
-                            self.system_skills[skill_instance.name] = (
-                                skill_instance
-                            )
-                            logger.info(
-                                f"Loaded system skill: {skill_instance.name}"
-                            )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to load system skill from {filename}: {e}"
-                    )
 
     def _get_chat_context(
         self,
@@ -2988,6 +2905,8 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         chat_context: Optional[dict] = None,
         reasoning_level: float = 0.0,
         agentic_mode: bool = False,
+        analysis: Optional[str] = None,
+        template_name: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         Stream LLM interpretation of command results.
@@ -2996,6 +2915,14 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             results: List of command result strings
             query: The natural language query that triggered the command
             chat_context: Optional dictionary with conversational context
+            agentic_mode: Skip context enrichment in agentic mode
+            analysis: Skill-side digest (issue #26 tier 1), when one was
+                extracted; rides the template's ``analysis`` variable in
+                addition to the generic formatted_results.
+            template_name: Skill-declared interpretation contract
+                (capability payload attribute 'interpretation_template');
+                falls back to the generic template when absent. The
+                template receives the same variable set either way.
 
         Yields:
             Chunks of the LLM interpretation as they become available
@@ -3016,12 +2943,14 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             effective_context = chat_context or {}
 
         interpretation_prompt = self.template_manager.render(
-            "framework.chat_manager.command_interpretation",
+            template_name
+            or "framework.chat_manager.command_interpretation",
             {
                 "formatted_results": "\n".join(formatted_results),
                 "query": query,
                 "chat_context": effective_context,
                 "language": self.current_language or "English",
+                "analysis": analysis,
             },
         )
 
@@ -4032,112 +3961,21 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
             marker += f"|{title}"
         return f"\n{marker}\n```\n{body}\n```\n\n"
 
-    @staticmethod
-    def _deep_recall_trail_chunk(digest: str) -> str:
-        """The never-spoken trail chunk for a Deep Recall run.
+    @classmethod
+    def _analysis_trail_chunk(cls, analysis: str) -> str:
+        """The never-spoken trail chunk for a skill-side digest
+        (issue #26 tier 1, conversational channel).
 
-        Shape: ``_deep_recall_digest_|<digest-hash>|<title>`` followed
-        by the digest body in a fenced block. Same conventions as the
-        offload trail (_offload_trail_chunk): the title is hoisted from
-        the '# Digest: <title>' first line and internal fences are
-        neutralized so they can never terminate the outer fence. The
-        chunk persists wholesale (Polaris renders trail records from
-        the persisted store, so a body stripped there would be
-        permanently invisible).
+        Same shape and conventions as the offload trail
+        (_offload_trail_chunk), one unified marker: the title is
+        hoisted from the '# Digest: <title>' first line and internal
+        fences are neutralized so they can never terminate the outer
+        fence. The chunk persists wholesale (Polaris renders trail
+        records from the persisted store, so a body stripped there
+        would be permanently invisible). The analysis itself is the
+        trail identity: payload-hash keyed like the offload digest.
         """
-        body = digest.strip()
-        title = None
-        heading = re.match(r"#\s*Digest:\s*(.+?)\s*($|\n)", body)
-        if heading:
-            title = heading.group(1)
-            body = body[heading.end():].lstrip()
-        if title:
-            # Marker-safe: single line, no pipes, no backticks.
-            title = re.sub(r"[|`\r\n]+", " ", title).strip()
-            if not title:
-                title = None
-        # Neutralize any fenced blocks the digest carries so they can
-        # never terminate the outer trail fence.
-        body = body.replace("```", "'''")
-        marker = f"_deep_recall_digest_|{OffloadDigestCache.key(digest)}"
-        if title:
-            marker += f"|{title}"
-        return f"\n{marker}\n```\n{body}\n```\n\n"
-
-    def _deliver_deep_recall(
-        self,
-        result: Any,
-        query: str,
-        chat_history: Optional[List[Dict]] = None,
-        memories: Optional[List[Dict]] = None,
-        reasoning_level: float = 0.0,
-    ) -> Generator[str, None, None]:
-        """Conversational delivery for a Deep Recall run.
-
-        Success: the digest rides the transcript as a mechanical trail
-        record (rendered collapsed by Polaris), then the spoken answer
-        streams from the recall-specific interpretation contract.
-        Failure: a status pill carries the fact and the interpretation
-        still runs — without a digest — so the turn completes with
-        honest humility instead of a dead end (fail to silence; the
-        template's no-digest branch carries the contract).
-        """
-        digest = None
-        if isinstance(result, dict) and result.get("success"):
-            digest = result.get("digest")
-        if digest:
-            yield self._deep_recall_trail_chunk(digest)
-        else:
-            logger.warning(
-                "ORAKLE: deep recall returned no digest; delivering"
-                " honest-failure answer."
-            )
-            yield "\n_orakle_status_|deep_recall_failed\n"
-        chat_context = self._get_chat_context(chat_history, memories)
-        for chunk in self._stream_deep_recall_answer(
-            digest, query, chat_context, reasoning_level
-        ):
-            yield chunk
-
-    def _stream_deep_recall_answer(
-        self,
-        digest: Optional[str],
-        query: str,
-        chat_context: Optional[dict] = None,
-        reasoning_level: float = 0.0,
-    ) -> Generator[str, None, None]:
-        """Stream the spoken answer from the recall-specific
-        interpretation contract (framework.deep_recall.interpretation).
-        No separate overflow gate: the digest is engine-bounded
-        (DIGEST_MAX_CHARS) and the chat context is ledger-driven by
-        _get_chat_context."""
-        interpretation_prompt = self.template_manager.render(
-            "framework.deep_recall.interpretation",
-            {
-                "digest": digest,
-                "query": query,
-                "chat_context": chat_context or {},
-                "language": self.current_language or "English",
-            },
-        )
-        if not self.system_message:
-            raise ValueError(
-                "system_message is not initialized in OrakleMiddleware"
-            )
-        interpretation_stream = self.llm.chat(
-            chat_history=self.llm.prepare_chat(
-                system_message=self.system_message,
-                new_message=interpretation_prompt,
-            ),
-            stream=True,
-            reasoning_level=reasoning_level,
-        )
-        cleaned_stream = self._strip_think_blocks_from_stream(
-            interpretation_stream
-        )
-        for chunk in cleaned_stream:
-            if chunk:
-                yield chunk
+        return cls._offload_trail_chunk(analysis, analysis)
 
     def _create_bureau_agent(
         self,

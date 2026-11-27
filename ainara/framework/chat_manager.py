@@ -267,9 +267,9 @@ class ChatManager:
             capabilities=self.capabilities,
         )
 
-        # Deep Recall engine (deliberative memory tier): registered for
-        # the system_skills adapter to fetch at run time; the engine
-        # resolves its LLM from the memory tier per run.
+        # Deep Recall engine (deliberative memory tier): registered so
+        # the PyBridge REST surface (/framework/deep_recall) can serve
+        # it; the engine resolves its LLM from the memory tier per run.
         self.deep_recall_engine = None
         if (
             self.memory_enabled
@@ -2518,17 +2518,19 @@ class ChatManager:
                     processed_answer += chunk
                     continue
 
-                # Deep Recall digest trail: mechanical record — never
-                # streamed live, never spoken, never routed through the
-                # doc-fence machinery; Polaris renders it from history
-                # after the turn, like the other trail records. Persisted
-                # wholesale (same doctrine as the offload digest trail):
-                # Polaris renders trail records from the persisted store,
-                # so without the body the record would be a pill forever;
-                # GREEN's dedup absorbs any derivative re-assimilation.
+                # Digest trail records (offload digestion and skill-side
+                # analysis alike, one unified marker): mechanical record
+                # — never streamed live, never spoken, never routed
+                # through the doc-fence machinery; Polaris renders it
+                # from history after the turn, like the other trail
+                # records. Persisted wholesale (same doctrine as the
+                # offload digest trail): Polaris renders trail records
+                # from the persisted store, so without the body the
+                # record would be a pill forever; GREEN's dedup absorbs
+                # any derivative re-assimilation.
                 if (
                     isinstance(chunk, str)
-                    and "_deep_recall_digest_" in chunk
+                    and "_orakle_offload_digest_" in chunk
                 ):
                     processed_answer += chunk
                     continue

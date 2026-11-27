@@ -49,11 +49,11 @@ Deliver the answer following these guidelines:
 
 Today is: {{current_date}} {{current_time}}
 
-{{#digest}}
+{{#analysis}}
 The Deep Recall investigation returned the following digest:
 
-{{{digest}}}
-{{/digest}}
-{{^digest}}
+{{{analysis}}}
+{{/analysis}}
+{{^analysis}}
 The recall investigation could not consult the records (no results). Answer from what you genuinely know — your reflex memories and the conversation context — and be honest that you could not verify past details right now. Do not fill gaps by guessing.
-{{/digest}}
+{{/analysis}}

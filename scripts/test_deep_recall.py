@@ -9,11 +9,12 @@
 # 2. Commercial license
 #    (Contact: rgomez@khromalabs.org for licensing options)
 #
-# Offline harness for the Deep Recall engine + system-skill adapter
-# (no services required): fakes for the LLM, GREEN memories and
-# ChatMemory drive deterministic scenarios covering the loop mechanics,
-# protocol recovery, fail-closed behavior, the registry wiring and the
-# trail/persistence helpers. Run: python scripts/test_deep_recall.py
+# Offline harness for the Deep Recall engine + core skill adapter
+# (no services required): fakes for the LLM, GREEN memories,
+# ChatMemory and the PyBridge HTTP surface drive deterministic
+# scenarios covering the loop mechanics, protocol recovery, fail-closed
+# behavior, the REST-contract adapter and the trail/persistence
+# helpers. Run: python scripts/test_deep_recall.py
 
 import sys
 from pathlib import Path
@@ -22,9 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ainara.framework.deep_recall import DeepRecallEngine  # noqa: E402
 from ainara.framework.orakle_middleware import OrakleMiddleware  # noqa: E402
-from ainara.framework.skills import register as registry  # noqa: E402
-from ainara.framework.system_skills.deep_recall import (  # noqa: E402
-    SystemSkillDeepRecall,
+from ainara.orakle.skills.memory import deep_recall as dr_skill  # noqa: E402
+from ainara.orakle.skills.memory.deep_recall import (  # noqa: E402
+    MemoryDeepRecall as DeepRecallSkill,
 )
 
 PASS = 0
@@ -123,32 +124,136 @@ def build_engine(script, topics=None, memories=None, entries=None):
     return engine, llm, chat_mem
 
 
-def test_registry_and_skill_adapter():
-    print("[registry + system skill adapter]")
+class FakeResponse:
+    def __init__(self, status_code, payload=None):
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.text = str(self._payload)
+
+    def json(self):
+        return self._payload
+
+
+class FakeRequests:
+    """Stands in for the requests module inside the core skill: records
+    the calls and returns a scripted response. Raises the scripted
+    exception (if any) instead of returning."""
+
+    class RequestException(Exception):
+        pass
+
+    def __init__(self, response=None, exc=None):
+        self.response = response
+        self.exc = exc
+        self.calls = []
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append(
+            {"url": url, "payload": json, "timeout": timeout}
+        )
+        if self.exc is not None:
+            raise self.exc
+        return self.response
+
+
+def run_skill(skill, query, timeframe=None):
+    import asyncio
+    kwargs = {"query": query}
+    if timeframe is not None:
+        kwargs["timeframe"] = timeframe
+    return asyncio.run(skill.run(**kwargs))
+
+
+def test_core_skill_adapter():
+    print("[core skill adapter over the PyBridge REST surface]")
     engine, _, _ = build_engine(
         [TOOL_MEMS, TOOL_LOGS, f"<final>{FINAL}</final>"],
         memories=[MEM1], entries=[LOG1],
     )
-    registry.register_service("deep_recall_engine", engine)
-    try:
-        skill = SystemSkillDeepRecall()
-        check("skill name", skill.name == "deep_recall")
-        check("definition exposes matcher_info",
-              "remember" in skill.matcher_info.lower())
-        result = skill.run("solar panel installation", {})
-        check("adapter delegates to engine",
-              result.get("success") is True)
-        check("digest present", "solar panel installation"
-              in result.get("digest", ""))
-        check("history tail forwarded", True)
+    skill = DeepRecallSkill()
 
-        # Engine missing -> structured failure, never raises.
-        registry.unregister_service("deep_recall_engine")
-        result = skill.run("solar", {})
-        check("engine missing -> structured failure",
-              result.get("success") is False and "error" in result)
+    fake = FakeRequests(
+        FakeResponse(200, {"success": True, "digest": FINAL, "turns": 4})
+    )
+    original_requests = dr_skill.requests
+    dr_skill.requests = fake
+    try:
+        result = run_skill(skill, "solar panel installation")
+        check("class name matches namespace derivation",
+              skill.__class__.__name__ == "MemoryDeepRecall")
+        check("declares compound scope", skill.compound_scope is True)
+        check("declares interpretation contract",
+              skill.interpretation_template
+              == "framework.deep_recall.interpretation")
+        check("matcher_info covers recall intent",
+              "remember" in skill.matcher_info.lower())
+        check("posts to PyBridge deep_recall endpoint",
+              fake.calls[0]["url"].endswith("/framework/deep_recall"))
+        check("payload carries the query",
+              fake.calls[0]["payload"]["query"] == "solar panel installation")
+        check("blocking call carries a generous timeout",
+              fake.calls[0]["timeout"] and fake.calls[0]["timeout"] >= 60)
+        check("delegates to engine digest",
+              result.get("success") is True
+              and result.get("analysis") == FINAL)
+        check("turns forwarded", result.get("turns") == 4)
+        check("digest never in a 'result' field",
+              "digest" not in result)
+
+        # timeframe reaches the endpoint payload mechanically.
+        result = run_skill(skill, "solar", timeframe="last week")
+        check("timeframe forwarded",
+              fake.calls[-1]["payload"]["timeframe"] == "last week")
+
+        # Engine-side failure (fail to silence): structured error.
+        fake.response = FakeResponse(
+            200, {"success": False,
+                  "result": "investigation could not complete"}
+        )
+        result = run_skill(skill, "solar")
+        check("engine failure -> structured failure",
+              result.get("success") is False
+              and "result" in result)
+
+        # Bad request.
+        fake.response = FakeResponse(
+            400, {"success": False, "result": "A recall query is required."}
+        )
+        result = run_skill(skill, "")
+        check("400 -> structured failure with detail",
+              result.get("success") is False
+              and "query" in result["result"])
+
+        # Server error.
+        fake.response = FakeResponse(503, {"success": False})
+        result = run_skill(skill, "solar")
+        check("503 -> structured failure",
+              result.get("success") is False)
+
+        # Transport failure: PyBridge unreachable.
+        fake.response = None
+        fake.exc = FakeRequests.RequestException("connection refused")
+        result = run_skill(skill, "solar")
+        check("transport failure -> structured failure",
+              result.get("success") is False and "unreachable"
+              in result["result"])
     finally:
-        registry.unregister_service("deep_recall_engine")
+        dr_skill.requests = original_requests
+
+    # The Orakle-side contract derived from the annotations: the
+    # capability id, the compound claim and the advertised parameters.
+    from ainara.framework.capabilities.skills import (
+        camel_to_snake, introspect_run,
+    )
+    details = introspect_run(DeepRecallSkill, "memory_deep_recall")
+    params = details.get("parameters", {})
+    check("capability id derived from namespace path",
+          camel_to_snake("MemoryDeepRecall") == "memory_deep_recall")
+    check("query parameter advertised",
+          "query" in params and params["query"].get("required") is True)
+    check("timeframe parameter advertised",
+          "timeframe" in params
+          and params["timeframe"].get("required") is False)
 
 
 def test_happy_path():
@@ -331,9 +436,9 @@ def _restore_config_isolation(dr, original):
 
 def test_trail_and_persistence_helpers():
     print("[trail chunk + persistence strip]")
-    chunk = OrakleMiddleware._deep_recall_trail_chunk(FINAL)
-    check("marker line present",
-          "_deep_recall_digest_|" in chunk)
+    chunk = OrakleMiddleware._analysis_trail_chunk(FINAL)
+    check("unified marker line present",
+          "_orakle_offload_digest_|" in chunk)
     check("title hoisted",
           "solar panel installation" in chunk.split("\n")[1])
     check("body fenced", "\n```\n" in chunk)
@@ -347,7 +452,7 @@ def test_trail_and_persistence_helpers():
         "Summary below:\n```markdown\n# Notes\n```\n"
         "Known gaps: none."
     )
-    fenced_chunk = OrakleMiddleware._deep_recall_trail_chunk(
+    fenced_chunk = OrakleMiddleware._analysis_trail_chunk(
         fenced_digest
     )
     check("internal fence neutralized",
@@ -359,15 +464,17 @@ def test_trail_and_persistence_helpers():
     tm = TemplateManager()
     rendered = tm.render(
         "framework.deep_recall.interpretation",
-        {"digest": FINAL, "query": "solar",
-         "chat_context": {}, "language": "English"},
+        {"analysis": FINAL, "query": "solar",
+         "chat_context": {}, "language": "English",
+         "formatted_results": ""},
     )
     check("interpretation renders digest",
           "Known gaps" in rendered and "[M:1]" in rendered)
     rendered_fail = tm.render(
         "framework.deep_recall.interpretation",
-        {"digest": None, "query": "solar",
-         "chat_context": {}, "language": "English"},
+        {"analysis": None, "query": "solar",
+         "chat_context": {}, "language": "English",
+         "formatted_results": ""},
     )
     check("interpretation renders honest-failure branch",
           "could not consult the records" in rendered_fail)
@@ -388,7 +495,7 @@ def test_green_digest_turn_exclusion():
         {"role": "user", "content": "what did we do about the roof?",
          "timestamp": "2024-03-12T10:00:00"},
         {"role": "assistant",
-         "content": "\n_deep_recall_digest_|abc|roof\n```\ndigest body\n```\n\n"
+         "content": "\n_orakle_offload_digest_|abc|roof\n```\ndigest body\n```\n\n"
          "We reinforced the roof first.",
          "timestamp": "2024-03-12T10:01:00"},
         {"role": "user", "content": "I painted it blue yesterday",
@@ -437,26 +544,9 @@ def test_timeframe_passthrough():
         "TIMEFRAME(S): the events are expected around: last week; in"
         " March." in m["content"] for c in llm_c.calls for m in c))
 
-    # Skill adapter: selection-LLM parameters reach the engine.
-    engine2, llm2, _ = build_engine(
-        [TOOL_MEMS, TOOL_LOGS, f"<final>{FINAL}</final>"],
-        memories=[MEM1], entries=[LOG1],
-    )
-    registry.register_service("deep_recall_engine", engine2)
-    try:
-        skill = SystemSkillDeepRecall()
-        result = skill.run("solar", {"timeframe": "last week"})
-        check("adapter forwards timeframe",
-              result.get("success") is True and any(
-                  "TIMEFRAME(S): the events are expected around: last week"
-                  in m["content"] for c in llm2.calls for m in c))
-        check("run_info declares timeframe", "timeframe"
-              in skill.run_info.get("parameters", {}))
-        check("run_info declares compound scope",
-              skill.run_info.get("info", "").find("compound") != -1
-              or skill.compound_scope is True)
-    finally:
-        registry.unregister_service("deep_recall_engine")
+    # Selection-side: the introspected contract advertises timeframe
+    # (see test_core_skill_adapter); the engine's timeframe mechanics
+    # are already covered above.
 
 
 def test_evidence_budget_and_grace():
@@ -567,7 +657,7 @@ def test_evidence_budget_and_grace():
 
 
 def main():
-    test_registry_and_skill_adapter()
+    test_core_skill_adapter()
     test_happy_path()
     test_exact_mode_and_window_bounds()
     test_timeframe_passthrough()
