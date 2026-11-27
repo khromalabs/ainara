@@ -35,24 +35,51 @@ The routing-relevant axis is **who sequences**, not step count:
 | Result | one unified result | one report |
 | Examples | "split this window", Deep Recall investigation | "research X, compare with our history, send report" |
 
-The tier predates Deep Recall: "inner skills" were originally built for
-voice UI commands and went dormant in the OpenAPI refactor
-(commit `fdc293c8`). The latency row is the voice-first argument made
-structural: a fully voice-driven Polaris requires imperative UI commands
-to route to in-process skills, never to an agent spawn.
+The tier predates Deep Recall: "inner skills" (system skills) were
+originally built for voice UI commands and went dormant in the OpenAPI
+refactor (commit `fdc293c8`). They were later retired entirely (Deep
+Recall was their last inhabitant and moved to a PyBridge REST surface
+consumed by a regular Orakle core skill — see "Skill/REST split"
+below): skills live only in Orakle, and PyBridge exposes backend
+framework functionality as REST. The latency row survives as the
+voice-first argument made structural: a fully voice-driven Polaris
+requires imperative UI commands to route to skill execution, never to
+an agent spawn.
 
-### Tier contract (system skills)
+### Tier contract (encapsulated skills)
 
-- **Conversation-scope**: loaded only by the conversation's middleware,
-  never by Bureau worker middleware (`OrakleMiddleware(
-  enable_system_skills=False)` in `ainara/bureau/server.py`). System
-  skills execute in-process via the owning conversation's service
-  registry (`get_service`); an agent process has no registry, and
-  advertising the capability there only invites wrong-tool selection and
-  improvisation on failure.
-- In-process execution; encapsulated internal steps; one unified result
-  surface.
-- No own confirmation UX (framework policy — issue #18).
+- **Encapsulation, not a separate tier**: an encapsulated skill is a
+  regular Orakle skill whose contract internalizes its steps — in
+  effect at the skill level, not a middleware-level paradigm. One
+  unified result surface; no own confirmation UX (framework policy —
+  issue #18).
+
+### Skill/REST split (system-skills retirement)
+
+With Bureau in the picture, the in-process system-skill tier became a
+duplicate skill surface: two paradigms, duplicated delivery code, and
+capabilities invisible to the agent universe. The resolution:
+
+- **Skills live only in Orakle.** Every routing candidate — including
+  what used to be a system skill — is an Orakle skill reached through
+  the ordinary selection flow; Bureau agents see it in their lean
+  capability projection like any other skill.
+- **PyBridge exposes framework functionality as REST.** When a skill
+  needs a framework component that lives in PyBridge (e.g. the
+  DeepRecallEngine and its corpora), PyBridge owns a REST endpoint for
+  it and the Orakle skill consumes that endpoint. The engine-side
+  contract is the skill-side transport; blocking calls are fine
+  (bounded work, local service).
+- **Infrastructure endpoints are framework facts**: no config key, no
+  model-fillable parameter — a hardcoded local default plus an env
+  override (`AINARA_PYBRIDGE_URL`) that the spawner may export if
+  ports ever become dynamic.
+- **Delivery generalizes instead of special-casing**: a skill-side
+  `analysis` digest persists as a mechanical trail record (one unified
+  marker, `_orakle_offload_digest_`) and an opt-in
+  `interpretation_template` capability attribute lets a skill declare
+  a domain-specific interpretation contract. No
+  `if skill_id == ...` branches.
 
 ## Routing rule: capability-first, agent-last
 
@@ -81,13 +108,13 @@ A skill may absorb a compound request only if BOTH hold:
   requests covering multiple topics or periods in a single
   investigation"). Versioned with the skill, present only when it is a
   candidate, cannot drift from hand-written text.
-- **`compound_scope` class attribute** on `BaseSystemSkill` (default
-  `False`, `ainara/framework/system_skills/base.py`), passed through
-  `get_definition()` and rendered by `format_skill_block`
+- **`compound_scope` class attribute** on `Skill` (default `False`,
+  `ainara/framework/skill.py`), passed through the capabilities payload
+  (opt-in; absent by default) and rendered by `format_skill_block`
   (`ainara/framework/orakle_middleware.py`) as a mechanical card line
   at full depth — the selection layer, which is the component deciding
   direct execution vs agent delegation. Every future voice-UI skill
-  inherits correct routing by inheriting the tier.
+  inherits correct routing by inheriting the attribute.
 - **Generic template clarification** (`framework.chat_manager.
   orakle_select_and_params.mu`): `requires_agent` means *multi-
   capability coordination*, with the explicit exception that a skill
