@@ -28,11 +28,11 @@ cited digest, so the model words the full picture instead of guessing.
 
 Design notes:
 - The conversation model triggers Deep Recall through the ordinary
-  ORAKLE channel: it is exposed as a system skill
-  (system_skills/deep_recall.py), so the existing tag contract,
-  selection flow, skill_intention sentence and loading pill all apply.
-  No dedicated tag, no pre-turn probe: zero added latency on turns that
-  don't need recall.
+  ORAKLE channel: it is exposed as a core skill (orakle/skills/memory/
+  deep_recall.py) over the PyBridge REST surface, so the existing tag
+  contract, selection flow, skill_intention sentence and loading pill
+  all apply. No dedicated tag, no pre-turn probe: zero added latency
+  on turns that don't need recall.
 - The loop is a bespoke mini ReAct here, not the Bureau Agent path: the
   corpus objects live in this process, and the offload-digestion
   transport (Bureau over HTTP) cannot reach them.

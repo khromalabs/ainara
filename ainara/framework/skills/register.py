@@ -16,14 +16,13 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # Lesser General Public License for more details.
 
-"""Service registry for framework-internal skills.
+"""Service registry for framework-internal components.
 
-System skills (ainara/framework/system_skills/) are loaded
-parameter-less by the middleware at import time, but some need live
-framework objects (memory stores, LLMs) that only exist after the
-ChatManager wires the application. Services registered here by the
-owner component are fetched by skills at run() time, keeping
-BaseSystemSkill's constructor-free load contract intact.
+Framework components owned by a long-lived server process (e.g. the
+DeepRecallEngine owned by PyBridge's ChatManager) are registered here
+by their owner; consumers in the same process (e.g. the REST surface
+that exposes the engine) fetch them at request time instead of
+coupling to construction order.
 """
 
 import logging
