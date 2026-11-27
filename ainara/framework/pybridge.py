@@ -1750,6 +1750,89 @@ def create_app():
             logger.error(f"Error searching chat history: {e}")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/framework/deep_recall", methods=["POST"])
+    def deep_recall_investigation():
+        """Deliberative recall over the memory corpora (REST surface).
+
+        PyBridge owns both corpora (GREEN memories + chat logs) and the
+        DeepRecallEngine, so the engine's canonical invocation is this
+        endpoint; the Orakle core skill `deep_recall` consumes it and
+        Bureau agents reach it through that skill.
+
+        Blocking by design: an investigation is a bounded multi-turn
+        LLM loop (deep_recall.max_turns), same as the conversational
+        path it replaces.
+
+        Body:
+            query (str, required): the recall topic.
+            timeframe (str | [str], optional): user-stated period(s).
+            history_tail ([{role, content}], optional): recent
+                conversation for reference resolution; defaults to the
+                current session's last messages.
+
+        Returns the engine contract: {"success": true, "digest": ...,
+        "turns": n} or {"success": false, "result": <why>} (fail to
+        silence — the caller speaks the failure, never a canned text).
+        """
+        if not hasattr(app, "chat_manager"):
+            return jsonify(
+                {"success": False, "result": "ChatManager unavailable."}
+            ), 503
+        engine = getattr(app.chat_manager, "deep_recall_engine", None)
+        if engine is None:
+            return jsonify(
+                {
+                    "success": False,
+                    "result": (
+                        "Deep Recall is unavailable (memory system"
+                        " disabled or not initialized)."
+                    ),
+                }
+            ), 503
+
+        payload = request.get_json(force=True, silent=True) or {}
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            return jsonify(
+                {"success": False, "result": "A recall query is required."}
+            ), 400
+        timeframe = payload.get("timeframe")
+        history_tail = payload.get("history_tail")
+        if not history_tail:
+            # Default: the current session's recent turns (user/
+            # assistant only). The engine clips to its own window; 12
+            # messages here give reference resolution headroom.
+            history_tail = [
+                {"role": m["role"], "content": m["content"]}
+                for m in (app.chat_manager.chat_history or [])[-12:]
+                if m.get("role") in ("user", "assistant")
+                and m.get("content")
+            ]
+
+        try:
+            result = engine.run(
+                query, history_tail=history_tail, timeframe=timeframe
+            )
+        except Exception as e:
+            logger.error(f"Deep Recall investigation failed: {e}")
+            return jsonify(
+                {
+                    "success": False,
+                    "result": "The recall investigation failed.",
+                }
+            ), 500
+        if result is None:
+            # All memory-tier providers exhausted: fail to silence.
+            return jsonify(
+                {
+                    "success": False,
+                    "result": (
+                        "The recall investigation could not be completed."
+                    ),
+                }
+            )
+        return jsonify(result)
+
     @app.route("/framework/chat/history", methods=["GET"])
     def get_chat_history():
         """
