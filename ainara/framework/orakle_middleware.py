@@ -739,6 +739,32 @@ class OrakleMiddleware:
         self.matcher_top_k = self.config_manager.get(
             "orakle.matcher.top_k", 10
         )
+        # Reasoning effort for the per-invocation selection LLM. The
+        # reasoning_level kwarg it used to pass never reached the wire
+        # (see litellm chat: the float→effort mapping is inert), so
+        # selection ran at each provider's default — provider-dependent
+        # behavior. Measured 2026-11-28 (gpt-oss-120b, fixed prompt):
+        # low == medium accuracy, high is slower AND worse (overthinking,
+        # one unparseable JSON in 8) — low locked in as default.
+        self.selection_reasoning_effort = self.config_manager.get(
+            "orakle.selection.reasoning_effort", "low"
+        )
+        # Sampling temperature for the selection LLM. Provider defaults are
+        # ~1.0, which made ambiguous routings a live coin-flip (identical
+        # queries flipping between candidates across turns). Deterministic
+        # sampling keeps the decision reproducible and debuggable — a
+        # deterministically wrong routing is a prompt problem, fixable in
+        # the card/template; a random one is neither observable nor
+        # fixable. Measured 2026-11-28: 0.0-0.2 identical accuracy.
+        self.selection_temperature = self.config_manager.get(
+            "orakle.selection.temperature", 0.2
+        )
+        # Forensic dump of the full selection prompt (candidates + rules)
+        # at INFO. Off by default: the prompt is ~10KB per request. Enable
+        # when diagnosing routing decisions in a live session.
+        self.selection_log_prompt = self.config_manager.get(
+            "orakle.selection.log_prompt", False
+        )
         self.reasoning_effort_limit = self.config_manager.get(
             "orakle.reasoning_effort_limit", 1.0
         )
@@ -1649,6 +1675,14 @@ class OrakleMiddleware:
         matches = self.matcher.match(
             query, threshold=self.matcher_threshold, top_k=self.matcher_top_k
         )
+        logger.info(
+            "ORAKLE matcher ranking (top {}): {}".format(
+                len(matches),
+                ", ".join(
+                    f"{m_['skill_id']}({m_['score']:.2f})" for m_ in matches
+                ),
+            )
+        )
 
         if not matches:
             if self._capabilities_pending:
@@ -1699,13 +1733,8 @@ class OrakleMiddleware:
             )
 
         # Use LLM to select the best skill and extract parameters
-        template = (
-            "framework.chat_manager.orakle_select_and_params"
-            if self.enable_agent_spawn
-            else "framework.chat_manager.orakle_select_and_params_old"
-        )
         prompt = self.template_manager.render(
-            template,
+            "framework.chat_manager.orakle_select_and_params",
             {
                 "query": query,
                 "candidate_skills": candidate_skills_text,
@@ -1716,6 +1745,8 @@ class OrakleMiddleware:
         )
 
         logger.debug(f"ORAKLE skill selection prompt: {prompt}")
+        if self.selection_log_prompt:
+            logger.info(f"ORAKLE selection prompt:\n{prompt}")
 
         # --- Guardrail: Retry loop for skill selection ---
         valid_skill_ids = [m["skill_id"] for m in matches]
@@ -1726,7 +1757,9 @@ class OrakleMiddleware:
             )
 
         select_prompt = """
-You are an expert data analyist. You combine built-in knowledge with real-time capabilities through the ORAKLE query system. ORAKLE connects with external API servers to access real-time data; these capabilities are called skills. Task is to identify from a query in natural language the skill and parameters matching the query intention. If no match can be found return an empty skill_id next to a descriptive error about why none of the possible candidates fits. Search carefully among the available skills.
+You are an expert data analyst. You combine built-in knowledge with real-time capabilities through the ORAKLE query system. ORAKLE connects with external API servers to access real-time data; these capabilities are called skills. Task is to identify from a query in natural language the skill and parameters matching the query intention. If no match can be found return an empty skill_id next to a descriptive error about why none of the possible candidates fits. Search carefully among the available skills.
+
+Judge routing by the requested SOURCE, not by the topic: requests to recall, remember or revisit the user's own past (memories, past conversations, prior decisions) belong to the recorded-history recall capability, never to internet search — even when the subject matter (coins, prices, news) looks like web material.
 
 IMPORTANT: If multiple skills seem equally relevant for the user's intent, always prefer skills marked as [USER] over those marked as [SYSTEM].
 """
@@ -1778,8 +1811,8 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
                     selection_response = current_llm.chat(
                         chat_history=current_chat_history,
                         stream=False,
-                        # Enforce low level reasoning if available
-                        reasoning_level=0.3,
+                        reasoning_effort=self.selection_reasoning_effort,
+                        temperature=self.selection_temperature,
                     )
                 except Exception as e:
                     logger.warning(
@@ -1915,8 +1948,14 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
 
         skill_intention = selection_data.get("skill_intention", "")
 
-        # Handle agent requirement
-        if selection_data.get("requires_agent", False):
+        # Handle agent requirement. The selection template always
+        # advertises requires_agent; installs with the agent process
+        # disabled keep the pre-Bureau behavior: ignore the flag and let
+        # the single-skill path handle the query as best it can.
+        if (
+            selection_data.get("requires_agent", False)
+            and self.enable_agent_spawn
+        ):
             logger.info(
                 f"ORAKLE: Query requires agent processing: '{query}'"
             )
@@ -1975,6 +2014,14 @@ IMPORTANT: If multiple skills seem equally relevant for the user's intent, alway
         # Use the data from the retry loop
         # If retries failed (e.g. persistent hallucination),
         # we force invalid ID to None
+        if selection_data.get("requires_agent", False):
+            # Agent path not taken (spawn disabled): pre-Bureau
+            # behavior — single-skill selection handles the query.
+            logger.warning(
+                "ORAKLE: selection wants the agent process but"
+                " orakle.enable_agent_spawn is disabled; falling back"
+                " to single-skill handling."
+            )
         selected_skill_id = selection_data.get("skill_id")
         if selected_skill_id and selected_skill_id not in valid_skill_ids:
             logger.error(

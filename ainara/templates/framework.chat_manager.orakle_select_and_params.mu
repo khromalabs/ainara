@@ -15,9 +15,10 @@ skill_id, parameters, frustration_level, frustration_reason, reasoning_level{{^a
 
 Instructions:
 1. Choose the skill which better suits the user request. IMPORTANT: Use only the exact parameters defined in the skill specification.
-2. Skip optional parameters unless needed.
-3. If no skill{{^agentic_mode}} or combination of skills (using requires_agent){{/agentic_mode}} fits, but query clearly seeks for information, use search_web skill as shown in example.
-4. If no skill fits the query intent, return an empty skill_id and add error_msg.
+2. Separate WHAT is sought from WHERE it must come from. If the user asks to recall, remember or revisit their OWN past (past conversations, stored memories, prior decisions or plans, "what did we say"), the requested SOURCE is recorded personal history: route to the recall candidate even when the topic sounds like web material (crypto, news, prices). Internet search serves external, current or general-knowledge sources only and can never substitute a recall request.
+3. Skip optional parameters unless needed.
+4. If no skill{{^agentic_mode}} or combination of skills (using requires_agent){{/agentic_mode}} fits, but query clearly seeks for information, use search_web skill as shown in example.
+5. If no skill fits the query intent, return an empty skill_id and add error_msg.
 
 Returned JSON object keys details:
 - frustration_level (0.0-1.0): Detect frustration, confusion, or dissatisfaction in the query.
@@ -28,10 +29,10 @@ Returned JSON object keys details:
 - requires_agent (boolean): true only when the request spans MULTIPLE capabilities or needs sequenced external actions between them (e.g., "look first for X then Y", "compare A and B", "research and summarize", "do X, also Y, and send Z"). This includes requests bundling several sub-questions whose findings must be gathered from multiple searches or lookups and combined into one answer: a single skill call returns raw per-query results, not a combined investigation — return requires_agent: true. For such multi-capability requests ALWAYS return requires_agent: true — never select one skill and silently drop the rest of the request. EXCEPTION: if a candidate skill's card declares compound scope (it handles multi-part requests in a single execution) AND the request falls within that skill's domain as described in its card, that skill takes the whole request directly — return requires_agent: false and pass every part to it (in the query and its parameters); the skill's internal steps cover the entire request and return one unified result. If no candidate card declares compound scope for the request's domain, multi-part requests always go to the agent.
 {{/agentic_mode}}
 
-Result example (skill):
+Result example (skill; "example_skill" is a placeholder — always choose a real skill from Available skills):
 
 {
-  "skill_id": "search_web",
+  "skill_id": "example_skill",
   "parameters": {"query": "analyze pros and cons of nuclear energy"},
   "reasoning_level": 0.7{{^agentic_mode}},
   "frustration_level": 0.0,
