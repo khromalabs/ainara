@@ -274,10 +274,16 @@ class OllamaLLM(LLMBackend):
         provider: Optional[Dict] = None,
         reasoning_level: Optional[float] = None,
         reasoning_effort: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Union[str, Generator[str, None, None]]:
         # reasoning_effort is accepted for interface parity; Ollama has no
         # equivalent effort knob (thinking is boolean via use_thinking below).
         messages = self._prepare_messages_for_ollama(chat_history)
+        # temperature is accepted for interface parity (Orakle selection);
+        # override the configured options only when explicitly requested.
+        options = dict(self.ollama_options)
+        if temperature is not None:
+            options["temperature"] = temperature
 
         logger.info(
             "Sending request to ollama.chat for model"
@@ -311,7 +317,7 @@ class OllamaLLM(LLMBackend):
                         messages=messages,
                         stream=True,
                         think=use_thinking,
-                        options=self.ollama_options,
+                        options=options,
                         keep_alive=self.keep_alive,
                     )
                     for chunk in response_stream:
@@ -326,7 +332,7 @@ class OllamaLLM(LLMBackend):
                     messages=messages,
                     stream=False,
                     think=use_thinking,
-                    options=self.ollama_options,
+                    options=options,
                     keep_alive=self.keep_alive,
                 )
                 message = response_data.get("message", {})
@@ -354,10 +360,16 @@ class OllamaLLM(LLMBackend):
         provider: Optional[Dict] = None,
         reasoning_level: Optional[float] = None,
         reasoning_effort: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Union[str, AsyncGenerator[str, None]]:
         # reasoning_effort is accepted for interface parity; Ollama has no
         # equivalent effort knob.
         messages = self._prepare_messages_for_ollama(chat_history)
+        # Interface parity with chat(): explicit temperature overrides the
+        # configured options only when requested.
+        options = dict(self.ollama_options)
+        if temperature is not None:
+            options["temperature"] = temperature
 
         logger.info(
             "Sending async request to ollama.chat for model"
@@ -389,7 +401,7 @@ class OllamaLLM(LLMBackend):
                         messages=messages,
                         stream=stream,
                         think=use_thinking,
-                        options=self.ollama_options,
+                        options=options,
                         keep_alive=self.keep_alive,
                     )
                     # Each item in stream is like:
@@ -407,7 +419,7 @@ class OllamaLLM(LLMBackend):
                     messages=messages,
                     stream=False,
                     think=use_thinking,
-                    options=self.ollama_options,
+                    options=options,
                     keep_alive=self.keep_alive,
                 )
                 message = response_data.get("message", {})

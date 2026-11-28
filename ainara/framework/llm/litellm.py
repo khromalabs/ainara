@@ -531,6 +531,7 @@ class LiteLLM(LLMBackend):
         provider: dict = None,
         reasoning_level: Optional[float] = None,
         reasoning_effort: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM"""
         # Check if we're using the placeholder provider
@@ -568,6 +569,11 @@ class LiteLLM(LLMBackend):
                 "stream": stream,
                 "timeout": float(provider.get("request_timeout", 120.0)),
                 "stream_timeout": 30,
+                **(
+                    {"temperature": temperature}
+                    if temperature is not None
+                    else {}
+                ),
                 **(
                     {"api_base": provider["api_base"]}
                     if "api_base" in provider
@@ -610,29 +616,17 @@ class LiteLLM(LLMBackend):
             #     degrades gracefully via _run_with_memory_llm's provider
             #     fallback.
             #
-            # Re-enable plan: preflight with get_supported_openai_params,
-            # map the heuristic's float level to low/medium/high, and skip
-            # the param (not the call) when unsupported.
-            if reasoning_level is not None and reasoning_level > 0:
-                if litellm.supports_reasoning(model=provider["model"]):
-                    reasoning_effort_str = "low"
-                    if reasoning_level > 0.66:
-                        reasoning_effort_str = "high"
-                    elif reasoning_level > 0.33:
-                        reasoning_effort_str = "medium"
-
-                    # completion_kwargs["reasoning_effort"] = (
-                    #     reasoning_effort_str
-                    # )
-                    self.logger.info(
-                        f"Requesting '{reasoning_effort_str}' reasoning for"
-                        f" model {provider['model']}"
-                    )
-                else:
-                    self.logger.warning(
-                        "Reasoning requested but not supported by model"
-                        f" {provider['model']}"
-                    )
+            # The float reasoning_level→effort mapping that used to live
+            # here is GONE (2026-11-28): it was inert since 2025-10 — the
+            # assignment was commented out, yet the "Requesting 'X'
+            # reasoning" log line kept firing, making calls look
+            # effort-pinned when nothing was sent and the provider's own
+            # default applied. Reasoning effort reaches the wire
+            # exclusively via _resolve_reasoning_effort: an explicit
+            # reasoning_effort kwarg, else the provider entry's configured
+            # default, else the provider's own default. Callers that want
+            # a specific effort pass reasoning_effort= explicitly (e.g.
+            # Orakle selection → orakle.selection.reasoning_effort).
 
             # Reasoning effort resolution: explicit per-call kwarg
             # (internal tier calls such as GREEN memories generation),
@@ -733,6 +727,7 @@ class LiteLLM(LLMBackend):
         provider: dict = None,
         reasoning_level: Optional[float] = None,
         reasoning_effort: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Union[str, Generator]:
         """Process text using LiteLLM (async version)"""
         # Check if we're using the placeholder provider
@@ -791,6 +786,11 @@ class LiteLLM(LLMBackend):
                 "timeout": float(provider.get("request_timeout", 120.0)),
                 "stream_timeout": 30,
                 **(
+                    {"temperature": temperature}
+                    if temperature is not None
+                    else {}
+                ),
+                **(
                     {"api_base": provider["api_base"]}
                     if "api_base" in provider
                     else {}
@@ -805,29 +805,10 @@ class LiteLLM(LLMBackend):
                 # "tool_choice": "none",
             }
 
-            # Add reasoning effort if requested and supported
-            # (TODO(llm): resume adaptive reasoning — see the detailed note
-            # in chat(); this is the async mirror of that block.)
-            if reasoning_level is not None and reasoning_level > 0:
-                if litellm.supports_reasoning(model=provider["model"]):
-                    reasoning_effort_str = "low"
-                    if reasoning_level > 0.66:
-                        reasoning_effort_str = "high"
-                    elif reasoning_level > 0.33:
-                        reasoning_effort_str = "medium"
-
-                    # completion_kwargs["reasoning_effort"] = (
-                    #     reasoning_effort_str
-                    # )
-                    self.logger.info(
-                        f"[DISABLED] Requesting '{reasoning_effort_str}' reasoning for"
-                        f" model {provider['model']} (async)"
-                    )
-                else:
-                    self.logger.warning(
-                        "Reasoning requested but not supported by model"
-                        f" {provider['model']} (async)"
-                    )
+            # Add reasoning effort if requested and supported.
+            # The float reasoning_level→effort mapping is INERT here too
+            # (async mirror of the chat() cleanup, 2026-11-28): effort
+            # reaches the wire only via _resolve_reasoning_effort.
 
             # Reasoning effort resolution (see chat()).
             effort = self._resolve_reasoning_effort(

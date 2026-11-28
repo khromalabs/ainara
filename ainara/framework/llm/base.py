@@ -268,6 +268,7 @@ class LLMBackend(ABC):
         stream: bool = False,
         reasoning_level: Optional[float] = None,
         reasoning_effort: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Union[Tuple[str, Optional[str]], Generator]:
         """Process text using the LLM backend
 
