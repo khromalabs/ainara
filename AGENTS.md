@@ -104,6 +104,15 @@ before proposing changes that cut against them.
   `format_skill_block()`: semantic docstring as `Description:`, first
   `matcher_info` paragraph, and the parameters from the annotations
   (full depth).
+- The main conversation model (Polaris chat) sees an ID-free ABILITY
+  MENU compiled from the capability payload by
+  `framework/capability_digest.py` (hash-gated cache; mechanical
+  fallback). It states intents inside `<orakle>` tags — routing is
+  ID-native in Orakle, so capability IDs never appear in its prompt,
+  consistent with the stealth rule. Fixed enumerations (`Literal`)
+  are listed COMPLETELY and closed (no "…"/"etc."); open parameters
+  get at most two "such as" examples. See
+  `docs/architecture/orakle-routing.md`.
 - Bureau agents see a LEAN projection of the same payload, scoped to
   the blueprint's `allowed_skills` and rendered into their system
   prompt by `format_capabilities_menu()` (depth="lean"): semantic
@@ -327,6 +336,7 @@ python scripts/evaluation/tests/test_orakle_middleware.py
 
 # Component-level tests
 python scripts/test_kokoro_tts.py
+python scripts/test_capability_digest.py
 python scripts/test_coinmarketcap.py
 python scripts/other/test_stt.py
 python scripts/other/test_cuda.py

@@ -26,7 +26,9 @@ Use ORAKLE queries with XML-style tags.
 
 {{> framework.orakle.syntax}}
 
-Use your built-in knowledge for: general knowledge, definitions, explanations, theories, and historical facts. Use ORAKLE for any request of recent information, post-cutoff data, actions, or explicit user ORAKLE requests. Your available ORAKLE capabilities are: {{skills_hint_text}}
+Use your built-in knowledge for: general knowledge, definitions, explanations, theories, and historical facts. Use ORAKLE for any request of recent information, post-cutoff data, actions, or explicit user ORAKLE requests.
+
+{{{capabilities_digest}}}
 
 ## ORAKLE POLICY:
 1. When to use: ALWAYS use ORAKLE for real-time data, real-world actions, or when in doubt about data freshness. Include specific parameters for precision.

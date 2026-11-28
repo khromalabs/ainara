@@ -132,6 +132,51 @@ A skill may absorb a compound request only if BOTH hold:
 No capability-specific code in the middleware. The middleware stays:
 single skill execution, or delegate to agent.
 
+## The main-model ability menu (capability digest)
+
+The main conversation model sees capability IDs for nothing: its
+`<orakle>` queries are pure natural language, and routing is ID-native
+in Orakle (matcher + selection LLM). Feeding it an ID list was inert
+inventory — and contradicted the stealth rule ("do not use terms like
+tools, APIs, or skills"). Instead, the system prompt carries an ID-free
+ability menu compiled from the capability payload by
+`ainara/framework/capability_digest.py`:
+
+- **Hash-gated generation.** The payload (ids, descriptions, parameter
+  declarations) is hashed; on match the cached digest is reused, so the
+  LLM compilation pass runs only when skills change. Cache:
+  `<data dir>/capability_digest.json`, atomic write, versioned.
+- **LLM-compiled, mechanically validated.** The compiler receives lean
+  cards (id, semantic description, fixed options) and must return JSON
+  entries each declaring the capability IDs it covers. Validation
+  gates (enforced mechanically, retried once, then fallback): full ID
+  coverage, each ID covered once, no ID token in the rendered text, no
+  mechanism talk (skill/tool/API), no ellipsis or "etc.".
+- **Fixed-list rule.** Where a parameter declares a closed set
+  (`Literal` → `one of: ...` in the payload), the digest lists EVERY
+  value with `|` separators — closed by construction, so the model
+  cannot infer unlisted options. Open-ended parameters get at most two
+  examples phrased as "such as". Rationale: the model must mention
+  these knobs inside the free-text query for the selection layer to
+  map them (e.g. `search_type`, `recency`), but it must never guess
+  option names.
+- **Mechanical fallback.** Without the LLM (placeholder provider,
+  failure, repeated validation breach) the menu degrades to a
+  deterministic projection: first docstring sentence + complete fixed
+  options. Degraded, never broken; never raises.
+- **Bureau is untouched.** Agent system prompts keep the lean,
+  ID-native menu (`format_capabilities_menu`, depth="lean"): agents
+  plan multi-step goals and benefit from the full affordance card; the
+  stealth doctrine governs the conversational surface, not the
+  autonomous worker's planning prompt.
+
+Design driver (Nov 2026): with the bare-ID hint, glm-5.3-flashx twice
+announced a deep-recall intention and ended the turn without emitting
+the `<orakle>` tag — the recall never dispatched. The digest gives the
+main model a first-person affordance to map recall requests onto; the
+systematic guard for the announced-but-not-dispatched failure mode
+remains an open follow-up.
+
 ## Regression tests
 
 `scripts/evaluation/tests/agentic_routing.py` holds the adversarial

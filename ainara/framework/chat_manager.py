@@ -34,6 +34,7 @@ from typing import Any, Dict, Generator, List, Literal, Optional, Union
 from pycountry import languages
 from pygame import mixer
 
+from ainara.framework.capability_digest import build_capability_digest
 from ainara.framework.chat_memory import ChatMemory
 from ainara.framework.config import config
 from ainara.framework.deep_recall import DeepRecallEngine
@@ -210,11 +211,14 @@ class ChatManager:
             )
             logger.info("Reasoning level heuristic enabled.")
 
-        # Format skills descriptions as a comma-separated list for the ephemeral hint
-        skills_names = []
-        for skill in self.capabilities:
-            skills_names.append(skill["name"])
-        self.skills_hint_text = ", ".join(skills_names)
+        # Ability menu for the system prompt: an ID-free capability digest
+        # (docs/architecture/orakle-routing.md). The main model states
+        # intents; routing stays ID-native in Orakle. Generated once per
+        # capability set (hash-gated cache), mechanical fallback keeps the
+        # prompt functional if compilation fails. Never raises.
+        self.capabilities_digest = build_capability_digest(
+            self.capabilities, self.llm
+        )
 
         # Check if the user profile is new to show an onboarding message
         user_memories_empty = (
@@ -250,7 +254,7 @@ class ChatManager:
             "framework.chat_manager.system_prompt",
             {
                 "is_new_profile": is_new_profile,
-                "skills_hint_text": self.skills_hint_text,
+                "capabilities_digest": self.capabilities_digest,
                 "user_profile_summary": self.user_profile_summary or "",
                 "recent_memories_summary": self.recent_memories_summary or "",
                 "last_chat_timestamp": getattr(
@@ -2155,19 +2159,6 @@ class ChatManager:
             # last_chat_timestamp) is in the system prompt template.
 
             system_hint_content = ""
-
-            # --- Skills Names Hint (compact per-turn enforcement) ---
-            # TODO Apparently a good idea, but seems to confuse smaller models
-            # if self.skills_hint_text:
-            #     system_hint_content += (
-            #         "These ORAKLE capabilities are available:"
-            #         f" {self.skills_hint_text}. If the user query can be"
-            #         " fulfilled using them, you must use the"
-            #         " <orakle>full query intent</orakle>"
-            #     )
-            #     if self.first_turn:
-            #         self.first_turn = False
-            #         logger.info("SKILLS HINT injected (first turn)")
 
             # --- Conversation Summary (dynamic, updated by background
             # thread or the manual /compact command) ---
