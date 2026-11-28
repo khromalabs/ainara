@@ -56,14 +56,17 @@ REQUEST_TIMEOUT = 600
 
 class MemoryDeepRecall(Skill):
     """Deliberate recall of the user's own past: their memories and
-    conversation records. Use when the user asks to recall, remember,
-    revisit or reconstruct something from their OWN past — what they
-    said or decided before, previous conversations, shared history,
-    personal events, plans made earlier ('what did we say about X',
-    'remember when', 'do you recall', 'lo que hablamos'). Also checks
-    the recorded history before stating anything about past events.
-    NOT for general knowledge, encyclopedic or world facts, web
-    search, or current/real-time information.
+    conversation records. DECISION RULE — judge by SOURCE, not by
+    TOPIC: when a request is phrased as recall of what the user said,
+    decided, planned or experienced before ('recall everything about
+    X', 'remember when', 'do you recall'), select this capability
+    regardless of subject matter. Topics that sound
+    like web material (crypto tokens, migrations, prices, news) are
+    still recall requests when the requested source is the user's own
+    recorded history; answering them with a web search is wrong. Use
+    also to check the recorded history before stating anything about
+    past events. NOT for general knowledge, encyclopedic or world
+    facts, or current/real-time information.
     """
 
     # Tier contract (see docs/architecture/orakle-routing.md): the
@@ -83,10 +86,12 @@ class MemoryDeepRecall(Skill):
         " something from their OWN past: what they said or decided"
         " before, previous conversations, shared history, personal"
         " events, plans made earlier, 'what did we say/talk about',"
-        " 'remember when', 'do you recall', 'lo que hablamos',"
-        " 'recuerda cuando'. Also for compound recall requests"
-        " bundling several past topics or periods at once ('what did"
-        " we say about X last week and Y in March'): one"
+        " 'remember when', 'do you recall'. Recall requests may"
+        " concern any topic, even web-flavored ones (tokens, migrations, prices, news):"
+        " the deciding signal is the SOURCE — the user's own recorded"
+        " past — not the subject matter. Also for compound recall"
+        " requests bundling several past topics or periods at once"
+        " ('what did we say about X last week and Y in March'): one"
         " investigation covers all parts. Also for checking the"
         " recorded history before stating anything about past"
         " events. NOT for general knowledge, encyclopedic or"
